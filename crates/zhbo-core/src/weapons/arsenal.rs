@@ -461,6 +461,14 @@ impl Arsenal {
         self.ads = 0.0;
     }
 
+    /// Whether the weapon-switch key has another weapon to cycle to. BO2's client cycles its
+    /// selection over the weapons held (`FUN_00537c20` → `FUN_005378d0`) and requests a change only
+    /// when that lands on a different one; with a single weapon it lands on the same and nothing
+    /// is sent, so there is no switch to hold back or to carry.
+    pub fn can_cycle(&self) -> bool {
+        self.weapons.len() > 1
+    }
+
     /// The weapon can't shoot right now (raising, putting away, reloading, meleeing, throwing).
     pub fn is_busy(&self) -> bool {
         self.raise_left > 0.0 || self.drop_left > 0.0 || self.current().is_reloading() || self.melee_left > 0.0 || self.melee_recover_left > 0.0 || self.offhand.is_some()
@@ -482,12 +490,10 @@ impl Arsenal {
     /// blasts: `cac_modified_damage` returns the damage unchanged when the victim is the attacker
     /// (`_class.gsc:957-958`; another General's blasts go through [`crate::sim::guard`]), so the
     /// blast share is 1. `stunprotection` cuts a stun to x0.1 whoever threw it
-    /// (`_weapons.gsc:1375-1376`). Checked against the class: by the time the grenade goes off the
-    /// hand holds the gun again.
+    /// (`_weapons.gsc:1375-1376`), the thrower's own included: the guard applies it to every
+    /// victim, so the own share is 1 here too.
     pub fn self_harm_scales(&self) -> (f32, f32) {
-        let class = self.class_specialties();
-        let stun = if class.has(Specialty::StunProtection) { self.tuning.stun_protection_scale } else { 1.0 };
-        (1.0, stun)
+        (1.0, 1.0)
     }
 
     /// The hip spread cone's min and max at an eye height (inches; Ghidra G6): the weapon's
@@ -795,8 +801,10 @@ impl Arsenal {
         // (`FUN_00537c20` → `FUN_005378d0`) unless it sends a cancelable item's cancel instead
         // (states 0x16-0x1b), and the server's switch check (`FUN_008e0e60`) only holds the
         // request while the offhand states run — the command keeps carrying it, so the switch
-        // happens once the offhand is done. Each press cycles once more.
-        if pressed & buttons::SWAP_WEAPON != 0 {
+        // happens once the offhand is done. Each press cycles once more. With no other weapon to
+        // cycle to (the knife alone, a shield deployed) the selection stays put and nothing is
+        // requested ([`Arsenal::can_cycle`]): the press is not kept for later.
+        if pressed & buttons::SWAP_WEAPON != 0 && self.can_cycle() {
             if let Some(u) = self.offhand {
                 let cancels = self.offhand_def(u.lethal()).hold_cancelable && !matches!(u, OffhandUse::Raising { .. });
                 if !cancels {
@@ -835,8 +843,11 @@ impl Arsenal {
         // BO2 starts no weapon change during an alt drop (`FUN_008db500` returns in states 3-5).
         let shot_running = !self.current().is_reloading() && self.current().cooldown - self.tick(Timing::Fire) > 1e-6;
         let held_back = meleeing || shot_running;
-        if pressed & buttons::SWAP_WEAPON != 0 && held_back {
+        if pressed & buttons::SWAP_WEAPON != 0 && held_back && self.can_cycle() {
             self.swaps_pending = self.swaps_pending.wrapping_add(1);
+        }
+        if !self.can_cycle() {
+            self.swaps_pending = 0;
         }
         let swaps = if self.swaps_pending > 0 { self.swaps_pending as usize } else { (pressed & buttons::SWAP_WEAPON != 0) as usize };
         if swaps > 0 && self.weapons.len() > 1 && !held_back && !self.alt_pending {

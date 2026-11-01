@@ -15,6 +15,7 @@ pub mod lzo;
 pub mod sab;
 pub mod sndalias;
 pub mod sndglobals;
+pub mod shock;
 pub mod stringtable;
 pub mod t6zone;
 pub mod w3d;

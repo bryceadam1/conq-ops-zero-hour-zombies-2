@@ -35,6 +35,7 @@ pub mod movement;
 pub mod profile;
 pub mod projectiles;
 pub mod sim;
+pub mod shellshock;
 pub mod shield;
 pub mod soundlayers;
 pub mod sounds;

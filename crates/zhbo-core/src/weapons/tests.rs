@@ -1158,3 +1158,33 @@ fn random_input_never_breaks_the_arsenal() {
         }
     }
 }
+
+/// A weapon-switch press with nothing to switch to is not kept: with the shield deployed the knife
+/// is the only weapon, so a press during a grenade throw (an offhand holds a switch back) asks for
+/// nothing (`FUN_005378d0` cycles back to the same weapon); picking the shield up later raises the
+/// shield and nothing switches away from it.
+#[test]
+fn a_switch_press_with_one_weapon_is_not_carried() {
+    let mut a = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: String::new(), ..Loadout::test_kit() });
+    a.raise_left = 0.0;
+    let (slot, state, gave) = a.take_shield().expect("the shield is held");
+    assert_eq!(a.weapons.len(), 1, "the knife alone");
+    let mut rng = Rng::new(9);
+    let mut out = Vec::new();
+    let settle = |a: &mut Arsenal, out: &mut Vec<WeaponAction>, rng: &mut Rng| {
+        for _ in 0..120 {
+            a.step(0, 0, false, 0, 0.0, rng, out);
+        }
+    };
+    settle(&mut a, &mut out, &mut rng);
+    a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
+    assert!(a.offhand.is_some(), "the grenade is in hand");
+    a.step(buttons::LETHAL, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+    assert_eq!(a.swaps_pending, 0, "nothing to switch to: nothing carried");
+    settle(&mut a, &mut out, &mut rng);
+    a.return_shield(slot, state, gave);
+    out.clear();
+    settle(&mut a, &mut out, &mut rng);
+    assert!(a.current().def.is_shield(), "the shield stays up");
+    assert!(!out.contains(&WeaponAction::Swapped), "{out:?}");
+}

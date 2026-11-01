@@ -16,6 +16,7 @@ pub mod deploy;
 pub mod guard;
 mod fire;
 mod hack;
+mod shock;
 pub mod optics;
 mod plant;
 mod rts;
@@ -279,6 +280,8 @@ pub struct PlayerSim {
     pub tracer_count: u8,
     /// A melee lunge at an enemy in progress (`fire::MeleeCharge`).
     pub charge: Option<fire::MeleeCharge>,
+    /// The shellshock running on him in first person ([`crate::shellshock`]).
+    pub shock: crate::shellshock::Shellshock,
 }
 
 impl PlayerSim {
@@ -398,6 +401,7 @@ impl PlayerSim {
             optics: Default::default(),
             tracer_count: 0,
             charge: None,
+            shock: Default::default(),
         }
     }
 }
@@ -595,6 +599,7 @@ impl Sim {
             optics: Default::default(),
             tracer_count: 0,
             charge: None,
+            shock: Default::default(),
                 }
             }
         };
@@ -668,6 +673,7 @@ impl Sim {
                     optics: Default::default(),
                     tracer_count: 0,
                     charge: None,
+                    shock: Default::default(),
                 }
             }
         };
@@ -735,7 +741,7 @@ impl Sim {
         self.equipment.shields.clone_from(&self.shields);
         // The Generals' perks against others' blasts (`sim::guard`), for this frame's blasts.
         self.equipment.guards.clear();
-        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal)));
+        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal, p.is_first_person())));
         for idx in 0..self.players.len() {
             let Some(mut p) = self.players[idx].take() else { continue };
             let keep = self.step_player(host, idx, &mut p);
@@ -745,6 +751,7 @@ impl Sim {
         }
         self.step_projectiles(host);
         self.step_equipment(host);
+        self.apply_shock_hits();
         self.step_deployed(host);
         for s in &mut self.smokes {
             host.smoke(s.0, s.1);
@@ -759,8 +766,18 @@ impl Sim {
         let mut struck = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
             // Its blast reaches each General through his guard (`sim::guard`).
-            let guarded = guard::Guarded { host, guards: &self.equipment.guards, def: proj.def, stuck_to: proj.stuck_to, thrown: true };
+            let hits = std::cell::RefCell::new(Vec::new());
+            let guarded = guard::Guarded { host, guards: &self.equipment.guards, def: proj.def, stuck_to: proj.stuck_to, thrown: true, owner: proj.owner, at: None, hits: &hits };
             let outcome = proj.step_shielded(&guarded, &self.shields);
+            // What it did to first-person Generals, placed where it went off.
+            let at = match outcome {
+                Some(Outcome::Exploded { at, .. }) => Some(at),
+                _ => None,
+            };
+            self.equipment.shock_hits.borrow_mut().extend(hits.take().into_iter().map(|h| guard::ShockHit { at: h.at.or(at), ..h }));
+            if let (Some(at), crate::weapons::Effect::Emp) = (at, proj.def.effect) {
+                self.equipment.shock_hits.borrow_mut().extend(shock::emp_hits(host, &self.players, proj.def, proj.owner, at));
+            }
             if let Some((at, surface)) = proj.bounced {
                 bounces.push((*owner, at, proj.def.bounce_sound(surface)));
             }
@@ -885,6 +902,7 @@ impl Sim {
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         }
+        p.shock.step();
         if !p.is_first_person() {
             return true;
         }
@@ -938,7 +956,8 @@ impl Sim {
                     self.emit(idx, EventKind::FieldComputerOpened);
                 } else {
                     let mods = MoveModifiers {
-                        speed_scale: p.arsenal.move_scale(),
+                        // A shellshock scales the run speed for its whole duration (`PM_CmdScale`).
+                        speed_scale: p.arsenal.move_scale() * p.shock.movement(),
                         block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 || p.building,
                         sprint_time_scale: p.arsenal.sprint_scale(),
                         move_faster: p.arsenal.move_faster(),

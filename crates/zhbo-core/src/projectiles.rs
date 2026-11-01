@@ -464,11 +464,19 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 }
             }
             Effect::Stun => {
-                // `time = 2 + 4 * scale`, scale 1 at the centre, 0 at the edge (`_weapons.gsc:1372`).
-                let scale = 1.0 - (dist / d.explosion_radius.max(1.0)).clamp(0.0, 1.0);
+                // `time = 2 + 4 * scale`, scale 1 at the centre, 0 at the edge (`_weapons.gsc:1372`);
+                // the thrower's own scale runs over half the radius (`:1364-1365`).
+                let thrown = crate::equipment::Kind::of(d) == crate::equipment::Kind::Other;
+                let radius = d.explosion_radius.max(1.0) * if own { tuning.concussion_self_radius_scale } else { 1.0 };
+                let scale = 1.0 - (dist / radius).clamp(0.0, 1.0);
                 let mut secs = tuning.concussion_time_min + tuning.concussion_time_scale * scale;
                 if own {
                     secs *= self_stun_scale;
+                    // BO2 concusses the thrower too (every damage reaches `onweapondamage`,
+                    // `_globallogic_player.gsc:1222`); placed equipment's stun is not the script's.
+                    if thrown {
+                        host.disable(o.id, disable_kind::PARALYZED, secs);
+                    }
                 }
                 if !own {
                     host.disable(o.id, disable_kind::PARALYZED, secs);

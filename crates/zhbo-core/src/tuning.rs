@@ -203,6 +203,21 @@ tuning! {
     hacker_tool_max_equipment_distance: "hackertoolmaxequipmentdistance" = 2000.0, "Black Hat: the farthest equipment it locks on to, inches (`_hacker_tool.gsc:12`); the mod uses it for Zero Hour drones too.";
     concussion_time_min: "concussion_time_min" = 2.0, "Stun at the blast's edge, seconds: BO2's `time = 2 + 4 * scale` (`gametypes/_weapons.gsc:1372`).";
     concussion_time_scale: "concussion_time_scale" = 4.0, "Extra stun at the blast's centre, seconds (the `4` in `gametypes/_weapons.gsc:1372`; `scale` is 1 at the centre, 0 at the edge).";
+    concussion_self_radius_scale: "concussion_self_radius_scale" = 0.5, "The thrower's own concussion: `scale` runs over this share of the radius (`gametypes/_weapons.gsc:1364-1365`: `radius * 0.5` when `self == eattacker`).";
+    flash_duration_scale: "flash_duration_scale" = 6.0, "Flashbang: seconds at full distance and angle shares (`_flashgrenades.gsc:53`, `duration = amount_distance * amount_angle * 6`).";
+    flash_angle_min: "flash_angle_min" = 0.5, "Flashbang: the angle share's floor (`_flashgrenades.gsc:43-44`).";
+    flash_angle_full: "flash_angle_full" = 0.8, "Flashbang: an angle share above this counts as 1 (`_flashgrenades.gsc:45-46`).";
+    flash_self_scale: "flash_self_scale" = 0.5, "Flashbang: the thrower's distance share scale (`_flashgrenades.gsc:48-49`).";
+    flash_min_duration: "flash_min_duration" = 0.25, "Flashbang: shorter than this, nothing (`_flashgrenades.gsc:55-56`).";
+    flash_protection_scale: "flash_protection_scale" = 0.1, "Flashbang: `flashprotection`'s duration share (`_flashgrenades.gsc:86-90`).";
+    blast_shock_min_damage: "blast_shock_min_damage" = 10.0, "Explosive damage (BO2's scale) over which the player is shaken (`_shellshock.gsc:30-31`, `damage > 10`).";
+    blast_shock_duration: "blast_shock_duration" = 0.5, "Seconds of the frag shock explosive damage plays (`_shellshock.gsc:35`).";
+    emp_shock_duration: "emp_shock_duration" = 1.0, "Seconds of the flashbang shock an EMP grenade plays on a player (`_empgrenade.gsc:105`).";
+    proximity_shock_duration: "proximity_shock_duration" = 1.5, "Shock Charge: seconds of its zap's shock (`_proximity_grenade.gsc:188-189`).";
+    proximity_dot_time: "scr_proximityGrenadeDOTDamageTime" = 0.15, "Shock Charge: seconds between its damage ticks (`_proximity_grenade.gsc:24`).";
+    proximity_dot_instances: "scr_proximityGrenadeDOTDamageInstances" = 4.0, "Shock Charge: damage ticks (`_proximity_grenade.gsc:25`).";
+    proximity_exit_wait: "proximity_exit_wait" = 0.85, "Shock Charge: seconds after its last tick before the exit shock (`_proximity_grenade.gsc:204`).";
+    proximity_exit_duration: "proximity_exit_duration" = 0.6, "Shock Charge: seconds of the exit shock (`_proximity_grenade.gsc:206`).";
     emp_grenade_duration: "empgrenade_duration" = 12.0, "EMP Grenade: seconds a vehicle stays disabled (`_empgrenade.gsc:102`, `empduration = 12`).";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";

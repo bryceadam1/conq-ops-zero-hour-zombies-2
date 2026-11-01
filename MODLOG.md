@@ -9755,3 +9755,61 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   which the mod does not model; both noted for a follow-up. Tests:
   `flak_jacket_cuts_anothers_explosives_only`, `the_tactical_mask_cuts_anothers_concussion`,
   `a_flak_jacket_general_takes_less_from_anothers_frag`.
+- **A switch press with nothing to switch to was kept and fired later.** During an offhand (or a
+  melee, or a shot's time) the arsenal queues weapon-switch presses (`swaps_pending`) and applies
+  them when the hold-back ends, as BO2's command carries the request. With a single weapon — the
+  knife alone while the shield is deployed — the queue was never cleared, so picking the shield up
+  later switched straight away from it. BO2's client cycles its selection over the weapons held
+  (`FUN_00537c20` → `FUN_005378d0`) and sends a change only when it lands on a different weapon;
+  with one weapon nothing is requested. `Arsenal::can_cycle` gates the queue, and a queue is
+  dropped whenever there is no other weapon. Test: `a_switch_press_with_one_weapon_is_not_carried`
+  (fails without the fix).
+- **The thrower is concussed by his own concussion grenade, over half the radius** (the follow-up
+  the Flak Jacket entry left open). BO2 runs `onweapondamage` for every damage a player takes,
+  his own included (`finishplayerdamagewrapper` → `damageshellshockandrumble`,
+  `_globallogic_player.gsc:1222,2237-2239`); for the concussion it takes `radius * 0.5` when
+  `self == eattacker` (`_weapons.gsc:1364-1365`; the script's 512 is the def's
+  `iExplosionRadius`), then `time = 2 + 4 * scale` and Tactical Mask's x0.1. The mod's stun branch
+  skipped the thrower entirely. Now a thrown stun grenade (not placed equipment: the Shock Charge is
+  not the script's concussion) stuns its thrower with `scale` over
+  `concussion_self_radius_scale` (tuning pack, 0.5) of the radius, so past half the radius he gets
+  the edge time (2 s), as BO2. His own Tactical Mask now comes from the guard like anyone's, so
+  `self_harm_scales` returns 1 for both shares. **Note:** like every General's stun, it reaches the
+  host as `disable(PARALYZED)`; the first-person sim has no concussion screen or movement effect of
+  its own (unchanged, a separate item). Test: `the_thrower_is_concussed_over_half_the_radius`
+  (fails without the fix).
+- **Stuns on the first-person General are BO2's shellshocks, not Zero Hour's paralysis.** 5c5ccd0
+  (and every enemy concussion/flashbang before it) sent `disable(PARALYZED)` to the first-person
+  General, which freezes the player outright. A BO2 stun is a shellshock: `shellshock( name,
+  duration )` with the numbers of `shock/<name>.shock`.
+  * **Data.** `zhbo_formats::shock` parses the `bg_shock_*` files (keys and meanings from t6mp's
+    registration `FUN_008b7bb0` and loader `FUN_008bca80`); the converter carries the five the MP
+    GSC plays for the mod's sources (`concussion_grenade_mp`, `flashbang`, `frag_grenade_mp`,
+    `proximity_grenade`, `proximity_grenade_exit`; all in the weapon pool) as `Shock` blocks of the
+    weapon table; the stand-in table carries the same rows (a real-install test pins them equal).
+  * **Effects (decompiled).** Movement: `PM_CmdScale` (`FUN_008c4110`) multiplies the run speed by
+    the shock's `movement` for the whole shock (no fade) — `MoveModifiers.speed_scale` in the
+    logic step. Look: `FUN_005109f0`, `f = min(left / lookControl_fadeTime, 1)`, sensitivity
+    `1 + (scale − 1)·f`, turn rate at most `maxpitchspeed / f`, `maxyawspeed / f` deg/s — in the
+    client's mouse look, whose angles the input carries (BO2 does it in the client's command too).
+    Screen: a flashed shock's whiteout `min(left / screenFlashWhiteFadeTime, 1)` (`FUN_005105c0`)
+    — a white full-screen rectangle under the HUD's elements.
+  * **Sources (the GSC).** Concussion: its stun time (2 + 4·scale, the thrower's over half the
+    radius, Tactical Mask) as `concussion_grenade_mp`. Flashbang: `distance × angle × 6` with the
+    engine's shares (`FUN_005f1c60`: distance 1 inside the inner radius falling to 0 at the
+    radius, angle `(dot + 1) / 2`), the script's angle clamp, the thrower's half distance,
+    `flashprotection` x0.1 and the 0.25 s floor (`_flashgrenades.gsc:38-90`). EMP: `flashbang` for
+    1 s on anyone it reaches but teammates (`_empgrenade.gsc:105`). Shock Charge:
+    `proximity_grenade` 1.5 s, then `proximity_grenade_exit` 0.6 s after its 4 × 0.15 s ticks and
+    0.85 s (`_proximity_grenade.gsc:186-206`). Explosive damage over 10 (BO2's scale):
+    `frag_grenade_mp` 0.5 s unless a flashbang's runs (`_shellshock.gsc:14-38`). The script's
+    numbers are tuning-pack keys (`[Shellshock]`). A new shock replaces the running one, as
+    `shellshock` overwrites the player's.
+  * **Who gets what.** `sim::guard` knows which Generals are in first person: their stun becomes a
+    `ShockHit` the sim turns into the shock (`sim::shock`), and Zero Hour's disable is not sent.
+    Zero Hour's own units and a General under RTS control keep `disable(PARALYZED)` — they have no
+    first-person view to shock, and Zero Hour's paralysis is the closest it has.
+  * **Not ported (no seam yet):** the blurred layer and the flashed screengrab (renderer passes),
+    the shock's view kick, its vision set, and its sound (the tinnitus loop, the mix snapshot and
+    room) — the shock's `soundLoop` is carried but not played. No ABI change; the weapon table
+    gains `Shock` blocks (covered by this round's `hud::VERSION` 82).

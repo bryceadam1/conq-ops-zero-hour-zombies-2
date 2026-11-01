@@ -428,6 +428,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     }
     table.hit_boxes = crate::thirdperson::hit_boxes(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &body_clips);
     summary.push(format!("soldier hit boxes: {} over {} body states", table.hit_boxes.len(), body_clips.len()));
+    // The shellshocks the GSC plays (`shock/<name>.shock` in the weapon pool).
+    table.shocks = crate::weapons::shocks(&pool)?;
+    summary.push(format!("{} shellshocks", table.shocks.len()));
 
     // The soldiers: body, every converted weapon in the right hand (one shown at a time), and the
     // tablet.

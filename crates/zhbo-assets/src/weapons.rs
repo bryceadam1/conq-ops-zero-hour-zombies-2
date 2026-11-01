@@ -490,6 +490,7 @@ pub fn table_with_metadata(
         weapon_groups: Vec::new(),
         class_caps: Vec::new(),
         hit_boxes: Vec::new(),
+        shocks: Vec::new(),
     }
 }
 
@@ -678,6 +679,35 @@ pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
 
 /// BO2's localized strings for the display names: `zone/<language>/<lang>_code_post_gfx_mp.ff`
 /// with `<lang>_patch_mp.ff` over it. Empty if the language zones can't be read.
+/// The shellshocks the mod plays ([`zhbo_core::shellshock::names::ALL`]), from their
+/// `shock/<name>.shock` files in the weapon pool (highest priority first), as the table's
+/// `Shock` blocks. A missing file is an error: the core's shocks would silently do nothing.
+pub fn shocks(pool: &[&zhbo_formats::t6zone::Zone]) -> Result<Vec<zhbo_core::shellshock::ShockDef>, String> {
+    zhbo_core::shellshock::names::ALL
+        .iter()
+        .map(|name| zhbo_formats::shock::find(pool, name).map(|s| shock_def(&s)).ok_or(format!("{}: not in the weapon pool", zhbo_formats::shock::path(name))))
+        .collect()
+}
+
+/// A parsed shock file as the table's `Shock` block.
+pub fn shock_def(s: &zhbo_formats::shock::Shock) -> zhbo_core::shellshock::ShockDef {
+    zhbo_core::shellshock::ShockDef {
+        name: s.name.clone(),
+        flashed: s.screen_type == zhbo_formats::shock::ScreenType::Flashed,
+        blur: s.blur_blend_time,
+        blur_fade: s.blur_fade_time,
+        white_fade: s.flash_white_fade_time,
+        shot_fade: s.flash_shot_fade_time,
+        look_control: s.look_control,
+        max_pitch_speed: s.look_max_pitch_speed,
+        max_yaw_speed: s.look_max_yaw_speed,
+        sensitivity: s.look_sensitivity_scale,
+        look_fade: s.look_fade_time,
+        movement: s.movement,
+        sound_loop: s.sound_loop.clone(),
+    }
+}
+
 pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
     zhbo_formats::localize::install_strings(bo2_dir, &["code_post_gfx_mp", "patch_mp"])
 }
@@ -2584,6 +2614,19 @@ mod tests {
         assert_eq!(to_def(&w, &HashMap::new()).camo_material, "camo_msmc");
         let none = Weapon { name: "mtar_mp".into(), class: bo2::class::RIFLE, ..Default::default() };
         assert_eq!(to_def(&none, &HashMap::new()).camo_material, "");
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_shellshocks_convert_and_the_stand_ins_match_them() {
+        // Every shock the core plays is in the weapon pool, and the stand-in table's `Shock`
+        // blocks (zhbo-core's BUILTIN) are the install's values.
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let crate::paks::MpPool { patch, common_patch, common } = crate::paks::MpPool::load(&dir).unwrap();
+        let shocks = shocks(&[&patch, &common_patch, &common]).unwrap();
+        assert_eq!(shocks.len(), zhbo_core::shellshock::names::ALL.len());
+        let stand_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().shocks;
+        assert_eq!(stand_in, shocks);
     }
 
     #[test]

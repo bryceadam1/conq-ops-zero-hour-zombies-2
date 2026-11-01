@@ -201,10 +201,11 @@ impl Placed {
         }
     }
 
-    /// Blow it up where it is; its damage reaches each General through his guard.
-    fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer], guards: &[crate::sim::guard::Guard]) -> EquipEvent {
+    /// Blow it up where it is; its damage reaches each General through his guard, and what it does
+    /// to a first-person General goes into `hits` (the sim's shellshocks).
+    fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer], guards: &[crate::sim::guard::Guard], hits: &std::cell::RefCell<Vec<crate::sim::guard::ShockHit>>) -> EquipEvent {
         self.remove(host);
-        let guarded = crate::sim::guard::Guarded { host, guards, def: self.def, stuck_to: self.stuck_to, thrown: false };
+        let guarded = crate::sim::guard::Guarded { host, guards, def: self.def, stuck_to: self.stuck_to, thrown: false, owner: self.general, at: Some(self.pos), hits };
         let b = blast(&guarded, self.def, self.general, self.pos, None, 1.0, 1.0, shields);
         let d = self.def;
         EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, def: d, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface: b.surface }
@@ -221,6 +222,9 @@ pub struct Equipment {
     /// every blast — equipment's and projectiles' — reaches the host through them
     /// ([`crate::sim::guard`]).
     pub guards: Vec<crate::sim::guard::Guard>,
+    /// What this frame's blasts did to first-person Generals, for the sim's shellshocks
+    /// ([`crate::sim::guard::ShockHit`]); the sim drains it.
+    pub shock_hits: std::cell::RefCell<Vec<crate::sim::guard::ShockHit>>,
     /// The tuning pack's equipment numbers.
     pub tuning: EquipTuning,
 }
@@ -244,6 +248,7 @@ impl Equipment {
         let mut gone = Vec::new();
         let shields = &self.shields;
         let guards = &self.guards;
+        let hits = &self.shock_hits;
         let tn = self.tuning;
         for (i, p) in self.placed.iter_mut().enumerate() {
             p.age += LOGIC_DT;
@@ -274,7 +279,7 @@ impl Equipment {
                     if p.kind == Kind::Betty {
                         p.pos.z = host.ground_height(p.pos.x, p.pos.y) + tn.betty_hop;
                     }
-                    events.push(p.explode(host, shields, guards));
+                    events.push(p.explode(host, shields, guards, hits));
                     gone.push(i);
                 }
                 continue;
@@ -356,7 +361,7 @@ impl Equipment {
         while k < self.placed.len() {
             if self.placed[k].owner == owner && self.placed[k].kind == Kind::C4 {
                 let mut p = self.placed.remove(k);
-                events.push(p.explode(host, &self.shields, &self.guards));
+                events.push(p.explode(host, &self.shields, &self.guards, &self.shock_hits));
             } else {
                 k += 1;
             }

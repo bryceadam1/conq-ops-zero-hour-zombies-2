@@ -924,10 +924,14 @@ impl Client {
                     let menu = self.class_pick_wanted(unclassed);
                     if allowed && !in_fc && !menu {
                         let zoom = hfov / base_fov;
-                        let sens = self.cfg.sensitivity * zoom;
+                        // A shellshock's look control (`crate::shellshock`, t6mp `FUN_005109f0`):
+                        // the sensitivity scaled and the turn rate capped, both fading back.
+                        let look = p.shock.look();
+                        let sens = self.cfg.sensitivity * zoom * look.sensitivity;
                         let inv = if self.cfg.invert_y { -1.0 } else { 1.0 };
-                        self.yaw = wrap_angle(self.yaw - inp.mouse_dx * sens);
-                        self.pitch = (self.pitch - inp.mouse_dy * sens * inv).clamp(-MAX_PITCH, MAX_PITCH);
+                        let cap = |d: f32, max_deg_s: f32| if max_deg_s.is_finite() { d.clamp(-(max_deg_s.to_radians() * dt), max_deg_s.to_radians() * dt) } else { d };
+                        self.yaw = wrap_angle(self.yaw + cap(-inp.mouse_dx * sens, look.max_yaw_speed));
+                        self.pitch = (self.pitch + cap(-inp.mouse_dy * sens * inv, look.max_pitch_speed)).clamp(-MAX_PITCH, MAX_PITCH);
                     }
                     out.camera_override = 1;
                     out.eye = eye;

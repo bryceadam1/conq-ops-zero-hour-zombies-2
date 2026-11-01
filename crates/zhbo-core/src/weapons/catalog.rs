@@ -36,6 +36,8 @@ pub struct Catalog {
     pub tablet_meshes: u8,
     /// The soldier's hit boxes per body state (`HitBox` lines), `None` in a table without them.
     hit_body: Option<&'static crate::hitloc::Poses>,
+    /// BO2's shellshocks by name (`Shock` blocks).
+    shocks: Vec<&'static crate::shellshock::ShockDef>,
 }
 
 impl Catalog {
@@ -79,6 +81,7 @@ impl Catalog {
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
             hit_body: (!t.hit_boxes.is_empty()).then(|| &*Box::leak(Box::new(crate::hitloc::Poses::new(&t.hit_boxes)))),
+            shocks: t.shocks.into_iter().map(|k| &*Box::leak(Box::new(k))).collect(),
         }
     }
 
@@ -207,6 +210,11 @@ impl Catalog {
         self.perks.get(stats).copied()
     }
 
+    /// A shellshock by its file name (`concussion_grenade_mp`, `flashbang`).
+    pub fn shock(&self, name: &str) -> Option<&'static crate::shellshock::ShockDef> {
+        self.shocks.iter().copied().find(|k| k.name == name)
+    }
+
     /// The soldier's hit boxes per body state, when the table carries them.
     pub fn hit_body(&self) -> Option<&'static crate::hitloc::Poses> {
         self.hit_body
@@ -255,6 +263,10 @@ pub fn install_catalog(text: &str) -> Result<usize, String> {
         if !table.ui_text.iter().any(|t| t.key == u.key) {
             table.ui_text.push(u);
         }
+    }
+    if table.shocks.is_empty() {
+        // A table converted before the shellshocks were: the stand-in rows (BO2's own).
+        table.shocks = built_in.shocks;
     }
     if table.bonus_cards.is_empty() {
         // A table converted before the bonus cards were: the stand-in rows (BO2's own).
@@ -341,6 +353,46 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 /// player's install. `WeaponGroups` is the order `cacweaponslot.lua` adds the weapon groups in;
 /// the `ClassCap.*` lines are `cacutility.lua`'s ([`crate::classes::DATA_CAPS`]).
 pub const BUILTIN: &str = "
+Shock concussion_grenade_mp
+  Flashed = 1
+  Blur = 0.4 12
+  Flash = 7.5 15
+  Look = 1 22 22 0.1 2
+  Movement = 0.32
+  SoundLoop = chr_tinitus_loop
+End
+Shock flashbang
+  Flashed = 1
+  Blur = 0.4 1
+  Flash = 3.5 1
+  Look = 0 90 90 0.5 2
+  Movement = 0.8
+  SoundLoop = chr_flashbang_tinnitus_loop
+End
+Shock frag_grenade_mp
+  Flashed = 0
+  Blur = 0.4 1
+  Flash = 0 0
+  Look = 0 90 90 0.5 2
+  Movement = 0.4
+  SoundLoop = chr_tinitus_loop
+End
+Shock proximity_grenade
+  Flashed = 0
+  Blur = 2 2
+  Flash = 0 0
+  Look = 1 1 1 0.05 4
+  Movement = 0.1
+  SoundLoop = 
+End
+Shock proximity_grenade_exit
+  Flashed = 0
+  Blur = 0.1 2
+  Flash = 0 0
+  Look = 1 30 30 0.2 2
+  Movement = 0.525
+  SoundLoop = 
+End
 WeaponGroups = weapon_smg weapon_assault weapon_cqb weapon_lmg weapon_sniper weapon_pistol weapon_launcher weapon_special
 ClassCap.maxCustomClass = 5
 ClassCap.maxGrenades = 2
