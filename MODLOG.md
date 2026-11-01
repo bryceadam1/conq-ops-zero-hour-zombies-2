@@ -9076,3 +9076,45 @@ translation edits one file. Still literal, with no BO2 key: RESET SET (the mod's
 entry), NOTHING TO CHOOSE, KNIFE, the personalize fallback name lists.
 
 The weapon table grows rows: the archive needs a reconvert (a `hud::VERSION` bump at integration).
+
+## Integration, polish round 2 (2026-11-01)
+
+`v1/gap-cleanup` (7fb3dea), `v1/weapon-patches` (287edab) and `v1/code-polish2` (c241396) merged in
+that order onto main 453fcba (`v1/integration3`).
+* **gap-cleanup.** Main and the branch had each set the `WEAPON_FIELDS` assert to 145, so git kept
+  one line. The real count is 146 (`OverlaySize` + `FireSoundNpc`).
+* **weapon-patches.** It sits on gap-cleanup's 084a31c, but only `weapons/table.rs` conflicted:
+  `CacName`, `CacLocked` and `CacLockHint` bring `WEAPON_FIELDS` to 149.
+* **code-polish2.** It split the files the other two edit. gap-cleanup's empty-reload fallback is
+  now in `weapons/weapon_state.rs::magazine_times`, which moved there from `arsenal.rs` (gap-cleanup's
+  entry above names the old file). build-archive's `generals:` error line is now in
+  `cmd_build_archive`. Every line the first two merges added survives somewhere in the tree, and no
+  line they removed came back in code-polish2's new files.
+
+**One weapon-pool loader.** `paks::MpPool` loads `zhbo_formats::weapon::MP_POOL` by name through
+the shared `t6zone` loader (`paks::load_zone`) and resolves the weapons and attachments
+(`MpPool::weapons`). Before this, `generals::files`, `hud::build_archive`, the viewmodel sweep, the
+conformance actual side and six real-install tests each loaded `common_mp`, `common_patch_mp` and
+`patch_mp` by hand before calling `mp_weapons`. The conformance expected side
+(`bo2::install::Install`) now loads the same `MP_POOL` names through the same loader.
+
+**Gotcha: `defaultweapon_mp`.** Resolving over the whole pool pulls in `patch_mp`'s
+`defaultweapon_mp`, the asset pool's stand-in for a missing weapon. It has the frag grenade's view
+model and no world model. `is_player_weapon` passed it, so it was converted with no `.zbw`, and the
+real-install native audit failed with "ZW63 is not in the archive". It is now in
+`manifest::EXCLUDED_WEAPONS`. Any pool-wide weapon walk has to expect it.
+
+The archive moved, so `hud::VERSION` 79 → 80. ABI 27 and the blob formats are unchanged (CONTRACT
+Versioning).
+
+Verified:
+* `cargo test --workspace`: 959 passed.
+* `cargo clippy --workspace --all-targets`: clean.
+* Real-install suites: `-p zhbo-assets -- --ignored --skip conformance` 56 passed; `-p zhbo-formats
+  -- --ignored` 17 passed.
+* Conformance: weapons 12,163 rows, 2,327 → 1,979 cells, 23 → 11 clusters. That is gap-cleanup's
+  1,882 plus the Peacekeeper's 97 `hud_icon` cells. cac 0 cells with 4 BO2-only rows (camo); 25 → 12
+  gap clusters.
+* `cargo xtask build`: OK.
+* Autotests, run one at a time: default 16/16, `--classpick` 8/8, `--rts` 15/15, `--scope` pass,
+  `--w3d-ads` 2/2.
