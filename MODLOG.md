@@ -4464,3 +4464,15 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Conformance: the half-turn quaternion sign (2026-10-25, branch `v1/quat-canonical`)
+
+A generator artifact, not a parity gap. `bo2::rows::canonical_quat` (both sides use it) chose the
+quaternion's sign from the unrounded `w`, then rounded: a half-turn whose `w` came out of the
+matrix as −1e-9 printed `-1|0|0|0` on one side and `1|0|0|0` on the other — the same rotation
+(q and −q). The sign is now chosen on the rounded components. 35 `view_part_rotations` cells
+(dsr50/ksg parts) left the report: weapons 706,586 → 706,551 cells, that column 1,392 → 1,357
+rows (35 → 29 kinds), nothing else moved; gap clusters unchanged at 214.
+
+Verified: `cargo test -p zhbo-conformance` (new `a_half_turn_keeps_one_sign_whatever_the_noise_in_w`);
+clippy clean on the crate; the conformance CLI as measured. Nothing the mod ships changed.

@@ -533,11 +533,13 @@ pub fn angles_to_quat(a: [f32; 3]) -> [f64; 4] {
 }
 
 /// A unit quaternion with `w >= 0` (q and −q are the same rotation), components rounded to 1e-6
-/// so `-0` and noise do not print.
+/// so `-0` and noise do not print. The sign is chosen on the rounded components: a half-turn's
+/// `w` of −1e-9 rounds to 0 and must not flip the axis (`1|0|0|0` vs `-1|0|0|0`).
 pub fn canonical_quat(q: [f64; 4]) -> [f64; 4] {
     let n = q.iter().map(|c| c * c).sum::<f64>().sqrt().max(1e-12);
-    let sign = if q[3] < 0.0 || (q[3] == 0.0 && q.iter().find(|c| **c != 0.0).is_some_and(|c| *c < 0.0)) { -1.0 } else { 1.0 };
-    q.map(|c| ((c / n * sign) * 1e6).round() / 1e6 + 0.0)
+    let r = q.map(|c| (c / n * 1e6).round() / 1e6);
+    let sign = if r[3] < 0.0 || (r[3] == 0.0 && r.iter().find(|c| **c != 0.0).is_some_and(|c| *c < 0.0)) { -1.0 } else { 1.0 };
+    r.map(|c| c * sign + 0.0)
 }
 
 /// `FUN_008ec9e0`: the weapon the combination toggles to. The `*Index` fields are resolved from
@@ -585,5 +587,14 @@ mod tests {
         let q = angles_to_quat([0.0, 0.0, 90.0]);
         assert!((q[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6, "{q:?}");
         assert_eq!(angles_to_quat([0.0, 360.0, 0.0]), [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn a_half_turn_keeps_one_sign_whatever_the_noise_in_w() {
+        // q and −q are the same half-turn; a `w` that rounds to zero must not pick the sign.
+        assert_eq!(canonical_quat([1.0, 0.0, 0.0, -1e-9]), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(canonical_quat([-1.0, 0.0, 0.0, 1e-9]), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(canonical_quat([-1.0, 0.0, 0.0, -1e-9]), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(canonical_quat([0.0, 0.0, 0.0, -1.0]), [0.0, 0.0, 0.0, 1.0]);
     }
 }
