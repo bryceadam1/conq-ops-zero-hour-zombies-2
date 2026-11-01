@@ -8849,3 +8849,16 @@ lock (`clearhackertarget`), not the pull-back.
 
 **Gotcha:** `equipmenthackertooltimems = 50` alone reads as "instant"; the pull-back and fire delay
 are what make the hack take its ~0.4 s, and they live in the weapon def, not the script.
+
+## Code polish 2: oversized files split along their seams (2026-11-01)
+
+Mechanical moves, no behaviour change (test counts identical before and after):
+- `sim/mod.rs` 3,046 → 1,103 lines: its 1,944 lines of inline tests are `sim/tests.rs` (still
+  `crate::sim::tests`, so `FakeHost`'s path is unchanged).
+- `weapons/mod.rs` 1,322 → 249: the main test module is `weapons/tests.rs`.
+- `zhbo-gfx/src/runtime/mod.rs` 1,866 → 1,019: the `Resources` seam (`resources.rs`: shaders,
+  programs, uniforms, layouts, buffers, textures, frame buffers) and the per-draw seam
+  (`encode.rs`: views, draw state, `submit`, `discard`, `blit`) are their own `impl Renderer` files.
+- `zhbo-assets`' 767-line `run` is a dispatch table over one `cmd_<subcommand>` function each.
+Not split (yet): `zhbo-formats/src/weapon.rs`'s 416-line `read`, and `weapons/arsenal.rs` (with
+batch 9's fire-cycle work).

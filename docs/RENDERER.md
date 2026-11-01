@@ -64,7 +64,10 @@ reflection, then the WGSL (`src/blob.rs`). `createShader` decodes it.
 
 ## Runtime model (`src/runtime/`)
 
-It follows bgfx's semantics:
+`mod.rs` holds the `Renderer` (device, pools, init, reset, stats); `resources.rs` the resource
+calls (shaders, programs, uniforms, layouts, buffers, textures, frame buffers); `encode.rs` the
+per-draw calls between frames (views, draw state, `submit`, `discard`, `blit`); `frame.rs` turns the
+recorded views into passes; `native.rs` is the BO2 model pass. It follows bgfx's semantics:
 
 * **Views 0–255** have a rect, a clear, a mode, a frame buffer and view/proj matrices. `submit`
   records a draw into a view. `frame()` executes views in `setViewOrder` order. Each view that has

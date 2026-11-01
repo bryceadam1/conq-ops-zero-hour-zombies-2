@@ -35,8 +35,9 @@ converter (`zhbo-assets`), the conformance oracle (`zhbo-conformance`) and `xtas
 
 ### `crates/zhbo-gfx`
 The renderer: the engine's bgfx API subset implemented on wgpu, plus the build-time shader
-translator. Depends on nothing. Split into `runtime` (`mod.rs` device/resource pools,
-`frame.rs` frame phases), `state.rs` (pipeline/bind-group state), `shader.rs`, and `ffi.rs`
+translator. Depends on nothing. Split into `runtime` (`mod.rs` device and pools,
+`resources.rs` resource calls, `encode.rs` per-draw calls, `frame.rs` frame phases, `native.rs` the
+BO2 model pass), `state.rs` (pipeline/bind-group state), `shader.rs`, and `ffi.rs`
 (the C ABI the engine's backend calls). Optional dependency of `zhbo-core` behind the
 `renderer` feature.
 
