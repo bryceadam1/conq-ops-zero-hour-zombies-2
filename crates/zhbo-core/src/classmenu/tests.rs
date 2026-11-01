@@ -4,7 +4,7 @@ use super::items::cac_entries;
 
     #[test]
     fn the_default_draft_spends_the_base_kit_points() {
-        let d = Draft::default();
+        let d = Draft::test_kit();
         // 2 weapons + 2 primary attachments + lethal + tactical + 3 perks = 9; one point free.
         assert_eq!(d.spent(), 9);
         assert_eq!(d.remaining(), 1);
@@ -15,7 +15,7 @@ use super::items::cac_entries;
 
     #[test]
     fn tab_marks_the_personalize_action_without_touching_the_draft() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         let before = e.draft.clone();
         let slot = e.slot;
         assert_eq!(e.step(Edges { personalize: true, ..Default::default() }), Outcome::Continue);
@@ -31,7 +31,7 @@ use super::items::cac_entries;
     fn the_primary_weapon_row_opens_camo_and_an_optic_row_opens_reticles() {
         // `caceditclass.lua:748` `AddCamoButton` on the primary weapon row, `:825`
         // `AddReticleButton` on the primary optic row.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         assert_eq!(e.step(Edges { camo: true, ..Default::default() }), Outcome::Continue);
         assert_eq!(e.personalize, Some(PersonalizeKind::Camo));
         assert_eq!(e.step(Edges::default()), Outcome::Continue);
@@ -56,7 +56,7 @@ use super::items::cac_entries;
     /// prompt only when the slot holds a weapon, each with its own `weaponSlot`.
     #[test]
     fn c_on_each_weapon_box_opens_that_weapons_camo_page() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.slot = Slot::Secondary;
         assert_eq!(e.camo_page(), Some(PersonalizeKind::SecondaryCamo));
         assert_eq!(e.step(Edges { camo: true, ..Default::default() }), Outcome::Continue);
@@ -71,7 +71,7 @@ use super::items::cac_entries;
         e.draft.primary.clear();
         assert_eq!(e.camo_page(), None);
         // Nor anywhere but a weapon box.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.slot = Slot::Lethal;
         assert_eq!(e.camo_page(), None);
         assert_eq!(PersonalizeKind::SecondaryCamo.columns(), 6, "the same `CACCamo` grid");
@@ -87,7 +87,7 @@ use super::items::cac_entries;
             reticle_color: "red".into(),
             secondary_camo: "camo_atacs".into(),
             knife: "camo_diamond".into(),
-            ..Draft::default()
+            ..Draft::test_kit()
         };
         // A different secondary: its camo goes, the primary's options and the knife's stay.
         let mut e = Editor::new(personalised.clone());
@@ -117,7 +117,7 @@ use super::items::cac_entries;
 
     #[test]
     fn the_secondary_camo_page_sets_secondarycamo_only() {
-        let mut d = Draft { camo: "camo_gold".into(), secondary_camo: "camo_atacs".into(), ..Draft::default() };
+        let mut d = Draft { camo: "camo_gold".into(), secondary_camo: "camo_atacs".into(), ..Draft::test_kit() };
         let choices: Vec<String> = ["camo_none", "camo_atacs", "camo_gold"].iter().map(|s| (*s).to_string()).collect();
         let mut p = Personalize::new(PersonalizeKind::SecondaryCamo, choices, &d);
         assert_eq!((p.equipped.as_str(), p.highlight), ("camo_atacs", 1), "opens on the class's secondarycamo");
@@ -146,7 +146,7 @@ use super::items::cac_entries;
 
     #[test]
     fn personalize_opens_on_the_current_choice_and_applies_the_confirmed_cell() {
-        let mut d = Draft { camo: "gold".into(), ..Draft::default() };
+        let mut d = Draft { camo: "gold".into(), ..Draft::test_kit() };
         let choices: Vec<String> = ["none", "gold", "diamond", "beast", "bengal", "blue"].iter().map(|s| s.to_string()).collect();
         let mut p = Personalize::new(PersonalizeKind::Camo, choices, &d);
         assert_eq!(p.highlight, 1, "opens on the draft's current camo");
@@ -163,7 +163,7 @@ use super::items::cac_entries;
 
     #[test]
     fn personalize_cancel_leaves_the_draft_untouched() {
-        let mut d = Draft { reticle: "red_dot".into(), ..Draft::default() };
+        let mut d = Draft { reticle: "red_dot".into(), ..Draft::test_kit() };
         let choices: Vec<String> = ["none", "red_dot", "acog"].iter().map(|s| s.to_string()).collect();
         let mut p = Personalize::new(PersonalizeKind::Reticle, choices, &d);
         assert_eq!(p.highlight, 1);
@@ -173,7 +173,7 @@ use super::items::cac_entries;
 
     #[test]
     fn personalize_with_no_choices_closes_without_applying() {
-        let mut d = Draft::default();
+        let mut d = Draft::test_kit();
         let mut p = Personalize::new(PersonalizeKind::Knife, Vec::new(), &d);
         assert_eq!(p.step(Edges { confirm: true, ..Default::default() }, &mut d), Outcome::Cancel);
         assert!(d.knife.is_empty());
@@ -200,7 +200,7 @@ use super::items::cac_entries;
 
     #[test]
     fn personalize_editor_wraps_across_rows_like_contentgrid() {
-        let mut d = Draft::default();
+        let mut d = Draft::test_kit();
         let choices: Vec<String> = (0..12).map(|i| format!("camo_{i}")).collect();
         let mut p = Personalize::new(PersonalizeKind::Camo, choices, &d);
         assert_eq!(p.highlight, 0);
@@ -235,7 +235,7 @@ use super::items::cac_entries;
     /// re-picking the same gun keeps them.
     #[test]
     fn a_new_weapon_in_a_slot_starts_without_attachments() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.slot = Slot::Primary;
         let ids = e.gun_list(true);
         let same = ids.iter().position(|id| *id == e.draft.primary).expect("the AN-94 is listed");
@@ -249,7 +249,7 @@ use super::items::cac_entries;
         e.apply_option(other);
         assert!(e.draft.primary_atts.is_empty(), "{:?}", e.draft.primary_atts);
         // The secondary slot follows the same rule.
-        let mut e = Editor::new(Draft { secondary_atts: vec!["reflex".into()], ..Draft::default() });
+        let mut e = Editor::new(Draft { secondary_atts: vec!["reflex".into()], ..Draft::test_kit() });
         e.slot = Slot::Secondary;
         let ids = e.gun_list(false);
         let other = ids.iter().position(|id| *id != e.draft.secondary).expect("another sidearm");
@@ -286,7 +286,7 @@ use super::items::cac_entries;
 
     #[test]
     fn attachments_cap_at_two_until_the_gunfighter_wildcard() {
-        let mut d = Draft { primary: "an94_mp".into(), primary_atts: vec![], ..Draft::default() };
+        let mut d = Draft { primary: "an94_mp".into(), primary_atts: vec![], ..Draft::test_kit() };
         let shorts = allowed_shorts(&d.primary);
         assert!(shorts.len() >= 2);
         let mut max = d.primary_att_max();
@@ -309,7 +309,7 @@ use super::items::cac_entries;
 
     #[test]
     fn toggling_off_a_gunfighter_wildcard_truncates_its_extra_attachment() {
-        let mut d = Draft { primary: "an94_mp".into(), primary_atts: vec!["gl".into(), "reflex".into(), "stock".into()], wildcards: vec![Wildcard::PrimaryGunfighter], ..Draft::default() };
+        let mut d = Draft { primary: "an94_mp".into(), primary_atts: vec!["gl".into(), "reflex".into(), "stock".into()], wildcards: vec![Wildcard::PrimaryGunfighter], ..Draft::test_kit() };
         assert_eq!(d.spent(), 11);
         assert!(!d.valid());
         d.wildcards.remove(0);
@@ -320,7 +320,7 @@ use super::items::cac_entries;
 
     #[test]
     fn the_budget_refuses_an_over_spend() {
-        let mut d = Draft::default();
+        let mut d = Draft::test_kit();
         // Default is 9; adding a wildcard makes 10 (valid), another makes 11 (invalid).
         d.wildcards.push(Wildcard::Overkill);
         assert_eq!(d.remaining(), 0);
@@ -332,7 +332,7 @@ use super::items::cac_entries;
 
     #[test]
     fn a_draft_round_trips_through_custom_class() {
-        let mut d = Draft { name: "My Rifle".into(), primary: "an94_mp".into(), primary_atts: vec!["reflex".into()], ..Draft::default() };
+        let mut d = Draft { name: "My Rifle".into(), primary: "an94_mp".into(), primary_atts: vec!["reflex".into()], ..Draft::test_kit() };
         d.perks = [Some(Perk::LIGHTWEIGHT), Some(Perk::TOUGHNESS), Some(Perk::DEXTERITY)];
         let c = d.to_custom();
         assert_eq!(c.name, "My Rifle");
@@ -347,8 +347,8 @@ use super::items::cac_entries;
 
     #[test]
     fn the_spec_applies_over_the_base_kit() {
-        let d = Draft { primary: "an94_mp".into(), primary_atts: vec![], perks: [Some(Perk::FLAK_JACKET), None, None], ..Draft::default() };
-        let l = crate::weapons::Loadout::default().with_spec(&d.to_spec());
+        let d = Draft { primary: "an94_mp".into(), primary_atts: vec![], perks: [Some(Perk::FLAK_JACKET), None, None], ..Draft::test_kit() };
+        let l = crate::weapons::Loadout::test_kit().with_spec(&d.to_spec());
         assert_eq!(l.primary, "an94_mp");
         // The spec carries exactly the set perks; unset tiers fall back to the base kit's slots.
         assert_eq!(l.perks, vec![Perk::FLAK_JACKET]);
@@ -397,14 +397,14 @@ use super::items::cac_entries;
             (Focus::card(2), Down, s(Slot::Perk1)),
         ];
         for (from, dir, to) in cases {
-            let mut e = Editor::new(Draft::default());
+            let mut e = Editor::new(Draft::test_kit());
             e.focus_on(*from);
             assert_eq!(e.focus(), *from);
             assert_eq!(walk(&mut e, &[*dir]), *to, "{from:?} {dir:?}");
         }
         // No link, no move: the card row's ends and the left column's Left.
         for (from, dir) in [(Focus::card(0), Left), (Focus::card(2), Right), (s(Slot::Primary), Left)] {
-            let mut e = Editor::new(Draft::default());
+            let mut e = Editor::new(Draft::test_kit());
             e.focus_on(from);
             assert!(!e.navigate(dir), "{from:?} {dir:?} has no link");
             assert_eq!(e.focus(), from);
@@ -415,11 +415,11 @@ use super::items::cac_entries;
     fn the_column_jumps_return_to_the_box_they_came_from() {
         use Dir::*;
         // `Perk12Button_GainFocus`: PRIMARY's Right goes back to the perk last focused.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         assert_eq!(walk(&mut e, &[Right, Down, Left]), Focus::slot(Slot::Primary), "perk 2's Left is PRIMARY");
         assert_eq!(walk(&mut e, &[Right]), Focus::slot(Slot::Perk2), "and PRIMARY's Right now returns to perk 2");
         // `BonusCardButton_GainFocus`: the column above and below a card return to it.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.focus_on(Focus::card(1));
         assert_eq!(walk(&mut e, &[Up, Down]), Focus::card(1), "SECONDARY ATTS' Down returns to card 2");
         assert_eq!(walk(&mut e, &[Down, Up]), Focus::card(1), "the name row's Up returns to card 2");
@@ -427,7 +427,7 @@ use super::items::cac_entries;
         e.focus_on(Focus::slot(Slot::Tactical));
         assert_eq!(walk(&mut e, &[Down]), Focus::card(2));
         // A hover runs the same hook (hover is `gain_focus`).
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.step_pointer(PointerEvent { slot: e.slots().iter().position(|s| *s == Slot::Perk2), moved: true, ..Default::default() });
         assert_eq!(e.focus(), Focus::slot(Slot::Perk2));
         e.focus_on(Focus::slot(Slot::Primary));
@@ -437,7 +437,7 @@ use super::items::cac_entries;
     #[test]
     fn a_greed_plate_joins_its_tiers_column_and_links() {
         use Dir::*;
-        let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], ..Draft::default() });
+        let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], ..Draft::test_kit() });
         e.focus_on(Focus::slot(Slot::Perk1));
         assert_eq!(walk(&mut e, &[Down]), Focus::slot(Slot::Perk1b));
         assert_eq!(walk(&mut e, &[Down]), Focus::slot(Slot::Perk2));
@@ -450,7 +450,7 @@ use super::items::cac_entries;
     #[test]
     fn the_wheel_walks_the_grid_links() {
         // LUI's wheel is Up/Down (t6mp `FUN_009376a0`): PRIMARY -> PRIMARY ATTS -> SECONDARY.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.step_pointer(PointerEvent { wheel: 2, ..Default::default() });
         assert_eq!(e.slot, Slot::Secondary);
         e.step_pointer(PointerEvent { wheel: -1, ..Default::default() });
@@ -461,11 +461,11 @@ use super::items::cac_entries;
     fn backing_out_of_the_grid_saves_the_class() {
         // BO2 writes each pick into the class as it is made and `CACEditClass.Back` only closes
         // (`caceditclass.lua:472-548`, `:642-653`): Escape on the grid keeps the edits.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Save);
         assert!(!e.denied);
         // Escape inside an open list closes the list only (one step back), never the editor.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
         assert!(e.picking);
         assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Continue);
@@ -477,7 +477,7 @@ use super::items::cac_entries;
     fn an_over_budget_draft_backs_out_unsaved_with_the_deny() {
         // Every pick that would break the budget is refused, so only a class loaded that way can
         // be over it. It cannot be kept, and the player is not trapped: Escape leaves unsaved.
-        let mut d = Draft::default();
+        let mut d = Draft::test_kit();
         d.wildcards.push(Wildcard::Overkill);
         d.wildcards.push(Wildcard::Tactician);
         let mut e = Editor::new(d);
@@ -489,7 +489,7 @@ use super::items::cac_entries;
     #[test]
     fn the_editor_opens_the_list_on_the_held_option() {
         // The secondary slot opens on the Tac-45, which the built-in table holds.
-        let mut e = Editor::new(Draft { secondary: "fnp45_mp".into(), ..Draft::default() });
+        let mut e = Editor::new(Draft { secondary: "fnp45_mp".into(), ..Draft::test_kit() });
         e.slot = Slot::Secondary;
         let idx = e.current_option_index();
         assert_eq!(e.gun_list(false)[idx], "fnp45_mp");
@@ -503,7 +503,7 @@ use super::items::cac_entries;
 
     #[test]
     fn perk_picks_land_in_their_tier() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.slot = Slot::Perk2;
         let perks = perk_list(2);
         let scav = perks.iter().position(|p| p.def().id == "Scavenger").expect("Scavenger is tier 2");
@@ -519,7 +519,7 @@ use super::items::cac_entries;
     #[test]
     fn option_chosen_marks_the_drafts_current_elements() {
         // Primary: the held gun's index is the chosen one; no other weapon is.
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.slot = Slot::Primary;
         let held = e.current_option_index();
         assert!(e.option_chosen(held));
@@ -542,7 +542,7 @@ use super::items::cac_entries;
 
     #[test]
     fn slot_values_read_as_the_resulting_class() {
-        let d = Draft::default();
+        let d = Draft::test_kit();
         assert_eq!(slot_value(&d, Slot::Primary), weapons::weapon("an94_mp").menu_name());
         assert_eq!(slot_value(&d, Slot::Secondary), weapons::weapon("fnp45_mp").menu_name());
         // The attachment row lists the display names, not the shorts.
@@ -561,7 +561,7 @@ use super::items::cac_entries;
         // BO2's editor only shows the class name (`caceditclass.lua:177`); the rename is the class
         // options' RENAME (`cacclassoptions.lua:183-192`). Letters are not text entry here: they
         // are the grid's own keys or nothing, and the name never changes.
-        let mut e = Editor::new(Draft { name: "RIFLE".into(), ..Draft::default() });
+        let mut e = Editor::new(Draft { name: "RIFLE".into(), ..Draft::test_kit() });
         for k in [Key::M, Key::P, Key::Key1, Key::Space, Key::Backspace] {
             let mut now = crate::input::KeySet::default();
             now.set_down(k, true);
@@ -573,7 +573,7 @@ use super::items::cac_entries;
 
     #[test]
     fn the_name_round_trips_through_a_saved_class() {
-        let mut d = Draft { name: "My Rifle".into(), ..Draft::default() };
+        let mut d = Draft { name: "My Rifle".into(), ..Draft::test_kit() };
         d.primary = "an94_mp".into();
         let c = d.to_custom();
         assert_eq!(c.name, "My Rifle");
@@ -585,7 +585,7 @@ use super::items::cac_entries;
 
     #[test]
     fn a_greed_wildcard_splices_in_a_second_perk_row() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         // Without the wildcard the second row is absent from the walk.
         assert!(!e.slots().contains(&Slot::Perk1b));
         assert_eq!(e.slots().len(), Slot::ALL.len());
@@ -604,7 +604,7 @@ use super::items::cac_entries;
     #[test]
     fn the_second_perk_row_sets_the_extra_pick_without_touching_the_base() {
         // Six points of kit, so the Greed wildcard and its second perk both fit the ten.
-        let d = Draft { primary_atts: vec!["reflex".into()], ..Draft::default() };
+        let d = Draft { primary_atts: vec!["reflex".into()], ..Draft::test_kit() };
         assert_eq!(d.spent(), 8);
         let mut e = Editor::new(d);
         e.draft.wildcards.push(Wildcard::Perk1Greed);
@@ -629,7 +629,7 @@ use super::items::cac_entries;
 
     #[test]
     fn turning_off_a_greed_wildcard_drops_its_second_perk() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.draft.wildcards.push(Wildcard::Perk2Greed);
         e.slot = Slot::Perk2b;
         e.draft.extra_perks[1] = Some(Perk::SCAVENGER);
@@ -645,7 +645,7 @@ use super::items::cac_entries;
 
     #[test]
     fn a_greed_perk_costs_its_point_in_the_budget() {
-        let mut d = Draft::default();
+        let mut d = Draft::test_kit();
         let base = d.spent();
         d.extra_perks[0] = Some(Perk::SCAVENGER);
         assert_eq!(d.spent(), base + 1, "the Greed perk costs a point");
@@ -655,7 +655,7 @@ use super::items::cac_entries;
 
     #[test]
     fn overkill_offers_primary_guns_in_the_secondary_list() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         // The secondary lists BO2's `secondary` items: the pistols and the launchers.
         let base = e.gun_list(false);
         assert!(base.contains(&"fnp45_mp") && base.contains(&"smaw_mp"), "{base:?}");
@@ -690,7 +690,7 @@ use super::items::cac_entries;
 
     #[test]
     fn overkill_puts_a_second_primary_into_the_secondary_slot() {
-        let mut e = Editor::new(Draft::default());
+        let mut e = Editor::new(Draft::test_kit());
         e.draft.wildcards.push(Wildcard::Overkill);
         e.slot = Slot::Secondary;
         let ids = e.gun_list(false);
@@ -715,7 +715,7 @@ use super::items::cac_entries;
 
 #[test]
 fn pointer_hover_click_and_wheel_drive_the_editor() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     // Hovering a row moves the highlight without changing state.
     assert_eq!(e.step_pointer(PointerEvent { slot: Some(2), moved: true, ..Default::default() }), Outcome::Continue);
     assert_eq!(e.slot, Slot::Secondary);
@@ -740,7 +740,7 @@ fn pointer_hover_click_and_wheel_drive_the_editor() {
 
 #[test]
 fn a_click_outside_the_list_does_not_confirm_the_highlighted_row() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.picking = true;
     e.slot = Slot::Primary;
     // No hovered slot or option: a click on empty space is ignored.
@@ -753,7 +753,7 @@ fn a_click_outside_the_list_does_not_confirm_the_highlighted_row() {
 
 #[test]
 fn the_budget_denies_an_eleventh_point_and_leaves_the_draft() {
-    let mut d = Draft::default();
+    let mut d = Draft::test_kit();
     d.wildcards.push(Wildcard::Overkill);
     assert_eq!(d.spent(), PICK_10);
     let mut e = Editor::new(d);
@@ -813,7 +813,7 @@ fn a_fourth_bonus_card_is_denied() {
         secondary: "fnp45_mp".into(),
         secondary_atts: Vec::new(),
         perks: [Some(Perk::LIGHTWEIGHT), None, None],
-        ..Draft::default()
+        ..Draft::test_kit()
     });
     let cards = crate::classes::max_bonus_cards() as i32;
     assert!(e.draft.spent() + cards < PICK_10, "room for every card: {}", e.draft.spent());
@@ -852,7 +852,7 @@ fn a_fourth_bonus_card_is_denied() {
 #[test]
 fn an_over_capped_draft_is_not_valid() {
     // A hand-built draft (or one derived from a stored class) past the cap never saves.
-    let d = Draft { wildcards: vec![Wildcard::Perk1Greed, Wildcard::Perk2Greed, Wildcard::Perk3Greed, Wildcard::Overkill], ..Draft::default() };
+    let d = Draft { wildcards: vec![Wildcard::Perk1Greed, Wildcard::Perk2Greed, Wildcard::Perk3Greed, Wildcard::Overkill], ..Draft::test_kit() };
     assert_eq!(d.wildcards.len(), crate::classes::max_bonus_cards() + 1);
     assert!(!d.valid(), "over the card cap");
 }
@@ -929,7 +929,7 @@ fn a_grid_picker_walks_two_dimensions_and_a_wide_slot_says_so() {
     assert_eq!(Slot::Wildcards.option_columns(), Some(3), "`cacbonuscards.lua:7`");
     assert_eq!(Slot::Primary.option_columns(), None, "the carousel walks categories, not a grid");
 
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Perk2;
     e.picking = true;
     e.option = 0;
@@ -980,7 +980,7 @@ fn dual_wield_gives_the_dw_weapon_and_reads_back() {
 /// re-opening it shows the pistol with Dual Wield equipped.
 #[test]
 fn picking_dual_wield_saves_the_dw_weapon() {
-    let mut e = Editor::new(Draft { secondary: "fiveseven_mp".into(), ..Draft::default() });
+    let mut e = Editor::new(Draft { secondary: "fiveseven_mp".into(), ..Draft::test_kit() });
     e.slot = Slot::SecondaryAtts;
     let i = attachment_shorts(&e.draft.secondary).iter().position(|s| *s == "dw").expect("Dual Wield is offered");
     assert!(e.apply_option(i));
@@ -1016,7 +1016,7 @@ fn the_wildcard_grid_is_the_tables_cards_in_sort_order() {
     );
     let sorts: Vec<(i32, i32)> = weapons::catalog().bonus_cards().iter().map(|c| (c.sort, c.index)).collect();
     assert!(sorts.windows(2).all(|w| w[0] <= w[1]), "{sorts:?}");
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Wildcards;
     assert_eq!(e.options(), wildcard_list().iter().map(|w| w.name().to_string()).collect::<Vec<_>>());
     for (i, w) in wildcard_list().into_iter().enumerate() {
@@ -1027,7 +1027,7 @@ fn the_wildcard_grid_is_the_tables_cards_in_sort_order() {
 /// A card is charged its row's cost (BO2's column 12).
 #[test]
 fn a_wildcard_costs_its_cards_cost() {
-    let mut d = Draft::default();
+    let mut d = Draft::test_kit();
     let before = d.spent();
     d.wildcards.push(Wildcard::Overkill);
     assert_eq!(d.spent() - before, Wildcard::Overkill.card().map(|c| c.cost).unwrap());
@@ -1037,7 +1037,7 @@ fn a_wildcard_costs_its_cards_cost() {
 /// with one equipped, the other is denied untouched; turning the first off frees it.
 #[test]
 fn tactician_and_danger_close_exclude_each_other() {
-    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::default() });
+    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::test_kit() });
     e.slot = Slot::Wildcards;
     let at = |w: Wildcard| wildcard_list().iter().position(|x| *x == w).unwrap();
     let pick = |e: &mut Editor, w: Wildcard| {
@@ -1090,8 +1090,8 @@ fn an_old_profiles_class_reloads_with_its_cards() {
 /// (`bonuscardbutton.lua:490-545`).
 #[test]
 fn danger_close_opens_a_second_lethal_box_that_costs_a_point() {
-    let plain = Draft::default();
-    let mut e = Editor::new(Draft { perks: [None, None, None], ..Draft::default() });
+    let plain = Draft::test_kit();
+    let mut e = Editor::new(Draft { perks: [None, None, None], ..Draft::test_kit() });
     let base = e.draft.spent();
     assert_eq!(e.draft.offhand_boxes(true), 1, "one box without the card");
     assert_eq!(e.apply_second_offhand(true), ApplyResult::NoChange, "no second box to fill");
@@ -1119,7 +1119,7 @@ fn danger_close_opens_a_second_lethal_box_that_costs_a_point() {
     assert_eq!(e.apply(dc), ApplyResult::Changed);
     assert_eq!((e.draft.offhand_boxes(true), e.draft.lethal_count(), e.draft.spent()), (1, 1, base));
     // No lethal, no second one: the card alone.
-    let bare = Draft { lethal: String::new(), wildcards: vec![Wildcard::DangerClose], ..Draft::default() };
+    let bare = Draft { lethal: String::new(), wildcards: vec![Wildcard::DangerClose], ..Draft::test_kit() };
     assert_eq!(bare.to_custom().lethal_count, 0);
     assert_eq!(plain.to_custom().lethal_count, 1);
 }
@@ -1136,7 +1136,7 @@ fn the_offhand_slots_list_their_statstable_items_placed_equipment_included() {
     assert!(tactical.contains(&"concussion_grenade_mp") && tactical.contains(&"trophy_system_mp"), "{tactical:?}");
     assert!(!lethal.contains(&"trophy_system_mp") && !tactical.contains(&"claymore_mp"));
     // Picking it from the list puts it in the draft.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Lethal;
     let i = lethal.iter().position(|id| *id == "claymore_mp").unwrap();
     assert_eq!(e.options()[i], "Claymore");
@@ -1160,7 +1160,7 @@ fn the_primary_slot_offers_the_assault_shield_and_repair_keeps_it() {
 #[test]
 fn tactician_lists_the_tactical_items_in_the_lethal_slot() {
     let at = |w: Wildcard| wildcard_list().iter().position(|x| *x == w).unwrap();
-    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::default() });
+    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::test_kit() });
     e.slot = Slot::Lethal;
     assert_eq!(e.options(), equipment_ids(true).iter().map(|id| weapons::weapon(id).display_name.clone()).collect::<Vec<_>>());
     e.slot = Slot::Wildcards;
@@ -1194,7 +1194,7 @@ fn tactician_lists_the_tactical_items_in_the_lethal_slot() {
 /// second, another item starts at one, and the saved class gives and re-opens with the count.
 #[test]
 fn a_second_tactical_costs_a_point_and_round_trips() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let base = e.draft.spent();
     assert_eq!(e.draft.tactical_count(), 1);
     assert_eq!(e.draft.to_custom().tactical_count, 1, "the class's own count, not the item's start count");
@@ -1211,7 +1211,7 @@ fn a_second_tactical_costs_a_point_and_round_trips() {
     assert_eq!(e.apply(i), ApplyResult::Changed, "and again returns it");
     assert_eq!(e.draft.tactical_count(), 1);
     // Over budget, the second is denied and the draft untouched.
-    let mut full = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], extra_perks: [Some(Perk::HARDLINE), None, None], ..Draft::default() });
+    let mut full = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], extra_perks: [Some(Perk::HARDLINE), None, None], ..Draft::test_kit() });
     full.draft.secondary_atts = vec![];
     while full.draft.remaining() > 0 {
         full.draft.primary_atts.push("x".into());
@@ -1221,7 +1221,7 @@ fn a_second_tactical_costs_a_point_and_round_trips() {
     assert_eq!(full.apply(i), ApplyResult::Denied);
     assert_eq!(full.draft, before);
     // A stored count is clamped to the item's cap by the repair.
-    let mut c = Draft::default().to_custom();
+    let mut c = Draft::test_kit().to_custom();
     c.tactical_count = 7;
     let _ = crate::classrepair::repair(&mut c);
     assert_eq!(c.tactical_count, items::offhand_cap(&c.tactical));
@@ -1248,7 +1248,7 @@ fn the_cac_lists_follow_the_sort_key_then_the_index() {
 fn the_attachment_grid_keeps_the_weapons_order_whatever_is_equipped() {
     // BO2's grid adds one button per attachment number (`cacattachmentsmenu.lua:858-879`): an
     // equipped attachment stays in its place, and the grid opens on the first one equipped.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let offered = offered_attachments(&e.draft.primary);
     e.slot = Slot::PrimaryAtts;
     for (i, short) in offered.iter().enumerate() {
@@ -1264,7 +1264,7 @@ fn the_attachment_grid_keeps_the_weapons_order_whatever_is_equipped() {
 /// pistol secondary under Overkill opens on a submachine gun, not the catalog's first gun.
 #[test]
 fn a_list_without_the_held_gun_opens_on_its_first_category() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.draft.wildcards.push(Wildcard::Overkill);
     e.slot = Slot::Secondary;
     assert!(!e.gun_list(false).contains(&e.draft.secondary.as_str()), "the pistol is not offered");

@@ -332,6 +332,18 @@ impl Arsenal {
         melee_weapon(self.current().def, self.class_melee)
     }
 
+    /// The melee just started is a charge (the lunge): BO2 times it with the melee weapon's
+    /// charge time and delay instead (`FUN_008dc770`, +0x488/+0x438), where the def has them.
+    pub fn charge_melee(&mut self) {
+        let m = self.melee_weapon();
+        if m.melee_charge_time > 0.0 {
+            self.melee_left = m.melee_charge_time;
+        }
+        if m.melee_charge_delay > 0.0 && self.melee_delay_left > 0.0 {
+            self.melee_delay_left = m.melee_charge_delay;
+        }
+    }
+
     pub fn has(&self, perk: Perk) -> bool {
         self.loadout.perks.contains(&perk)
     }

@@ -398,7 +398,7 @@ fn falls_back_to_text_without_the_art() {
 #[test]
 fn the_held_knife_hides_the_ammo_digits_only() {
     let (mut sim, _) = fps_state();
-    let mut a = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { secondary: String::new(), ..crate::weapons::Loadout::default() });
+    let mut a = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { secondary: String::new(), ..crate::weapons::Loadout::test_kit() });
     a.raise_left = 0.0;
     sim.players[0].as_mut().unwrap().arsenal = a;
     let digits = |sim: &Sim| {

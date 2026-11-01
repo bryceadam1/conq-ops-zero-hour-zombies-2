@@ -271,11 +271,11 @@ fn a_menu_fades_in_over_the_luas_250ms() {
     // No time and the full duration both draw exactly the static screen (no fade group, no clip).
     assert_eq!(draw(Some(MENU_OPEN_MS / 1000.0), None), landed, "the landed fade is the static draw");
     // The editor is a menu too, and its picker is a submenu: both fade in the same way.
-    let e = Editor::new(Draft::default());
+    let e = Editor::new(Draft::test_kit());
     // The PRIMARY label is a dimmed slot label: it lands at its own alpha, not full.
     assert_eq!(alpha(&draw(Some(0.0), Some(&e)), "PRIMARY"), Some(0));
     assert!(alpha(&draw(None, Some(&e)), "PRIMARY").is_some_and(|a| a > 0), "the editor lands visible");
-    let mut picker = Editor::new(Draft::default());
+    let mut picker = Editor::new(Draft::test_kit());
     picker.slot = Slot::Perk2;
     picker.picking = true;
     assert_eq!(alpha(&draw(Some(0.0), Some(&picker)), "Scavenger"), Some(0), "the submenu opens from 0");
@@ -311,7 +311,7 @@ fn the_allocation_bar_lights_one_segment_per_point_and_the_counter_says_n_of_ten
 
 #[test]
 fn the_editor_grid_hit_tests_every_box() {
-    let e = Editor::new(Draft::default());
+    let e = Editor::new(Draft::test_kit());
     let l = editor_layout(1280.0, 720.0);
     let cells = editor_cells(&l, &e);
     // Every box of the walk is on screen, and its middle maps back to it. A weapon that offers
@@ -344,7 +344,7 @@ fn centre(l: &EditorLayout, r: crate::lui::Rect) -> (f32, f32) {
 
 #[test]
 fn the_weapon_picker_hit_tests_the_card_and_the_tiles_it_draws() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Primary;
     e.picking = true;
     let l = editor_layout(1280.0, 720.0);
@@ -372,7 +372,7 @@ fn the_weapon_picker_hit_tests_the_card_and_the_tiles_it_draws() {
 
 #[test]
 fn an_option_grid_hit_tests_every_card_it_draws() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Perk2;
     e.picking = true;
     let l = editor_layout(1280.0, 720.0);
@@ -403,7 +403,7 @@ fn an_option_grid_hit_tests_every_card_it_draws() {
 fn the_shared_fold_walks_a_content_grid_with_all_four_arrows() {
     // The perk picker's grid is three wide (`cacperksp.lua:7`). The shared fold passes the arrows
     // to the pure editor now, so the hosts get BO2's ContentGrid links without their own code.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Perk2;
     e.picking = true;
     e.option = 0;
@@ -429,7 +429,7 @@ fn the_shared_fold_walks_a_content_grid_with_all_four_arrows() {
 
 #[test]
 fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_one() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Perk3;
     e.picking = true;
     e.option = e.options().len() - 1;
@@ -454,7 +454,7 @@ fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_o
 
 #[test]
 fn the_editor_screens_draw_their_boxes_and_prompts() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Perk2;
     let mut prims = Vec::new();
     draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
@@ -481,7 +481,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
 
 #[test]
 fn a_launcher_shows_attachments_not_available() {
-    let d = Draft { secondary: "smaw_mp".into(), ..Draft::default() };
+    let d = Draft { secondary: "smaw_mp".into(), ..Draft::test_kit() };
     let e = Editor::new(d);
     let mut prims = Vec::new();
     draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
@@ -493,7 +493,7 @@ fn a_launcher_shows_attachments_not_available() {
 fn the_weapon_list_opens_on_the_held_guns_category() {
     // The default draft's primary (the AN-94) is a rifle, so the list opens on that category
     // and the highlight is one of its guns.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     press(&mut e, &mut prev, &[Key::Enter]);
     assert!(e.picking, "Enter opens the primary list");
@@ -510,7 +510,7 @@ fn a_weapon_lists_under_its_statstable_group_not_its_class() {
     // statstable lists under weapon_special: the secondary list shows it among the SPECIALS.
     let knife = weapons::weapon("knife_ballistic_mp");
     assert_eq!((knife.class, knife.cac_class()), (WeaponClass::Pistol, WeaponClass::Special));
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Secondary;
     e.picking = true;
     let cats = weapon_categories(&e);
@@ -531,7 +531,7 @@ fn two_categories() -> Vec<Category> {
 #[test]
 fn up_down_walk_the_categories_and_left_right_the_guns_inside_one() {
     let cats = two_categories();
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Primary;
     e.picking = true;
     e.option = 1;
@@ -555,7 +555,7 @@ fn up_down_walk_the_categories_and_left_right_the_guns_inside_one() {
     step_category(&mut e, &cats, -1);
     assert_eq!(e.option, 4, "and each category keeps its own card");
     // Through the fold: Down moves to the next category, Left/Right walk the guns.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     press(&mut e, &mut prev, &[Key::Enter]);
     let cats = weapon_categories(&e);
@@ -588,7 +588,7 @@ fn the_carousel_mouse_clicks_to_focus_and_clicks_the_focused_card_to_equip() {
     // `cardcarousel.lua`: the cards ignore hover (`setHandleMouseMove(false)`, :853-857); a click on
     // another card focuses it, a click on the focused card is its action (`CardMouseClick`,
     // :1576-1643).
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     press(&mut e, &mut prev, &[Key::Enter]);
     let cats = weapon_categories(&e);
@@ -625,7 +625,7 @@ fn the_carousel_mouse_clicks_to_focus_and_clicks_the_focused_card_to_equip() {
 #[test]
 fn a_click_beside_an_open_picker_opens_nothing_else() {
     // The picker owns the screen: the editor's boxes are not drawn, so they are not hit-tested.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     e.slot = Slot::Perk1;
     press(&mut e, &mut prev, &[Key::Enter]);
@@ -642,7 +642,7 @@ fn a_click_beside_an_open_picker_opens_nothing_else() {
 
 #[test]
 fn enter_picks_the_highlighted_gun_of_the_active_category() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     press(&mut e, &mut prev, &[Key::Enter]);
     let cats = weapon_categories(&e);
@@ -660,7 +660,7 @@ fn enter_picks_the_highlighted_gun_of_the_active_category() {
 
 #[test]
 fn the_category_column_rotates_so_the_active_one_is_on_top() {
-    let d = Draft::default();
+    let d = Draft::test_kit();
     let mut e = Editor::new(d);
     e.slot = Slot::Primary;
     e.picking = true;
@@ -689,7 +689,7 @@ fn walk_to_slot(e: &mut Editor, prev: &mut MenuPrev, want: Slot) -> Vec<Option<&
 
 #[test]
 fn the_editor_plays_the_luas_cue_at_each_call_site() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     // Opening the primary slot is CACEditClass's WeaponChosen: the weapon picker's select cue.
     assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::WEAPON_SELECT));
@@ -717,7 +717,7 @@ fn the_editor_plays_the_luas_cue_at_each_call_site() {
     assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::GRID_EQUIP));
     // An attachment is `cac_equipment_add` (`attachmentgridbutton.lua`'s actionSFX). A fresh
     // editor: the default draft carries two attachments at 9/10, so the earlier perk left no room.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     e.slot = Slot::PrimaryAtts;
     assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
@@ -727,7 +727,7 @@ fn the_editor_plays_the_luas_cue_at_each_call_site() {
     assert_eq!(press(&mut e, &mut prev, &[Key::R]).cue, Some(cues::ITEM_REMOVE));
     // A refused choice is the deny alone: the host surfaces `denied` (its cue and the rim) and no
     // second cue plays, as BO2's handlers pick denySFX *instead of* the action sound.
-    let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Tactician, Wildcard::Overkill], ..Draft::default() });
+    let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Tactician, Wildcard::Overkill], ..Draft::test_kit() });
     let mut prev = MenuPrev::default();
     let frame = press(&mut e, &mut prev, &[Key::Escape]);
     assert!(frame.denied, "eleven points will not save");
@@ -737,7 +737,7 @@ fn the_editor_plays_the_luas_cue_at_each_call_site() {
 
 #[test]
 fn the_slot_walk_plays_the_loadout_nav_and_the_wildcard_row_its_own() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     let cues = walk_to_slot(&mut e, &mut prev, Slot::Wildcards);
     let (last, rest) = cues.split_last().expect("the walk moved");
@@ -748,7 +748,7 @@ fn the_slot_walk_plays_the_loadout_nav_and_the_wildcard_row_its_own() {
 
 #[test]
 fn a_bonus_card_plays_its_own_equip_alias() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     e.slot = Slot::Wildcards;
     assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
@@ -763,7 +763,7 @@ fn a_bonus_card_plays_its_own_equip_alias() {
 
 #[test]
 fn a_pickers_title_is_the_luas_heading() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     // BO2 titles the weapon screens `PRIMARY`/`SECONDARY` (`MPUI_<slot>_CAPS`), the wildcard screen
     // `MENU_WILDCARDS_CAPS` (menus/cacbonuscards.lua), the others by their slot.
     for (slot, want) in [(Slot::Primary, "PRIMARY"), (Slot::Secondary, "SECONDARY"), (Slot::Wildcards, "WILDCARDS"), (Slot::Perk2, "PERK 2")] {
@@ -777,7 +777,7 @@ fn a_pickers_title_is_the_luas_heading() {
 
 #[test]
 fn the_secondary_slot_lists_pistols_first() {
-    let d = Draft { secondary: "fnp45_mp".into(), ..Draft::default() };
+    let d = Draft { secondary: "fnp45_mp".into(), ..Draft::test_kit() };
     let mut e = Editor::new(d);
     e.slot = Slot::Secondary;
     e.picking = true;
@@ -788,7 +788,7 @@ fn the_secondary_slot_lists_pistols_first() {
 
 #[test]
 fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
-    let d = Draft { primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() };
+    let d = Draft { primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::test_kit() };
     let mut e = Editor::new(d);
     let mut prev = MenuPrev::default();
     // R on the primary clears the gun and its attachments (BO2's ClearWeapon).
@@ -802,7 +802,7 @@ fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
     assert!(!frame.removed, "nothing left to remove");
     assert!(!frame.denied);
     // R on a perk tier clears that tier only.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     press(&mut e, &mut prev, &[Key::Right]); // Primary -> Perk 1 (`customclass.lua:863-991`)
     assert_eq!(e.slot, Slot::Perk1);
@@ -811,7 +811,7 @@ fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
     assert!(e.draft.perks[0].is_none(), "tier 1 is empty");
     assert!(e.draft.perks[1].is_some(), "tier 2 is untouched");
     // R on a bonus card clears that card alone: each card is its own button.
-    let d = Draft { primary_atts: vec![], wildcards: vec![Wildcard::Perk1Greed, Wildcard::Overkill], ..Draft::default() };
+    let d = Draft { primary_atts: vec![], wildcards: vec![Wildcard::Perk1Greed, Wildcard::Overkill], ..Draft::test_kit() };
     let mut e = Editor::new(d);
     let mut prev = MenuPrev::default();
     e.focus_on(Focus::card(1));
@@ -821,7 +821,7 @@ fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
 
 #[test]
 fn the_card_row_highlights_and_hover_focuses_one_card() {
-    let d = Draft { primary_atts: vec![], wildcards: vec![Wildcard::Perk1Greed], ..Draft::default() };
+    let d = Draft { primary_atts: vec![], wildcards: vec![Wildcard::Perk1Greed], ..Draft::test_kit() };
     let mut e = Editor::new(d);
     let mut prev = MenuPrev::default();
     let l = editor_layout(1280.0, 720.0);
@@ -848,7 +848,7 @@ fn the_card_row_highlights_and_hover_focuses_one_card() {
 #[test]
 fn the_grids_wheel_moves_a_row() {
     // The wheel is LUI's Up/Down: a whole grid row (`contentgrid.lua`'s column links), not one cell.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let mut prev = MenuPrev::default();
     e.slot = Slot::Perk3;
     press(&mut e, &mut prev, &[Key::Enter]);
@@ -863,7 +863,7 @@ fn the_grids_wheel_moves_a_row() {
 
 #[test]
 fn the_circled_x_clears_only_the_selected_filled_box() {
-    let d = Draft { primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() };
+    let d = Draft { primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::test_kit() };
     let mut e = Editor::new(d);
     let l = editor_layout(1280.0, 720.0);
     // Select the attachment strip, then click the second attachment's X.
@@ -876,7 +876,7 @@ fn the_circled_x_clears_only_the_selected_filled_box() {
     e.slot = Slot::Primary;
     assert_eq!(editor_remove_at(&l, &cells, &e, r.x + r.w * 0.5, r.y + r.h * 0.5), None);
     // Clicking it removes exactly that attachment.
-    let mut e = Editor::new(Draft { primary: "an94_mp".into(), primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() });
+    let mut e = Editor::new(Draft { primary: "an94_mp".into(), primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::test_kit() });
     e.slot = Slot::PrimaryAtts;
     let cells = editor_cells(&l, &e);
     let second = cells.iter().find(|c| c.slot == Slot::PrimaryAtts && c.index == 1).cloned().expect("the second box");
@@ -903,7 +903,7 @@ fn the_perk_lists_follow_bo2s_grid_order() {
         vec!["Toughness", "Cold Blooded", "Fast Hands", "Hard Wired", "Scavenger"],
         vec!["Dexterity", "Extreme Conditioning", "Engineer", "Tactical Mask", "Dead Silence", "Awareness"],
     ];
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     for (tier, want) in expected.iter().enumerate() {
         e.slot = perk_slot(tier as u8 + 1);
         assert_eq!(e.options(), *want, "perk tier {}", tier + 1);
@@ -914,7 +914,7 @@ fn the_perk_lists_follow_bo2s_grid_order() {
 fn the_bonus_card_list_follows_bo2s_grid_order() {
     // f-wildcards/001: Perk 1 Greed, Perk 2 Greed, Perk 3 Greed / Overkill, Secondary Gunfighter,
     // Primary Gunfighter / Tactician, Danger Close.
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Wildcards;
     assert_eq!(
         e.options(),
@@ -1069,7 +1069,7 @@ fn a_rename_types_into_the_dialog_field_and_commits_on_enter() {
 fn the_personalize_screen_draws_bo2s_grid_and_labels() {
     let _f = crate::lui::font::lock();
     crate::lui::font::load("");
-    let draft = Draft::default();
+    let draft = Draft::test_kit();
     let choices: Vec<String> = ["NONE", "GOLD", "DIAMOND", "BEAST", "BENGAL", "BLUE", "CHERRY", "CARBON"].iter().map(|s| s.to_string()).collect();
     let p = Personalize::new(PersonalizeKind::Camo, choices, &draft);
     let mut prims = Vec::new();
@@ -1088,7 +1088,7 @@ fn the_personalize_screen_draws_bo2s_grid_and_labels() {
 fn the_personalize_screen_moves_and_selects_with_arrows() {
     let _f = crate::lui::font::lock();
     crate::lui::font::load("");
-    let mut draft = Draft::default();
+    let mut draft = Draft::test_kit();
     let choices: Vec<String> = ["NONE", "GOLD", "DIAMOND", "BEAST", "BENGAL", "BLUE"].iter().map(|s| s.to_string()).collect();
     let mut p = Personalize::new(PersonalizeKind::Camo, choices, &draft);
     let mut prev = MenuPrev::default();
@@ -1118,9 +1118,9 @@ fn the_personalize_screen_moves_and_selects_with_arrows() {
 fn primary_gunfighter_shows_a_third_attachment_plate() {
     let l = editor_layout(1280.0, 720.0);
     let plates = |e: &Editor| editor_cells(&l, e).into_iter().filter(|c| c.slot == Slot::PrimaryAtts).collect::<Vec<_>>();
-    let without = Editor::new(Draft::default());
+    let without = Editor::new(Draft::test_kit());
     assert_eq!(plates(&without).len(), 2);
-    let mut d = Draft { wildcards: vec![Wildcard::PrimaryGunfighter], ..Draft::default() };
+    let mut d = Draft { wildcards: vec![Wildcard::PrimaryGunfighter], ..Draft::test_kit() };
     d.primary_atts = vec!["gl".into(), "reflex".into(), "grip".into()];
     let with = Editor::new(d);
     let third = plates(&with);
@@ -1140,7 +1140,7 @@ fn primary_gunfighter_shows_a_third_attachment_plate() {
 /// `bonusCardDescription`).
 #[test]
 fn the_wildcard_grid_shows_the_highlighted_cards_description() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Wildcards;
     e.picking = true;
     let list = crate::classmenu::wildcard_list();
@@ -1162,7 +1162,7 @@ fn the_wildcard_grid_shows_the_highlighted_cards_description() {
 /// `perkDescription`, `e-perks/002`: "Hardline" / "Earn Scorestreaks faster.").
 #[test]
 fn the_perk_grid_shows_the_highlighted_perks_description() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Perk1;
     e.picking = true;
     e.option = (0..8).position(|i| e.option_perk(i) == Some(crate::weapons::Perk::HARDLINE)).expect("Hardline is a Perk 1");
@@ -1185,7 +1185,7 @@ fn the_perk_grid_shows_the_highlighted_perks_description() {
 #[test]
 fn the_tactical_buttons_second_box_takes_a_second_tactical() {
     let l = editor_layout(1280.0, 720.0);
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let spent = e.draft.spent();
     let cells = editor_cells(&l, &e);
     let second = *cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 1).expect("the concussion takes two");
@@ -1216,7 +1216,7 @@ fn the_tactical_buttons_second_box_takes_a_second_tactical() {
 /// (`cacweaponsp.lua:540-590`, `c-primary/001`): the table's statstable text, wrapped.
 #[test]
 fn the_weapon_picker_shows_the_items_description() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     e.slot = Slot::Primary;
     e.picking = true;
     e.option = e.options().iter().position(|o| o == "MP7").expect("the MP7 stand-in");
@@ -1232,7 +1232,7 @@ fn the_weapon_picker_shows_the_items_description() {
 /// converter's `ZHBO_CaC_Weapon_<id>`: the button's box and the list's rows draw it.
 #[test]
 fn the_offhands_draw_their_cac_picture() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let l = editor_layout(1280.0, 720.0);
     let cell = *editor_cells(&l, &e).iter().find(|c| c.slot == Slot::Lethal).unwrap();
     assert_eq!(cell_icon(&e, &cell), Some(crate::names::cac_weapon_image("frag_grenade_mp")));
@@ -1246,7 +1246,7 @@ fn the_offhands_draw_their_cac_picture() {
 /// the picker alike.
 #[test]
 fn the_lethal_slot_is_titled_second_tactical_under_tactician() {
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     assert_eq!((super::editor::offhand_title(&e.draft, true), super::editor::offhand_title(&e.draft, false)), ("LETHAL", "TACTICAL"));
     e.draft.wildcards.push(crate::classmenu::Wildcard::Tactician);
     assert_eq!(super::editor::offhand_title(&e.draft, true), "SECOND TACTICAL");
@@ -1259,7 +1259,7 @@ fn the_lethal_slot_is_titled_second_tactical_under_tactician() {
 #[test]
 fn an_empty_extra_offhand_box_shows_the_plus_sign() {
     let l = editor_layout(1280.0, 720.0);
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     let find = |e: &Editor, slot: Slot| editor_cells(&l, e).into_iter().find(|c| c.slot == slot && c.index == 1);
     let second = find(&e, Slot::Tactical).expect("the concussion takes two");
     assert!(super::editor::offhand_plus(&e, &second));
@@ -1287,7 +1287,7 @@ fn a_bonus_cards_box_is_marked_as_its_preview_slot() {
     let marked = |e: &Editor| -> Vec<(Slot, usize)> {
         editor_cells(&l, e).into_iter().filter(|c| super::editor::bonus_card_box(e, c)).map(|c| (c.slot, c.index)).collect()
     };
-    let mut e = Editor::new(Draft::default());
+    let mut e = Editor::new(Draft::test_kit());
     assert!(marked(&e).is_empty(), "the tactical's second box is the slot's own");
     e.draft.wildcards = vec![Wildcard::DangerClose, Wildcard::Perk1Greed, Wildcard::PrimaryGunfighter];
     let m = marked(&e);
@@ -1314,7 +1314,7 @@ fn the_category_order_follows_the_catalogs_weapon_groups() {
 #[test]
 fn the_extra_offhand_box_is_the_small_one() {
     let l = editor_layout(1280.0, 720.0);
-    let e = Editor::new(Draft::default());
+    let e = Editor::new(Draft::test_kit());
     let cells = editor_cells(&l, &e);
     let first = cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 0).unwrap().rect;
     let second = cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 1).unwrap().rect;
@@ -1348,7 +1348,7 @@ fn a_dialog_takes_hover_focus_and_the_wheel() {
 
 #[test]
 fn the_personalize_wheel_moves_a_row() {
-    let mut draft = Draft::default();
+    let mut draft = Draft::test_kit();
     let choices: Vec<String> = (0..15).map(|i| format!("C{i}")).collect();
     let mut p = Personalize::new(PersonalizeKind::Camo, choices, &draft);
     let prev = MenuPrev::default();

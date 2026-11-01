@@ -17,7 +17,7 @@ fn duel(held: bool, yaw: f32) -> (FakeHost, Sim) {
     sim.take_control(&host, 1, 2);
     sim.choose_class(0, 1, 0, &[]);
     let p = sim.players[1].as_mut().unwrap();
-    p.arsenal = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: "mp7_mp".into(), ..Loadout::default() });
+    p.arsenal = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: "mp7_mp".into(), ..Loadout::test_kit() });
     p.arsenal.raise_left = 0.0;
     if !held {
         p.arsenal.active = 1;
@@ -166,7 +166,7 @@ fn the_use_key_beside_it_gives_the_shield_back_and_brings_it_up() {
 fn a_shield_only_kit_gets_the_held_knife_while_it_is_deployed() {
     let (host, mut sim) = duel(true, FACING_SHOOTER);
     let p = sim.players[1].as_mut().unwrap();
-    p.arsenal = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: String::new(), ..Loadout::default() });
+    p.arsenal = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: String::new(), ..Loadout::test_kit() });
     p.arsenal.raise_left = 0.0;
     // Whatever the kit carries besides the shield stays; the knife is given only when nothing does.
     p.arsenal.weapons.retain(|w| w.def.is_shield());

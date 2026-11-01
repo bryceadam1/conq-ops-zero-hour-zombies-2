@@ -168,9 +168,9 @@ fn texture_name(page: usize) -> String {
 /// Every distinct `dpadIcon` of the player weapons and their alt modes (inventory `ALTMODE`), in
 /// table order, with its streamed image when the variant's inline material has one: the
 /// materials the HUD's alt-fire slot can draw.
-fn dpad_icons(weapons: &[zhbo_formats::weapon::Weapon]) -> Vec<(String, Option<zhbo_formats::ipak::ImageKey>)> {
+fn dpad_icons(weapons: &[zhbo_formats::weapon::Weapon], roster: &crate::weapons::Roster) -> Vec<(String, Option<zhbo_formats::ipak::ImageKey>)> {
     let mut icons: Vec<(String, Option<zhbo_formats::ipak::ImageKey>)> = Vec::new();
-    for w in weapons.iter().filter(|w| crate::weapons::is_player_weapon(w) || w.inventory == zhbo_formats::weapon::inventory::ALTMODE) {
+    for w in weapons.iter().filter(|w| roster.is_player_weapon(w) || w.inventory == zhbo_formats::weapon::inventory::ALTMODE) {
         let Some(icon) = w.dpad_icon.as_ref().filter(|i| !i.is_empty()) else { continue };
         match icons.iter_mut().find(|(i, _)| i == icon) {
             Some((_, key)) => *key = key.or(w.dpad_icon_key),
@@ -220,13 +220,14 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let mp = crate::paks::MpPool::load(bo2_dir)?;
     let (weapons, attachments) = mp.weapons()?;
     let crate::paks::MpPool { patch, common, .. } = mp;
+    let roster = crate::weapons::Roster::read(&patch);
     zones.insert("common_mp", common);
     // The create-a-class weapon pictures: each item's image in BO2's `mp/statstable.csv` plus
     // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`). The knife's personalize page
     // shows `knife_held`'s column 6 as it is (`caccamomenu.lua`'s `knifePersonalization` branch:
     // `combat_tab_knife`, no `_big`).
     let item_images = crate::cac::item_rows(bo2_dir);
-    for id in crate::weapons::converted_base(&weapons) {
+    for id in crate::weapons::converted_base(&weapons, &roster) {
         let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
         let base = crate::generals::base_id(&id);
         if let Some((image, slot)) = item_images.get(base.trim_end_matches("_mp")) {
@@ -252,7 +253,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     }
     // The alt-fire slot's art (`zhbo_core::hud::ammo::alt_slot_icon`): each variant's `dpadIcon`
     // (`hud_gl_select`, `hud_select_fire_bullet_stack`), the player weapons' and their alt modes'.
-    for (icon, hash) in dpad_icons(&weapons) {
+    for (icon, hash) in dpad_icons(&weapons, &roster) {
         let source = hash.map_or_else(|| Source::Dynamic(icon.clone()), Source::Hash);
         wanted.push((zhbo_core::lui::materials::image(&icon), source, 128));
     }
@@ -661,7 +662,7 @@ mod tests {
         ];
         // One entry per material; any variant's streamed image serves.
         let key = |h: u32| zhbo_formats::ipak::ImageKey { data_hash: h, name_hash: h };
-        assert_eq!(dpad_icons(&weapons), vec![("hud_gl_select".to_string(), Some(key(7))), ("hud_select_fire_bullet_stack".to_string(), Some(key(9)))]);
+        assert_eq!(dpad_icons(&weapons, &crate::weapons::Roster::any()), vec![("hud_gl_select".to_string(), Some(key(7))), ("hud_select_fire_bullet_stack".to_string(), Some(key(9)))]);
     }
 
     fn assert_packed(sizes: &[(u32, u32)], at: &[(usize, (u32, u32))]) {

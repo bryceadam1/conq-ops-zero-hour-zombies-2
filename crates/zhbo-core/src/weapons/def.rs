@@ -318,6 +318,12 @@ pub struct WeaponDef {
     /// Seconds from the melee press to the strike (`iMeleeDelay`): BO2's swing starts on the press
     /// and the hit lands when this delay runs out.
     pub melee_delay: f32,
+    /// The lunge: how far away an enemy may be for the melee to charge at him (`meleeChargeRange`,
+    /// Zero Hour units; 0 for no lunge), and the charge melee's time and delay
+    /// (`iMeleeChargeTime`/`iMeleeChargeDelay`, seconds), which replace `melee_time`/`melee_delay`.
+    pub melee_charge_range: f32,
+    pub melee_charge_time: f32,
+    pub melee_charge_delay: f32,
     /// Grenades and launchers.
     pub effect: Effect,
     pub fuse_time: f32,
@@ -420,6 +426,10 @@ pub struct WeaponDef {
     /// array cell for the surface struck (t6mp `FUN_004c1590` event 0x47); `NONE` or absent where
     /// the install has no such alias (silent, as BO2's hash miss).
     pub bounce_sounds: Vec<(String, String)>,
+    /// A bounce off each surface (the mod's slot names): the share of the speed kept along it and
+    /// into it, BO2's `parallelBounce[surface]` / `perpendicularBounce[surface]`. A surface not
+    /// listed bounces by the tuning pack's `ProjectileBounceAlong`/`ProjectileBounce`.
+    pub bounce: Vec<(String, f32, f32)>,
     /// `iProjectileActivateDist` (ZH units): a projectile that strikes something before flying this
     /// far is a dud — no blast (t6mp `FUN_00604280`, the path length `G_RunMissile` accumulates).
     /// 0 = always armed.
@@ -883,6 +893,9 @@ impl Default for WeaponDef {
             melee_damage: MELEE_DAMAGE,
             melee_time: 0.6,
             melee_delay: 0.0,
+            melee_charge_range: 0.0,
+            melee_charge_time: 0.0,
+            melee_charge_delay: 0.0,
             effect: Effect::None,
             equipment_kind: Kind::Other,
             fuse_time: 0.0,
@@ -932,6 +945,7 @@ impl Default for WeaponDef {
             attachment_fire_start_sounds: Vec::new(),
             explode_sound: String::new(),
             bounce_sounds: Vec::new(),
+            bounce: Vec::new(),
             activate_dist: 0.0,
             dud_fx: String::new(),
             dud_sound: String::new(),
@@ -997,11 +1011,10 @@ impl Default for WeaponDef {
 }
 
 pub const MELEE_DAMAGE: f32 = 135.0;
-/// The knife's reach past the victim's hit radius: the mod's value. BO2's base melee range is
-/// `player_meleeRange` 55 in (`dvars-t6mp.tsv`), but its knife also lunges (`meleeChargeRange` in
-/// the weapon def, not converted yet); 64 in stands for the two until the lunge is in the weapon
-/// table. The converter bakes it into the RTS knife's `AttackRange`.
-pub const MELEE_RANGE: f32 = inches(64.0);
+/// The melee's reach past the victim's hit radius: BO2's `player_meleeRange` 55 in (the tuning
+/// pack's `player_meleeRange`, held equal by a test; a constant because the converter bakes it into
+/// the RTS knife's `AttackRange`). Past it the knife lunges ([`WeaponDef::melee_charge_range`]).
+pub const MELEE_RANGE: f32 = inches(55.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
@@ -1079,8 +1092,14 @@ impl WeaponDef {
         self.attachment_fire_sounds.clone_from(&from.attachment_fire_sounds);
         self.attachment_fire_start_sounds.clone_from(&from.attachment_fire_start_sounds);
         self.bounce_sounds.clone_from(&from.bounce_sounds);
+        self.bounce.clone_from(&from.bounce);
         self.dud_fx.clone_from(&from.dud_fx);
         self.dud_sound.clone_from(&from.dud_sound);
+    }
+
+    /// The bounce off `surface` ([`Self::bounce`]): (along, into) kept, if the def has it.
+    pub fn bounce_off(&self, surface: crate::impacts::Surface) -> Option<(f32, f32)> {
+        self.bounce.iter().find(|(s, ..)| s == surface.name()).map(|&(_, a, p)| (a, p))
     }
 
     /// The bounce sound for `surface` ([`Self::bounce_sounds`]), empty when there is none.

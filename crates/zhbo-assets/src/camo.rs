@@ -372,7 +372,7 @@ mod tests {
         let names = crate::weapons::names(&bo2);
         let bo2w = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        let mut table = crate::weapons::table(&bo2w, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
+        let mut table = crate::weapons::table(&bo2w, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &crate::weapons::Roster::read(&patch));
         // The plain table's option list is empty; take the base tab from the patch's own table
         // (the production path does this in `table_with_metadata` with `camo_options`).
         let base: Vec<String> = crate::weapons::camo_options(&patch, &names)

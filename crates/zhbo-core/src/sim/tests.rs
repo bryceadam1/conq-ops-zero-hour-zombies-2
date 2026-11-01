@@ -338,7 +338,7 @@ fn identical_inputs_are_deterministic() {
         // thrown tactical.
         if let Some(p) = sim.players[0].as_mut() {
             p.arsenal = crate::weapons::Arsenal::with_loadout(
-                crate::weapons::Loadout::default().with_spec("lethal=claymore_mp"),
+                crate::weapons::Loadout::test_kit().with_spec("lethal=claymore_mp"),
             );
         }
         (host, sim)
@@ -451,7 +451,7 @@ fn a_one_gun_class_carries_the_held_knife_as_its_second_weapon() {
     host.add(general(1, 0));
     let mut sim = Sim::new();
     sim.take_control(&host, 0, 1);
-    sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { primary: "mp7_mp".into(), ..crate::weapons::Loadout::default().with_spec("secondary=") });
+    sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { primary: "mp7_mp".into(), ..crate::weapons::Loadout::test_kit().with_spec("secondary=") });
     wait_until_ready(&mut sim, &host);
     let a = &sim.player(0).unwrap().arsenal;
     let ids: Vec<&str> = a.weapons.iter().map(|w| w.def.id.as_str()).collect();
@@ -464,14 +464,14 @@ fn a_one_gun_class_carries_the_held_knife_as_its_second_weapon() {
     assert_eq!(a.current().def.id, "knife_held_mp", "the switch brings up the knife");
     assert_eq!(a.melee_weapon().id, "knife_held_mp", "a knife in the hand strikes with itself");
     // Two guns: no knife in the hand (it is still the melee); no guns: the knife alone.
-    let two = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+    let two = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
     assert!(two.weapons.iter().all(|w| w.def.class.is_gun()) && two.weapons.len() == 2);
     let none = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::unarmed());
     assert_eq!(none.weapons.len(), 1);
 }
 
 /// Bug 1: a General spawns with no guns and no grenades, only the melee knife, until a class
-/// is chosen. `Loadout::default()` (the classes' base kit) is untouched.
+/// is chosen. `Loadout::test_kit()` (the classes' base kit) is untouched.
 #[test]
 fn a_fresh_general_spawns_unarmed() {
     let host = FakeHost::default();
@@ -489,7 +489,7 @@ fn a_fresh_general_spawns_unarmed() {
     assert!(a.loadout.primary.is_empty() && a.loadout.secondary.is_empty());
     assert!(a.loadout.perks.is_empty());
     // The full base kit is still what the classes build on.
-    let base = crate::weapons::Loadout::default();
+    let base = crate::weapons::Loadout::test_kit();
     assert!(!base.primary.is_empty() && !base.secondary.is_empty() && !base.lethal.is_empty());
 }
 
@@ -533,7 +533,7 @@ fn the_gun_fires_again_after_the_melee_and_its_re_raise() {
         host.add(general(1, 0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
-        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default().with_spec(perks));
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit().with_spec(perks));
         wait_until_ready(&mut sim, &host);
         run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
         sim.events.clear();
@@ -567,7 +567,7 @@ fn an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out() {
         host.add(general(1, 0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
-        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         let left = setup(&mut sim, &host);
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
         for f in 0..120u32 {
@@ -613,7 +613,7 @@ fn an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out() {
         host.add(general(1, 0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
-        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
         (0..120u32)
@@ -638,7 +638,7 @@ fn the_switch_button_cancels_a_held_cancelable_offhand() {
         host.add(general(1, 0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
-        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         wait_until_ready(&mut sim, &host);
         let base = sim.player(0).unwrap().arsenal.lethal.def;
         let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef { hold_cancelable: cancelable, timing: crate::weapons::CycleTimes { hold_fire_time: pull_back, ..base.timing }, ..base.clone() }));
@@ -675,7 +675,7 @@ fn a_plantable_item_is_refused_in_the_air_and_over_deep_water() {
         host.add(general(1, 0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
-        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         wait_until_ready(&mut sim, &host);
         let base = crate::weapons::weapon("claymore_mp");
         // BO2's claymore throw: 100 forward, -10000 up (straight down).
@@ -732,7 +732,7 @@ fn a_switch_pressed_after_a_shot_happens_when_the_shot_ends() {
     host.add(general(1, 0));
     let mut sim = Sim::new();
     sim.take_control(&host, 0, 1);
-    sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+    sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
     wait_until_ready(&mut sim, &host);
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
     let a = &sim.player(0).unwrap().arsenal;
@@ -1951,4 +1951,40 @@ fn identical_inputs_give_identical_results() {
         (host.get(1).pos, host.get(2).health, host.get(4).health, hits)
     };
     assert_eq!(make(), make());
+}
+
+/// The knife's lunge (BO2's melee charge, `FUN_008dc770`/`FUN_008c3770`): with an enemy in front
+/// past `player_meleeRange` but inside the knife's `meleeChargeRange`, the melee charges — the
+/// General closes to the reach on the charge's decelerating move and the strike lands with the
+/// charge delay on the enemy it charges at. A knife without a charge range swings at the air.
+fn lunge(charge_range: f32) -> (f32, f32) {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(2, 1, 18.0) });
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    wait_until_ready(&mut sim, &host);
+    let p = sim.players[0].as_mut().unwrap();
+    let mut knife = p.arsenal.class_melee.clone();
+    (knife.melee_charge_range, knife.melee_charge_time, knife.melee_charge_delay, knife.melee_delay) = (charge_range, 1.16, 0.1, 0.05);
+    p.arsenal.class_melee = Box::leak(Box::new(knife));
+    host.damage_log.borrow_mut().clear();
+    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::MELEE, pressed: buttons::MELEE, ..Default::default() }, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 20);
+    let dealt = host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| d.2).sum::<f32>();
+    (sim.player(0).unwrap().body.pos.x, dealt)
+}
+
+#[test]
+fn the_knife_lunges_past_its_reach_and_strikes() {
+    let reach = crate::weapons::MELEE_RANGE + crate::hitscan::INFANTRY_HIT_RADIUS;
+    // The install's held knife: 116 in of charge, 1.16 s charge time, 0.1 s charge delay.
+    let (x, dealt) = lunge(crate::units::inches(116.0));
+    assert!(dealt > 0.0, "the lunge reached him");
+    assert!((x - (18.0 - reach)).abs() < 1.0, "stopped at the reach: x {x}, want {}", 18.0 - reach);
+    let (x, dealt) = lunge(0.0);
+    assert_eq!(dealt, 0.0, "no charge range: out of reach");
+    assert!(x.abs() < 0.5, "and no lunge: x {x}");
+    assert_eq!(crate::weapons::MELEE_RANGE, crate::units::inches(crate::tuning::Tuning::default().player_melee_range), "the reach is the tuning pack's player_meleeRange");
 }

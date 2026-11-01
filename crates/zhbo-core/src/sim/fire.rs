@@ -54,7 +54,10 @@ impl Sim {
             }
             WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
             WeaponAction::CantPlant { lethal } => self.emit(idx, EventKind::CantPlant { lethal }),
-            WeaponAction::MeleeSwing => self.emit(idx, EventKind::Melee),
+            WeaponAction::MeleeSwing => {
+                self.emit(idx, EventKind::Melee);
+                self.start_melee_charge(host, p);
+            }
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
                 // Where BO2's launch sets it down, not a fixed distance in front: a lobbed item
@@ -180,6 +183,74 @@ impl MeleeReach {
     }
 }
 
+/// BO2's melee charge (the knife's lunge): the target and the seconds left of it. A melee at an
+/// enemy in front, past the reach (`player_meleeRange`) but inside the melee weapon's
+/// `meleeChargeRange`, charges at him (`FUN_008dc770`: charge flag 0x20000 and a charge distance
+/// beyond the reach pick the charge times); the move runs `sqrt(2 x gap / friction)` seconds
+/// (`FUN_008c3770`: speed `sqrt(gap x 2 x friction)`, time speed / friction).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeleeCharge {
+    pub target: u32,
+    pub left: f32,
+}
+
+impl Sim {
+    /// The enemy a melee can reach within `range` (past the victim's hit radius), nearest first:
+    /// in front of the General, alive, not an ally, not a structure or a deployed shield.
+    fn melee_target(&self, host: &dyn LogicHost, p: &PlayerSim, range: f32) -> Option<ObjInfo> {
+        let (fwd, _) = basis_xy(p.yaw);
+        let mut near = Vec::new();
+        host.query(p.body.eye(), range + MELEE_QUERY_SLACK, p.general, &mut near);
+        near.into_iter()
+            .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
+            .filter(|o| !self.deployed.iter().any(|d| d.object != 0 && d.object == o.id))
+            .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
+            .filter(|o| {
+                let to = o.pos - p.body.pos;
+                let d = to.length_xy();
+                d <= range + reach_radius(o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > MELEE_FACING_COS)
+            })
+            .min_by(|a, b| (a.pos - p.body.pos).length_xy().total_cmp(&(b.pos - p.body.pos).length_xy()).then(a.id.cmp(&b.id)))
+    }
+
+    /// On the melee press: a target past the reach but inside the melee weapon's charge range
+    /// makes this a charge melee (its charge time and delay) and starts the lunge.
+    pub(super) fn start_melee_charge(&mut self, host: &dyn LogicHost, p: &mut PlayerSim) {
+        p.charge = None;
+        let knife = p.arsenal.melee_weapon();
+        if knife.melee_charge_range <= MELEE_RANGE {
+            return;
+        }
+        let Some(target) = self.melee_target(host, p, knife.melee_charge_range) else { return };
+        let gap = (target.pos - p.body.pos).length_xy() - reach_radius(&target) - MELEE_RANGE;
+        if gap <= 0.0 {
+            return; // in reach: the plain melee
+        }
+        let friction = crate::units::inches(p.arsenal.tuning.player_melee_charge_friction).max(1.0);
+        p.arsenal.charge_melee();
+        p.charge = Some(MeleeCharge { target: target.id, left: (2.0 * gap / friction).sqrt() });
+    }
+
+    /// This frame's lunge for the movement (`None`: none, or it ended — its time ran out, or the
+    /// target died or went out of sight).
+    pub(super) fn melee_charge(&self, host: &dyn LogicHost, p: &mut PlayerSim) -> Option<crate::movement::Charge> {
+        let c = p.charge.as_mut()?;
+        c.left -= LOGIC_DT;
+        let target = host.object(c.target, p.general).filter(|o| !o.has(objflags::DEAD));
+        let (Some(o), true) = (target, c.left > -1e-6) else {
+            p.charge = None;
+            return None;
+        };
+        let t = &p.arsenal.tuning;
+        Some(crate::movement::Charge {
+            target: o.pos,
+            stop: MELEE_RANGE + reach_radius(&o),
+            max_speed: crate::units::inches(t.player_melee_charge_max_speed),
+            friction: crate::units::inches(t.player_melee_charge_friction),
+        })
+    }
+}
+
 impl Sim {
     /// BO2's knife: the nearest enemy in front of the General and in reach takes the hit.
     /// The swing's event (`EventKind::Melee`, the swipe sound) is the caller's: first person emits
@@ -191,9 +262,12 @@ impl Sim {
             MeleeReach::Body => MELEE_QUERY_SLACK,
             MeleeReach::Footprint(own) => own + MELEE_QUERY_SLACK,
         };
+        // A charge melee strikes the enemy it charges at (BO2 locks the charge target, ps +0x530),
+        // wherever the lunge has got to when the charge delay runs out.
+        let charged = p.charge.and_then(|c| host.object(c.target, p.general)).filter(|o| !o.has(objflags::DEAD));
         let mut near = Vec::new();
         host.query(eye, MELEE_RANGE + extra, p.general, &mut near);
-        let victim = near
+        let victim = charged.or_else(|| near
             .iter()
             .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
             .filter(|o| !self.deployed.iter().any(|d| d.object != 0 && d.object == o.id))
@@ -207,7 +281,8 @@ impl Sim {
                 let da = (a.pos - p.body.pos).length_xy();
                 let db = (b.pos - p.body.pos).length_xy();
                 da.total_cmp(&db).then(a.id.cmp(&b.id))
-            });
+            })
+            .cloned());
         // A deployed shield in front, before the victim, takes the strike (melee-scaled damage).
         let victim_at = victim.map_or(MELEE_RANGE + extra, |v| (v.pos - p.body.pos).length_xy());
         if let Some((i, t)) = self.deployed_on_ray(eye, fwd, (MELEE_RANGE + extra).min(victim_at)) {
@@ -564,7 +639,7 @@ mod tests {
     #[test]
     fn danger_close_gives_a_second_lethal() {
         let host = FakeHost::default();
-        let draft = Draft { wildcards: vec![Wildcard::DangerClose], second_offhand: [true, false], ..Draft::default() };
+        let draft = Draft { wildcards: vec![Wildcard::DangerClose], second_offhand: [true, false], ..Draft::test_kit() };
         let mut sim = with_class(&host, &draft);
         let a = &sim.player(0).unwrap().arsenal;
         assert_eq!((a.lethal.def.id.as_str(), a.lethal.count), ("frag_grenade_mp", 2));
@@ -577,7 +652,7 @@ mod tests {
         a.scavenge();
         assert_eq!(a.lethal.count, 2, "scavenged back to the class's two, not past it");
         // Without the card: one.
-        let plain = with_class(&FakeHost::default(), &Draft::default());
+        let plain = with_class(&FakeHost::default(), &Draft::test_kit());
         assert_eq!(plain.player(0).unwrap().arsenal.lethal.count, 1);
     }
 
@@ -586,7 +661,7 @@ mod tests {
     #[test]
     fn tactician_throws_a_tactical_from_the_lethal_slot() {
         let host = FakeHost::default();
-        let draft = Draft { wildcards: vec![Wildcard::Tactician], lethal: "concussion_grenade_mp".into(), ..Draft::default() };
+        let draft = Draft { wildcards: vec![Wildcard::Tactician], lethal: "concussion_grenade_mp".into(), ..Draft::test_kit() };
         let mut sim = with_class(&host, &draft);
         let a = &sim.player(0).unwrap().arsenal;
         assert_eq!(a.lethal.def.id, "concussion_grenade_mp");
@@ -601,7 +676,7 @@ mod tests {
     #[test]
     fn a_second_tactical_is_given_with_the_class() {
         let host = FakeHost::default();
-        let draft = Draft { wildcards: vec![Wildcard::Tactician], lethal: "concussion_grenade_mp".into(), second_offhand: [true, true], ..Draft::default() };
+        let draft = Draft { wildcards: vec![Wildcard::Tactician], lethal: "concussion_grenade_mp".into(), second_offhand: [true, true], ..Draft::test_kit() };
         assert_eq!(draft.spent(), Draft { second_offhand: [false; 2], ..draft.clone() }.spent() + 2);
         let mut sim = with_class(&host, &draft);
         let a = &sim.player(0).unwrap().arsenal;

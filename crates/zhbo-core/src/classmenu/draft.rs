@@ -46,29 +46,29 @@ pub struct Draft {
     pub secondary_camo: String,
 }
 
-impl Default for Draft {
-    /// BO2's default class: the AN-94 with a Reflex sight and a Grenade Launcher, the Tac-45, a
-    /// frag, a concussion, and Lightweight/Fast Hands/Dexterity — the base kit (`Loadout::default`).
-    fn default() -> Self {
+impl Draft {
+    /// The test fixture kit ([`crate::weapons::Loadout::test_kit`]) as a draft.
+    #[cfg(test)]
+    pub fn test_kit() -> Draft {
         Draft {
-            name: String::new(),
             primary: "an94_mp".into(),
             primary_atts: vec!["gl".into(), "reflex".into()],
             secondary: "fnp45_mp".into(),
-            secondary_atts: Vec::new(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
-            second_offhand: [false; 2],
             perks: [Some(Perk::LIGHTWEIGHT), Some(Perk::FAST_HANDS), Some(Perk::DEXTERITY)],
-            extra_perks: [None, None, None],
-            wildcards: Vec::new(),
-            reserve: [0, 0],
-            camo: String::new(),
-            reticle: String::new(),
-            reticle_color: String::new(),
-            knife: String::new(),
-            secondary_camo: String::new(),
+            ..Draft::from_custom(&CustomClass::default())
         }
+    }
+}
+
+impl Default for Draft {
+    /// The base kit ([`crate::weapons::loadout::BASE_KIT`], the same spec
+    /// [`crate::weapons::Loadout::default`] is), unnamed.
+    fn default() -> Self {
+        let mut d = Draft::from_custom(&CustomClass::from_spec(crate::weapons::loadout::BASE_KIT));
+        d.name = String::new();
+        d
     }
 }
 

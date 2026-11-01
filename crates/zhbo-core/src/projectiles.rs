@@ -164,9 +164,10 @@ impl Projectile {
                         return Some(self.impact(host, o));
                     } else {
                         // Grenades bounce off.
-                        let f = self.flight;
-                        self.vel = Vec3::new(-self.vel.x * f.bounce_along, -self.vel.y * f.bounce_along, self.vel.z * f.bounce_up);
-                        self.bounce(host, Surface::of_object(Some(&o)));
+                        let surface = Surface::of_object(Some(&o));
+                        let (along, up) = self.bounce_scales(surface);
+                        self.vel = Vec3::new(-self.vel.x * along, -self.vel.y * along, self.vel.z * up);
+                        self.bounce(host, surface);
                     }
                 }
             }
@@ -186,10 +187,11 @@ impl Projectile {
                         return Some(Outcome::Hit { at: self.pos, kill: false });
                     }
                 } else {
-                    let f = self.flight;
-                    self.vel = Vec3::new(self.vel.x * f.bounce_along, self.vel.y * f.bounce_along, -self.vel.z * f.bounce_up);
-                    self.bounce(host, host.surface_at(self.pos.x, self.pos.y));
-                    if self.vel.length() < f.rest_speed {
+                    let surface = host.surface_at(self.pos.x, self.pos.y);
+                    let (along, up) = self.bounce_scales(surface);
+                    self.vel = Vec3::new(self.vel.x * along, self.vel.y * along, -self.vel.z * up);
+                    self.bounce(host, surface);
+                    if self.vel.length() < self.flight.rest_speed {
                         self.resting = true;
                         self.vel = Vec3::ZERO;
                     }
@@ -237,6 +239,12 @@ impl Projectile {
 
     /// A bounce off `surface`: the impact table's `grenade_bounce` cell for it, when BO2 has one
     /// (t6mp `FUN_004c1590` event 0x47), here; the def's sound by the client ([`Self::bounced`]).
+    /// The speed kept bouncing off `surface` (along it, into it): the def's BO2
+    /// `parallelBounce`/`perpendicularBounce` cell, else the tuning pack's.
+    fn bounce_scales(&self, surface: Surface) -> (f32, f32) {
+        self.def.bounce_off(surface).unwrap_or((self.flight.bounce_along, self.flight.bounce_up))
+    }
+
     fn bounce(&mut self, host: &dyn LogicHost, surface: Surface) {
         if let Some(fx) = crate::impacts::fx_cell(crate::impacts::GRENADE_BOUNCE, surface) {
             host.fx(&fx, self.pos);
@@ -429,6 +437,41 @@ mod tests {
         assert!((t - frag.fuse_time).abs() < 0.1, "went off at {t}");
         assert!(matches!(outcome, Outcome::Exploded { .. }));
         assert!(p.pos.x > 5.0, "it was thrown forward: {:?}", p.pos);
+    }
+
+    /// A bounce keeps the def's BO2 `parallelBounce`/`perpendicularBounce` for the surface struck
+    /// (the dirt the fake ground is), and the tuning pack's scales where the def has none.
+    #[test]
+    fn a_bounce_keeps_the_defs_per_surface_share() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut frag = weapon("frag_grenade_mp").clone();
+        frag.fuse_time = 10.0;
+        let first_bounce = |def: &'static WeaponDef| {
+            let mut p = Projectile::launch(def, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, -1.0).normalized_or_zero(), def.fuse_time, &host, 0.0);
+            loop {
+                let before = p.vel;
+                p.step(&host);
+                if p.bounced.is_some() {
+                    return (before, p.vel);
+                }
+            }
+        };
+        frag.bounce = vec![("dirt".into(), 0.25, 0.5)];
+        let with: &'static WeaponDef = Box::leak(Box::new(frag.clone()));
+        let (before, after) = first_bounce(with);
+        assert!((after.x / before.x - 0.25).abs() < 1e-3, "along: {before:?} -> {after:?}");
+        assert!((after.z / -(before.z - with_gravity_step(with)) - 0.5).abs() < 0.05, "into: {before:?} -> {after:?}");
+        frag.bounce.clear();
+        let without: &'static WeaponDef = Box::leak(Box::new(frag));
+        let (before, after) = first_bounce(without);
+        let t = crate::tuning::Tuning::default();
+        assert!((after.x / before.x - t.projectile_bounce_along).abs() < 1e-3, "the pack's along share");
+    }
+
+    /// One frame's fall, for comparing a bounce's vertical speed with the speed before it.
+    fn with_gravity_step(def: &WeaponDef) -> f32 {
+        if def.projectile_gravity { gravity() * LOGIC_DT } else { 0.0 }
     }
 
     #[test]

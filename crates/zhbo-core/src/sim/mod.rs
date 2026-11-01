@@ -273,6 +273,8 @@ pub struct PlayerSim {
     pub optics: optics::Optics,
     /// BO2's per-shooter tracer countdown (`centity` byte `+0x35c`, `fire::tracer_due`).
     pub tracer_count: u8,
+    /// A melee lunge at an enemy in progress (`fire::MeleeCharge`).
+    pub charge: Option<fire::MeleeCharge>,
 }
 
 impl PlayerSim {
@@ -353,7 +355,7 @@ impl PlayerSim {
             gun: Default::default(),
             fire_yaw: 0.0,
             fire_pitch: 0.0,
-            arsenal: Arsenal::new(),
+            arsenal: Arsenal::with_loadout(crate::weapons::Loadout::test_kit()),
             rng: Rng::new(1),
             input: FpsInput::default(),
             pressed_accum: 0,
@@ -367,6 +369,7 @@ impl PlayerSim {
             building: false,
             optics: Default::default(),
             tracer_count: 0,
+            charge: None,
         }
     }
 }
@@ -562,6 +565,7 @@ impl Sim {
             building: false,
             optics: Default::default(),
             tracer_count: 0,
+            charge: None,
                 }
             }
         };
@@ -633,6 +637,7 @@ impl Sim {
                     building: false,
                     optics: Default::default(),
                     tracer_count: 0,
+                    charge: None,
                 }
             }
         };
@@ -867,6 +872,7 @@ impl Sim {
                         block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 || p.building,
                         sprint_time_scale: p.arsenal.sprint_scale(),
                         move_faster: p.arsenal.move_faster(),
+                        charge: self.melee_charge(host, p),
                     };
                     movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
                     let mut actions = Vec::new();

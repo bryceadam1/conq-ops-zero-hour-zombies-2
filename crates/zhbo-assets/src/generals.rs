@@ -260,7 +260,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let reticles = crate::weapons::reticle_options(&patch, &names);
     let reticle_colors = crate::weapons::reticle_color_options(&patch, &names);
     let camo_assets = zhbo_formats::weapon::camo_all(&common_patch).map_err(|e| e.to_string())?;
+    let roster = crate::weapons::Roster::read(&patch);
     let options = crate::weapons::OptionTables {
+        roster: &roster,
         camo: &camo,
         reticles: &reticles,
         reticle_colors: &reticle_colors,
@@ -293,7 +295,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         Err(e) => summary.push(format!("class caps: {e} (the built-in caps stand in)")),
     }
     let converted = crate::weapons::converted(&patch, &bo2);
-    let converted_base = crate::weapons::converted_base(&bo2);
+    let converted_base = crate::weapons::converted_base(&bo2, &roster);
     crate::weapons::add_variants(&mut table, &converted, &bo2);
     let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
     crate::camo::offer_what_converted(&mut table, &camo.with_art);
@@ -675,7 +677,7 @@ mod tests {
             assert_eq!(w.view_shell_eject_effect.is_some(), w.view_last_shot_eject_effect.is_some(), "{}: the last-shot twin", w.name);
         }
         let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
-            bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
+            { let roster = crate::weapons::Roster::read(&patch); bo2.iter().filter(|w| roster.is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect() };
         assert!(defs.len() > 50, "{} player weapons", defs.len());
         // The table carries every one of them unchanged.
         let again = zhbo_core::weapons::parse_table(&zhbo_core::weapons::format_table(&defs)).unwrap();
@@ -736,7 +738,8 @@ mod tests {
         let patched = zhbo_formats::weapon::all_in(&common_patch, &[&patch, &common]).unwrap();
         assert!(patched.len() > 70, "{} patched weapons", patched.len());
         let mut clip_changes = 0;
-        for p in patched.iter().filter(|w| crate::weapons::is_player_weapon(w)) {
+        let roster = crate::weapons::Roster::read(&patch);
+        for p in patched.iter().filter(|w| roster.is_player_weapon(w)) {
             let got = pooled.iter().find(|w| w.name == p.name).unwrap_or_else(|| panic!("{} pooled", p.name));
             let def = crate::weapons::to_def(got, &names);
             assert_eq!(def, crate::weapons::to_def(p, &names), "{}: the patch's definition", p.name);
@@ -754,7 +757,7 @@ mod tests {
         }
         // The Peacekeeper: only the patch zone defines it, its models and its clips.
         let pk = pooled.iter().find(|w| w.name == "peacekeeper_mp").expect("peacekeeper_mp in the pool");
-        assert!(crate::weapons::is_player_weapon(pk));
+        assert!(roster.is_player_weapon(pk), "the statstable lists the Peacekeeper");
         assert!(launch.iter().all(|w| w.name != pk.name));
         let pool = [&patch, &common_patch, &common];
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
@@ -778,7 +781,7 @@ mod tests {
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
+        let table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &crate::weapons::Roster::read(&patch));
         let mut fails = Vec::new();
         let mut combos = 0;
         for base in table.weapons.iter().filter(|d| !d.allowed.is_empty()) {
@@ -902,7 +905,7 @@ mod tests {
         let (bo2, atts) = mp.weapons().unwrap();
         let crate::paks::MpPool { patch, .. } = mp;
         let names = crate::weapons::names(&bo2_dir);
-        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &crate::weapons::Roster::read(&patch));
         let converted = crate::weapons::converted(&patch, &bo2);
         crate::weapons::add_variants(&mut table, &converted, &bo2);
         let text = zhbo_core::weapons::format_full_table(&table);
@@ -922,7 +925,7 @@ mod tests {
         let (bo2, atts) = mp.weapons().unwrap();
         let crate::paks::MpPool { patch, .. } = mp;
         let names = crate::weapons::names(&bo2_dir);
-        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &crate::weapons::Roster::read(&patch));
         crate::weapons::add_variants(&mut table, &["as50_mp+acog".to_string(), "as50_mp+fmj".to_string()], &bo2);
         let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
         assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");
@@ -947,9 +950,9 @@ mod tests {
         // The attachments carry BO2's compatibility lists (the metadata), as `files` builds them:
         // without them the loadout's `an94_mp+gl+reflex` sanitizes to a different combination.
         let meta = crate::weapons::attachment_metadata(&patch, &names);
-        let opts = crate::weapons::OptionTables { camo: &[], reticles: &[], reticle_colors: &[] };
+        let opts = crate::weapons::OptionTables { roster: &crate::weapons::Roster::read(&patch), camo: &[], reticles: &[], reticle_colors: &[] };
         let mut table = crate::weapons::table_with_metadata(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &meta, &opts);
-        let ids = crate::weapons::converted_base(&bo2);
+        let ids = crate::weapons::converted_base(&bo2, opts.roster);
         crate::weapons::add_variants(&mut table, &ids, &bo2);
         let weapon = xmodel::find(&common, WEAPON).unwrap();
         let body = xmodel::find(&load_zone(&bo2_dir, FACTIONS[0].zone).unwrap(), FACTIONS[0].body).unwrap();
@@ -993,9 +996,18 @@ mod tests {
         assert!(files.iter().any(|(p, _)| p == INI_PATH));
         assert!(files.iter().filter(|(p, _)| p.ends_with(".w3d")).count() >= 1 + FACTIONS.len() + ANIMS.len());
         let text = |path: &str| files.iter().find(|(p, _)| p == path).map(|(_, b)| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
-        // The overhead General's BO2 hits (a soldier, a vehicle, anything else) for both guns.
+        // The overhead General's BO2 hits (a soldier, a vehicle, anything else) for the base kit's
+        // bullet guns. BO2's default class (the Assault premade) carries the SMAW as its second
+        // weapon: a launcher's slot has no bullet impacts.
         let hits = text(RTS_FX_PATH);
-        for slot in ["0 ", "1 "] {
+        let base = zhbo_core::weapons::Loadout::default();
+        let mp = crate::paks::MpPool::load(Path::new(&bo2)).unwrap();
+        let (weapons, _) = mp.weapons().unwrap();
+        let bullet = |id: &str| weapons.iter().find(|w| w.name == crate::generals::base_id(id)).is_some_and(|w| w.weap_type == zhbo_formats::weapon::kind::BULLET);
+        for (slot, id) in [("0 ", &base.primary), ("1 ", &base.secondary)] {
+            if !bullet(id) {
+                continue;
+            }
             let line = hits.lines().find(|l| l.starts_with(slot)).unwrap_or_else(|| panic!("no impacts for slot {slot}: {hits}"));
             assert!(line.split(' ').skip(1).all(|fx| fx.starts_with("ZHBO_BO2FX_")), "{line}");
         }
@@ -1188,6 +1200,8 @@ mod tests {
         let file = |path: &str| files.iter().find(|(p, _)| p == path).map(|(_, b)| b.as_slice());
         let manifests: Vec<&(String, Vec<u8>)> = files.iter().filter(|(p, _)| p.ends_with(".zbv")).collect();
         let native: Vec<&(String, Vec<u8>)> = files.iter().filter(|(p, _)| p.starts_with(zhbo_native::DIR)).collect();
+        // The converted table says which ids are offhands (their BO2 offhand slot).
+        let table = file(crate::weapons::TABLE_PATH).map(|b| zhbo_core::weapons::parse_full_table(&String::from_utf8_lossy(b)).expect("the weapon table parses")).expect("the weapon table");
         println!("native blobs: {} files, {:.1} MB", native.len(), native.iter().map(|(_, b)| b.len()).sum::<usize>() as f64 / 1e6);
         assert!(manifests.len() >= FACTIONS.len(), "{} native viewmodels", manifests.len());
         for (path, bytes) in manifests {
@@ -1196,7 +1210,7 @@ mod tests {
             // its model is the weapon's view model. Off-hand equipment rides the left palm's
             // `tag_knife_attach`; the gun control stays on the primary gun's `tag_weapon`.
             let gun_part = vm.parts.iter().find(|p| p.tag.is_some()).unwrap_or_else(|| panic!("{path}: no gun part"));
-            if crate::manifest::LETHALS.iter().chain(crate::manifest::TACTICALS.iter()).any(|id| vm.id == *id) {
+            if table.weapons.iter().find(|d| d.id == vm.id).is_some_and(|d| d.class.is_offhand()) {
                 assert_eq!(gun_part.tag.as_deref(), Some("tag_knife_attach"), "{path} ({}): the equipment should hang from the left palm", vm.id);
             } else if vm.id == "an94_mp" {
                 assert_eq!(gun_part.tag.as_deref(), Some("tag_weapon"), "{path}: the gun control stays on the gun anchor");

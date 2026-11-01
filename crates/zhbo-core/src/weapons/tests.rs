@@ -9,7 +9,7 @@ fn def(f: impl FnOnce(&mut WeaponDef)) -> &'static WeaponDef {
 }
 
 fn arsenal_with(primary: &'static WeaponDef) -> Arsenal {
-    let mut a = Arsenal::new();
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.weapons[0] = WeaponState::new(primary);
     a.raise_left = 0.0;
     a
@@ -51,7 +51,7 @@ fn an_unknown_weapon_id_is_loud_and_never_becomes_the_first_gun() {
 fn a_gun_melees_with_the_class_melee_weapon_and_the_held_knife_with_itself() {
     let mut rng = Rng::new(1);
     let class_melee = weapon(CLASS_MELEE);
-    let mut a = Arsenal::new();
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     assert!(a.current().def.class.is_gun());
     assert_eq!(a.class_melee.id, CLASS_MELEE);
@@ -86,7 +86,7 @@ fn the_strike_lands_after_the_melee_weapons_delay() {
     assert!(class_melee.melee_delay > LOGIC_DT, "the stand-in has a delay to wait for");
     let swing_and_strike = |perks: &str| {
         let mut rng = Rng::new(1);
-        let mut a = Arsenal::with_loadout(Loadout::default().with_spec(perks));
+        let mut a = Arsenal::with_loadout(Loadout::test_kit().with_spec(perks));
         a.raise_left = 0.0;
         let mut out = Vec::new();
         a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
@@ -115,7 +115,7 @@ fn the_strike_lands_after_the_melee_weapons_delay() {
 #[test]
 fn an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out() {
     let mut rng = Rng::new(1);
-    let mut a = Arsenal::with_loadout(Loadout::default());
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     let mut out = Vec::new();
     a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
@@ -134,7 +134,7 @@ fn an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out() {
     assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "the strike never lands");
     assert!(matches!(a.offhand, Some(OffhandUse::Holding { .. })), "then the pull-back");
 
-    let mut a = Arsenal::with_loadout(Loadout::default());
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     a.since_sprint = 0.01;
     let sprint_out = a.current().def.sprint_out_time;
@@ -151,7 +151,7 @@ fn an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out() {
 #[test]
 fn a_switch_during_a_melee_happens_after_it() {
     let mut rng = Rng::new(1);
-    let mut a = Arsenal::with_loadout(Loadout::default());
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     let mut out = Vec::new();
     a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
@@ -172,7 +172,7 @@ fn a_switch_during_a_melee_happens_after_it() {
 fn a_switch_during_a_frag_happens_after_it() {
     let run = |cancelable: bool| {
         let mut rng = Rng::new(1);
-        let mut a = Arsenal::with_loadout(Loadout::default());
+        let mut a = Arsenal::with_loadout(Loadout::test_kit());
         a.raise_left = 0.0;
         assert!(a.weapons.len() > 1);
         let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef { hold_cancelable: cancelable, ..a.lethal.def.clone() }));
@@ -210,7 +210,7 @@ fn after_a_melee_the_gun_comes_back_up_and_fast_melee_recovery_speeds_only_that(
     // Frames of the swing, of the re-raise, and whether the trigger did anything meanwhile.
     let melee = |perks: &str| {
         let mut rng = Rng::new(1);
-        let mut a = Arsenal::with_loadout(Loadout::default().with_spec(perks));
+        let mut a = Arsenal::with_loadout(Loadout::test_kit().with_spec(perks));
         a.raise_left = 0.0;
         let mut out = Vec::new();
         a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
@@ -260,10 +260,10 @@ fn the_unarmed_kit_is_knife_only_and_the_base_kit_is_untouched() {
     assert_eq!(a.current().def.id, "knife_held_mp");
     assert_eq!((a.lethal.count, a.tactical.count), (0, 0));
     assert!(a.loadout.perks.is_empty());
-    // `Loadout::default()` is still the classes' spec base and the converter's source.
-    let base = Loadout::default();
+    // `Loadout::test_kit()` is still the classes' spec base and the converter's source.
+    let base = Loadout::test_kit();
     assert!(!base.primary.is_empty() && !base.secondary.is_empty());
-    assert!(!Arsenal::new().is_unarmed(), "Arsenal::new stays the full base kit for the tests/converter");
+    assert!(!Arsenal::with_loadout(Loadout::test_kit()).is_unarmed(), "Arsenal::new stays the full base kit for the tests/converter");
 }
 
 #[test]
@@ -664,7 +664,7 @@ fn shotguns_fire_pellets_and_reload_shell_by_shell() {
 
 #[test]
 fn grenades_cook_and_throw() {
-    let mut a = Arsenal::new();
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     let mut rng = Rng::new(5);
     let mut out = Vec::new();
@@ -700,7 +700,7 @@ fn grenades_cook_and_throw() {
 
 #[test]
 fn cooking_too_long_goes_off_in_hand() {
-    let mut a = Arsenal::new();
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     let mut out = Vec::new();
     let mut rng = Rng::new(6);
@@ -747,14 +747,14 @@ fn swap_drops_then_raises_faster_with_fast_hands() {
         }
         n
     };
-    let mut a = Arsenal::new();
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     a.loadout.perks.clear();
     // The secondary's first raise (it has not been up yet), after the primary's drop.
     let expect = ((a.weapons[0].def.drop_time + a.weapons[1].def.first_raise_time) / LOGIC_DT).ceil();
     let slow = swap_frames(&mut a);
     assert_eq!(a.active, 1);
-    let mut b = Arsenal::new();
+    let mut b = Arsenal::with_loadout(Loadout::test_kit());
     b.raise_left = 0.0;
     assert!(b.loadout.perks.contains(&Perk::FAST_HANDS));
     let fast = swap_frames(&mut b);
@@ -784,7 +784,7 @@ fn alt_toggle_frames(a: &mut Arsenal) -> (usize, bool) {
 fn a_launcher_toggle_raises_the_incoming_mode_over_its_alt_raise_time() {
     // G16 / FUN_008df320: the alt raise is the incoming variant's iAltRaiseTime; the launcher
     // pair's alt drop is 0, so the mode changes on the press frame (FUN_008e4da0).
-    let mut a = Arsenal::new();
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     a.raise_left = 0.0;
     a.loadout.perks.clear();
     let gl = weapon("gl_an94_mp");
@@ -964,7 +964,7 @@ fn damage_curve_and_explosion_falloff() {
 
 #[test]
 fn perks_change_movement() {
-    let mut a = Arsenal::new();
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
     assert!(a.move_faster(), "Lightweight grants movefaster");
     a.loadout.perks.retain(|p| *p != Perk::LIGHTWEIGHT);
     assert!(!a.move_faster());

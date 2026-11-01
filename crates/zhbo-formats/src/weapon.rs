@@ -702,6 +702,12 @@ pub struct Weapon {
     pub ads_out_time: f32,
     pub melee_time: f32,
     pub melee_delay: f32,
+    /// The lunge (`meleeChargeRange`, inches; `iMeleeChargeTime`/`iMeleeChargeDelay`, seconds):
+    /// a melee at an enemy farther than `player_meleeRange` but inside this range charges at him
+    /// and swings with the charge times (`FUN_008dc770`, weaponTime/weaponDelay from +0x488/+0x438).
+    pub melee_charge_range: f32,
+    pub melee_charge_time: f32,
+    pub melee_charge_delay: f32,
     pub spin_up_time: f32,
     pub spin_down_time: f32,
     pub fuse_time: f32,
@@ -813,6 +819,11 @@ pub struct Weapon {
     /// (t6mp `FUN_004c1590` event 0x47: `bounceSound[surface]`, then the impact table's
     /// `grenade_bounce` row cell).
     pub bounce_sounds: Vec<Option<String>>,
+    /// `parallelBounce` / `perpendicularBounce`: per BO2 surface (32, `materialSurfType_t`), the
+    /// share of a bouncing projectile's speed kept along the surface and into it. Empty where the
+    /// def has no array.
+    pub parallel_bounce: Vec<f32>,
+    pub perpendicular_bounce: Vec<f32>,
     /// `iProjectileActivateDist` (inches): a projectile that strikes something before travelling
     /// this far is a dud (t6mp `FUN_00604280`), 0 = always armed.
     pub projectile_activate_dist: i32,
@@ -1173,6 +1184,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.sprint_out_time = ms(z, d + WD::sprintOutTime);
     w.melee_time = ms(z, d + WD::iMeleeTime);
     w.melee_delay = ms(z, d + WD::iMeleeDelay);
+    w.melee_charge_range = z.f32(d + WD::meleeChargeRange);
+    w.melee_charge_time = ms(z, d + WD::meleeChargeTime);
+    w.melee_charge_delay = ms(z, d + WD::meleeChargeDelay);
     w.spin_up_time = ms(z, d + WD::iSpinUpTime);
     w.spin_down_time = ms(z, d + WD::iSpinDownTime);
     w.fuse_time = ms(z, d + WD::fuseTime);
@@ -1336,6 +1350,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
     let bounce = z.u32(d + WD::bounceSound);
     w.bounce_sounds = if bounce == 0 { Vec::new() } else { (0..32).map(|i| opt_str(z, bounce + 4 * i)).collect() };
+    let floats = |at: u32| if at == 0 { Vec::new() } else { (0..32).map(|i| z.f32(at + 4 * i)).collect() };
+    w.parallel_bounce = floats(z.u32(d + WD::parallelBounce));
+    w.perpendicular_bounce = floats(z.u32(d + WD::perpendicularBounce));
     w.projectile_activate_dist = int(z, d + WD::iProjectileActivateDist);
     w.projectile_dud_sound = opt_str(z, d + WD::projDudSound);
     let dud = z.try_u32(d + WD::projDudEffect)?;

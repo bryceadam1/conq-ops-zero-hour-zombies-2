@@ -62,7 +62,7 @@ impl Source {
             paks.learn(z);
         }
         let names = crate::weapons::names(bo2_dir);
-        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &crate::weapons::Roster::read(&patch));
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
         let mut emblems = BTreeMap::new();
         if let Ok(zh) = zhbo_requirements::check_requirements().zero_hour {
@@ -872,7 +872,7 @@ mod tests {
 
         let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
         let src = Source::open(Path::new(&dir)).expect("open the install");
-        let table = crate::weapons::table(&src.bo2, &src.atts, crate::weapons::default_attachment(&src.patch).as_ref(), &Default::default());
+        let table = crate::weapons::table(&src.bo2, &src.atts, crate::weapons::default_attachment(&src.patch).as_ref(), &Default::default(), &crate::weapons::Roster::read(&src.patch));
         let tuning = Tuning::default();
         let aspect = 16.0 / 9.0;
         let tx = 1.0 / (zhbo_core::client::horizontal_fov(tuning.cg_fov, aspect) * 0.5).tan();

@@ -412,6 +412,8 @@ pub fn reticle_color_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap
 /// The option tables the converter feeds the weapon table: BO2's camo rows and the base
 /// reticle/colour rows. Each weapon's camo asset is its own def's `weaponCamo` ([`to_def`]).
 pub struct OptionTables<'a> {
+    /// Who is a player weapon ([`Roster`]).
+    pub roster: &'a Roster,
     pub camo: &'a [CamoOption],
     pub reticles: &'a [CamoOption],
     pub reticle_colors: &'a [CamoOption],
@@ -419,8 +421,8 @@ pub struct OptionTables<'a> {
 
 /// The whole table: every player weapon, the alt modes their attachments add, and every
 /// attachment. `default_att` is [`default_attachment`].
-pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], default_att: Option<&bo2::Attachment>, names: &HashMap<String, String>) -> Table {
-    let opts = OptionTables { camo: &[], reticles: &[], reticle_colors: &[] };
+pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], default_att: Option<&bo2::Attachment>, names: &HashMap<String, String>, roster: &Roster) -> Table {
+    let opts = OptionTables { roster, camo: &[], reticles: &[], reticle_colors: &[] };
     table_with_metadata(bo2, atts, default_att, names, &HashMap::new(), &opts)
 }
 
@@ -434,7 +436,13 @@ pub fn table_with_metadata(
     meta: &HashMap<String, AttachmentMeta>,
     opts: &OptionTables,
 ) -> Table {
-    let mut weapons: Vec<WeaponDef> = bo2.iter().filter(|w| is_player_weapon(w)).map(|w| to_def(w, names)).collect();
+    let mut weapons: Vec<WeaponDef> = bo2.iter().filter(|w| opts.roster.is_player_weapon(w)).map(|w| to_def(w, names)).collect();
+    // A sniper rifle is a `rifle` to its weapon def; the statstable group says it is a sniper.
+    for d in &mut weapons {
+        if d.class == Class::Rifle && opts.roster.item(&d.id).is_some_and(|i| i.group == "weapon_sniper") {
+            d.class = Class::Sniper;
+        }
+    }
     let mut extra: Vec<String> = Vec::new();
     for d in &weapons {
         extra.extend(d.alt_modes.iter().map(|(_, alt)| alt.clone()));
@@ -864,26 +872,56 @@ pub fn with_alt_modes(defs: &[WeaponDef], ids: &[String]) -> Vec<String> {
     out
 }
 
-/// A weapon a player can carry in BO2 multiplayer (not killstreak, turret or alt-mode entries).
-pub fn is_player_weapon(w: &Weapon) -> bool {
-    use manifest::{EXCLUDED_WEAPONS, LETHALS, TACTICALS};
-    if w.name == "knife_held_mp" {
-        return true;
+/// Who BO2 hands a weapon to: its Create-a-Class roster. A variant is a player weapon when
+///
+/// * `mp/statstable.csv` lists it as an item (group `weapon_*`, allocation cost not negative:
+///   `zhbo_conformance::bo2::combos::items`, `_bot_loadout.gsc:506-509`);
+/// * it is the dual-wield form `R_dw_mp` of an item `R` whose attachments (column 8) include `dw`
+///   (G16: the `dw` attachment switches to the underscore form; those rows cost -1);
+/// * or `_class.gsc` gives it to every class itself: `knife_mp` (`:586`) and `knife_held_mp` (`:682`).
+///
+/// No weapon id is special-cased: the War Machine and the minigun (cost -1) and `defaultweapon_mp`
+/// (no row) fall out of the data.
+#[derive(Clone, Debug, Default)]
+pub struct Roster {
+    /// The items by variant (`an94_mp`), or `None` when no statstable was read (synthetic
+    /// fixtures): then every weapon with a view model is taken.
+    items: Option<HashMap<String, zhbo_conformance::bo2::combos::Item>>,
+}
+
+impl Roster {
+    /// The roster of the player's `patch_mp` statstable (empty when it has none).
+    pub fn read(patch: &zhbo_formats::t6zone::Zone) -> Roster {
+        let Ok(Some(statstable)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Roster { items: Some(HashMap::new()) } };
+        Roster { items: Some(zhbo_conformance::bo2::combos::items(&statstable).into_iter().map(|i| (i.variant.clone(), i)).collect()) }
     }
-    if w.name == zhbo_core::weapons::CLASS_MELEE {
-        return true;
+
+    /// An install with an empty statstable: only the knives `_class.gsc` gives.
+    pub fn read_none() -> Roster {
+        Roster { items: Some(HashMap::new()) }
     }
-    if w.name.starts_with("remote_") || w.name.contains("killstreak") {
-        return false;
+
+    /// For synthetic fixtures without a statstable: every weapon with a view model.
+    pub fn any() -> Roster {
+        Roster { items: None }
     }
-    if LETHALS.contains(&w.name.as_str()) || TACTICALS.contains(&w.name.as_str()) {
-        return true;
+
+    /// The Create-a-Class item a variant is, if any.
+    pub fn item(&self, variant: &str) -> Option<&zhbo_conformance::bo2::combos::Item> {
+        self.items.as_ref()?.get(variant)
     }
-    // The Assault Shield: a primary of weapType `riotshield` (not a gun to `is_gun`).
-    if is_shield(w) {
-        return !EXCLUDED_WEAPONS.contains(&w.name.as_str());
+
+    pub fn is_player_weapon(&self, w: &Weapon) -> bool {
+        use zhbo_core::weapons::{CLASS_MELEE, KNIFE_HELD};
+        if w.name == CLASS_MELEE || w.name == KNIFE_HELD {
+            return true;
+        }
+        let Some(items) = &self.items else { return w.view_model.is_some() };
+        if items.contains_key(&w.name) {
+            return true;
+        }
+        w.name.strip_suffix("_dw_mp").is_some_and(|r| items.get(&format!("{r}_mp")).is_some_and(|i| i.attachments.iter().any(|a| a == "dw")))
     }
-    w.is_gun() && !w.name.contains("wager") && !w.name.starts_with("inventory_") && w.view_model.is_some() && !EXCLUDED_WEAPONS.contains(&w.name.as_str())
 }
 
 /// BO2's riot shield: weapType `riotshield` in the primary inventory (`riotshield_mp`).
@@ -922,30 +960,21 @@ fn attachment_location_multipliers(w: &Weapon) -> Vec<(String, Vec<(u8, f32)>)> 
 }
 
 fn class_of(w: &Weapon) -> Class {
-    use manifest::{LETHALS, TACTICALS};
-    let name = w.name.as_str();
     // An offhand's class is its BO2 `offhandSlot`: the slot picks the button (`FUN_008de050`) and
     // the specialty that speeds its states (G3: slot 3 runs at `perk_weapEquipmentUseMultiplier`).
     // The Create-a-Class slot it is listed under is the statstable's (`cac_slot`), a separate
     // thing: the Sensor Grenade is a `specialgrenade` item on the equipment slot.
-    if LETHALS.contains(&name) || TACTICALS.contains(&name) {
-        return match w.offhand_slot {
-            bo2::offhand_slot::EQUIPMENT => Class::Equipment,
-            bo2::offhand_slot::TACTICAL => Class::Tactical,
-            bo2::offhand_slot::LETHAL => Class::Lethal,
-            // Not on an offhand button in BO2's data: the manifest list decides.
-            _ if LETHALS.contains(&name) => Class::Lethal,
-            _ => Class::Tactical,
-        };
+    match w.offhand_slot {
+        bo2::offhand_slot::EQUIPMENT => return Class::Equipment,
+        bo2::offhand_slot::TACTICAL => return Class::Tactical,
+        bo2::offhand_slot::LETHAL => return Class::Lethal,
+        _ => {}
     }
     if w.weap_type == bo2::kind::MELEE {
         return Class::Melee;
     }
     if is_shield(w) {
         return Class::Shield;
-    }
-    if w.view_model.as_deref().is_some_and(|m| m.contains("_sniper_")) {
-        return Class::Sniper;
     }
     match w.class {
         bo2::class::MG => Class::Lmg,
@@ -1147,6 +1176,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },
         melee_delay: w.melee_delay.max(0.0),
+        melee_charge_range: inches(w.melee_charge_range.max(0.0)),
+        melee_charge_time: w.melee_charge_time.max(0.0),
+        melee_charge_delay: w.melee_charge_delay.max(0.0),
         effect,
         fuse_time: w.fuse_time,
         cook: w.cook_off_hold,
@@ -1196,6 +1228,13 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         bounce_sounds: zhbo_core::impacts::Surface::ALL
             .into_iter()
             .filter_map(|s| w.bounce_sounds.get(crate::impacts::bo2_surface(s)).cloned().flatten().map(|a| (s.name().to_string(), zhbo_core::names::def_sound_event(&a))))
+            .collect(),
+        bounce: zhbo_core::impacts::Surface::ALL
+            .into_iter()
+            .filter_map(|s| {
+                let i = crate::impacts::bo2_surface(s);
+                Some((s.name().to_string(), *w.parallel_bounce.get(i)?, *w.perpendicular_bounce.get(i)?))
+            })
             .collect(),
         activate_dist: inches(w.projectile_activate_dist.max(0) as f32),
         dud_fx: String::new(),
@@ -1492,13 +1531,13 @@ pub fn rts_weapons_ini(defs: &[WeaponDef], flashes: &BTreeMap<String, String>, h
 /// The ids whose art is converted for the base weapons only: the loadout's (with its attachments)
 /// first, then every other player weapon unless `ZHBO_CONVERT_ALL_WEAPONS=0`. Used for HUD icons,
 /// FX and sound tables, where a combo's entry is its base weapon's.
-pub fn converted_base(all: &[Weapon]) -> Vec<String> {
+pub fn converted_base(all: &[Weapon], roster: &Roster) -> Vec<String> {
     let l = Loadout::default();
     let mut ids = vec![l.primary, l.secondary, l.lethal, l.tactical, l.melee, zhbo_core::weapons::CLASS_MELEE.to_string()];
     // Every weapon's art, so any of them can be picked up, bought or swapped to; `=0` converts only
     // the loadout's (quicker while developing).
     if !std::env::var("ZHBO_CONVERT_ALL_WEAPONS").is_ok_and(|v| v == "0") {
-        for w in all.iter().filter(|w| is_player_weapon(w)) {
+        for w in all.iter().filter(|w| roster.is_player_weapon(w)) {
             if !ids.contains(&w.name) {
                 ids.push(w.name.clone());
             }
@@ -1554,7 +1593,7 @@ pub fn all_legal_combos(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> V
 /// `ZHBO_CONVERT_ALL_COMBOS=0` (on by default, so a locally built archive covers every legal combo;
 /// developers set it to `0` for a quicker base-only build).
 pub fn converted(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> Vec<String> {
-    let mut ids = converted_base(all);
+    let mut ids = converted_base(all, &Roster::read(patch));
     if !matches!(std::env::var("ZHBO_CONVERT_ALL_COMBOS").as_deref(), Ok("0")) {
         for id in all_legal_combos(patch, all) {
             if !ids.contains(&id) {
@@ -1699,8 +1738,19 @@ mod tests {
     fn maps_bo2_types_to_classes() {
         let rifle = Weapon { name: "an94_mp".into(), class: bo2::class::RIFLE, view_model: Some("t6_wpn_ar_an94_view".into()), ..Default::default() };
         assert_eq!(class_of(&rifle), Class::Rifle);
+        // A sniper is a `rifle` to its def; the statstable group (`weapon_sniper`) makes it a sniper.
         let sniper = Weapon { name: "dsr50_mp".into(), class: bo2::class::RIFLE, view_model: Some("t6_wpn_sniper_dsr50_view".into()), ..Default::default() };
-        assert_eq!(class_of(&sniper), Class::Sniper);
+        assert_eq!(class_of(&sniper), Class::Rifle);
+        let item = |reference: &str, group: &str| zhbo_conformance::bo2::combos::Item { reference: reference.into(), variant: format!("{reference}_mp"), group: group.into(), slot: "primary".into(), cost: 1, attachments: Vec::new(), index: 0 };
+        let roster = Roster { items: Some([("dsr50_mp".to_string(), item("dsr50", "weapon_sniper")), ("an94_mp".to_string(), item("an94", "weapon_assault"))].into_iter().collect()) };
+        let opts = OptionTables { roster: &roster, camo: &[], reticles: &[], reticle_colors: &[] };
+        let t = table_with_metadata(&[rifle.clone(), sniper.clone()], &[], None, &HashMap::new(), &HashMap::new(), &opts);
+        let class = |id: &str| t.weapons.iter().find(|d| d.id == id).map(|d| d.class);
+        assert_eq!((class("an94_mp"), class("dsr50_mp")), (Some(Class::Rifle), Some(Class::Sniper)));
+        // Not on the roster: not a player weapon (the minigun's cost is -1; `defaultweapon_mp` has no row).
+        assert!(!roster.is_player_weapon(&Weapon { name: "minigun_mp".into(), view_model: Some("v".into()), ..Default::default() }));
+        let dw_roster = Roster { items: Some([("fiveseven_mp".to_string(), zhbo_conformance::bo2::combos::Item { attachments: vec!["dw".into()], ..item("fiveseven", "weapon_pistol") })].into_iter().collect()) };
+        assert!(dw_roster.is_player_weapon(&Weapon { name: "fiveseven_dw_mp".into(), ..Default::default() }), "the dual-wield form of an item that lists dw");
         let frag = Weapon { name: "frag_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::LETHAL, ..Default::default() };
         assert_eq!((class_of(&frag), effect_of(&frag)), (Class::Lethal, Effect::Explode));
         let conc = Weapon { name: "concussion_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::TACTICAL, ..Default::default() };
@@ -1754,7 +1804,7 @@ mod tests {
         assert_eq!(attachment_def(&att("stalker_smg", 25, 2.55), &default, &names, &meta).ads_move_scale, 2.55);
         // The whole table drops the stub and keeps the comparison.
         let atts = [att(",defaultattachment", 0, 0.0), att("dualclip", 2, 1.0), att("stalker_lmg", 25, 1.8)];
-        let t = table(&[], &atts, Some(&default), &names);
+        let t = table(&[], &atts, Some(&default), &names, &Roster::any());
         let by = |id: &str| t.attachments.iter().find(|a| a.id == id).unwrap().ads_move_scale;
         assert_eq!(t.attachments.len(), 2);
         assert_eq!((by("dualclip"), by("stalker_lmg")), (0.0, 1.8));
@@ -2207,7 +2257,7 @@ mod tests {
         // The table as the converter builds it: the attachments carry BO2's compatibility, so
         // `apply` keeps every legal combination whole.
         let meta = attachment_metadata(&patch, &HashMap::new());
-        let opts = OptionTables { camo: &[], reticles: &[], reticle_colors: &[] };
+        let opts = OptionTables { roster: &crate::weapons::Roster::read(&patch), camo: &[], reticles: &[], reticle_colors: &[] };
         let mut built = table_with_metadata(&all, &atts, default_attachment(&patch).as_ref(), &HashMap::new(), &meta, &opts);
         add_variants(&mut built, &combos, &all);
         let mut ours: std::collections::BTreeSet<String> = combos.iter().map(|id| strip(id)).collect();
@@ -2302,7 +2352,7 @@ mod tests {
         let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
         let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
         let all = zhbo_formats::weapon::all(&common).unwrap();
-        let base = converted_base(&all);
+        let base = converted_base(&all, &Roster::read(&patch));
         let full = all_legal_combos(&patch, &all);
         // The base set's statstable-backed ids: the enumerator's `items` are the only CaC bases.
         let statstable = zhbo_formats::stringtable::rows(&patch, "mp/statstable.csv").unwrap().unwrap();
@@ -2388,7 +2438,7 @@ mod tests {
         assert_eq!(defs[0].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_com_knife_whoosh_plr"), "the held knife's own");
         assert_eq!(defs[1].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_melee_whoosh_plr"), "the class melee weapon's own");
         assert_eq!(layers(zhbo_core::sounds::MELEE_SWING), Some(vec!["wpn_melee_whoosh_plr".to_string()]), "the global swing");
-        assert!(bo2.iter().all(is_player_weapon), "both knives are converted");
+        assert!(bo2.iter().all(|w| Roster::read_none().is_player_weapon(w)), "both knives are converted, whatever the statstable");
     }
 
     #[test]
@@ -2603,7 +2653,7 @@ mod tests {
             view_model: Some("t6_wpn_ar_an94_view".into()),
             ..Default::default()
         };
-        let opts = OptionTables { camo: &camo, reticles: &[], reticle_colors: &[] };
+        let opts = OptionTables { roster: &crate::weapons::Roster::any(), camo: &camo, reticles: &[], reticle_colors: &[] };
         let table = table_with_metadata(&[w], &[], None, &HashMap::new(), &HashMap::new(), &opts);
         assert_eq!(table.weapons.len(), 1);
         let ids: Vec<String> = camo.iter().map(|c| c.id.clone()).collect();
@@ -2719,5 +2769,24 @@ mod target_finder_tests {
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let finders: Vec<&str> = atts.iter().filter(|a| a.kind == zhbo_core::attachments::TARGET_FINDER_KIND as u32).map(|a| a.name.as_str()).collect();
         assert!(!finders.is_empty() && finders.iter().all(|n| n.starts_with("rangefinder")), "{finders:?}");
+    }
+
+    /// The grenades carry BO2's per-surface bounce (`parallelBounce`/`perpendicularBounce`) and the
+    /// knife its lunge (`meleeChargeRange`, the charge times).
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn grenades_bounce_and_the_knife_lunges_by_the_install() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (bo2, _) = mp.weapons().unwrap();
+        let def = |id: &str| crate::weapons::to_def(bo2.iter().find(|w| w.name == id).unwrap_or_else(|| panic!("{id}")), &std::collections::HashMap::new());
+        let frag = def("frag_grenade_mp");
+        println!("frag bounce {:?}", frag.bounce);
+        assert!(!frag.bounce.is_empty() && frag.bounce.iter().all(|&(_, a, p)| (0.0..=1.5).contains(&a) && (0.0..=1.5).contains(&p)), "{:?}", frag.bounce);
+        // The held knife lunges (116 in, charge time 1.16 s, delay 0.1 s); `knife_mp`, the melee
+        // with a gun up, has no charge range.
+        let held = def(zhbo_core::weapons::KNIFE_HELD);
+        assert!(held.melee_charge_range > zhbo_core::weapons::MELEE_RANGE && held.melee_charge_time > 0.0, "{} {}", held.melee_charge_range, held.melee_charge_time);
+        assert_eq!(def(zhbo_core::weapons::CLASS_MELEE).melee_charge_range, 0.0);
     }
 }

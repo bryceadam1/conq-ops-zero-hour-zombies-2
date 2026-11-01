@@ -222,11 +222,38 @@ pub struct MoveModifiers {
     pub sprint_time_scale: f32,
     /// The player has `movefaster` (Lightweight).
     pub move_faster: bool,
+    /// A melee lunge in progress ([`Charge`]): it replaces the walk this frame.
+    pub charge: Option<Charge>,
+}
+
+/// BO2's melee charge (`FUN_008c34f0`): each frame the player moves straight at the target at the
+/// speed that stops him at the melee reach under the charge friction, `sqrt(2 x friction x gap)`,
+/// never faster than the charge's top speed. Zero Hour units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Charge {
+    pub target: Vec3,
+    /// Stop this far from the target's centre (the reach plus its hit radius).
+    pub stop: f32,
+    pub max_speed: f32,
+    pub friction: f32,
+}
+
+impl Charge {
+    /// The charge velocity from `pos` (horizontal).
+    pub fn velocity(&self, pos: Vec3) -> Vec3 {
+        let to = Vec3::new(self.target.x - pos.x, self.target.y - pos.y, 0.0);
+        let d = to.length_xy();
+        let gap = (d - self.stop).max(0.0);
+        if d < 1e-3 || gap <= 0.0 {
+            return Vec3::ZERO;
+        }
+        to * ((2.0 * self.friction * gap).sqrt().min(self.max_speed) / d)
+    }
 }
 
 impl Default for MoveModifiers {
     fn default() -> Self {
-        Self { speed_scale: 1.0, block_sprint: false, sprint_time_scale: 1.0, move_faster: false }
+        Self { speed_scale: 1.0, block_sprint: false, sprint_time_scale: 1.0, move_faster: false, charge: None }
     }
 }
 
@@ -269,7 +296,11 @@ pub fn step(
     }
     let wish_speed = max_speed * wish.length_xy().min(1.0);
 
-    if body.on_ground {
+    if let Some(c) = mods.charge.filter(|_| body.on_ground) {
+        // The lunge owns the horizontal velocity (no walk, no jump) while it runs.
+        let v = c.velocity(body.pos);
+        body.vel = Vec3::new(v.x, v.y, body.vel.z);
+    } else if body.on_ground {
         apply_friction(body, tuning, dt);
         accelerate(body, wish_dir, wish_speed, tuning.ground_accel, dt);
         if pressed & buttons::JUMP != 0 {

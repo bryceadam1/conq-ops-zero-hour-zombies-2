@@ -622,6 +622,13 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("MeleeDelay", "Seconds from the melee press to the strike (BO2's iMeleeDelay).", FieldKind::Num,
         |d: &WeaponDef| d.melee_delay.to_string(),
         |d: &mut WeaponDef, v: Values| { d.melee_delay = v.text_num()?; Ok(()) }),
+    field!("MeleeCharge", "The lunge: charge range (Zero Hour units), charge melee time and delay (seconds).", FieldKind::Nums(3),
+        |d: &WeaponDef| nums(&[d.melee_charge_range, d.melee_charge_time, d.melee_charge_delay]),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(3)?;
+            (d.melee_charge_range, d.melee_charge_time, d.melee_charge_delay) = (v.num(0), v.num(1), v.num(2));
+            Ok(())
+        }),
     field!("Effect", "How the shot lands: explode, stun, emp, smoke, impact, none.", FieldKind::Enum,
         |d: &WeaponDef| d.effect.name().into(),
         |d: &mut WeaponDef, v: Values| { d.effect = Effect::parse(v.text).ok_or("unknown effect")?; Ok(()) }),
@@ -753,6 +760,18 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("BounceSounds", "A bounce's sound per surface (`surface=event`; BO2's `bounceSound[surface]`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.bounce_sounds),
         |d: &mut WeaponDef, v: Values| { d.bounce_sounds = parse_pairs(v.text); Ok(()) }),
+    field!("Bounce", "The speed kept bouncing off each surface, along/into (`surface=along/into`; BO2's `parallelBounce`/`perpendicularBounce`).", FieldKind::Pairs,
+        |d: &WeaponDef| d.bounce.iter().map(|(s, a, p)| format!("{s}={a}/{p}")).collect::<Vec<_>>().join(" "),
+        |d: &mut WeaponDef, v: Values| {
+            d.bounce = parse_pairs(v.text)
+                .into_iter()
+                .filter_map(|(s, ap)| {
+                    let (a, p) = ap.split_once('/')?;
+                    Some((s, a.parse().ok()?, p.parse().ok()?))
+                })
+                .collect();
+            Ok(())
+        }),
     field!("ActivateDist", "Path length before the projectile arms (`iProjectileActivateDist`, ZH units); a hit sooner is a dud.", FieldKind::Num,
         |d: &WeaponDef| d.activate_dist.to_string(),
         |d: &mut WeaponDef, v: Values| { d.activate_dist = v.text_num()?; Ok(()) }),
@@ -1220,7 +1239,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 149);
+        assert_eq!(WEAPON_FIELDS.len(), 151);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

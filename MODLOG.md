@@ -9139,3 +9139,35 @@ Verified:
   scale — a `+tacknife` combination's own variant keeps `iMeleeTime` 800 (conformance row
   `beretta93r_mp dualclip+tacknife`) and its quickness is its melee animation
   (`viewmodel_*_tactical_melee`), which the combination already plays. The multiplier is removed.
+
+## Code polish 3: the roster, the knife's lunge, BO2's grenade bounce (2026-11-01)
+
+- **Who is a player weapon** is data now (`weapons::Roster`): a variant `mp/statstable.csv` lists
+  as an item (group `weapon_*`, allocation cost not negative — the oracle's
+  `combos::items`, `_bot_loadout.gsc:506-509`), the dual-wield form `R_dw_mp` of an item whose
+  attachments include `dw` (G16; those rows cost -1), or one of the two knives `_class.gsc` hands out
+  itself (`knife_mp` `:586`, `knife_held_mp` `:682`). The name patterns (`remote_`, `killstreak`,
+  `wager`, `inventory_`), `manifest::EXCLUDED_WEAPONS` (minigun, defaultweapon) and the 15-id
+  `LETHALS`/`TACTICALS` lists are gone: an offhand's class is its def's `offhandSlot`, and a
+  sniper is the statstable's `weapon_sniper` group (it is a `rifle` to its weapon def), not a
+  `_sniper_` view-model substring. The War Machine (cost -1, a pickup) is no longer converted.
+- **The base kit is one spec** (`weapons::loadout::BASE_KIT`) for `Loadout::default` and
+  `Draft::default` (they were two hand copies). **Finding:** it is the mod's kit, not BO2's — BO2's
+  default class is the Assault premade (`level.defaultclass = "CLASS_ASSAULT"`, `_class.gsc:36`;
+  `reset_classes.cfg`'s `equipdefaultclass 0 class_custom_assault`). Switching to it was tried and
+  reverted: with the SMAW as the base secondary the conformance run loses the pistols' RMR lens
+  reticle material (`view_part_materials`, 39 cells, every pistol `+reflex`) — the texture
+  conversion is order-dependent (the first conversion of a material decides whether it is dropped;
+  `textures::textures`/`Looks::dropped`). Fix that, then point `BASE_KIT` at `classes::BASIC[0]`.
+  Tests that relied on the kit's attachments use `Loadout::test_kit()`/`Draft::test_kit()`.
+- **The lunge** (BO2's melee charge, t6mp `FUN_008dc770`, `FUN_008c3770`, `FUN_008c34f0`): a melee
+  at an enemy in front past `player_meleeRange` (55 in, now also `weapons::MELEE_RANGE`, was the
+  mod's 64) but inside the melee weapon's `meleeChargeRange` charges — the swing takes
+  `iMeleeChargeTime`/`iMeleeChargeDelay`, the General moves at `sqrt(2 x friction x gap)` (capped at
+  `player_meleeChargeMaxSpeed` 800 in/s, decelerating at `player_meleeChargeFriction` 1200) so he
+  stops at the reach, and the strike lands on the locked target. The install's `knife_held_mp`
+  lunges 116 in (1.16 s, 0.1 s delay); `knife_mp`, the melee with a gun up, has no charge range, so
+  only the held knife (and the ballistic knife) lunge.
+- **Grenade bounce** is the weapon def's `parallelBounce`/`perpendicularBounce` per surface (the
+  frag keeps 0.7 along, 0.2 into, every surface); the tuning pack's `ProjectileBounce*` keys are the
+  fallback for a def without the arrays.

@@ -178,6 +178,10 @@ tuning! {
     pen_large_rock: "large_rock" = 12.0, "Penetration depth, inches: a `large` round through rock (`info/bullet_penetration_mp`).";
     pen_large_wood: "large_wood" = 16.0, "Penetration depth, inches: a `large` round through wood (`info/bullet_penetration_mp`).";
     pen_large_water: "large_water" = 72.0, "Penetration depth, inches: a `large` round through water (`info/bullet_penetration_mp`).";
+    // ---- Melee and the knife's lunge (t6mp `FUN_008b7bb0` dvars; `FUN_008c3770`/`FUN_008c34f0` PM charge) ----
+    player_melee_range: "player_meleeRange" = 55.0, "The melee's reach, inches (dvar default); past it, inside the weapon's `meleeChargeRange`, the melee lunges.";
+    player_melee_charge_max_speed: "player_meleeChargeMaxSpeed" = 800.0, "The lunge's top speed, inches/s (dvar default; `FUN_008c34f0` clamps the charge velocity to it).";
+    player_melee_charge_friction: "player_meleeChargeFriction" = 1200.0, "The lunge's deceleration, inches/s^2 (dvar default): it starts at sqrt(2 x friction x distance) so it stops at the reach (`FUN_008c3770`).";
     // ---- Equipment, concussion and EMP (BO2's MP scripts, `gsc-dump/mp/decompiled/t6/maps/mp/`) ----
     scr_weaponobject_radius: "scr_weaponobject_radius" = 192.0, "Claymore: the trigger radius, inches (`gametypes/_weaponobjects.gsc:34` default; the trigger at `:1502`). The weapon's own explosion radius also caps it (`shouldaffectweaponobject`, `:1562-1569`).";
     scr_weaponobject_coneangle: "scr_weaponobject_coneangle" = 70.0, "Claymore: half-angle of its front cone, degrees (`gametypes/_weaponobjects.gsc:31`; `detectiondot = cos(angle)`, `:282`).";
@@ -219,8 +223,8 @@ tuning! {
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";
     building_rate: "BuildingRate" = 1.0, "Build/repair rate multiplier (the mod's value).";
-    projectile_bounce: "ProjectileBounce" = 0.3, "Grenade bounce: share of the speed into the surface kept (the mod's value; BO2's per-surface `perpendicularBounce` is not converted yet).";
-    projectile_bounce_along: "ProjectileBounceAlong" = 0.6, "Grenade bounce: share of the speed along the surface kept (the mod's value; BO2's `parallelBounce`).";
+    projectile_bounce: "ProjectileBounce" = 0.3, "Grenade bounce: share of the speed into the surface kept, where the weapon def has no `perpendicularBounce` cell for the surface (the mod's value).";
+    projectile_bounce_along: "ProjectileBounceAlong" = 0.6, "Grenade bounce: share of the speed along the surface kept, where the def has no `parallelBounce` cell (the mod's value).";
     projectile_rest_speed: "ProjectileRestSpeed" = 3.0, "A bouncing grenade below this speed comes to rest, Zero Hour units/s (the mod's value).";
     equipment_arm_time: "EquipmentArmTime" = 1.0, "Seconds after it is down before equipment does anything (the mod's stand-in for BO2's `waittillnotmoving` plus `activationdelay`).";
 }

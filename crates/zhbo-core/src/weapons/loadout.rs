@@ -103,21 +103,28 @@ impl Loadout {
     }
 }
 
+impl Loadout {
+    /// A test fixture kit with attachments and an alt mode (BO2's premades carry neither): the
+    /// AN-94 with a Reflex sight and a Grenade Launcher, the Tac-45, a frag, a concussion, the
+    /// knife; Lightweight, Fast Hands and Dexterity.
+    #[cfg(test)]
+    pub fn test_kit() -> Loadout {
+        Loadout::unarmed().with_spec(BASE_KIT)
+    }
+}
+
+/// The General's base kit — before a class lands, and what a new custom class starts from
+/// (`classmenu::Draft::default`) — as one spec, the one source of both. It is the mod's kit, not
+/// BO2's: BO2's own default class is the Assault premade (`level.defaultclass = "CLASS_ASSAULT"`,
+/// `_class.gsc:36`; `reset_classes.cfg`'s `equipdefaultclass 0 class_custom_assault`,
+/// [`crate::classes::BASIC`]`[0]`). Switching to it waits on a converter fix: with the SMAW as the
+/// base secondary the pistols' RMR lens reticle drops out of the conversion (MODLOG, code polish 3).
+pub const BASE_KIT: &str = "primary=an94_mp+gl+reflex;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity";
+
 impl Default for Loadout {
-    /// The General's kit: the AN-94 with a Reflex sight and a Grenade Launcher, the Tac-45, a frag,
-    /// a concussion, the knife; Lightweight, Fast Hands and Dexterity. `ZHBO_LOADOUT` changes it (see [`Loadout::with_spec`]).
+    /// The base kit ([`BASE_KIT`]); `ZHBO_LOADOUT` changes it (see [`Loadout::with_spec`]).
     fn default() -> Self {
-        let l = Loadout {
-            primary: "an94_mp+gl+reflex".into(),
-            secondary: "fnp45_mp".into(),
-            lethal: "frag_grenade_mp".into(),
-            tactical: "concussion_grenade_mp".into(),
-            melee: KNIFE_HELD.into(),
-            perks: vec![Perk::LIGHTWEIGHT, Perk::FAST_HANDS, Perk::DEXTERITY],
-            reserve: [None, None],
-            lethal_count: None,
-            tactical_count: None,
-        };
+        let l = Loadout::unarmed().with_spec(BASE_KIT);
         // The loadout spec from the config registry (ZHBO_LOADOUT, read once at init).
         match crate::config::get().loadout.as_deref() {
             Some(spec) => l.with_spec(spec),

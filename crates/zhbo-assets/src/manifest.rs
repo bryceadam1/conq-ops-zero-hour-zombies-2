@@ -5,21 +5,6 @@
 
 use zhbo_core::weapons::{Effect, Kind, Place};
 
-/// Lethal equipment and tactical equipment in BO2's create-a-class (the rest of the offhands and
-/// items are sorted by `OffhandClass`).
-pub const LETHALS: &[&str] = &["frag_grenade_mp", "sticky_grenade_mp", "hatchet_mp", "bouncingbetty_mp", "claymore_mp", "satchel_charge_mp"];
-pub const TACTICALS: &[&str] = &[
-    "concussion_grenade_mp",
-    "flash_grenade_mp",
-    "willy_pete_mp",
-    "emp_grenade_mp",
-    "sensor_grenade_mp",
-    "proximity_grenade_mp",
-    "trophy_system_mp",
-    "tactical_insertion_mp",
-    "pda_hack_mp",
-];
-
 /// What each BO2 weapon is as equipment once down: the weapon table's `Equipment` block, written
 /// here.
 pub fn equipment_kind_of(name: &str) -> Kind {
@@ -60,11 +45,6 @@ pub fn named_effect(name: &str) -> Option<Effect> {
 /// Thrown weapons that stick to what they hit.
 pub const STICKY: &[&str] = &["sticky_grenade_mp", "crossbow_mp", "satchel_charge_mp", "proximity_grenade_mp"];
 
-/// Weapons that exist in BO2's files but the mod never hands out (turrets and killstreak props
-/// are filtered by name patterns). `minigun_mp` is an ordinary gun BO2 never gives in multiplayer;
-/// `defaultweapon_mp` is the weapon pool's default asset (only `patch_mp` defines it, with the frag
-/// grenade's view model and no world model): the stand-in for a missing weapon, not a carryable.
-pub const EXCLUDED_WEAPONS: &[&str] = &["minigun_mp", "defaultweapon_mp"];
 
 /// A few weapons' own display keys have no text; BO2's menus use these instead.
 pub fn display_name_key(key: &str) -> &str {

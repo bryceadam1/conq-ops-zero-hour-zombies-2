@@ -304,10 +304,12 @@ mod tests {
         let sniper = icons[preset_rows()].as_ref().expect("the saved class is on the first custom button");
         assert_eq!(sniper.name, "My Sniper");
         assert_eq!(sniper.primary, "ZHBO_BO2_Icon_dsr50_mp", "the base gun's icon, not the attachment's");
-        assert_eq!(sniper.secondary, "ZHBO_BO2_Icon_fnp45_mp");
-        assert_eq!(sniper.lethal, "ZHBO_BO2_Icon_frag_grenade_mp");
-        assert_eq!(sniper.tactical, "ZHBO_BO2_Icon_concussion_grenade_mp");
-        assert_eq!(sniper.perks, vec![sprites::perk_icon(crate::weapons::Perk::LIGHTWEIGHT), sprites::perk_icon(crate::weapons::Perk::FAST_HANDS), sprites::perk_icon(crate::weapons::Perk::DEXTERITY)]);
+        // The slots the class leaves out are the base kit's (BO2's default class).
+        let base = crate::weapons::Loadout::default();
+        assert_eq!(sniper.secondary, weapon_icon(&base.secondary));
+        assert_eq!(sniper.lethal, weapon_icon(&base.lethal));
+        assert_eq!(sniper.tactical, weapon_icon(&base.tactical));
+        assert_eq!(sniper.perks, base.perks.iter().map(|&p| sprites::perk_icon(p)).collect::<Vec<_>>());
         assert!(icons[preset_rows() + 1..].iter().all(|c| c.is_none()));
         crate::profile::reset();
     }
