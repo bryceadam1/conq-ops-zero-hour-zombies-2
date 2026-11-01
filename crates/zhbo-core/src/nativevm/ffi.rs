@@ -112,7 +112,8 @@ impl State {
         let vmkey = (inp.vm, inp.faction as u8);
         let camo = local_camo(inp.vm);
         let camo_key = camo.as_ref().map_or(0, |c| super::camo::key_of(&c.asset, &c.option));
-        let key = (inp.vm, inp.faction as u8, camo_key);
+        let reticle = super::local_reticle(inp.vm);
+        let key = (inp.vm, inp.faction as u8, camo_key, reticle);
         if inp.vm < 0 || self.failed.contains(&vmkey) {
             return NOT_NATIVE;
         }
@@ -120,7 +121,7 @@ impl State {
             #[cfg(feature = "renderer")]
             self.gpu.release();
             self.loaded = None;
-            match load(&mut self.files, inp.vm, inp.faction as u8, self.overlay_material_override.as_deref(), camo.as_ref().map(|c| (c.asset.as_str(), c.option.as_str()))) {
+            match load(&mut self.files, inp.vm, inp.faction as u8, self.overlay_material_override.as_deref(), camo.as_ref().map(|c| (c.asset.as_str(), c.option.as_str())), reticle) {
                 Err(e) => {
                     self.failed.insert(vmkey);
                     self.log_once(e);

@@ -53,6 +53,7 @@ pub(crate) fn apply(mesh: &mut Mesh, camo: &Camo, option: &str, wears: impl Fn(u
                     if material.color.is_some() {
                         s.color = material.color.clone();
                         s.maps = material.maps.clone();
+                        s.specular = material.specular.clone();
                     }
                     s.blend = material.blend;
                     s.emissive = material.emissive;

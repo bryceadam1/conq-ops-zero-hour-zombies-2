@@ -86,7 +86,16 @@ pub struct Texture {
     pub image: Option<Image>,
 }
 
+/// One of a material's shader constants (`MaterialConstantDef`): the value its techset's shaders
+/// read under that name (`Reticle_Color`, `Color_Map_Scale`, ...).
 #[derive(Clone, Debug, PartialEq)]
+pub struct Constant {
+    /// [`sampler_hash`] of the full name (the record keeps only its first 12 characters).
+    pub name_hash: u32,
+    pub value: [f32; 4],
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
     pub name: String,
     pub textures: Vec<Texture>,
@@ -94,6 +103,10 @@ pub struct Material {
     /// type (`stateBitsEntry`); `None` where the material has no such technique.
     pub state_bits: Vec<Option<[u32; 2]>>,
     pub sort_key: u8,
+    /// The technique set's name (`mc_sw4_3d_reticle_dynamic_...`; a leading `,` marks a reference
+    /// and is dropped): which shaders draw the material.
+    pub techset: String,
+    pub constants: Vec<Constant>,
 }
 
 impl Material {
@@ -108,6 +121,11 @@ impl Material {
     pub fn sampler(&self, name: &str) -> Option<&Image> {
         let h = sampler_hash(name);
         self.textures.iter().filter(|t| t.name_hash == h).find_map(|t| t.image.as_ref())
+    }
+    /// The value of the shader constant `name` (`Reticle_Color`), matched by name hash.
+    pub fn constant(&self, name: &str) -> Option<[f32; 4]> {
+        let h = sampler_hash(name);
+        self.constants.iter().find(|c| c.name_hash == h).map(|c| c.value)
     }
     pub fn image(&self, semantic: u8) -> Option<&Image> {
         self.textures.iter().filter(|t| t.semantic == semantic).find_map(|t| t.image.as_ref())
@@ -131,11 +149,13 @@ impl Material {
     }
 }
 
-/// The hash BO2 stores in `MaterialTextureDef::nameHash` for a sampler name: `h = 33·h ^ c` over
-/// the lower-cased name from 0 (`R_HashString`). Checked against the install: an ordinary gun
+/// The hash BO2 stores in `MaterialTextureDef::nameHash` for a sampler name (and in
+/// `MaterialConstantDef::nameHash` for a constant): `h = 33·h ^ (c | 0x20)` from 0 (`R_HashString`). Checked against the install: an ordinary gun
 /// material's `colorMap` and the style camos' `_col` both carry `0xa0ab1041`.
 pub fn sampler_hash(name: &str) -> u32 {
-    name.bytes().fold(0u32, |h, c| h.wrapping_mul(33) ^ c.to_ascii_lowercase() as u32)
+    // BO2 folds case with `c | 0x20`, not a true lowercase: `_` hashes as 0x7f (checked against
+    // `Color_Map` 0xb607c0fe and `Reticle_Color` 0x29cdfd82 on the reticle materials).
+    name.bytes().fold(0u32, |h, c| h.wrapping_mul(33) ^ (c | 0x20) as u32)
 }
 
 /// Which of a surface's faces draw (`GfxStateBits::loadBits[0]` bits 14-15: BO2's
@@ -466,7 +486,22 @@ pub fn read_material(z: &Zone, m: u32) -> Material {
             (states != 0 && i < state_count).then(|| [z.u32(states + 20 * i), z.u32(states + 20 * i + 4)])
         })
         .collect();
-    Material { name, textures, state_bits, sort_key: z.u8(m + 9) }
+    let techset = match z.u32(m + 92) {
+        0 => String::new(),
+        t => z.str_ptr(t).trim_start_matches(',').to_string(),
+    };
+    let (ccount, ctable) = (z.u8(m + 85) as u32, z.u32(m + 100));
+    let constants = if ctable == 0 {
+        Vec::new()
+    } else {
+        (0..ccount)
+            .map(|c| {
+                let d = ctable + 32 * c;
+                Constant { name_hash: z.u32(d), value: [z.f32(d + 16), z.f32(d + 20), z.f32(d + 24), z.f32(d + 28)] }
+            })
+            .collect()
+    };
+    Material { name, textures, state_bits, sort_key: z.u8(m + 9), techset, constants }
 }
 
 /// Read the `GfxImage` at `g`.
@@ -607,6 +642,11 @@ mod tests {
         assert_eq!(sampler_hash("colorMap"), 0xa0ab_1041);
         assert_eq!(sampler_hash("SpecularAndGloss"), 0x8c29_7e80);
         assert_eq!(sampler_hash("specularMap"), 0x34ec_ccb3);
+        // `_` folds to 0x7f, not itself: the reticle shaders' sampler and constant names.
+        assert_eq!(sampler_hash("Color_Map"), 0xb607_c0fe);
+        assert_eq!(sampler_hash("Detail_Map"), 0x55a0_4772);
+        assert_eq!(sampler_hash("Reticle_Color"), 0x29cd_fd82);
+        assert_eq!(sampler_hash("Color_Map_Scale"), 0xee77_5239);
     }
 
     #[test]

@@ -97,7 +97,9 @@ pub(super) fn project(client: &Client, w: f32, h: f32, at: Vec3) -> Option<(f32,
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_marks(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, sim: &Sim, p: &PlayerSim) {
     let def = p.arsenal.current().def;
-    let finder = def.target_finder && p.arsenal.ads > 0.6;
+    // The lens draws the target finder's own diamonds (BO2's display, `sim::optics`) when the
+    // native viewmodel drew its reticle; the W3D fallback keeps these.
+    let finder = def.target_finder && p.arsenal.ads > 0.6 && !crate::nativevm::lens_reticle_drawn();
     let engineer = p.arsenal.has(crate::weapons::Perk::ENGINEER);
     if !finder && !engineer {
         return;

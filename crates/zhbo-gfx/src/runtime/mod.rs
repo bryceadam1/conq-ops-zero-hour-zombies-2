@@ -13,7 +13,7 @@ mod frame;
 pub mod math;
 mod native;
 
-pub use native::{NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, NATIVE_MAX_BONES, NATIVE_MAX_LIGHTS};
+pub use native::{NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, NATIVE_MAX_BLIPS, NATIVE_MAX_BONES, NATIVE_MAX_LIGHTS};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -545,6 +545,8 @@ pub(crate) struct Resources {
     layout_ids: HashMap<VertexLayout, u16>,
     /// Formats probed for use as render targets (see `renderable`).
     renderable: HashMap<wgpu::TextureFormat, bool>,
+    /// Multisampled depth formats (and counts) that can also be sampled.
+    msaa_depth_sampleable: HashMap<(wgpu::TextureFormat, u32), bool>,
 }
 
 impl Resources {
@@ -563,6 +565,7 @@ impl Resources {
             layouts: Vec::new(),
             layout_ids: HashMap::new(),
             renderable: HashMap::new(),
+            msaa_depth_sampleable: HashMap::new(),
         }
     }
 }
@@ -1197,6 +1200,13 @@ impl Renderer {
         };
         // Depth targets cannot be resolved, so an MSAA depth target is itself multisampled.
         let depth_msaa = plan.format.is_depth_stencil_format() && samples > 1;
+        // A multisampled depth is bound as a texture only by the native pass's MMS screen (its
+        // scene-depth resolve), where the device allows it.
+        let depth_msaa_usage = if depth_msaa && self.msaa_depth_sampleable(base_format, samples) {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+        };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d { width, height, depth_or_array_layers: layers },
@@ -1204,7 +1214,7 @@ impl Renderer {
             sample_count: if depth_msaa { samples } else { 1 },
             dimension: wgpu::TextureDimension::D2,
             format: base_format,
-            usage: if depth_msaa { wgpu::TextureUsages::RENDER_ATTACHMENT } else { usage },
+            usage: if depth_msaa { depth_msaa_usage } else { usage },
             view_formats: &view_formats,
         });
         let msaa = (samples > 1 && !depth_msaa).then(|| {
@@ -1259,6 +1269,28 @@ impl Renderer {
     /// Whether `format` can be a render target on this device. Format tables and downlevel
     /// rules differ per backend (R32F is not renderable on GL ES-class devices), so ask the device:
     /// create a tiny target inside a validation error scope, once per format.
+    /// Whether a multisampled depth texture of `format` can also be bound for sampling (probed once
+    /// per format and count inside an error scope, like [`Self::renderable`]).
+    fn msaa_depth_sampleable(&mut self, format: wgpu::TextureFormat, samples: u32) -> bool {
+        if let Some(&ok) = self.res.msaa_depth_sampleable.get(&(format, samples)) {
+            return ok;
+        }
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let _probe = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa depth probe"),
+            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let ok = block_on(scope.pop()).is_none();
+        self.res.msaa_depth_sampleable.insert((format, samples), ok);
+        ok
+    }
+
     fn renderable(&mut self, format: wgpu::TextureFormat) -> bool {
         if let Some(&ok) = self.res.renderable.get(&format) {
             return ok;

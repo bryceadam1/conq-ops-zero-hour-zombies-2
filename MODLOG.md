@@ -5806,3 +5806,270 @@ Tests: `ipak::tests` (synthetic pack: field order, two images sharing a data has
 `r_hash_string`); install-gated `paks::tests::an_images_pack_entry_is_its_stream_hash_and_name_hash`
 (the XPR-50 overlay's GfxImage key is its patch_mp.ipak entry; base.ipak holds the older revision
 under the same name hash). No `hud::VERSION` bump needed (archive bytes unchanged).
+
+## The specular colour: metals reflect in their spec map's hue (2026-10-30, branch `v1/spec-colour`)
+
+Stacked on `v1/camo-art-tail`. The camo art tail left gold drawing as dark polished metal: its
+`colorMap` is a flat (21,20,13) and its whole gold hue is the `SpecularAndGloss` map (mean
+158,135,83), while the native pass read the spec map only as a luminance level (`maps.a`, f0 =
+level²). This is not a gold special case: BO2's spec maps are colour maps (`*_spc-rgb` in the image
+names). A probe over the 201 distinct spec maps `common_mp`'s materials bind (`specularMap`/
+`SpecularAndGloss` sampler, else semantic 8): 122 have a mean chroma (max−min of RGB) above 4 —
+dogtags, the red tritium vials (160,20,20), bullet brass (148,130,65), lens coatings, the gold and
+diamond_alt camos — and only 15 are grey within 1. The probe was a throwaway ignored test; the
+numbers are in `~/.opencode/plan/spec-colour/PLAN.md`.
+
+* **Data.** `zhbo_native::model::Material` appends `specular`: `*_spec.tga`, the spec map's RGB at
+  its own size (shrunk to the cap), raw, alpha opaque (`textures::specular_color`). Written for every
+  opaque surface with a spec map, by the model texture pipeline and by the camo style art (gold's
+  `SpecularAndGloss`). The suffix is `_spec`, not `_spc`, so no converted file looks like a BO2 spec
+  image (the camo install test forbids any `camo_code_spc` file). The packed `_nsg` maps keep the
+  level for draws without the colour.
+* **Core.** `SurfaceSpec::specular`; `nativevm::camo::apply` swaps it with the style's colour/maps;
+  `nativevm::gpu` and `nativebody::gpu` upload it raw (display-space shading, like `maps`).
+* **Shader.** `NativeSurface.specular` → binding 5 (1×1 white when absent), the material uniform
+  grows to 48 bytes (`spec.x` flags the map; only with packed maps, whose gloss it needs). f0 becomes
+  a colour, `spec.rgb²` — the same square the level used — and feeds the highlight's Fresnel, the
+  environment reflection and the diffuse split `(1 − f0)`. A grey spec map draws exactly as its
+  level (headless pin `a_coloured_spec_map_tints_the_metal`: level-only RGB 35/34/28, gold spec
+  40/34/18, grey spec == level). No art-direction constant: the hue and its strength are the map's.
+* **Not used:** `shaderConsts [10,10,0.46,0.53,…]` stay uninterpreted. The compiled techniques name
+  `Specular_Amount`/`Reflection_Amount` constants (shader strings, `common_mp`), which these may be;
+  decoding them needs the DXBC (not done; no tint was invented in their place).
+
+Sweep (`render_viewmodels --no-attachments --camo …` on an94/mp7/scar against item 15's
+`sweep-after`, same base code; `~/.opencode/plan/spec-colour/strip_*.png`): gold changes 3.3–5.1 % of
+the frame, its changed pixels' mean going from grey (61,64,66) to gold (75,63,38) on the an94;
+diamond warms the same way (its `_alt` spec map is gold-tinted 134,120,84); carbon/multicam move
+≤0.5 % (stock brass and lens surfaces now take their tint).
+
+**Versions (integrator-owned, NOT bumped):** `zhbo_native::model::VERSION` 3→4 and
+`zhbo_native::camo::VERSION` 1→2 (the shared material record appends an `opt_str`; an old blob read
+by new code fails or misparses — the bump is required), and the archive `hud::VERSION` (new
+`_spec.tga` files in every model's textures; the archive grew 0.90 → 1.01 GB). No C ABI change:
+`NativeSurface` is Rust-only.
+
+## The alt-fire slot draws BO2's `dpadIcon`; the smoke grenade's icon (2026-10-31, branch `v1/art-columns`)
+
+Stacked on `v1/spec-colour`. The ammo area's alt-fire slot drew `ZHBO_BO2_Icon_<alt id>`, a sprite
+that never existed (the alt id is `gl_an94_mp~an94_mp+gl`), so only the key prompt showed — and it
+showed for a second optic too. BO2's slot (action slot 3, `ammoarea.lua` `altFireImage`, 64×64 at
+`Right - 118`) is built by `t6mp` `FUN_0094f7a0` (`actionSlotData`): slot type 2 appears only when
+the held weapon is an alt mode (inventory 3) or has an alt weapon (`FUN_008ec9e0`), and only with a
+material, `FUN_008ed6e0`: the variant's own `dpadIcon` (`+0x25c`, layouts `WV::dpadIcon` = 604),
+else the first attachment's alt weapon's. So a launcher shows `hud_gl_select` (a little launcher)
+in both modes, select fire `hud_select_fire_bullet_stack` (the selector switch), and a hybrid optic
+has no `dpadIcon` — no slot, no key.
+
+* **Data.** `WeaponDef.dpad_icon` (table key `DpadIcon`, appended; unknown keys are skipped, so old
+  tables still parse) = the variant's `dpadIcon`. `zhbo_formats::weapon::Weapon.dpad_icon_hash`: the
+  inline material's streamed image, like `hud_icon_hash` — `hud_gl_select` has no standalone asset
+  in any MP zone, so the name search cannot find it.
+* **Converter.** One `ZHBO_Mat_<dpadIcon>` sprite per distinct `dpadIcon` of the player weapons and
+  the `ALTMODE` variants (`hud::dpad_icons`, 128 px; 8 on the stock install). The name search
+  (`Source::Dynamic`) also reads `code_post_gfx` last: the smoke grenade's `hud_willy_pete` loads
+  only there (common_mp's inline copy has no image), so `ZHBO_BO2_Icon_willy_pete_mp` — the
+  tactical counter's icon — converts now; it was the last missing weapon icon.
+* **HUD.** `hud::ammo::alt_slot_icon` is BO2's rule; `draw_alt_fire` draws `ZHBO_Mat_<icon>`.
+* **Conformance.** `dpad_icon` is emitted from the def when its sprite shipped: 1573 → 0 rows.
+  `hud_icon` 1422 → 1421 (willy_pete). The remaining 1421 are the alt modes (`dualoptic_*`, `sf_*`):
+  BO2's LUI reads `hudIcon` only for the lethal/tactical counters (`FUN_0094f520`,
+  `hud_update_offhand`), and no mod screen draws an alt mode's icon, so the mod ships none — left
+  open rather than shipping an undrawn sprite.
+
+`view_part_materials` (9,331 rows) has no material-assignment cause on this base. Every row with a
+manifest lacks `mc/mtl_clan_tag` + `mc/mtl_player_icon` (and the optic's `*_reticle*`): the
+surfaces `textures::textures` leaves out on purpose (BO2 fills the tag/emblem from the player's own
+at run time; the reticle is projected to infinity and the HUD draws it on the line of sight).
+Removing those, no row differs by order, camo variant or `_glo`; the rest are part counts (the
+duplicate magazine part on an94/hamr, the `_dw` guns' extra `_lh` part, the `ir`+`vzoom` dualband
+parts) and the 651 combos without a manifest. Closing the column needs a reticle surface pass and
+a clan tag/emblem — renderer features, not a converter fix.
+
+**Versions (integrator-owned, NOT bumped):** the archive's `hud::VERSION` (new sprites, a new
+weapon-table key). No C ABI change.
+
+## The optic reticle on the lens, projected to infinity (2026-10-31, branch `v1/lens-reticle`)
+
+Stacked on `v1/art-columns`. `view_part_materials` differed on every manifested row because
+`textures.rs` dropped three surface kinds BO2 fills at draw time — the optic reticle, the clan tag
+(`mc/mtl_clan_tag`) and the emblem (`mc/mtl_player_icon`) — and the HUD drew a 2D reticle on the
+line of sight instead. The native pass now draws them; the W3D path still leaves them out (no
+shader). All three are recognised by their **technique set** (`Material::techset`, now read with
+the material's constants), never by name.
+
+* **BO2's reticle technique, from its DXBC.** `mc/mtl_t6_attach_optic_*_reticle*` use
+  `mc_sw4_3d_reticle_dynamic` (technique 3: `pimp_shader_sw4_3d_reticle_dynamic_9b0c84e4` VS,
+  `_1f5ed1d` PS; dumped with a throwaway SM4 disassembler, `~/.opencode/plan/lens-reticle/tools`).
+  The VS: `uv = 0.5 + Color_Map_Scale · (dot(T, v), −dot(B, v))` with `v` the normalized
+  view-space position (eye→vertex) and `B = cross(N, T) · sign` — the reticle depends on direction
+  only, so it sits at infinity on the lens normal (parallax-free). The PS: `Color_Map` at that UV
+  (sampler state clamps U/V), red × `Reticle_Color` × `(1 − Color_Map_Noise · noise)` + green ^
+  `Glow_Falloff` × `Glow_Color` × noise (`Detail_Map` at the mesh UV × `Noise_Scale`), × 
+  `Emissive_Amount`; alpha blue × `Background`; squared, × `(1 − weaponParam0.y) ·
+  saturate(2 · weaponParam0.w)` × `hdrControl0.x`, then `sqrt`. Blend `ONE, INV_SRC_ALPHA`
+  (bits 0x19288962). `weaponParam0` is written by `t6mp` `FUN_00529dd0` (x, y via `FUN_0042ac00`
+  = the `FUN_0051f0a0` flag, w via `FUN_0042ac60` = `playerState + 0x1e0` from `FUN_00536f30`,
+  the ADS fraction): the reticle fades in over the first half of the aim. Ported as
+  `native.wgsl` `fs_reticle` (tangent frame from derivatives; RENDERER.md "The lens reticle").
+* **Gotcha: BO2's name hash folds case with `c | 0x20`.** `sampler_hash` used
+  `to_ascii_lowercase`, identical for letters but not for `_` (0x5f → 0x7f): `Color_Map` is
+  0xb607c0fe, `Reticle_Color` 0x29cdfd82. The old names (`colorMap`, `SpecularAndGloss`) hash the
+  same either way. The 12-byte `MaterialConstantDef::name` is truncated; match by hash.
+* **Gotcha: `common_mp`'s optic materials reference the noise image as a 0 × 0 stub** (no stream
+  hash); `code_post_gfx_mp` loads it in full. `Paks::learn` records a zone's streamed images by
+  name and `Paks::resolve` falls back to it.
+* **The CaC reticle option.** `mp/weaponoptions.csv` (`patch_mp`) is BO2's table: `FUN_00529360`
+  fills one table per optic column (column 3; column 5 for the reflex's RMR), row 0 the model's
+  stock material, row `n` option `n`'s. Converted to `Art\Native\reticles.zbr` (new
+  `zhbo_native::reticles`); the core swaps the lens surface by the class's row (`reticle_N` → row
+  `N + 1`, the CaC grid's `_reticle_0{N+1}` art, `cacreticles.lua:1150-1240`, as the HUD maps
+  it). **The reticle colour option has no render effect found:** the table has no colour column
+  and the shader reads no code constant besides `weaponParam0`/`hdrControl0`; each reticle's
+  colour is its own material's.
+* **The clan tag with no tag.** Its PS picks four glyphs from the font atlas, one per quarter of U,
+  by `weaponParam1.xyzw`; `FUN_0052a010` writes 0 for each when the player has no tag (flag 0x2000
+  clear). Baked at conversion: the atlas's first `Char_Size` cell four times across — alpha 0 on
+  the install, so nothing shows, as in BO2.
+* **The emblem** draws its material's own `emblem_clear` (transparent; BO2's look without an
+  emblem, flag 0x4000 clear). **Not done:** the faction-emblem swap (`Material::emblem` marks the
+  surface). Zero Hour's `USA_Logo`/`China_Logo`/`GLA_Logo` are 48×48 `MappedImage`s in
+  `SCShellUserInterface512.INI` on `Data\English\Art\Textures\SCShellUserInterface512_006.tga`
+  (`EnglishZH.big`): the core would need the bridge to resolve the localized page.
+* **The HUD.** `draw_crosshair` leaves its 2D optic reticle out while the native viewmodel drew a
+  lens reticle last frame (`nativevm::lens_reticle_drawn`, thread-local); the W3D fallback keeps it.
+* **Not ported:** `reticle_static` (MMS: mesh UV, screen-space noise), `reticle_ui3d` and
+  `reticle_dynamic_2colors` (the dual band's code-driven display) — still left out of both paths.
+
+Sweep (`render_viewmodels`, an94 + mp7, base `ba0918a` vs this branch, both converting every job;
+`~/.opencode/plan/lens-reticle/sweep-{before,after}`): only the aimed halves of the four lens
+optics change (an94: reflex 32 px, ACOG 22, holo 567, dual optic 49); every hip half and every
+other attachment is pixel-identical (the clan tag and emblem draw transparent). The dot sits on the
+frame centre; the dual optic's horseshoe reads upright, as its image. Conformance:
+`view_part_materials` 9,331 → 3,199 rows (the rest: the rangefinder/MMS reticles above, part
+counts, the 651 manifest-less combos); weapons cells 699,074 → 692,942; no other column moved;
+gap clusters 213 → 213.
+
+**Versions (integrator-owned, NOT bumped):** `zhbo_native::model::VERSION` and
+`zhbo_native::camo::VERSION` (the shared material record appends `reticle` and `emblem`), the
+archive's `hud::VERSION` (new textures and `reticles.zbr`). `reticles.zbr` is new at v1. No C ABI
+change (`NativeSurface`/`NativeFrame` are Rust-only; `ZhboNativeIn` is unchanged).
+
+**Follow-up (same branch): the other reticle techniques.** Ported from their DXBC as
+`NativeReticleKind`s of `fs_reticle` (RENDERER.md "The lens reticle"): `reticle_dynamic_2colors`
+(the dual band's `rangefinder_reticle2`; the dynamic VS, a PS that lerps its colours to
+`Reticle_Alt_Color`/`Glow_Alt_Color` by `weaponParam0.z` and has **no** aim fade — the `t6mp`
+dvars registered beside it, `FUN_004cc260`, describe the alt colour as the range finder's
+"enemy spotted" colour), `reticle_static` (the MMS: VS `reticle_ui3d_b51cfb3a` passes the mesh
+UV; PS samples the image there, the noise at `SV_Position / renderTargetSize · Noise_Scale`, no
+aim fade) and `reticle_ui3d` (the dual band's `rangefinder_reticle`: no image of its own — it
+samples `ui3dSampler`, the code's UI render target, at `uv · ui3dUVSetup5.xy + .zw`, R/B two shapes,
+G/A two glows, alpha 1, blend `ONE, ONE`). The mod draws no rangefinder display and detects no
+one, so the ui3d reticle binds black and adds nothing and the two-colour one keeps its primary
+colours — BO2's empty / nobody-spotted states. Gotcha: `reticle_dynamic_2colors_…` also starts
+`reticle_dynamic_`; the technique match takes the most specific prefix. Not this item: the MMS's
+screen (`mc/mtl_t6_attach_optic_mms_display`, the `sw4_3d_sonar_attachment_lens2` technique: a
+depth-pulse scanner) draws as a plain additive noise texture and washes the MMS lens white in the
+sweep; it needs its own port.
+
+**Follow-up: the faction emblem** is converted from the player's Zero Hour install (CONTRACT.md):
+`MappedImage <Side>_Logo` in `Data\INI\MappedImages\TextureSize_512\SCShellUserInterface512.INI`,
+48 × 48 on `Data\English\Art\Textures\SCShellUserInterface512_006.tga` (`EnglishZH.big`).
+
+**Follow-up: the EMP.** BO2 hides the reticle while the player is EMP'd (`weaponParam0.y`, the
+`FUN_0051f0a0` player-state flag). The sim's EMP grenade (`projectiles.rs`, `Effect::Emp`) is
+Zero Hour's: it disables non-infantry objects only (`host.disable(.., disable_kind::EMP, ..)`
+skips anything with `objflags::INFANTRY`), so the General is never EMP'd and has no such state.
+`NativeFrame.optics_off` stays plumbed at 0; a player-side EMP effect would drive it.
+
+## The optic displays: the MMS screen, the target finder's spotting and diamonds (2026-10-31, branch `v1/optic-displays`)
+
+Stacked on `v1/lens-reticle`. Three lens displays BO2 drives from code, now driven by the sim and
+drawn by the native pass. Research dumps: `~/.opencode/plan/optic-displays/` (`x1.c`, `x2.c`,
+`x3.c`, the DXBC listings `sonar_attachment_lens2_*.txt`).
+
+* **The MMS screen** (`mc/mtl_t6_attach_optic_mms_display`, `sw4_3d_sonar_attachment_lens2`) drew
+  as plain additive noise and washed the lens white. Ported from its DXBC as `native.wgsl`
+  `fs_sonar` (RENDERER.md "The MMS screen"): it is **screen space** — at its pixel it reads the
+  scene's view depth (BO2's `floatZ`) for outlines and a pulse ring sweeping out from the eye, and
+  BO2's sonar render target (`sonarColor`/`sonarDepth`, the characters drawn with
+  `mc/sonar_attachment_character` by `R_AddDObjSurfacesCamera sonar`, mapped by `weaponParam4`) for
+  the characters, shown **only where they stand ≥ 10" behind the scene** — through walls; a
+  character in plain view is on the scene's own depth and stays off the scanner. The mod has no
+  per-character render target: each character is a capsule the pixel's ray is tested against
+  (`NativeOptics::blips`, the closest faithful version; BO2's silhouette becomes a capsule). The
+  scene's depth is the target view's depth attachment resolved into an `R32Float` before the pass.
+* **Who is on the scanner** (`t6mp` `FUN_004e7b40`, run per character per frame; the dvars from
+  `FUN_004cc260`, now `[Optics]` in the tuning pack): teammates hidden; a character's visibility
+  (its `weaponParam0.x` on the sonar pass) is `1 −` the mean of `speed / (MaxSpeed 2.2 +
+  DistanceFactor 3 · (1 − d / mmsMaxDist))` over `SpeedDelay` 0.8 s, floored at `SpeedTimeRatio` 0;
+  beyond `mmsMaxDist` a sample counts as full speed. **Gotcha: the speeds are per 60 Hz frame** —
+  the ring holds `SpeedDelay × 60` samples (`FMUL [0x00b128e4]` = 60 before `ftol`); the 30 Hz sim
+  converts. Stationary enemies show, runners fade (BO2's own description: "lingering heat
+  signatures from stationary enemies … up to 25 meters"). `sim::optics`, deterministic, per
+  `PlayerSim`.
+* **`mmsWeapon` is weapon data.** `WeaponDef.mms`/`mms_max_dist` (table field `Mms`) from the
+  variant and the attachment (`WeaponAttachment::mmsWeapon`/`mmsMaxDist`), OR'd as BO2's
+  `FUN_008ebce0`. Conformance `mms_weapon` 9,341 → 117 rows: the rest are the select-fire alt
+  rows (`sf_*` with `mms`), where BO2's alt variant carries no attachments while the mod's alt
+  keeps the weapon's others (`weapons.rs` "Select fire and the second optic keep the weapon's
+  other attachments") — the same class as the alt rows' `silenced` diff; a separate item.
+* **"Enemy spotted"** (`weaponParam0.z`) — the writer is `FUN_00529d80`, not `FUN_00529dd0`:
+  `z = FUN_00525ad0` = spotted (`cg+0x8442c`) ∧ range ≠ −1 ∧ active (`0x84434`) ∧ now > since
+  (`0x84430`), all set by `FUN_00528ec0`: weapon flag `0x13`, **only at ADS == 1.0**, a trace 8192"
+  along the view; an enemy-team player (not `specialty_immunerangefinder`) under the crosshair is
+  spotted, the range kept in feet (`/12`), `cg_rangeFinderMinEnemySpottingDist` −1 (no limit). The
+  sim's trace (`hitscan::trace`) drives `NativeFrame.reticle_alt`; the colour turns the tick after.
+* **Naming: the `rangefinder` attachment is BO2's Target Finder**, not the dual band (`ir`); the
+  lens-reticle entry's "dual band" for `rangefinder_reticle`/`reticle2` meant this optic.
+* **The ui3d display** (`FUN_00526780`, drawn into ui3d window 5 only above 0.99 ADS): 6 (idle) or
+  10 (spotted) sprites from `mtl_t6_attach_optic_rangefinder_ui3d_background`'s 256×128 atlas
+  (a constant table in code: `x, y, w, h, s, t, ds, dt, rotation`, window 512 × 85 units), then a
+  diamond (`cg_rangeFinderDiamondSize` 50, atlas UV 0.414–0.676 × 0.273–0.797) on every enemy
+  player at 70 − 25 = 45" above his feet standing (30 crouched, 11 prone), where the eye's ray to
+  it crosses the `tag_hud` plane. **No range digits are drawn in MP** (the dvars' "display digits"
+  have no writer besides the spotting state). Ported: the diamonds, analytically — an outline in
+  the alt shape/glow channels at the lens UV where the eye's ray crosses the lens; the sim lists
+  the marks. **Not ported:** the atlas (its sprite and the static frame sprites).
+* The HUD's 2D target-finder diamonds give way while the native lens draws them (W3D fallback
+  keeps them).
+
+Sweep (`render_viewmodels --weapon an94_mp`, `ZHBO_SWEEP_CONVERT_ALL=1`; vs
+`lens-reticle/sweep-after2`, `~/.opencode/plan/optic-displays/sweep`): only `att_mms` changes
+from this work (aimed half 13,501 px: the white wash is gone, the screen shows its reticle over
+the see-through display — the sweep has no scene depth and no characters); every other image's
+1,016 hip pixels are the faction emblem, which this run's archive lacks. Conformance (vs
+`lens-reticle/conf2`): weapons cells 691,106 → 681,882 (`mms_weapon` 9,341 → 117), no other
+column moved, gap clusters 213 → 213.
+
+**Versions (integrator-owned, NOT bumped):** `zhbo_native::model::VERSION` and
+`zhbo_native::camo::VERSION` (the material record appends `sonar`; an old archive's blobs now read
+as corrupt), the weapon table gains `Mms` fields (the archive's `hud::VERSION`). No C ABI change.
+
+**Follow-up: the target finder's frame, from BO2's data.** `zhbo_assets::rangefinder` converts
+the display `FUN_00526780` draws: the atlas `mtl_t6_attach_optic_rangefinder_ui3d_background`
+(`code_post_gfx_mp`, 256×128, its image `mtl_t6_attach_rfo_reticle`) and the sprite tables. **The
+tables are not in `.rdata` as a table**: the function builds them on the stack (`local_260`, six
+quads idle; `local_188`, ten spotted) from scattered float constants (`0x00b26e54` = 230, …), so
+the converter keeps, per slot, the address the code loads (cited from the decompile; `None` a
+literal 0) and **reads the values from the player's own `t6mp.exe`** — its `.rdata` is not
+SteamStub-encrypted (byte-identical to the unpacked reference). Each quad is `x, y, w, h, s, t, ds,
+dt, rotation` (window units of 512, atlas texels at 1/256 × 1/128, degrees; a turned quad rotates
+its texel rectangle about its centre, as the code builds the vertices); the converter bakes the two
+sets into 512² frames with the atlas material's blend. The data settles the colours: the idle
+sprites are in the atlas's red (the ui3d reticle's primary, blue-white) and the spotted ones —
+the centre, the label, the brackets and four inward arrows — and the diamond in its blue (alt,
+red), with glows in alpha. The renderer draws the atlas's diamond (`0x00b26e2c`..`38`,
+`cg_rangeFinderDiamondSize` 50 × `0x00c735e0`) per mark; the analytic outline is gone.
+`Art\Native\rangefinder.zrd` is new at v1.
+
+**Follow-up: the target finder is attachment kind 0x13, not a name.** `FUN_008eb270(weapon, k)`
+(what `FUN_00528ec0`/`FUN_00526780` call with `0x13`) is true when the weapon index's packed
+combo kinds (bits 8–13, 14–19, 20–25) hold `k`, or a variant whose attachment table's first slot is
+empty allows `k` in `iAttachments`. `AttachmentDef.kind` (table field `Kind`) now carries BO2's
+`attachmentType` and `attachments::apply` sets `target_finder` for kind `TARGET_FINDER_KIND`
+(0x13) — the short-name match is gone. The variant-mask path is not ported (no shipped variant
+was found to need it). Pinned on the install (`the_installs_target_finder_is_kind_0x13`: only
+`rangefinder` has the kind). Sweep (`ZHBO_SWEEP_MARKS=1`, an94+rangefinder aimed): the spotted
+frame's brackets, arrows and label and two diamonds, red, on the lens. Conformance unchanged by
+both follow-ups (weapons 681,882 cells, gap clusters 213).

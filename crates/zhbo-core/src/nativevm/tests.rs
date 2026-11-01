@@ -98,7 +98,7 @@ fn each_part_wears_its_own_camo_asset() {
     let mut files = Files::default();
     let mut loaded = None;
     for _ in 0..8 {
-        if let Some(l) = load(&mut files, 7, b'U', None, Some(("camo_gun", "camo_atacs"))).unwrap() {
+        if let Some(l) = load(&mut files, 7, b'U', None, Some(("camo_gun", "camo_atacs")), 0).unwrap() {
             loaded = Some(l);
             break;
         }
@@ -162,6 +162,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
             name: "mc/mtl_weapon_camo_gold".into(),
             color: Some("Art\\Textures\\gold.tga".into()),
             maps: Some("Art\\Textures\\gold_nsg.tga".into()),
+            specular: Some("Art\\Textures\\gold_spec.tga".into()),
             ..Default::default()
         }],
         options: vec![
@@ -186,6 +187,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
     super::camo::apply(&mut m, &blob, "camo_gold", |_| true);
     assert_eq!(m.surfaces[0].color.as_deref(), Some("Art\\Textures\\gold.tga"));
     assert_eq!(m.surfaces[0].maps.as_deref(), Some("Art\\Textures\\gold_nsg.tga"));
+    assert_eq!(m.surfaces[0].specular.as_deref(), Some("Art\\Textures\\gold_spec.tga"), "gold's hue is its spec colour");
     assert_eq!(m.surfaces[0].camo, None);
     assert_eq!(m.surfaces[1].color, before);
     assert_eq!(m.surfaces[2].camo, None);
@@ -348,7 +350,7 @@ fn the_ads_slot_follows_the_alt_mode_table() {
         ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_UP) as u16, alt_up.clone()),
         ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_DOWN) as u16, alt_down.clone()),
     ];
-    let loaded = |clips: Vec<(u16, String)>| Loaded { key: (7, b'U', 0), camo: None, manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips }, skeleton: Skeleton::default(), mesh: Mesh::default(), mesh_aimed: None, overlay_art_present: false, aim: None, anims: HashMap::new() };
+    let loaded = |clips: Vec<(u16, String)>| Loaded { key: (7, b'U', 0, 0), camo: None, manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips }, skeleton: Skeleton::default(), mesh: Mesh::default(), mesh_aimed: None, overlay_art_present: false, aim: None, anims: HashMap::new() };
     let l = loaded(clips);
     assert_eq!(l.ads_clip(1, false), Some(up.as_str()));
     assert_eq!(l.ads_clip(1, true), Some(down.as_str()));
@@ -1048,13 +1050,13 @@ fn diag_real_maps() {
         let v = |x: f32, y: f32, u: f32, w: f32| NativeVertex { position: [x, y, 0.0], normal: [0.0, 0.0, -1.0], uv: [u, w], bones: [0; 4], weights: [1.0, 0.0, 0.0, 0.0] };
         let verts = [v(0.0, 0.0, 0.0, 0.0), v(0.0, 64.0, 0.0, 1.0), v(64.0, 64.0, 1.0, 1.0), v(64.0, 0.0, 1.0, 0.0)];
         for (maps, label) in [(INVALID, "no maps"), (m, "maps")] {
-            let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[NativeSurface { first_index: 0, index_count: 6, blend: NativeBlend::Opaque, emissive: false, color: c, maps, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None }]);
+            let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[NativeSurface { first_index: 0, index_count: 6, blend: NativeBlend::Opaque, emissive: false, color: c, maps, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None }]);
             let mut ortho = [0.0f32; 16];
             ortho[0] = 2.0 / 64.0; ortho[5] = -2.0 / 64.0; ortho[12] = -1.0; ortho[13] = 1.0; ortho[14] = 0.5; ortho[15] = 1.0;
             let mut lights = [NativeLight::default(); 3];
             lights[0] = NativeLight { direction: [0.81, -0.38, 0.45], color: [1.0, 1.0, 1.0] };
             lights[1] = NativeLight { direction: [-0.79, -0.62, 0.0], color: [0.24, 0.24, 0.31] };
-            let f = NativeFrame { view_proj: Some(ortho), eye: [32.0, 32.0, -100.0], ambient: [0.22, 0.2, 0.17], lights, light_count: 2, debug: 0.0 };
+            let f = NativeFrame { view_proj: Some(ortho), eye: [32.0, 32.0, -100.0], ambient: [0.22, 0.2, 0.17], lights, light_count: 2, debug: 0.0, ads: 0.0, optics_off: 0.0, reticle_alt: 0.0, optics: Default::default() };
             r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[zhbo_native::math::MAT4_IDENTITY], frame: f });
             r.request_screenshot(INVALID, "x");
             r.frame();
@@ -1141,4 +1143,98 @@ fn diag_real_viewmodel() {
     }
     std::fs::write(std::env::var("ZHBO_DIAG_OUT").unwrap(), ppm).unwrap();
     zhgfx_shutdown();
+}
+
+/// The class's reticle option picks its `weaponoptions.csv` row: `reticle_N` is row `N + 1` (the
+/// CaC grid's `_reticle_0{N+1}` art); no choice is the optic's stock row 0.
+#[test]
+fn the_reticle_option_is_its_table_row() {
+    assert_eq!(super::reticle_row(""), 0);
+    assert_eq!(super::reticle_row("reticle_0"), 1);
+    assert_eq!(super::reticle_row("reticle_3"), 4);
+    assert_eq!(super::reticle_row("reticle_10"), 11);
+    assert_eq!(super::reticle_row("nonsense"), 0);
+}
+
+/// Only lens surfaces whose stock material starts a set change, and only to a row that is a lens.
+#[test]
+fn the_reticle_choice_swaps_the_lens_material_only() {
+    use zhbo_native::model::{Material, Reticle};
+    use zhbo_native::reticles::Reticles;
+    let lens = |name: &str, scale: f32| Material { name: name.into(), color: Some(format!("{name}.tga")), reticle: Some(Reticle { scale, ..Default::default() }), ..Default::default() };
+    let set = Reticles { sets: vec![vec![lens("mc/reflex", 14.6), lens("mc/reflex_01", 20.0)]] };
+    let surface = |material: &str, reticle: bool| SurfaceSpec {
+        first_index: 0,
+        index_count: 3,
+        blend: zhbo_native::model::Blend::Premultiplied,
+        emissive: false,
+        color: Some(format!("{material}.tga")),
+        maps: None,
+        specular: None,
+        sort_key: 62,
+        cull: zhbo_native::model::Cull::None,
+        material: material.into(),
+        camo_layer: zhbo_native::model::CamoLayer::None,
+        camo: None,
+        camo_uv: [0.0, 0.0, 1.0, 1.0],
+        part: 0,
+        reticle: reticle.then(|| Reticle { scale: 14.6, ..Default::default() }),
+        emblem: false,
+        sonar: None,
+        display: None,
+    };
+    let mut mesh = Mesh { surfaces: vec![surface("mc/reflex", true), surface("mc/gun", false), surface("mc/holo", true)], ..Default::default() };
+    super::apply_reticle(&mut mesh, &set, 1);
+    assert_eq!(mesh.surfaces[0].color.as_deref(), Some("mc/reflex_01.tga"));
+    assert_eq!(mesh.surfaces[0].reticle.as_ref().map(|r| r.scale), Some(20.0));
+    assert_eq!(mesh.surfaces[1].color.as_deref(), Some("mc/gun.tga"), "not a lens");
+    assert_eq!(mesh.surfaces[2].color.as_deref(), Some("mc/holo.tga"), "no set for this optic");
+    let mut past = Mesh { surfaces: vec![surface("mc/reflex", true)], ..Default::default() };
+    super::apply_reticle(&mut past, &set, 5);
+    assert_eq!(past.surfaces[0].color.as_deref(), Some("mc/reflex.tga"), "a row past the set keeps the stock reticle");
+}
+
+/// The gun's emblem surface shows the viewmodel's faction's Zero Hour logo
+/// (`zhbo_native::emblem_path`) when the archive has it, and its own stand-in when not.
+#[test]
+fn the_emblem_surface_wears_the_factions_logo() {
+    let arms = model("arms", vec![bone("tag_weapon", None, [0.0; 3])]);
+    let mut gun = model("gun", vec![bone("j_gun", None, [0.0; 3])]);
+    gun.materials[0].emblem = true;
+    gun.materials[0].color = Some("Art\\Textures\\zhbo_emblem_clear_a.tga".into());
+    let manifest = Viewmodel {
+        id: "test_mp".into(),
+        faction: b'G',
+        parts: vec![
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None, ads_swap: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: None, ads_swap: None },
+        ],
+        markers: vec![],
+        hide: vec![],
+        clips: vec![],
+    };
+    let run = |with_logo: bool| {
+        let mut files_in: Vec<(String, Vec<u8>)> = vec![
+            (zhbo_native::viewmodel_path(7, 'G'), manifest.to_bytes()),
+            (zhbo_native::model_path("arms"), arms.to_bytes()),
+            (zhbo_native::model_path("gun"), gun.to_bytes()),
+        ];
+        if with_logo {
+            files_in.push((zhbo_native::emblem_path('G'), vec![1, 2, 3]));
+        }
+        let mut files = Files::default();
+        for _ in 0..8 {
+            if let Some(l) = load(&mut files, 7, b'G', None, None, 0).unwrap() {
+                return l;
+            }
+            let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+            for w in &wanted {
+                files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+            }
+        }
+        panic!("the viewmodel loads");
+    };
+    let emblem = |l: &Loaded| l.mesh.surfaces.iter().find(|s| s.emblem).and_then(|s| s.color.clone());
+    assert_eq!(emblem(&run(true)), Some(zhbo_native::emblem_path('G')), "the GLA logo");
+    assert_eq!(emblem(&run(false)).as_deref(), Some("Art\\Textures\\zhbo_emblem_clear_a.tga"), "no logo in the archive: the stand-in");
 }

@@ -7,7 +7,7 @@ use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
 
 use super::ffi::{State, ZhboNativeBodyIn, DRAWN, LOADING, NOT_NATIVE};
-use crate::nativevm::{native_blend, native_cull};
+use crate::nativevm::{native_blend, native_cull, native_reticle, native_sonar, technique_files};
 
 /// The rig's handles on the GPU.
 #[derive(Default)]
@@ -40,7 +40,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
         // space shading (native.wgsl): every map uploads raw.
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
-            for p in [&surf.color, &surf.maps].into_iter().flatten() {
+            for p in [&surf.color, &surf.maps, &surf.specular].into_iter().flatten().chain(technique_files(surf)) {
                 if !paths.iter().any(|(q, _)| q == p) {
                     paths.push((p.clone(), false));
                 }
@@ -80,7 +80,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
             let surfaces: Vec<NativeSurface> = mesh
                 .surfaces
                 .iter()
-                .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: s.sort_key, cull: native_cull(s.cull) })
+                .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), handle)), sonar: s.sonar.as_ref().map(|so| native_sonar(so, handle)) })
                 .collect();
             let m = r.native_create_mesh(&vertices, &mesh.indices, &surfaces);
             Some((m, handles.into_iter().map(|(_, h)| h).filter(|&h| h != INVALID).collect::<Vec<_>>()))
@@ -108,7 +108,13 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
     for (l, i) in lights.iter_mut().zip(&inp.lights) {
         *l = NativeLight { direction: i.dir, color: i.color };
     }
-    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug };
+    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
+        // Nobody aims through a third-person optic: BO2 sets the reticle's fade (`weaponParam0`)
+        // for the local viewmodel only, so a world model's lens reticle stays dark.
+        ads: 0.0, optics_off: 0.0,
+        // The optic displays' inputs (`weaponParam0.z`, the MMS's characters, the target
+        // finder's marks) are the local viewmodel's only: a world model's display stays empty.
+        reticle_alt: 0.0, optics: Default::default() };
     let palette = &s.posed.palette;
     let draw = NativeDraw { target_view: inp.target_view, before_view: inp.before_view, mesh, palette, frame };
     if with_renderer(false, |r| r.native_submit(&draw)) {

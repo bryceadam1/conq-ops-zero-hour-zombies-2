@@ -233,6 +233,7 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
         point: a.point as u8,
         silenced: a.silenced,
         laser: a.laser_sight,
+        mms_max_dist: a.mms_max_dist,
         fire,
         clip: if fire.is_some() { a.clip_size.max(0) as u16 } else { 0 },
         damage_range_scale: a.damage_range_scale,
@@ -879,6 +880,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         laser: false,
         fmj: false,
         target_finder: false,
+        mms_max_dist: w.mms_max_dist,
         recoil_reduction: (0.0, 0.0),
         place: manifest::place_of(&w.name),
         specialties: Specialties::from_words(w.perks.0, w.perks.1),
@@ -959,6 +961,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             unlimited_ammo: w.unlimited_ammo,
         },
         guided_missile_type: w.guided_missile_type,
+        // The variant's own action-slot material (`WeaponVariantDef.dpadIcon`): an alt mode carries
+        // it (`gl_an94_mp`: `hud_gl_select`), the weapon it toggles from does not.
+        dpad_icon: w.dpad_icon.clone().unwrap_or_default(),
     };
     #[cfg(debug_assertions)]
     {
@@ -1895,5 +1900,20 @@ mod tests {
         let frag = WeaponDef { projectile_speed: inches(800.0), ..Default::default() };
         // v² / g with BO2's gravity (800 in/s²): 800 inches.
         assert!((throw_range(&frag) - inches(800.0)).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod target_finder_tests {
+    /// The player's install: BO2's target finder is the `rangefinder` attachment, and its
+    /// `attachmentType` is the kind the code tests (`TARGET_FINDER_KIND`, 0x13), the only one.
+    #[test]
+    #[ignore]
+    fn the_installs_target_finder_is_kind_0x13() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR"));
+        let common = crate::paks::load_zone(&dir, "common_mp").unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let finders: Vec<&str> = atts.iter().filter(|a| a.kind == zhbo_core::attachments::TARGET_FINDER_KIND as u32).map(|a| a.name.as_str()).collect();
+        assert!(!finders.is_empty() && finders.iter().all(|n| n.starts_with("rangefinder")), "{finders:?}");
     }
 }

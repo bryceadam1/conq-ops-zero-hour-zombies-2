@@ -126,6 +126,18 @@ tuning! {
     perk_extra_breath: "perk_extraBreath" = 5.0, "`holdbreath`: extra seconds of breath (G1).";
     bg_aqs: "bg_aqs" = 1.0, "Anti-quickscope on (1) or off (0) (`FUN_008dac10`, `FUN_008f0f00`).";
     bg_aqs_style: "bg_aqsStyle" = 2.0, "Anti-quickscope style: 1 scales the scope sway, 2 offsets it by the sway factor.";
+
+    // ---- Optic displays (`t6mp` `FUN_004cc260` dvars; `sim::optics`) ---------------------------
+    sonar_max_speed: "cg_sonarAttachmentMaxSpeed" = 2.2, "MMS: inches per BO2 frame at which a far character is gone from the scanner (`FUN_004e7b40`).";
+    sonar_distance_factor: "cg_sonarAttachmentDistanceFactor" = 3.0, "MMS: added to the max speed as a character comes closer, at zero range (`FUN_004e7b40`).";
+    sonar_speed_delay: "cg_sonarAttachmentSpeedDelay" = 0.8, "MMS: seconds of speed averaged (`FUN_004e7b40`).";
+    sonar_speed_time_ratio: "cg_sonarAttachmentSpeedTimeRatio" = 0.0, "MMS: the lowest visibility a moving character keeps (`FUN_004e7b40`).";
+    sonar_hide_friendlies: "cg_sonarAttachmentHideFriendlies" = 1.0, "MMS: teammates are left off the scanner (1) (`FUN_004e7b40`).";
+    sonar_frames_per_second: "SonarFramesPerSecond" = 60.0, "MMS: BO2's frame for its per-frame speeds; the speed ring holds `SpeedDelay x 60` samples (`0x00b128e4`).";
+    range_finder_min_enemy_spotting_dist: "cg_rangeFinderMinEnemySpottingDist" = -1.0, "Target finder: feet beyond which a spotted enemy does not turn the reticle; -1 no limit (`FUN_00528ec0`).";
+    range_finder_display_ads: "RangeFinderDisplayAds" = 0.99, "Target finder: the ADS fraction above which its display draws (`DAT_00c73584`, `FUN_00526780`).";
+    range_finder_mark_height: "RangeFinderMarkHeight" = 45.0, "Target finder: inches above a standing enemy's feet its diamond is centred (70 - 25, `FUN_00526780`).";
+    range_finder_trace_dist: "RangeFinderTraceDist" = 8192.0, "Target finder: inches the spotting trace reaches (`_DAT_00b12d08`, `FUN_00528ec0`).";
     // ---- The mod's own ------------------------------------------------------------------------
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";

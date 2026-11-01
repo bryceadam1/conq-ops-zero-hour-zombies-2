@@ -37,6 +37,9 @@ pub struct Source {
     bo2: Vec<zhbo_formats::weapon::Weapon>,
     atts: Vec<zhbo_formats::weapon::Attachment>,
     defs: Vec<zhbo_core::weapons::WeaponDef>,
+    /// The faction emblems from the Zero Hour install (empty without one) and the target finder's
+    /// display, as the archive has them.
+    emblems: BTreeMap<String, Vec<u8>>,
 }
 
 impl Source {
@@ -46,13 +49,25 @@ impl Source {
         let common = load_zone(bo2_dir, "common_mp")?;
         let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
-        let paks = Paks::open(bo2_dir)?;
+        let mut paks = Paks::open(bo2_dir)?;
+        let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
+        if let Some(z) = &reticle_zone {
+            paks.learn(z);
+        }
         let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let names = crate::weapons::names(bo2_dir);
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
-        Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons })
+        let mut emblems = BTreeMap::new();
+        if let Ok(zh) = zhbo_requirements::check_requirements().zero_hour {
+            crate::emblems::faction_emblems(&zh.path, &mut emblems);
+        }
+        // The target finder's display, as the archive has it.
+        if let Ok(d) = crate::rangefinder::display(bo2_dir, &reticle_zone.iter().collect::<Vec<_>>(), &paks, &mut emblems) {
+            emblems.insert(zhbo_native::display::display_path(), d.to_bytes());
+        }
+        Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons, emblems })
     }
 
     /// The native blobs for converted viewmodel `id` — `an94_mp` or `an94_mp+reflex` — keyed by
@@ -65,6 +80,7 @@ impl Source {
         let mut defs = self.defs.clone();
         weapon_viewmodels(&self.patch, &self.common, &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()), 0)?;
         out.retain(|path, _| path.starts_with(zhbo_native::DIR) || path.starts_with("Art\\Textures\\"));
+        out.extend(self.emblems.clone());
         Ok(out)
     }
 
@@ -379,15 +395,17 @@ mod tests {
             let surfaces: usize = models.iter().map(|m| m.surfaces.len()).sum();
             (bones, verts, surfaces, manifest.parts.len())
         };
-        // The base's composite: the arms and the base gun. Its counts match RESEARCH.md's table.
+        // The base's composite: the arms and the base gun. RESEARCH.md's table (79 bones, 8058
+        // vertices, 7 surfaces) plus the gun's clan tag and emblem surfaces (87 vertices), which
+        // the native path draws since the lens-reticle work.
         let (bb, bv, bs, _) = counts("fnp45_mp");
-        assert_eq!((bb, bv, bs), (79, 8058, 7), "the base pistol's composite");
+        assert_eq!((bb, bv, bs), (79, 8145, 9), "the base pistol's composite");
         // The DW composite: the base's parts plus the `_lh` gun's, a separate rig on the left palm.
         let (db, dv, ds, dp) = counts("fnp45_dw_mp");
         assert!(db >= 81, "the DW composite adds the left gun's bones: {db} vs {bb}");
         assert!(dv >= 10_000, "the DW composite adds the left gun's vertices: {dv} vs {bv}");
-        // The raw `_lh` model carries 12 surfaces; the native path drops the reticle and clan-tag
-        // surfaces the W3D pass leaves out too (`looks.dropped`), leaving 10.
+        // The raw `_lh` model carries 12 surfaces; the native path keeps the clan tag and emblem
+        // the W3D pass leaves out (`looks.native_only`).
         assert!(ds >= 10, "the DW composite adds the left gun's surfaces to the base's 7: {ds}");
         assert!(dp > 2, "the DW composite adds a part: {dp}");
         // Each of the five DW pistols composes both guns, whatever its per-weapon surface counts.

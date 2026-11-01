@@ -281,6 +281,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             (a.silenced, a.laser) = (v.flag(0), v.flag(1));
             Ok(())
         }),
+    field!("MmsMaxDist", "Millimetre scanner's max distance (BO2 inches; the scanner flag is in Traits).", FieldKind::Num,
+        |a: &AttachmentDef| a.mms_max_dist.to_string(),
+        |a: &mut AttachmentDef, v: Values| { a.mms_max_dist = v.text_num()?; Ok(()) }),
     field!("Fire", "The fire mode it forces (`none` keeps the weapon's).", FieldKind::Enum,
         |a: &AttachmentDef| a.fire.map_or("none".into(), fire_name),
         |a: &mut AttachmentDef, v: Values| { a.fire = parse_fire(v.text); Ok(()) }),
@@ -668,6 +671,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.target_finder = v.flag(4);
             Ok(())
         }),
+    field!("MmsMaxDist", "Millimetre scanner's max distance (BO2 inches; the scanner flag is in Traits).", FieldKind::Num,
+        |d: &WeaponDef| d.mms_max_dist.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.mms_max_dist = v.text_num()?; Ok(()) }),
     field!("RecoilReduction", "Per-shot recoil reduction and its limit (the grip).", FieldKind::Nums(2),
         |d: &WeaponDef| format!("{} {}", d.recoil_reduction.0, d.recoil_reduction.1),
         |d: &mut WeaponDef, v: Values| {
@@ -857,6 +863,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("GuidedMissileType", "The missile guidance enum (`guidedMissileType_t`; 6 is TV-guided).", FieldKind::Num,
         |d: &WeaponDef| d.guided_missile_type.to_string(),
         |d: &mut WeaponDef, v: Values| { d.guided_missile_type = v.text_num()? as u32; Ok(()) }),
+    field!("DpadIcon", "BO2's `dpadIcon`: the action-slot material the alt-fire slot draws (`hud_gl_select`), empty when none.", FieldKind::Str,
+        |d: &WeaponDef| d.dpad_icon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.dpad_icon = v.text.into(); Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -916,8 +925,8 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 107);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 28);
+        assert_eq!(WEAPON_FIELDS.len(), 109);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 29);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 
@@ -1093,5 +1102,12 @@ mod tests {
         assert!(text.contains("AdsSwayOverride = -"), "{text}");
         assert!(text.contains("ViewPosOverride = - -0.1 0 1"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+    #[test]
+    fn dpad_icon_round_trips() {
+        let d = WeaponDef { id: "gl_an94_mp".into(), dpad_icon: "hud_gl_select".into(), ..Default::default() };
+        let text = format_table(std::slice::from_ref(&d));
+        assert!(text.contains("DpadIcon = hud_gl_select"), "{text}");
+        assert_eq!(parse_table(&text).unwrap()[0], d);
     }
 }

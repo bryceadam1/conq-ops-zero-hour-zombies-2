@@ -177,10 +177,6 @@ fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<
     out
 }
 
-/// One attachment model of a viewmodel: the model, its unique's tag, its placement, its attachment
-/// point, and its single unique's `weaponCamo`.
-type ExtraPart = (xmodel::Model, Option<String>, crate::xf::Xf, u32, Option<String>);
-
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
 
@@ -1004,7 +1000,7 @@ mod tests {
             radius: 0.0,
             mins,
             maxs,
-            materials: vec![Some(zhbo_formats::xmodel::Material { name: name.into(), textures: Vec::new(), state_bits: Vec::new(), sort_key: 0 })],
+            materials: vec![Some(zhbo_formats::xmodel::Material { name: name.into(), textures: Vec::new(), state_bits: Vec::new(), sort_key: 0, ..Default::default() })],
         }
     }
 

@@ -29,7 +29,7 @@
 //! and it reads only the archives already on this machine. Screenshots are output, not source:
 //! the default `target/cac-shots/` is inside the ignored build directory.
 
-mod atlas;
+pub(crate) mod atlas;
 mod contact;
 mod font;
 mod raster;

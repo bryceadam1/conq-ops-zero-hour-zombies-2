@@ -749,6 +749,15 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         // The viewmodel BO2 does not draw this frame: its scope overlay's reticle zoom is up.
         let hidden = s.client.hud.lui.gun_under_overlay.then(|| s.sim.player(inp.local_player).map(|p| p.arsenal.current_weapon().viewmodel)).flatten();
         crate::nativevm::set_gun_under_overlay(hidden);
+        // And the class's reticle for the primary's optic lens.
+        let reticle = s.sim.player(inp.local_player).and_then(|p| {
+            let def = crate::weapons::catalog().get(&p.arsenal.loadout.primary)?;
+            (def.viewmodel >= 0).then(|| (def.viewmodel, crate::nativevm::reticle_row(&p.reticle)))
+        });
+        crate::nativevm::set_local_reticle(reticle);
+        // And what the optic displays show (the MMS's characters, the target finder's colour).
+        let optics = s.sim.player(inp.local_player).map(|p| (p.optics.alt, p.optics.blips.clone()));
+        crate::nativevm::update_local_optics(inp.dt, optics);
         out
     })
     .unwrap_or_default();

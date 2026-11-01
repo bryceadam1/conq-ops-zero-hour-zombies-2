@@ -73,6 +73,65 @@ pub(crate) fn native_cull(c: Cull) -> zhbo_gfx::runtime::NativeCull {
     }
 }
 
+/// A surface's lens reticle as the renderer takes it, its noise map by `handle`. Shared with the
+/// third person.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_reticle(r: &zhbo_native::model::Reticle, display: Option<&zhbo_native::display::RangeFinderDisplay>, handle: impl Fn(&Option<String>) -> u16) -> zhbo_gfx::runtime::NativeReticle {
+    zhbo_gfx::runtime::NativeReticle {
+        noise: handle(&r.noise),
+        scale: r.scale,
+        color: r.color,
+        glow: r.glow,
+        glow_falloff: r.glow_falloff,
+        emissive: r.emissive,
+        noise_scale: r.noise_scale,
+        noise_amount: r.noise_amount,
+        background: r.background,
+        kind: match r.kind {
+            zhbo_native::model::ReticleKind::Dynamic => zhbo_gfx::runtime::NativeReticleKind::Dynamic,
+            zhbo_native::model::ReticleKind::TwoColors => zhbo_gfx::runtime::NativeReticleKind::TwoColors,
+            zhbo_native::model::ReticleKind::Static => zhbo_gfx::runtime::NativeReticleKind::Static,
+            zhbo_native::model::ReticleKind::Ui3d => zhbo_gfx::runtime::NativeReticleKind::Ui3d,
+        },
+        color_alt: r.color_alt,
+        glow_alt: r.glow_alt,
+        display: display.map(|d| zhbo_gfx::runtime::NativeDisplay { spotted: handle(&Some(d.spotted.clone())), atlas: handle(&Some(d.atlas.clone())), diamond_uv: d.diamond_uv, diamond_size: d.diamond_size }),
+    }
+}
+
+/// A surface's MMS screen as the renderer takes it, its maps by `handle`. Shared with the third
+/// person.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_sonar(s: &zhbo_native::model::Sonar, handle: impl Fn(&Option<String>) -> u16) -> zhbo_gfx::runtime::NativeSonar {
+    zhbo_gfx::runtime::NativeSonar { lookup: handle(&s.lookup), noise: handle(&s.noise), constants: s.constants() }
+}
+
+/// The texture files a surface's own technique reads besides its colour and packed maps (the
+/// reticle's noise, the MMS screen's lookup and noise).
+#[cfg(feature = "renderer")]
+pub(crate) fn technique_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> {
+    let reticle = s.reticle.as_ref().and_then(|r| r.noise.as_ref());
+    let sonar = s.sonar.as_ref().into_iter().flat_map(|so| [so.lookup.as_ref(), so.noise.as_ref()]).flatten();
+    let display = s.display.as_ref().into_iter().flat_map(|d| [&d.spotted, &d.atlas]);
+    reticle.into_iter().chain(sonar).chain(display)
+}
+
+/// Whether the native viewmodel drew a lens reticle in its last frame: the HUD then leaves its
+/// own 2D optic reticle out (BO2 has one reticle, on the lens). Presentation only; per thread,
+/// as the viewmodel and the HUD are both driven from the game thread.
+pub fn lens_reticle_drawn() -> bool {
+    LENS_RETICLE.with(|d| d.get())
+}
+
+#[cfg_attr(not(feature = "renderer"), allow(dead_code))]
+pub(crate) fn set_lens_reticle_drawn(drawn: bool) {
+    LENS_RETICLE.with(|d| d.set(drawn));
+}
+
+thread_local! {
+    static LENS_RETICLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Files the core asked the bridge for, and what came back.
 #[derive(Default)]
 pub struct Files {
@@ -160,6 +219,8 @@ pub struct SurfaceSpec {
     pub emissive: bool,
     pub color: Option<String>,
     pub maps: Option<String>,
+    /// BO2's specular colour map (`Material::specular`), or `None` for the maps' scalar level.
+    pub specular: Option<String>,
     pub sort_key: u8,
     pub cull: Cull,
     /// BO2's material name (`mc/mtl_t6_wpn_...`): the key a style camo's material pairs match.
@@ -174,6 +235,19 @@ pub struct SurfaceSpec {
     /// The manifest part (composition index) the surface came from: which `WeaponCamo` it wears
     /// (`Part::camo`, per part as BO2's `FUN_00529600`).
     pub part: u16,
+    /// The lens reticle's projection and constants (`Material::reticle`): drawn by the pass's
+    /// reticle technique, at infinity on the optic's axis, faded in by the aim.
+    pub reticle: Option<zhbo_native::model::Reticle>,
+    /// BO2's emblem surface (`Material::emblem`).
+    pub emblem: bool,
+    /// The MMS screen (`Material::sonar`): drawn by the pass's scanner technique.
+    pub sonar: Option<zhbo_native::model::Sonar>,
+    /// The target finder's display, on its ui3d reticle (`zhbo_native::display`).
+    pub display: Option<zhbo_native::display::RangeFinderDisplay>,
+}
+
+fn is_ui3d(s: &SurfaceSpec) -> bool {
+    s.reticle.as_ref().is_some_and(|r| r.kind == zhbo_native::model::ReticleKind::Ui3d)
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -293,6 +367,7 @@ pub fn build_mesh_visible<'a>(
                 emissive: m.is_some_and(|m| m.emissive),
                 color: m.and_then(|m| m.color.clone()),
                 maps: m.and_then(|m| m.maps.clone()),
+                specular: m.and_then(|m| m.specular.clone()),
                 sort_key: m.map_or(0, |m| m.sort_key),
                 cull: m.map_or(Cull::None, |m| m.cull),
                 material: m.map_or_else(String::new, |m| m.name.clone()),
@@ -300,6 +375,10 @@ pub fn build_mesh_visible<'a>(
                 camo: None,
                 camo_uv: [0.0, 0.0, 1.0, 1.0],
                 part: i as u16,
+                reticle: m.and_then(|m| m.reticle.clone()),
+                emblem: m.is_some_and(|m| m.emblem),
+                sonar: m.and_then(|m| m.sonar.clone()),
+                display: None,
             });
         }
     }
@@ -308,7 +387,8 @@ pub fn build_mesh_visible<'a>(
 
 /// A composed viewmodel, ready to pose.
 pub struct Loaded {
-    pub key: (i32, u8, u64),
+    /// Viewmodel, faction, camo choice, reticle row.
+    pub key: (i32, u8, u64, u32),
     /// The camo option applied to this mesh, or `None` for the stock finish.
     pub camo: Option<String>,
     pub manifest: Viewmodel,
@@ -321,6 +401,74 @@ pub struct Loaded {
     pub overlay_art_present: bool,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
+}
+
+/// The local player's reticle choice from the last client frame: the primary's viewmodel and the
+/// `weaponoptions.csv` row its lens takes (0: the optic's stock reticle). Set by
+/// `ffi::zhbo_client_frame`; read by the viewmodel draw.
+static LOCAL_RETICLE: Mutex<Option<(i32, u32)>> = Mutex::new(None);
+
+/// Record (or clear) the local player's reticle choice: `(viewmodel, row)`.
+pub fn set_local_reticle(choice: Option<(i32, u32)>) {
+    *LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()) = choice;
+}
+
+/// The reticle row for viewmodel `vm` (0, the stock reticle, when the choice is another gun's).
+pub(crate) fn local_reticle(vm: i32) -> u32 {
+    LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()).filter(|c| c.0 == vm).map_or(0, |c| c.1)
+}
+
+/// The `weaponoptions.csv` reticle row for a class's reticle option: `reticle_N` is row `N + 1`
+/// (the CaC grid shows `reticle_0` as the optic's `_reticle_01` art, `cacreticles.lua:1150-1240`;
+/// row `n` of the table is the `_reticle_0n` material); no choice is row 0, the optic's stock.
+pub fn reticle_row(id: &str) -> u32 {
+    id.strip_prefix("reticle_").and_then(|n| n.parse::<u32>().ok()).map_or(0, |n| n + 1)
+}
+
+/// Swap each lens surface's material for reticle row `row` of its optic's set (the converter's
+/// `weaponoptions.csv` table). A surface whose stock material has no set, or a row past the set,
+/// keeps its stock reticle.
+pub(crate) fn apply_reticle(mesh: &mut Mesh, set: &zhbo_native::reticles::Reticles, row: u32) {
+    for s in mesh.surfaces.iter_mut().filter(|s| s.reticle.is_some()) {
+        let Some(m) = set.option(&s.material, row as usize) else { continue };
+        if m.reticle.is_none() {
+            continue;
+        }
+        s.color = m.color.clone();
+        s.reticle = m.reticle.clone();
+        s.blend = m.blend;
+        s.emissive = m.emissive;
+        s.sort_key = m.sort_key;
+        s.cull = m.cull;
+    }
+}
+
+/// What the local player's optic displays show (the sim's `sim::optics`), with the presentation
+/// clock their pulse runs on. Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocalOptics {
+    /// Seconds of client frames (presentation only: the MMS pulse's phase).
+    pub time: f32,
+    /// The target finder's `weaponParam0.z`.
+    pub alt: f32,
+    /// The MMS's characters.
+    pub blips: Vec<crate::sim::optics::Blip>,
+}
+
+static LOCAL_OPTICS: Mutex<Option<LocalOptics>> = Mutex::new(None);
+
+/// Advance the displays' clock by `dt` and take the local player's optics (`None`: nothing to
+/// show). The clock wraps at an hour to keep its precision.
+pub fn update_local_optics(dt: f32, optics: Option<(f32, Vec<crate::sim::optics::Blip>)>) {
+    let mut slot = LOCAL_OPTICS.lock().unwrap_or_else(|e| e.into_inner());
+    let time = (slot.as_ref().map_or(0.0, |o| o.time) + dt.max(0.0)) % 3600.0;
+    let (alt, blips) = optics.unwrap_or_default();
+    *slot = Some(LocalOptics { time, alt, blips });
+}
+
+#[cfg_attr(not(feature = "renderer"), allow(dead_code))]
+pub(crate) fn local_optics() -> LocalOptics {
+    LOCAL_OPTICS.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
 }
 
 /// The local player's camo choice from the last client frame: the primary's viewmodel, its camo
@@ -383,7 +531,7 @@ fn overlay_art_present(files: &mut Files, id: &str, override_material: Option<&s
 
 /// Load step for `key`: `Ok(None)` while files are still coming, `Err` when the viewmodel can't be
 /// built (logged once by the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>, camo_choice: Option<(&str, &str)>) -> Result<Option<Loaded>, String> {
+pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>, camo_choice: Option<(&str, &str)>, reticle_row: u32) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::viewmodel_path(vm, faction as char);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -449,6 +597,58 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
             applied = Some(option.to_string());
         }
     }
+    // The target finder's display (the converter's `zhbo_native::display`): the ui3d reticle
+    // samples the frame BO2's code draws into the ui3d texture. An archive without it draws none.
+    if mesh.surfaces.iter().any(is_ui3d) {
+        let path = zhbo_native::display::display_path();
+        if !files.is_missing(&path) {
+            match files.get(&path) {
+                Some(bytes) => {
+                    let d = zhbo_native::display::RangeFinderDisplay::from_bytes(&bytes).map_err(|e| format!("{path}: {e}"))?;
+                    for m in std::iter::once(&mut mesh).chain(mesh_aimed.as_mut()) {
+                        for s in m.surfaces.iter_mut().filter(|s| is_ui3d(s)) {
+                            s.color = Some(d.idle.clone());
+                            s.display = Some(d.clone());
+                        }
+                    }
+                }
+                None => waiting = true,
+            }
+        }
+    }
+    // The emblem surfaces show the faction's Zero Hour logo (the converter's
+    // `zhbo_native::emblem_path`); an archive without it keeps the material's own stand-in.
+    if mesh.surfaces.iter().any(|s| s.emblem) {
+        let path = zhbo_native::emblem_path(faction as char);
+        if !files.is_missing(&path) {
+            if files.get(&path).is_some() {
+                for m in std::iter::once(&mut mesh).chain(mesh_aimed.as_mut()) {
+                    for s in m.surfaces.iter_mut().filter(|s| s.emblem) {
+                        s.color = Some(path.clone());
+                    }
+                }
+            } else {
+                waiting = true;
+            }
+        }
+    }
+    // The class's reticle: the lens surfaces take the chosen `weaponoptions.csv` row. An archive
+    // without the table draws the stock reticle.
+    if reticle_row != 0 && mesh.surfaces.iter().any(|s| s.reticle.is_some()) {
+        let path = zhbo_native::reticles::reticles_path();
+        if !files.is_missing(&path) {
+            match files.get(&path) {
+                Some(bytes) => {
+                    let set = zhbo_native::reticles::Reticles::from_bytes(&bytes).map_err(|e| format!("{path}: {e}"))?;
+                    apply_reticle(&mut mesh, &set, reticle_row);
+                    if let Some(m) = &mut mesh_aimed {
+                        apply_reticle(m, &set, reticle_row);
+                    }
+                }
+                None => waiting = true,
+            }
+        }
+    }
     if waiting {
         return Ok(None);
     }
@@ -459,7 +659,7 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     }
     files.forget(&path);
     let aim = skeleton.bone(AIM_TAG);
-    Ok(Some(Loaded { key: (vm, faction, camo_key), camo: applied, manifest, skeleton, mesh, mesh_aimed, overlay_art_present, aim, anims: HashMap::new() }))
+    Ok(Some(Loaded { key: (vm, faction, camo_key, reticle_row), camo: applied, manifest, skeleton, mesh, mesh_aimed, overlay_art_present, aim, anims: HashMap::new() }))
 }
 
 /// The clip a manifest shows for `clip` ([`Loaded::clip_path`]'s rule, also read by the conformance

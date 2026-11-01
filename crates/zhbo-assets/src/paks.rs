@@ -10,6 +10,7 @@ use zhbo_formats::fastfile;
 use zhbo_formats::ipak::{ImageKey, Ipak};
 use zhbo_formats::t6zone::{self, Zone};
 use zhbo_formats::iwi::Rgba;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
@@ -22,6 +23,10 @@ pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
 /// The image packs, in file-name order.
 pub(crate) struct Paks {
     paks: Vec<Ipak>,
+    /// Streamed images by name, from the zones [`Paks::learn`] saw: a material that only
+    /// references an image (`common_mp`'s optic reticles point at a 0 x 0 `..._reticle_noise`
+    /// stub) finds the zone that loads it.
+    names: BTreeMap<String, ImageKey>,
 }
 
 impl Paks {
@@ -38,12 +43,32 @@ impl Paks {
         for p in names {
             paks.push(Ipak::open(&p).map_err(|e| format!("{}: {e}", p.display()))?);
         }
-        Ok(Paks { paks })
+        Ok(Paks { paks, names: BTreeMap::new() })
     }
 
     /// The pixels of the image with this key (`xmodel::Image::key`).
     pub(crate) fn image(&self, key: ImageKey) -> Option<Rgba> {
         self.paks.iter().find_map(|pak| pak.entry(key).and_then(|e| images::load(pak, e).ok()))
+    }
+
+    /// Remember the streamed images `zone` loads (top-level and nested), by name; the first zone
+    /// to name one wins.
+    pub(crate) fn learn(&mut self, zone: &Zone) {
+        let Some(kind) = fastfile::asset_type_id("image") else { return };
+        for a in zone.assets.iter().chain(&zone.linked).filter(|a| a.kind == kind) {
+            let img = zhbo_formats::xmodel::read_image(zone, a.addr);
+            if img.stream_hash != 0 {
+                let key = img.key();
+                self.names.entry(img.name).or_insert(key);
+            }
+        }
+    }
+
+    /// `img`'s pixels: its own streamed data, or for a reference stub (no stream hash) the data of
+    /// the image of that name a learned zone loads (by its {data hash, name hash} key).
+    pub(crate) fn resolve(&self, img: &zhbo_formats::xmodel::Image) -> Option<Rgba> {
+        let key = if img.stream_hash != 0 { img.key() } else { *self.names.get(&img.name)? };
+        self.image(key)
     }
 }
 

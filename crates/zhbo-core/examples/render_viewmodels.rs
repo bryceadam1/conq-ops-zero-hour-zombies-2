@@ -14,6 +14,9 @@
 //! converted to world units at 6 inches each; `72` = 72" shows the whole off-hand rig, whose held
 //! clip authors the item at the waist, below the default first-person cone; `12` = 12" catches only
 //! its bottom sliver).
+//! `ZHBO_SWEEP_MARKS=1` puts two target-finder marks ahead (one on the axis, one up and to the
+//! left) with an enemy spotted, so a target finder's aimed half shows its display's spotted frame
+//! and diamonds (the sim's `optics::Optics` stand-in).
 //! `ZHBO_SWEEP_CONVERT_ALL=1` converts every job, including base weapons, through the converter
 //! instead of reading the archive's baked blobs, for a converter A/B. `--release` converts the
 //! combinations about ten times faster; a full sweep is a few minutes.
@@ -390,6 +393,12 @@ fn open_renderer() -> Result<(), String> {
     if let Ok(v) = std::env::var("ZHBO_SWEEP_BACK") {
         let back: f32 = v.parse::<f32>().unwrap_or(0.0) / 6.0;
         view[14] += back;
+    }
+    if std::env::var_os("ZHBO_SWEEP_MARKS").is_some() {
+        use zhbo_core::math::Vec3;
+        use zhbo_core::sim::optics::Blip;
+        let mark = |id, pos| Blip { id, pos, radius: 0.0, height: 0.0, intensity: 1.0 };
+        zhbo_core::nativevm::update_local_optics(0.0, Some((1.0, vec![mark(1, Vec3::new(200.0, 0.0, 0.0)), mark(2, Vec3::new(200.0, 12.0, 6.0))])));
     }
     let near: f32 = std::env::var("ZHBO_SWEEP_NEAR").ok().and_then(|v| v.parse().ok()).unwrap_or(NEAR);
     let proj = [t, 0.0, 0.0, 0.0, 0.0, t * aspect, 0.0, 0.0, 0.0, 0.0, FAR / (FAR - near), 1.0, 0.0, 0.0, -near * FAR / (FAR - near), 0.0];

@@ -18,6 +18,10 @@ pub mod point {
     pub const OPTIC: u8 = 1;
 }
 
+/// The `eAttachment` BO2's code tests for the target finder (`t6mp` `FUN_008eb270(weapon, 0x13)`
+/// in `FUN_00528ec0` and `FUN_00526780`).
+pub const TARGET_FINDER_KIND: u8 = 0x13;
+
 /// One BO2 attachment. A scale of 1 leaves the value alone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttachmentDef {
@@ -34,6 +38,9 @@ pub struct AttachmentDef {
     pub point: u8,
     pub silenced: bool,
     pub laser: bool,
+    /// BO2's `mmsMaxDist` (inches): the millimetre scanner's reach (its `mmsWeapon` flag is
+    /// [`Self::mms`] below, OR-ed into the weapon's traits).
+    pub mms_max_dist: f32,
     /// Select fire, stacked fire: the weapon fires this way instead.
     pub fire: Option<FireMode>,
     /// The fire-type attachment's own `iClipSize` (the tri-bolt's stack), 0 for none.
@@ -58,7 +65,8 @@ pub struct AttachmentDef {
     /// The specialties the attachment grants (`WeaponAttachment.perks`: fast mag's `fastreload`,
     /// quickdraw's `fastads`, the laser's `bulletaccuracy`, rapid fire's `rof`).
     pub specialties: Specialties,
-    /// `eAttachment`: BO2 walks a combination's attachments in this order (G14 §1).
+    /// `eAttachment` (`WeaponAttachment::attachmentType`): BO2 walks a combination's attachments
+    /// in this order (G14 §1), and code tests the weapon for a kind (the target finder, 0x13).
     pub kind: u8,
     /// `fReloadQuick{,Empty,Add}TimeScale`: scale the quick reload times (products).
     pub reload_quick_scale: (f32, f32, f32),
@@ -116,6 +124,7 @@ impl Default for AttachmentDef {
             point: 0,
             silenced: false,
             laser: false,
+            mms_max_dist: 0.0,
             fire: None,
             clip: 0,
             damage_range_scale: 1.0,
@@ -276,6 +285,13 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             }
         }
         d.laser |= a.laser;
+        // BO2's target finder is the weapon testing for attachment kind 0x13
+        // (`FUN_008eb270(weapon, 0x13)` in `FUN_00528ec0`/`FUN_00526780`: the combo's packed kinds).
+        d.target_finder |= a.kind == TARGET_FINDER_KIND;
+        // BO2's weapon is a scanner when its variant or any attachment is (`FUN_008ebce0`).
+        if a.mms {
+            d.mms_max_dist = a.mms_max_dist;
+        }
         d.specialties = d.specialties.union(a.specialties);
         if a.recoil_reduction.1 > 0.0 {
             d.recoil_reduction = a.recoil_reduction;
@@ -283,7 +299,6 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         match a.short.as_str() {
             "fmj" => d.fmj = true,
             "tacknife" => d.melee_time *= TACTICAL_KNIFE_MELEE,
-            "rangefinder" => d.target_finder = true,
             _ => {}
         }
     }
@@ -628,5 +643,14 @@ mod tests {
         assert_eq!(d.view_pos.strafe_rot, [0.0, 0.0, 1.0], "steadyaim (26) walks after acog (1)");
         assert_eq!(d.view_pos.stand_move, [-0.4, 0.0, 0.0]);
         assert_eq!(apply(&base, &[&acog]).view_pos.strafe_rot, [0.0, 0.0, 3.0]);
+    }
+
+    /// The target finder is BO2's attachment kind 0x13, whatever the attachment is called.
+    #[test]
+    fn the_target_finder_is_attachment_kind_0x13() {
+        let finder = AttachmentDef { short: "anything".into(), kind: TARGET_FINDER_KIND, ..Default::default() };
+        assert!(apply(&base(), &[&finder]).target_finder);
+        let named = AttachmentDef { short: "rangefinder".into(), kind: 0x12, ..Default::default() };
+        assert!(!apply(&base(), &[&named]).target_finder, "a name is not the kind");
     }
 }

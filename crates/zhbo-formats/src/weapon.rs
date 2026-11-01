@@ -295,6 +295,8 @@ pub struct Attachment {
     pub strafe_rot_r: f32,
     pub stand_move_f: f32,
     pub stand_rot: [f32; 3],
+    /// `mmsMaxDist` (inches): the millimetre scanner's reach.
+    pub mms_max_dist: f32,
 }
 
 /// Every attachment in a loaded zone.
@@ -372,6 +374,7 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 strafe_rot_r: z.f32(at + WA::strafeRotR),
                 stand_move_f: z.f32(at + WA::standMoveF),
                 stand_rot: vec3(z, at + WA::vStandRot),
+                mms_max_dist: z.f32(at + WA::mmsMaxDist),
             })
         })
         .collect()
@@ -597,6 +600,9 @@ pub struct Weapon {
     pub clip_only: bool,
     pub rifle_bullet: bool,
     pub silenced: bool,
+    /// The variant's `mmsMaxDist` (inches): the millimetre scanner's reach (its `mmsWeapon` is
+    /// read with the variant's flags below).
+    pub mms_max_dist: f32,
     pub fire_sound: Option<String>,
     pub fire_sound_player: Option<String>,
     pub fire_last_sound_player: Option<String>,
@@ -612,6 +618,9 @@ pub struct Weapon {
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
     pub hud_icon_key: Option<crate::ipak::ImageKey>,
     pub dpad_icon: Option<String>,
+    /// The d-pad icon's image in the `.ipak` packs (its material is inline in the variant, like
+    /// the HUD icon's: `hud_gl_select` has no standalone asset in any MP zone).
+    pub dpad_icon_key: Option<crate::ipak::ImageKey>,
     /// What a projectile does when it goes off (`projExplosionEffect`), or the impact table's
     /// effect for its `impactType` on dirt.
     pub explosion_effect: Option<crate::fx::Effect>,
@@ -841,6 +850,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         ads_out_time: ms(z, v + WV::iAdsTransOutTime),
         ads_zoom_fov: z.f32(v + WV::fAdsZoomFov1),
         silenced: z.u8(v + WV::bSilenced) != 0,
+        mms_max_dist: z.f32(v + WV::mmsMaxDist),
         allowed_attachments: z.u32(v + WV::iAttachments) as u64,
         attachment_variants: {
             let at = z.try_u32(v + WV::attachments)?;
@@ -862,6 +872,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         hide_tags: hide_tags(z, z.try_u32(v + WV::hideTags)?),
         alt_weapon: opt_str(z, v + WV::szAltWeaponName),
         dpad_icon: named(z, v + WV::dpadIcon),
+        dpad_icon_key: icon_key(z, z.u32(v + WV::dpadIcon)),
         perks: (z.u32(v + WV::perks), z.u32(v + WV::perks + 4)),
         view_kick_center: (z.f32(v + WV::fAdsViewKickCenterSpeed), z.f32(v + WV::fHipViewKickCenterSpeed)),
         overlay_material,
@@ -1087,12 +1098,16 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
     w.weapon_camo = named(z, d + WD::weaponCamo);
-    let icon = z.try_u32(d + WD::hudIcon)?;
-    w.hud_icon_key = (icon != 0)
-        .then(|| crate::xmodel::read_material(z, icon))
-        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
-        .filter(|k| k.data_hash != 0);
+    w.hud_icon_key = icon_key(z, z.try_u32(d + WD::hudIcon)?);
     Ok(w)
+}
+
+/// The streamed image of the inline material at `material` (a weapon's icon), if it has one.
+fn icon_key(z: &Zone, material: u32) -> Option<crate::ipak::ImageKey> {
+    (material != 0)
+        .then(|| crate::xmodel::read_material(z, material))
+        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
+        .filter(|k| k.data_hash != 0)
 }
 
 /// Every weapon in a loaded zone.

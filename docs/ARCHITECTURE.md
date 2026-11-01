@@ -73,7 +73,8 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   `hack.rs` (Black Hat), `build.rs` (hammer/site), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`,
-  `melee_strike`, `gather_targets`, `throw_velocity`).
+  `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
+  the MMS's characters, the target finder's spotting and marks).
 - `lui/`: BO2's LUI layout model shared by the HUD and the class screens: the anchor/edge
   resolution against a 720-unit root (`mod.rs`), BO2's converted UI fonts (`font.rs`), the
   BO2 materials the ports draw by name (`materials.rs`) and LUI's animation states (`anim.rs`).

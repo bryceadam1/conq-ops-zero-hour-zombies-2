@@ -128,6 +128,7 @@ impl Sim {
                 hammer: None,
                 site: None,
                 building: false,
+                optics: Default::default(),
             });
         }
         let Some(mut p) = self.players[idx].take() else { return RtsWeapons::default() };

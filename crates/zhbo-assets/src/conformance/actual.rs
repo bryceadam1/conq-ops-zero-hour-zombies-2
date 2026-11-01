@@ -525,7 +525,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .opt_text("overlay_material_low_res", opt(&d.overlay_material_low_res))
         .text("overlay_reticle", enum_name(cols::OVERLAY_RETICLE, d.overlay_reticle))
         .opt_text("hud_icon", hud_icon)
-        .absent("dpad_icon");
+        // The def's action-slot material, when its sprite shipped (`hud::ammo::alt_slot_icon`
+        // draws it in the alt-fire slot).
+        .opt_text("dpad_icon", (!d.dpad_icon.is_empty() && sh.has_sprite(&zhbo_core::lui::materials::image(&d.dpad_icon))).then(|| d.dpad_icon.clone()));
 
     // The viewmodel the game draws for this def.
     let vm = j.vm_def.viewmodel;

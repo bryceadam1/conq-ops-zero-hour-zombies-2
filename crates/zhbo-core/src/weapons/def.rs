@@ -354,6 +354,9 @@ pub struct WeaponDef {
     pub fmj: bool,
     /// Target finder: enemies are marked while aiming.
     pub target_finder: bool,
+    /// BO2's `mmsMaxDist` (inches): how far the millimetre scanner's screen shows characters
+    /// behind walls (`sim::optics`); whether the weapon is a scanner is `traits.mms`.
+    pub mms_max_dist: f32,
     /// ADS recoil reduction per shot fired, and its limit (the grip).
     pub recoil_reduction: (f32, f32),
     /// How a piece of equipment is used.
@@ -405,6 +408,10 @@ pub struct WeaponDef {
     /// `guidedMissileType_t`: a TV-guided weapon (6) keeps the HUD's scoped-hidden widgets under
     /// its overlay ([`crate::weapons::scope::scoped`]).
     pub guided_missile_type: u32,
+    /// BO2's `WeaponVariantDef.dpadIcon`: the action-slot material (`hud_gl_select` on a grenade
+    /// launcher's alt mode, `hud_select_fire_bullet_stack` on select fire), empty when none. The HUD's
+    /// alt-fire slot draws it (`hud::ammo::alt_slot_icon`).
+    pub dpad_icon: String,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -583,6 +590,7 @@ impl Default for WeaponDef {
             laser: false,
             fmj: false,
             target_finder: false,
+            mms_max_dist: 0.0,
             recoil_reduction: (0.0, 0.0),
             place: Place::Throw,
             specialties: Specialties::NONE,
@@ -608,6 +616,7 @@ impl Default for WeaponDef {
             zoom: Zoom::default(),
             traits: Traits::default(),
             guided_missile_type: 0,
+            dpad_icon: String::new(),
         }
     }
 }

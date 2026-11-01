@@ -164,6 +164,21 @@ fn texture_name(page: usize) -> String {
     format!("{TEXTURE}_{page}.tga")
 }
 
+/// Every distinct `dpadIcon` of the player weapons and their alt modes (inventory `ALTMODE`), in
+/// table order, with its streamed image when the variant's inline material has one: the
+/// materials the HUD's alt-fire slot can draw.
+fn dpad_icons(weapons: &[zhbo_formats::weapon::Weapon]) -> Vec<(String, Option<zhbo_formats::ipak::ImageKey>)> {
+    let mut icons: Vec<(String, Option<zhbo_formats::ipak::ImageKey>)> = Vec::new();
+    for w in weapons.iter().filter(|w| crate::weapons::is_player_weapon(w) || w.inventory == zhbo_formats::weapon::inventory::ALTMODE) {
+        let Some(icon) = w.dpad_icon.as_ref().filter(|i| !i.is_empty()) else { continue };
+        match icons.iter_mut().find(|(i, _)| i == icon) {
+            Some((_, key)) => *key = key.or(w.dpad_icon_key),
+            None => icons.push((icon.clone(), w.dpad_icon_key)),
+        }
+    }
+    icons
+}
+
 /// Read the sprites from the BO2 install at `bo2_dir` and return the archive bytes.
 pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let mut report = Report::default();
@@ -215,6 +230,12 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             (None, Some(icon)) => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
             _ => {}
         }
+    }
+    // The alt-fire slot's art (`zhbo_core::hud::ammo::alt_slot_icon`): each variant's `dpadIcon`
+    // (`hud_gl_select`, `hud_select_fire_bullet_stack`), the player weapons' and their alt modes'.
+    for (icon, hash) in dpad_icons(&weapons) {
+        let source = hash.map_or_else(|| Source::Dynamic(icon.clone()), Source::Hash);
+        wanted.push((zhbo_core::lui::materials::image(&icon), source, 128));
     }
     // The personalize camo grid's thumbnails (`menu_camo_*_pattern`, `menu_theater_nodata` for
     // `None`): the same `mp/attachmenttable.csv` rows the weapon table carries.
@@ -270,8 +291,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                     .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
             }
             Source::Dynamic(material) => {
-                // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`.
-                for zone in ["code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"] {
+                // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`, the
+                // smoke grenade's icon only in `code_post_gfx`.
+                for zone in ["code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend", "code_post_gfx"] {
                     if !zones.contains_key(zone) {
                         if let Ok(z) = crate::generals::load_zone(bo2_dir, zone) {
                             zones.insert(zone, z);
@@ -280,8 +302,10 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 }
                 // Each zone's own assets first, then the materials nested inside other assets (also
                 // pool members); only then the slow scan for a material loaded inline inside another
-                // asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
-                let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"];
+                // asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons). `code_post_gfx`
+                // (the shared post-gfx zone) last: the only zone that loads the smoke grenade's
+                // `hud_willy_pete` in full.
+                let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend", "code_post_gfx"];
                 // The material's first image; a `,name` reference stub (no stream hash) is resolved
                 // by name in the image pool, as BO2 does: `hud_willy_pete` in `common_mp` points at
                 // `,hud_us_smokegrenade`, whose full image is `patch_mp`'s.
@@ -553,6 +577,23 @@ pub fn archive_version(path: &Path) -> Option<u32> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn dpad_icons_are_the_alt_modes_distinct_materials() {
+        use zhbo_formats::weapon::{inventory, Weapon};
+        let alt = |name: &str, icon: Option<&str>, hash: Option<u32>| Weapon { name: name.into(), inventory: inventory::ALTMODE, dpad_icon: icon.map(str::to_string), dpad_icon_key: hash.map(|h| zhbo_formats::ipak::ImageKey { data_hash: h, name_hash: h }), ..Default::default() };
+        let weapons = [
+            alt("gl_an94_mp", Some("hud_gl_select"), None),
+            alt("gl_scar_mp", Some("hud_gl_select"), Some(7)),
+            alt("sf_an94_mp", Some("hud_select_fire_bullet_stack"), Some(9)),
+            alt("dualoptic_an94_mp", None, None),
+            // Not a player weapon nor an alt mode: its icon is never drawn.
+            Weapon { name: "killstreak_remote_turret_mp".into(), dpad_icon: Some("hud_ks_turret".into()), ..Default::default() },
+        ];
+        // One entry per material; any variant's streamed image serves.
+        let key = |h: u32| zhbo_formats::ipak::ImageKey { data_hash: h, name_hash: h };
+        assert_eq!(dpad_icons(&weapons), vec![("hud_gl_select".to_string(), Some(key(7))), ("hud_select_fire_bullet_stack".to_string(), Some(key(9)))]);
+    }
+
     fn assert_packed(sizes: &[(u32, u32)], at: &[(usize, (u32, u32))]) {
         for (i, ((page, a), sa)) in at.iter().zip(sizes).enumerate() {
             assert!(a.0 + sa.0 <= ATLAS && a.1 + sa.1 <= ATLAS, "{page}:{a:?} out of bounds");
@@ -690,6 +731,10 @@ mod tests {
             "ZHBO_Mat_scope_overlay_svu",
             "ZHBO_Mat_scope_overlay_vzoom",
             "ZHBO_Mat_scope_overlay_xpr50",
+            // The alt-fire slot's art (inline in common_mp's alt modes) and the smoke grenade's
+            // counter icon (only `code_post_gfx` loads it).
+            "ZHBO_Mat_hud_gl_select",
+            "ZHBO_Mat_hud_select_fire_bullet_stack",
             "ZHBO_BO2_Icon_willy_pete_mp",
         ] {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);

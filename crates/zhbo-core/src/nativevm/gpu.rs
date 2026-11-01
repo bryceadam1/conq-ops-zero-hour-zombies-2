@@ -2,15 +2,15 @@
 //! once per viewmodel, submit the posed palette each frame.
 
 use zhbo_gfx::ffi::with_renderer;
-use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
+use zhbo_gfx::runtime::{NativeBlip, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeSurface, NativeVertex, INVALID, NATIVE_MAX_BLIPS};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
-use super::{native_blend, native_cull, Mesh};
+use super::{local_optics, native_blend, native_cull, native_reticle, native_sonar, set_lens_reticle_drawn, technique_files, Mesh, ART_SCALE};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
 pub(crate) struct Gpu {
-    key: Option<(i32, u8, u64)>,
+    key: Option<(i32, u8, u64, u32)>,
     mesh: Option<u16>,
     /// The ADS part list's mesh, submitted at full ADS. `None` when no part swaps.
     mesh_aimed: Option<u16>,
@@ -37,17 +37,23 @@ impl Gpu {
 
 /// Upload (once its textures are in) and submit. `LOADING` while textures are still coming.
 pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
+    let drawn = submit(s, inp);
+    // The HUD's 2D optic reticle gives way only to a lens reticle that is actually drawing.
+    let lens = drawn == DRAWN && s.loaded.as_ref().is_some_and(|l| l.mesh.surfaces.iter().any(|s| s.reticle.is_some()));
+    set_lens_reticle_drawn(lens);
+    drawn
+}
+
+fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     let Some(loaded) = s.loaded.as_ref() else { return NOT_NATIVE };
     if s.gpu.key != Some(loaded.key) {
         // Every texture the surfaces name: decoded once in, absent ones draw white/flat.
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
             // Display-space shading (native.wgsl): every map uploads raw.
-            for (p, srgb) in [(&surf.color, false), (&surf.maps, false), (&surf.camo, false)] {
-                if let Some(p) = p {
-                    if !paths.iter().any(|(q, _)| q == p) {
-                        paths.push((p.clone(), srgb));
-                    }
+            for p in [&surf.color, &surf.maps, &surf.specular, &surf.camo].into_iter().flatten().chain(technique_files(surf)) {
+                if !paths.iter().any(|(q, _)| q == p) {
+                    paths.push((p.clone(), false));
                 }
             }
         }
@@ -87,7 +93,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
                 let surfaces: Vec<NativeSurface> = m
                     .surfaces
                     .iter()
-                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull) })
+                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), handle)), sonar: s.sonar.as_ref().map(|so| native_sonar(so, handle)) })
                     .collect();
                 r.native_create_mesh(&vertices, &m.indices, &surfaces)
             };
@@ -121,11 +127,19 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
         s.log_once("native viewmodel: the ADS part list draws at full ADS (ADS models)".into());
     }
     let Some(mesh) = mesh else { return NOT_NATIVE };
+    let optics = local_optics();
     let mut lights = [NativeLight::default(); 3];
     for (l, i) in lights.iter_mut().zip(&inp.lights) {
         *l = NativeLight { direction: i.dir, color: i.color };
     }
-    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug };
+    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
+        // BO2's fWeaponPosFrac drives the lens reticle's fade (`weaponParam0.w`); the mod has no
+        // effect that knocks optics out (BO2's EMP, `weaponParam0.y`).
+        ads: inp.ads, optics_off: 0.0,
+        // The target finder's "enemy spotted" (`weaponParam0.z`, the sim's `optics::Optics::alt`)
+        // and the MMS screen's characters.
+        reticle_alt: optics.alt,
+        optics: native_optics(&optics, inp.dir) };
     let palette = &s.posed.palette;
     let draw = NativeDraw { target_view: inp.target_view, before_view: inp.before_view, mesh, palette, frame };
     if with_renderer(false, |r| r.native_submit(&draw)) {
@@ -133,4 +147,15 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     } else {
         NOT_NATIVE
     }
+}
+
+/// The MMS screen's inputs: the clock, the view's forward, BO2 inches per world unit (the art's
+/// scale) and the sim's characters.
+fn native_optics(o: &super::LocalOptics, dir: [f32; 3]) -> NativeOptics {
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt().max(1e-6);
+    let mut out = NativeOptics { time: o.time, forward: dir.map(|c| c / len), inches_per_unit: 1.0 / ART_SCALE, blip_count: o.blips.len().min(NATIVE_MAX_BLIPS) as u32, ..Default::default() };
+    for (slot, b) in out.blips.iter_mut().zip(&o.blips) {
+        *slot = NativeBlip { pos: [b.pos.x, b.pos.y, b.pos.z], radius: b.radius, height: b.height, intensity: b.intensity };
+    }
+    out
 }

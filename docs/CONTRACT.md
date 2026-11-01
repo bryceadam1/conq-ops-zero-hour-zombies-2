@@ -305,10 +305,62 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   name-derived alias. The `.zcm` version is new
   (`camo::VERSION = 1`); the model blob's material record gains the camo layer, and its version
   bump (2→3) and the archive bump (64→65) are integrator-owned.
+  The material record (model and camo blobs alike, `Material::write`) then appends `specular`, the
+  converted spec colour map (`*_spec.tga`, RENDERER.md "The specular colour"); its bumps — model
+  `VERSION` 3→4, camo `VERSION` 1→2 and the archive's `hud::VERSION` — are integrator-owned. A
+  style camo replaces the surface's specular colour with the style's (gold's hue lives there).
   - **Divergences.** The camo applies to the first-person native viewmodel only: the W3D fallback
     bakes textures and has no texture override, and the third-person native body pins `camo` to
     `INVALID` (no third-person camo). Only the primary's viewmodel inherits the class camo, as the
     class stores one camo.
+
+* **The engine-filled surfaces: the lens reticle, the clan tag, the emblem.** BO2 fills three
+  kinds of viewmodel surface at draw time; the converter now keeps them in the native models (the
+  W3D path still leaves them out: it has no shader for them) and flags them by the material's
+  technique set, never by name. The material record appends `reticle` (the reticle
+  technique — `dynamic`, `dynamic_2colors`, `static`, `ui3d` — its constants by the shader's
+  names, and the noise map) and `emblem`
+  (`sw4_3d_player_icon`); RENDERER.md "The lens reticle" has the technique. The local primary's
+  reticle choice rides a core-global like the camo (`nativevm::set_local_reticle`, set by
+  `zhbo_client_frame` from `PlayerSim.reticle`: `reticle_N` is `weaponoptions.csv` row `N + 1`,
+  no choice row 0) — **no `ZhboNativeIn` field and no ABI bump**; the composed viewmodel is keyed
+  by it. The converter writes `Art\Native\reticles.zbr` (`ZBR\0`, v1, new): BO2's
+  `mp/weaponoptions.csv` `reticle` rows (`t6mp` `FUN_00529360`: column 3 per optic, column 5 the
+  reflex's RMR) as one material set per optic column in row order, row 0 the stock material the
+  optic's model carries; `nativevm::apply_reticle` swaps each lens surface whose stock material
+  starts a set. The reticle fades with `ZhboNativeIn.ads` (BO2's `fWeaponPosFrac`). Nothing in
+  the mod knocks a player's optics out, so `optics_off` stays 0: the sim's EMP grenade
+  (`Effect::Emp`, `projectiles.rs`) disables only non-infantry objects (vehicles and structures,
+  `disable_kind::EMP`) and never the General, whom BO2's EMP would blind. The material record
+  then appends `sonar` (the MMS screen, `sw4_3d_sonar_attachment_lens2`: its constants, `Lookup`
+  and `Static_Noise_Map`). **The optic displays' inputs are the sim's** (`sim::optics`, per
+  `PlayerSim`, deterministic): the MMS's characters (BO2's sonar rule, `FUN_004e7b40`) or the
+  target finder's marked enemies (`FUN_00526780`) as `Optics::blips`, and the target finder's
+  "enemy spotted" (`FUN_00528ec0`/`FUN_00529d80`) as `Optics::alt`; `zhbo_client_frame` hands the
+  local player's to the viewmodel with a presentation clock (`nativevm::update_local_optics`) —
+  again **no `ZhboNativeIn` field and no ABI bump**; `NativeFrame.optics`/`reticle_alt` are
+  Rust-only. The converter writes `Art\Native\rangefinder.zrd` (`ZRD\0`, v1, new): the target
+  finder's display — two baked frames, the atlas, the diamond's rectangle and size
+  (`zhbo_assets::rangefinder`, read from the player's `t6mp.exe`). The weapon table gains `Mms` (BO2's `mmsWeapon`, `mmsMaxDist` in inches) on weapons
+  and attachments. While the native viewmodel draws a lens
+  reticle, the HUD's 2D optic reticle (the W3D fallback's stand-in) stays out, and so do its 2D
+  target-finder diamonds
+  (`nativevm::lens_reticle_drawn`, per thread). The clan tag draws as BO2 does for a player
+  without one: its shader's four glyph indices are all 0 (`FUN_0052a010`), so the converter bakes
+  the font atlas's first cell four times across (transparent on the stock install). The emblem
+  shows the faction's Zero Hour logo (the parity plan's divergence: ZH factions replace BO2's
+  emblem), resolved **at conversion**, not through the bridge: `zhbo_assets::emblems` reads the
+  player's Zero Hour install (`zhbo_requirements`, `ZHBO_ZH_DIR`), finds `MappedImage
+  <Side>_Logo` in its `Data\INI\MappedImages` INIs and crops that rect (right/bottom exclusive)
+  from the page in an `Art\Textures` folder of its archives (`SCShellUserInterface512_006.tga` in
+  `EnglishZH.big` on the stock install), writing `zhbo_native::emblem_path(letter)` per faction
+  (`Faction::side`). `nativevm::load` puts the viewmodel's faction's logo on every
+  `Material::emblem` surface; an archive without it keeps the material's own `emblem_clear`. The
+  reticle colour option has no rendering effect found in BO2: `weaponoptions.csv` has no colour
+  column and the reticle shader reads no code-set colour. The third-person body draws its world
+  model's reticle with `ads = 0`, i.e. dark, as BO2 sets the fade for the local viewmodel only.
+  Version bumps (integrator-owned, not made): model `VERSION` and camo `VERSION` (the shared
+  material record appends `reticle` and `emblem`) and the archive's `hud::VERSION`.
 
 ## The native third person (Track R7)
 
@@ -531,7 +583,8 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 `Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
-flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, `bulletrange` (how far a non-spread round is traced). BO2's numbers stay in BO2's units (inches,
+flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, `bulletrange` (how far a non-spread round is traced), the optic displays'
+`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`). BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like
