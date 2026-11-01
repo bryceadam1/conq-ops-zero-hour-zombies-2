@@ -44,6 +44,10 @@ pub struct Draft {
     /// The secondary's camo id (`camo_none` = its stock finish), BO2's `secondarycamo`: the
     /// SECONDARY box's Personalize Weapon page. Empty means "not personalised" (no key).
     pub secondary_camo: String,
+    /// The secondary optic's reticle id (`reticle_N`): BO2's `secondaryreticle`, set from the
+    /// sidearm's Reflex (`CACReticles` with `weaponSlot = "secondary"`) and worn by its lens. Empty
+    /// means "not personalised" and serialises as no key.
+    pub secondary_reticle: String,
 }
 
 impl Draft {
@@ -84,8 +88,7 @@ impl Draft {
     /// `secondary` with a new value (`FUN_004943e0` → `FUN_008d0650`) zeroes that slot's
     /// `<slot>attachment1..3`, `<slot>camo`, `<slot>reticle` and `<slot>reticlecolor` (and its
     /// lens, tag and emblem, which the mod's class does not carry). The camo is option 0 (the
-    /// stock finish, empty here); the reticle and its colour are the primary's, the only optic the
-    /// mod personalizes.
+    /// stock finish, empty here), and so is the reticle (option 0, the optic's stock one).
     pub fn reset_weapon_options(&mut self, primary: bool) {
         if primary {
             self.primary_atts.clear();
@@ -95,7 +98,29 @@ impl Draft {
         } else {
             self.secondary_atts.clear();
             self.secondary_camo.clear();
+            self.secondary_reticle.clear();
         }
+    }
+
+    /// An attachment went onto a weapon slot: equipping one of the custom-reticle optics
+    /// ([`crate::weapons::RETICLE_OPTICS`]) sets the slot's reticle back to option 0, the optic's
+    /// stock reticle (`cacattachmentsmenu.lua` `Equip`: `AttachmentHasCustomReticle` →
+    /// `SetClassItem(<slot>reticle, GetWeaponOptionGroupIndex(0, RETICLE))`), so a reticle picked
+    /// through one optic never carries over to another.
+    pub fn equipped_attachment(&mut self, primary: bool, short: &str) {
+        if crate::weapons::RETICLE_OPTICS.contains(&short) {
+            if primary {
+                self.reticle.clear();
+            } else {
+                self.secondary_reticle.clear();
+            }
+        }
+    }
+
+    /// The reticle optic a weapon slot holds ([`crate::weapons::optic_of`] over its equipped
+    /// attachments): the `attachmentRef` its reticle screen lists.
+    pub fn reticle_optic(&self, primary: bool) -> Option<&'static str> {
+        crate::weapons::optic_of(if primary { &self.primary_atts } else { &self.secondary_atts })
     }
 
     /// The primary weapon id plus its attachments.
@@ -275,6 +300,7 @@ impl Draft {
         push("reticle_color", &self.reticle_color);
         push("knife", &self.knife);
         push("secondary_camo", &self.secondary_camo);
+        push("secondary_reticle", &self.secondary_reticle);
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
         }
@@ -302,6 +328,7 @@ impl Draft {
             reticle_color: self.reticle_color.clone(),
             knife: self.knife.clone(),
             secondary_camo: self.secondary_camo.clone(),
+            secondary_reticle: self.secondary_reticle.clone(),
         }
     }
 
@@ -338,6 +365,7 @@ impl Draft {
             reticle_color: c.reticle_color.clone(),
             knife: c.knife.clone(),
             secondary_camo: c.secondary_camo.clone(),
+            secondary_reticle: c.secondary_reticle.clone(),
         }
     }
 }

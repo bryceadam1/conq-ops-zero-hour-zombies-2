@@ -523,6 +523,14 @@ UiText WEAPON_NO_AMMO
   Text = No Ammo
 End
 
+UiText MENU_SELECT_RETICLE
+  Text = Select Reticle
+End
+
+UiText MENU_X_OPTICS
+  Text = &&1 Reticles
+End
+
 Perk LIGHTWEIGHT
   Name = Lightweight
   Description = Move faster.  Take no damage when falling.

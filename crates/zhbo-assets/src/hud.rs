@@ -274,12 +274,17 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // The wildcard grid's art: each bonus card's own image (`mp/statstable.csv` column 6), the
     // same rows the weapon table's `BonusCard` blocks carry.
     wanted.extend(crate::cac::wildcard_sprites(&crate::weapons::bonus_card_rows(&patch, &names)));
-    // The reticle grid's art: each reticle row's `<optic>_<N>` material per optic
-    // (`zhbo_core::weapons::reticle_art`, `reticlesgridbutton.lua:61-66`; `patch_ui_mp`).
+    // The reticle grid's art: each reticle row's `<optic>_<N>` material per optic, the Hybrid
+    // Optic's pair (`zhbo_core::weapons::reticle_art`, `reticlesgridbutton.lua` `SetupButtonImages`;
+    // `patch_ui_mp`). The Hybrid's `reflex_N`/`acog_N` are the other optics' own art, packed once.
+    let mut reticle_art: Vec<String> = Vec::new();
     for r in crate::weapons::reticle_options(&patch, &names) {
         for optic in zhbo_core::weapons::RETICLE_OPTICS {
-            if let Some(image) = zhbo_core::weapons::reticle_art(optic, &r.id) {
-                wanted.push((image.clone(), Source::Dynamic(image), 128));
+            for image in zhbo_core::weapons::reticle_art(optic, &r.id) {
+                if !reticle_art.contains(&image) {
+                    reticle_art.push(image.clone());
+                    wanted.push((image.clone(), Source::Dynamic(image), 128));
+                }
             }
         }
     }
@@ -813,6 +818,20 @@ mod tests {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
         }
         assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
+        // The reticle grid: every custom-reticle optic's art for every reticle row converts (the
+        // Hybrid Optic's pair included), so no cell of any optic's page is blank.
+        let patch = crate::generals::load_zone(&bo2.path, crate::fx::ZONE).unwrap();
+        let rows = crate::weapons::reticle_options(&patch, &crate::weapons::names(&bo2.path));
+        assert_eq!(rows.len(), 38, "reticle_0..37");
+        for optic in zhbo_core::weapons::RETICLE_OPTICS {
+            for r in &rows {
+                let art = zhbo_core::weapons::reticle_art(optic, &r.id);
+                assert!(!art.is_empty(), "{optic} {}", r.id);
+                for image in art {
+                    assert!(report.found.contains(&image), "{optic} {}: {image} did not convert", r.id);
+                }
+            }
+        }
         // The HUD fills the screen round a scope overlay with black (`zhbo_core::hud`'s
         // `draw_scope_overlay`), standing in for BO2's stretch of the art's own edge texels
         // (`FUN_004b4840`): every overlay's border must be opaque black for that to be BO2's look.

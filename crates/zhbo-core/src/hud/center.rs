@@ -89,10 +89,11 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
             return;
         }
         let size = 30.0 * s;
-        // The chosen stock reticle through the optic (`reticle_3` -> the optic's `_reticle_04`),
-        // tinted by the chosen colour (`reticle_color_1` is Red). Without a choice, the red dot.
-        let art = crate::weapons::optic_of(&wpn.def.attachments)
-            .and_then(|o| crate::weapons::reticle_art(o, &p.reticle));
+        // The held slot's chosen reticle through the optic (`reticle_3` -> `reflex_3`, the grid
+        // cell's art; the Hybrid Optic's first sight), tinted by the chosen colour
+        // (`reticle_color_1` is Red). Without a choice, the red dot.
+        let reticle = p.held_reticle();
+        let art = crate::weapons::optic_of(&wpn.def.attachments).and_then(|o| crate::weapons::reticle_art(o, reticle).into_iter().next());
         let rgb = reticle_color_rgb(&p.reticle_color).unwrap_or((1.0, 1.0, 1.0));
         let col = argb(rgb, 1.0);
         let name = art.unwrap_or_else(|| sprites::RED_DOT.to_string());
@@ -102,7 +103,7 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
             y: cy - size * 0.5,
             w: size,
             h: size,
-            argb: if p.reticle.is_empty() { 0xFFFF_FFFF } else { col },
+            argb: if reticle.is_empty() { 0xFFFF_FFFF } else { col },
             fallback: vec![Prim::Rect { x: cx - 2.0 * s, y: cy - 2.0 * s, w: 4.0 * s, h: 4.0 * s, argb: col }],
         });
         return;

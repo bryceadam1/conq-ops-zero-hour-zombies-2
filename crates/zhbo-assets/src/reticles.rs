@@ -118,5 +118,19 @@ mod tests {
         let reflex = |n: usize| r.option("mc/mtl_t6_attach_optic_reflex_reticle", n).map(|m| m.name.clone());
         assert_eq!(reflex(24).as_deref(), Some("mc/mtl_t6_attach_optic_reflex_reticle_38"));
         assert_eq!(reflex(37).as_deref(), Some("mc/mtl_t6_attach_optic_reflex_reticle_40"));
+        // Every optic lens the class picks a reticle for (the Reflex and the pistols' RMR, the
+        // EOTech, the ACOG, the Hybrid Optic's two sights), every row: the lens takes that row's
+        // own material with a projected reticle, never the stock lens standing in.
+        let rows = zhbo_formats::stringtable::rows(&patch, "mp/weaponoptions.csv").unwrap().unwrap();
+        let names = columns(&rows);
+        assert_eq!(names.len(), 6, "reflex, RMR, holo, acog, combo up/down: {:?}", names.iter().map(|n| &n[0]).collect::<Vec<_>>());
+        for set in &names {
+            assert_eq!(set.len(), 38, "{}", set[0]);
+            for (n, want) in set.iter().enumerate() {
+                let m = r.option(&set[0], n).unwrap_or_else(|| panic!("{}: row {n}", set[0]));
+                assert_eq!(&m.name, want, "{}: row {n} converts its own material", set[0]);
+                assert!(m.reticle.is_some() && m.color.as_ref().is_some_and(|c| files.contains_key(c)), "{}: row {n} ({want}) has its reticle art", set[0]);
+            }
+        }
     }
 }

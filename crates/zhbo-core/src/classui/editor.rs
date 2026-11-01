@@ -93,19 +93,19 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
     let removable = cells.iter().any(|c| c.slot == editor.slot && cell_filled(editor, c));
     let mut left: Vec<(&str, &str)> = vec![("ESC", crate::weapons::catalog().label("MENU_BACK"))];
     let right: Vec<(&str, &str)> = if editor.picking {
-        if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
-            left.push(("V", "Reticle"));
+        if editor.reticle_page().is_some() {
+            left.push(("V", crate::weapons::catalog().label("MENU_SELECT_RETICLE")));
         }
         Vec::new()
     } else {
         left = vec![("ESC", crate::weapons::catalog().label("MENU_BACK")), ("TAB", crate::weapons::catalog().label("MPUI_PERSONALIZE_KNIFE"))];
         // BO2's `AddCamoButton` on a weapon box that holds a gun (`caceditclass.lua:748`) and
-        // `AddReticleButton` on the primary optic row (`:825`).
+        // `AddReticleButton` on a slot holding a custom-reticle optic (`:825`).
         if editor.camo_page().is_some() {
             left.push(("C", "Camo"));
         }
-        if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
-            left.push(("V", "Reticle"));
+        if editor.reticle_page().is_some() {
+            left.push(("V", crate::weapons::catalog().label("MENU_SELECT_RETICLE")));
         }
         if removable {
             vec![("R", "Remove")]

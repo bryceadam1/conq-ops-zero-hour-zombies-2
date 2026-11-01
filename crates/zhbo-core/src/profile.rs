@@ -684,6 +684,7 @@ mod tests {
             knife: "camo_gold".into(),
             secondary: "fnp45_mp".into(),
             secondary_camo: "camo_atacs".into(),
+            secondary_reticle: String::new(),
             ..CustomClass::default()
         });
         let text = p.to_text();

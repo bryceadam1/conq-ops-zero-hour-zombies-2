@@ -60,8 +60,12 @@ impl Editor {
                 let max = self.draft.primary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
                     let base = self.draft.primary.clone();
+                    let was = self.draft.primary_atts.iter().any(|a| a == short);
                     if !toggle_att(&mut self.draft.primary_atts, short, max, |a, b| legal::compatible(&base, a, b)) {
                         return false;
+                    }
+                    if !was {
+                        self.draft.equipped_attachment(true, short);
                     }
                 }
             }
@@ -70,8 +74,12 @@ impl Editor {
                 let max = self.draft.secondary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
                     let base = self.draft.secondary.clone();
+                    let was = self.draft.secondary_atts.iter().any(|a| a == short);
                     if !toggle_att(&mut self.draft.secondary_atts, short, max, |a, b| legal::compatible(&base, a, b)) {
                         return false;
+                    }
+                    if !was {
+                        self.draft.equipped_attachment(false, short);
                     }
                 }
             }

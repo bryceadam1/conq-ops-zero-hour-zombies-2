@@ -170,7 +170,9 @@ attachment strip), the personalize pages `cac-personalize.png` (camo, CAMO tab),
 `cac-personalize-dlc.png` (its DLC tab), `cac-personalize-knife.png` (the knife page),
 `cac-editor-secondary.png` (the grid with SECONDARY focused: its camo swatch and the `C` prompt),
 `cac-personalize-secondary.png` (the sidearm's own camo page),
-`cac-reticles.png` and `cac-reticle-color.png`, `cac-editor-lethal.png` (the lethal list: grenades and placed equipment), `cac-editor-overkill.png` (the secondary list under Overkill: primary groups only), `cac-editor-danger-close.png`/`cac-editor-danger-close-x2.png` (the lethal button's Danger Close box, empty then filled), `cac-editor-wildcards.png` (the wildcard grid: the table's bonus cards and the
+`cac-reticles.png` (and `-dlc`/`-dlc2`) and one page per other custom-reticle optic
+(`cac-reticles-holo`/`-acog`/`-dualoptic`/`-dualoptic-dlc`, the sidearm's `cac-reticles-secondary`),
+`cac-editor-reticle-prompt.png` (the attachment box's `V Select Reticle`), `cac-reticle-color.png`, `cac-editor-lethal.png` (the lethal list: grenades and placed equipment), `cac-editor-overkill.png` (the secondary list under Overkill: primary groups only), `cac-editor-danger-close.png`/`cac-editor-danger-close-x2.png` (the lethal button's Danger Close box, empty then filled), `cac-editor-wildcards.png` (the wildcard grid: the table's bonus cards and the
 highlighted card's name and description), `cac-editor-perks.png` (the Perk 1 grid: BO2's perk names and the highlighted perk's name and description) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs), and the HUD's scope overlays
 (`hud::scope_overlay`) as `hud-<material>-<w>x<h>.png` for every converted overlay at 1280x720,
 1280x800, 1024x768 and 1720x720 (the scope must stay round at every aspect). Default size
@@ -272,7 +274,10 @@ pistol (e.g., `secondary=fnp45_dw_mp`) in a local capture run and confirm the le
 the left palm.
 
 **The camo sweep.** `--camo <id>` (repeatable) draws the weapon with that class camo set and writes
-`<weapon>/camo_<id>.png`; the manifest's `camo` column names the option. Compare it with the stock
+`<weapon>/camo_<id>.png` (`att_<short>_camo_<id>.png` for an attachment job); the manifest's `camo`
+column names the option. `--reticle <id>` (repeatable, instead of the camos) draws the optic's lens
+with that class reticle (`reticle_3` is `weaponoptions.csv` row 3) into `<weapon>/reticle_<N>.png` the
+same way. Compare it with the stock
 `base.png` and the BO2 captures (`~/Documents/BO2-reference/cac/sweep/i-personalize/`). C0's
 evidence: the atacs solid is 32×32 with alpha 41–47, the pattern 256×256 with alpha 0–110 and
 edge-tiling (edge mean difference 4.2/3.2); `CAMO_GAIN` is 2.0 (1.0 is the fallback if the

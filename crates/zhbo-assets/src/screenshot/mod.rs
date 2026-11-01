@@ -119,6 +119,12 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticles-dlc", reticle_tab_prims(1)),
         ("cac-reticles-dlc2", reticle_tab_prims(2)),
+        ("cac-reticles-holo", reticle_optic_prims("holo", false)),
+        ("cac-reticles-acog", reticle_optic_prims("acog", false)),
+        ("cac-reticles-dualoptic", reticle_optic_prims("dualoptic", false)),
+        ("cac-reticles-dualoptic-dlc", reticle_optic_tab_prims("dualoptic", false, 1)),
+        ("cac-reticles-secondary", reticle_optic_prims("reflex", true)),
+        ("cac-editor-reticle-prompt", reticle_prompt_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
         ("cac-dialog-class", class_dialog_prims()),
@@ -262,6 +268,50 @@ fn reticle_tab_prims(tab: i32) -> Vec<Prim> {
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
+/// The first converted weapon of the slot (a pistol for the secondary, a non-pistol primary
+/// otherwise) that offers `optic`, by the catalog's order.
+fn weapon_offering(optic: &str, secondary: bool) -> Option<String> {
+    zhbo_core::weapons::catalog()
+        .all()
+        .iter()
+        .filter(|w| !w.id.contains('+') && zhbo_core::weapons::Class::ALL_GUNS.contains(&w.class))
+        .filter(|w| (w.class == zhbo_core::weapons::Class::Pistol) == secondary)
+        .find(|w| w.allowed.iter().any(|(s, _)| s == optic))
+        .map(|w| w.id.clone())
+}
+
+/// The reticle grid for the slot's `optic` (`CACReticles` with that `attachmentRef`): a weapon
+/// that offers it, the optic equipped, on tab `tab`.
+fn reticle_optic_tab_prims(optic: &str, secondary: bool, tab: i32) -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    if let Some(id) = weapon_offering(optic, secondary) {
+        if secondary {
+            (editor.draft.secondary, editor.draft.secondary_atts) = (id, vec![optic.to_string()]);
+        } else {
+            (editor.draft.primary, editor.draft.primary_atts) = (id, vec![optic.to_string()]);
+        }
+    }
+    let kind = if secondary { PersonalizeKind::SecondaryReticle } else { PersonalizeKind::Reticle };
+    let tabs = classui::personalize_tabs_for(kind, classui::personalize_weapon(kind, &editor.draft));
+    let mut p = Personalize::with_tabs(kind, tabs, &editor.draft);
+    p.step_tab(tab);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+fn reticle_optic_prims(optic: &str, secondary: bool) -> Vec<Prim> {
+    reticle_optic_tab_prims(optic, secondary, 0)
+}
+
+/// The editor grid with the primary's attachment box focused: its equipped Reflex adds BO2's
+/// `V Select Reticle` prompt (`CACAttachmentsButton.SlotGainFocus` → `AddReticleButton`).
+fn reticle_prompt_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    editor.slot = Slot::PrimaryAtts;
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
 /// BO2's seven stock reticle colours (`attachmenttable.csv:68-74`).
 fn reticle_color_personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
@@ -292,6 +342,7 @@ fn empty_editor_prims() -> Vec<Prim> {
         reticle_color: String::new(),
         knife: String::new(),
         secondary_camo: String::new(),
+        secondary_reticle: String::new(),
     };
     let editor = Editor::new(draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
@@ -477,6 +528,7 @@ fn editor_state() -> Editor {
         knife: String::new(),
         // Gold on the sidearm: the SECONDARY button's swatch and its own camo page show it.
         secondary_camo: "camo_gold".into(),
+        secondary_reticle: String::new(),
     };
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
@@ -525,6 +577,7 @@ fn seed_profile() {
             reticle_color: String::new(),
             knife: String::new(),
             secondary_camo: String::new(),
+            secondary_reticle: String::new(),
             ..CustomClass::default()
         });
     }
@@ -736,7 +789,7 @@ mod tests {
         // primary optic's art (`reticlesgridbutton.lua:61-66`).
         let reticles = reticle_personalize_prims();
         let reticle_text = texts(&reticles);
-        assert!(reticle_text.contains(&"RETICLES"), "the reticle title draws: {reticle_text:?}");
+        assert!(reticle_text.contains(&"REFLEX RETICLES"), "the reticle title draws (`MENU_X_OPTICS`): {reticle_text:?}");
         assert!(reticle_text.contains(&"Back"), "the reticle ESC Back prompt draws: {reticle_text:?}");
         let colors = reticle_color_personalize_prims();
         let color_text = texts(&colors);

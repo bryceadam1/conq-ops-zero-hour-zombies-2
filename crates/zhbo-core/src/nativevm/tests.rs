@@ -1343,3 +1343,22 @@ fn the_emblem_surface_wears_the_factions_logo() {
     assert_eq!(emblem(&run(true)), Some(zhbo_native::emblem_path('G')), "the GLA logo");
     assert_eq!(emblem(&run(false)).as_deref(), Some("Art\\Textures\\zhbo_emblem_clear_a.tga"), "no logo in the archive: the stand-in");
 }
+
+/// Each weapon slot's optic lens wears its own class reticle (`primaryreticle`,
+/// `secondaryreticle`, `calcweaponoptions(class, 0/1)`), and an alt mode with a viewmodel of its own
+/// (the Hybrid Optic's second sight) the same row as its parent; no choice is the stock row 0.
+#[test]
+fn each_slots_optic_wears_its_own_class_reticle() {
+    use crate::weapons::WeaponDef;
+    let def = |id: &str, vm: i32, alt: &str| WeaponDef { id: id.into(), viewmodel: vm, alt: alt.into(), ..WeaponDef::default() };
+    let defs = [
+        def("an94_mp+dualoptic", 3, "dualoptic_an94_mp+dualoptic"),
+        def("dualoptic_an94_mp+dualoptic", 4, "an94_mp+dualoptic"),
+        def("fiveseven_mp+reflex", 5, ""),
+    ];
+    let lookup = |id: &str| defs.iter().find(|d| d.id == id);
+    let rows = class_reticles_in(lookup, &[("an94_mp+dualoptic", "reticle_9"), ("fiveseven_mp+reflex", "reticle_24")]);
+    assert_eq!(rows, vec![(3, 9), (4, 9), (5, 24)]);
+    let stock = class_reticles_in(lookup, &[("an94_mp+dualoptic", ""), ("nope_mp", "reticle_2")]);
+    assert_eq!(stock, vec![(3, 0), (4, 0)]);
+}

@@ -9348,3 +9348,95 @@ anyone; the sweep skips a strike its own fuse beats. Whether BO2 holds it until 
 
 The archive changes (new table key and the `explosive_bolt_mp` def, model and effects), so
 `hud::VERSION` needs a bump at integration.
+
+## Reticles: every custom-reticle optic, its own names and art, both weapons (2026-11-01, branch `v1/reticle-picker`)
+
+Playtest: "I can't customize the reticle for attachments that support it. All I see are a bunch of
+'Dot' reticles with no icons."
+
+**Root causes.** The screen was wired to the wrong data in four ways:
+* **Every cell said "Dot".** The label came from `mp/attachmenttable.csv` column 3, and that is
+  `MPUI_RETICLE_DEFAULT` ("Dot") on all 38 `reticle` rows. BO2's grid never shows that column.
+  `ReticlesGridButton.new` (`reticlesgridbutton.lua`) labels a cell
+  `Localize("MPUI_RETICLE_" .. attachmentRef .. "_" .. index)`, so a Reflex's `reticle_3` is
+  "Target Drop", an EOTech's is "Hit Mark", and the Hybrid Optic's is "Target Ranger Drop".
+* **No icons.** The art follows the screen's optic, `optic_of(primary_atts)` over
+  reflex/holo/acog. But the `V` prompt opened for any `hud::OPTICS` attachment: the Target Finder,
+  MMS, Dual Band and Variable Zoom have no reticle grid at all, so their page had no optic and no
+  art. The Hybrid Optic does have a grid but was not in the list. In the open attachment grid the
+  prompt followed the highlighted option even when that optic was not equipped yet.
+  `CACUtility.attachmentsWithCustReticle` (`cacutility.lua:168-177`) lists BO2's optics: reflex,
+  holo, acog, dualoptic. `CACAttachmentsButton.SlotGainFocus` offers `MENU_SELECT_RETICLE` only on a
+  slot that holds one of them.
+* **The sidearm had none.** BO2's class carries `<slot>reticle` for both weapons, and
+  `CACReticles` reads `perController.weaponSlot`. A pistol's Reflex (attachmentRef `reflex`, lens
+  `mtl_t6_attach_optic_rmr_reticle`, the RMR column of `weaponoptions.csv`) gets its own reticle.
+* **A new optic kept the old pick.** `CACAttachments.Equip` resets `<slot>reticle` to option 0
+  when it equips a custom-reticle attachment. The mod kept a reticle picked through another optic.
+
+**The fix.**
+* `weapons::RETICLE_OPTICS` is now BO2's list. `reticle_art` returns a cell's pictures: the
+  Hybrid Optic draws two side by side (`reflex_N`, `acog_N`), and options 0 and 9 use their own
+  `dualoptic_up_N`/`dualoptic_down_N`. Each picture is 32 units square, 20 apart about the centre
+  (`SetupButtonImages`). Before, the art was stretched to the cell's width.
+* `reticle_name_key` builds the label key. The converter writes every `MPUI_RETICLE_<OPTIC>_<N>`
+  string the install has as `UiText` (`weapons::reticle_names`). The title is BO2's
+  `MENU_X_OPTICS` ("&&1 Reticles", e.g. "REFLEX RETICLES"). The prompt is `MENU_SELECT_RETICLE`.
+* `Editor::reticle_page` gates `V` on an equipped custom-reticle optic, for either weapon. With
+  the attachment box closed, the slot's own optic counts. With it open, the highlighted option must
+  be that equipped optic.
+* New `PersonalizeKind::SecondaryReticle`, plus `Draft`/`CustomClass`/`PlayerSim`
+  `secondary_reticle` (spec key `secondary_reticle`, absent from older specs).
+  `Draft::equipped_attachment` resets the slot's reticle. A new sidearm clears it.
+* `nativevm::set_local_reticle` now takes one `(viewmodel, row)` per slot weapon and each of its
+  alt modes (`class_reticles`). The W3D fallback's 2D reticle uses the held slot's choice
+  (`PlayerSim::held_reticle`).
+* The lens side was already right for every optic. `weaponoptions.csv` has six sets: reflex,
+  RMR, holo, acog, combo_up and combo_down (the Hybrid's two lenses). The real-install test now
+  checks that all 6 × 38 rows convert their own material with reticle art.
+
+**Tests.**
+* `classui::personalize` `every_optic_and_reticle_draws_its_own_art_and_name`: every optic ×
+  38 rows × both slots, checking art, name (never "Dot"), title, and the pick landing in the
+  slot's own field.
+* `classmenu` `v_opens_a_reticle_page_only_on_a_slot_holding_a_custom_reticle_optic` and
+  `equipping_a_reticle_optic_resets_that_slots_reticle`.
+* `nativevm` `each_slots_optic_wears_its_own_class_reticle`.
+* Spec round trip, and the sim's `held_reticles`/`held_reticle`.
+* Real-install tests: `every_optic_names_every_reticle`; the hud archive test checks that every
+  optic × row picture converts; the reticles test covers every lens set × row.
+* The screenshot harness gains `cac-reticles-{holo,acog,dualoptic,dualoptic-dlc,secondary}` and
+  `cac-editor-reticle-prompt`. `render_viewmodels` gains `--reticle <id>`, and the sweep source
+  now carries the reticle table so converted combinations take the lens too.
+
+**Gotchas.**
+* `UI_TEXT_KEYS` must equal the built-in stand-ins exactly (a real-install test checks this), so
+  the 152 per-optic names are written beside them (`reticle_names`), not added to the list.
+* Long Hybrid names ("Electroflex, Interface") run past their cell, as the camo names already
+  could.
+* **The viewmodel sweep had two vm bugs of its own.** `--camo` (and now `--reticle`) set the choice on
+  the base weapon's viewmodel. An attachment job draws through the combination's own archive entry
+  (`archive_vm`) or through a conversion's (index 0), so a combination never wore the look. The
+  output name also dropped the attachment, so each attachment's image overwrote the last. Both are
+  fixed: the choice goes on both viewmodels, and the files are `att_<short>_<look>.png`.
+* **The sidearm lens can't be checked in the sweep.** The Five-seven's aimed half does not look
+  through the RMR (the gun sits below the eye line), so no reticle pixel shows for any row. The
+  log does show the swap: `rmr_reticle` → `rmr_reticle_03`. This is a sweep pose limitation and
+  needs an in-game check.
+
+**Verified:**
+* `cargo test --workspace`: green.
+* `cargo clippy --workspace --all-targets`: clean.
+* Real-install suite (`--ignored --skip conformance`): 59 passed. The emblem test needs
+  `ZHBO_ZH_DIR`.
+* Conformance unchanged: weapons 1,979 cells / 11 clusters, 0/0 one-sided; cac 0 cells, 4
+  BO2-only rows; 12 gap clusters.
+* Headless images in `~/.opencode/plan/reticle-picker/`:
+  * `shots/cac-reticles*.png`
+  * `reticle-sheet.png`
+  * `vm-reticle-zoom.png`: the lenses of the Reflex, EOTech, ACOG and Hybrid at rows 0/3/9/24. Each
+    lens shows its grid cell's shape: Target Drop, the clover, Hearts on the Hybrid, the
+    thought bubble.
+
+**Integrator:** the archive changes (new `UiText` rows, the Hybrid's `dualoptic_up/down` sprites,
+the `secondary_reticle` class key), so `hud::VERSION` needs a bump. No ABI change.

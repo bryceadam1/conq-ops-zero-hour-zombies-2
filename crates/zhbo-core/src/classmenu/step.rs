@@ -24,10 +24,12 @@ impl Editor {
                 return Outcome::Continue;
             }
         }
-        // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
-        if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {
-            self.personalize = Some(PersonalizeKind::Reticle);
-            return Outcome::Continue;
+        // BO2's `AddReticleButton` on a slot holding a custom-reticle optic (`caceditclass.lua:825`).
+        if edges.reticle {
+            if let Some(kind) = self.reticle_page() {
+                self.personalize = Some(kind);
+                return Outcome::Continue;
+            }
         }
         // A box is highlighted: the arrows follow BO2's grid links (`nav.rs`), Enter opens the list.
         for (pressed, dir) in [(edges.up, Dir::Up), (edges.down, Dir::Down), (edges.left, Dir::Left), (edges.right, Dir::Right)] {
@@ -138,10 +140,12 @@ impl Editor {
     /// row. The weapon carousel keeps the plain list walk here; its four arrows are consumed by the
     /// shared fold (`classui::editor_frame`) because they steer its categories.
     pub(super) fn step_picking(&mut self, edges: Edges) -> Outcome {
-        // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
-        if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {
-            self.personalize = Some(PersonalizeKind::Reticle);
-            return Outcome::Continue;
+        // BO2's `AddReticleButton` on a slot holding a custom-reticle optic (`caceditclass.lua:825`).
+        if edges.reticle {
+            if let Some(kind) = self.reticle_page() {
+                self.personalize = Some(kind);
+                return Outcome::Continue;
+            }
         }
         let n = self.options().len();
         if n == 0 {
