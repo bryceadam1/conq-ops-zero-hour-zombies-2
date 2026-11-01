@@ -961,7 +961,8 @@ offset (16 bytes, now asserted on both sides); `zhbo_logic_choose_class`'s custo
 `classwire` token form (the 64-word size is unchanged; the text form still decodes); the menu's
 `save_profile` one-shot may carry length `-1` (`profile::PROFILE_LIVE`: write the core's live
 profile). Archive `hud::VERSION` 82 at the same point (the weapon table's `SpawnedGrenade`,
-`BodyAnims` and `ExplodeOnGround` keys, `explosive_bolt_mp` converted beside the crossbow, the
+`BodyAnims` and `ExplodeOnGround` keys and its `Shock` blocks (BO2's shellshock files), `explosive_bolt_mp`
+converted beside the crossbow, the
 per-optic reticle names and art, the patch-zone reference materials, the body's per-set W3D clips
 and INI); the native blob formats are unchanged.
 
