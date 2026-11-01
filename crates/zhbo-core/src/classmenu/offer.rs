@@ -60,7 +60,8 @@ pub fn draft_weapon_id(base: &str, shorts: &[&str]) -> String {
 /// * the lethal slot's items and, under Tactician, the tactical ones; the tactical slot's items;
 ///   every count from none to `maxGrenades`;
 /// * every perk, in a class carrying `maxSpecialtySlots` of them;
-/// * every camo the Personalize screens offer each gun and the knife, every reticle and colour;
+/// * every camo the Personalize screens offer each gun and the knife, every reticle of both
+///   optics and the colour;
 /// * an unnamed class and a name of [`NAME_MAX`] characters.
 ///
 /// The spare-round override ([`CustomClass::reserve`]) is no editor field; the payload carries it
@@ -115,6 +116,7 @@ pub fn kit_coverage(mut visit: impl FnMut(&CustomClass)) {
     let secondary_camos = choices(PersonalizeKind::SecondaryCamo, &mut bases(&secondaries).iter().map(String::as_str));
     let knives = choices(PersonalizeKind::Knife, &mut std::iter::once(weapons::KNIFE_HELD));
     let reticles = choices(PersonalizeKind::Reticle, &mut std::iter::once(""));
+    let secondary_reticles = choices(PersonalizeKind::SecondaryReticle, &mut std::iter::once(""));
     let colors = choices(PersonalizeKind::ReticleColor, &mut std::iter::once(""));
     let names = vec![String::new(), "W".repeat(NAME_MAX)];
 
@@ -132,7 +134,7 @@ pub fn kit_coverage(mut visit: impl FnMut(&CustomClass)) {
             .unwrap_or_default()
     };
     type Set = fn(&mut CustomClass, &str);
-    let fields: [(&[String], Set); 10] = [
+    let fields: [(&[String], Set); 11] = [
         (&names, |c, v| c.name = v.into()),
         (&primaries, |c, v| c.primary = v.into()),
         (&secondaries, |c, v| c.secondary = v.into()),
@@ -143,6 +145,7 @@ pub fn kit_coverage(mut visit: impl FnMut(&CustomClass)) {
         (&knives, |c, v| c.knife = v.into()),
         (&reticles, |c, v| c.reticle = v.into()),
         (&colors, |c, v| c.reticle_color = v.into()),
+        (&secondary_reticles, |c, v| c.secondary_reticle = v.into()),
     ];
     let mut worst = CustomClass {
         melee: weapons::KNIFE_HELD.into(),

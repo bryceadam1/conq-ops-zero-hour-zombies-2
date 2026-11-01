@@ -16,8 +16,8 @@
 //!   (its `allowed` order, BO2's statstable column 8). A dual-wield pistol (`fnp45_dw_mp`) is its
 //!   item with `dw` ([`crate::classmenu::items::given_parts`]), rebuilt by `given_weapon`.
 //! * **perks**: indices into [`crate::weapons::perks::PERKS`].
-//! * **camos** (primary, knife, secondary), **reticle**, **reticle colour**: indices into the
-//!   catalog's camo, reticle and reticle-colour tables, BO2's own option order.
+//! * **camos** (primary, knife, secondary), **reticles** (primary, secondary), **reticle colour**:
+//!   indices into the catalog's camo, reticle and reticle-colour tables, BO2's own option order.
 //! * the **name** as its UTF-8 bytes, the counts and reserves as numbers.
 //!
 //! Anything a vocabulary does not hold (a hand-edited profile, a value the catalog lacks) is
@@ -59,7 +59,7 @@ pub fn max_legal_perks() -> usize {
 
 /// The largest token payload a class built from the catalog's own items can have, in bytes: the
 /// header, the name at [`crate::classmenu::NAME_MAX`] characters of up to four UTF-8 bytes, five
-/// weapon slots with the most attachments, the counts, the most perks, the five option fields and
+/// weapon slots with the most attachments, the counts, the most perks, the six option fields and
 /// the two reserves. Every field is fixed-size except the name and the attachment and perk counts,
 /// so this is an upper bound for every legal kit.
 pub fn max_legal_bytes() -> usize {
@@ -69,7 +69,7 @@ pub fn max_legal_bytes() -> usize {
     let weapons = 5 * gun;
     let counts = 2;
     let perks = 1 + 2 * max_legal_perks();
-    let options = 5 * 2;
+    let options = 6 * 2;
     let reserves = 2 * 2;
     header + name + weapons + counts + perks + options + reserves
 }
@@ -94,6 +94,7 @@ pub fn encode(c: &CustomClass) -> Option<Vec<u32>> {
     coded(&mut body, cat.camo_index(&c.secondary_camo), &c.secondary_camo)?;
     coded(&mut body, cat.reticles().iter().position(|r| r.id == c.reticle), &c.reticle)?;
     coded(&mut body, cat.reticle_colors().iter().position(|r| r.id == c.reticle_color), &c.reticle_color)?;
+    coded(&mut body, cat.reticles().iter().position(|r| r.id == c.secondary_reticle), &c.secondary_reticle)?;
     body.extend_from_slice(&c.reserve[0].to_le_bytes());
     body.extend_from_slice(&c.reserve[1].to_le_bytes());
 
@@ -132,6 +133,7 @@ pub fn decode(words: &[u32]) -> Option<CustomClass> {
     c.secondary_camo = r.coded(camo)?;
     c.reticle = r.coded(|i| cat.reticles().get(i).map(|o| o.id.clone()))?;
     c.reticle_color = r.coded(|i| cat.reticle_colors().get(i).map(|o| o.id.clone()))?;
+    c.secondary_reticle = r.coded(|i| cat.reticles().get(i).map(|o| o.id.clone()))?;
     c.reserve = [r.u16()?, r.u16()?];
     // Every byte the header counted must be a field: a longer body is not this format.
     (r.at == r.bytes.len()).then_some(c)
