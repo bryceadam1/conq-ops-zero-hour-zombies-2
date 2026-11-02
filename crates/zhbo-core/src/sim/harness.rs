@@ -31,17 +31,24 @@ pub const RUNAHEAD: u32 = 4;
 /// The run-ahead over the match, as Zero Hour adapts it (`Network::processRunAheadCommand`, one
 /// value for every peer from the frame it is set): 30 as a game starts, then down to what the
 /// latency needs and back up, so commands pile onto one frame (it shrank: the last input wins,
-/// every press counts) or leave a frame without any (it grew: the last one holds).
+/// every press counts) or leave a frame without any (it grew: the last one holds). It changes once a
+/// round, at [`RUNAHEAD_CHANGE`]: the players are in first person and sending input every frame,
+/// and no beat of the script is pressed yet, so every change meets a stream of inputs while the
+/// beats keep the room they are spaced for (the round's body stays at 12 or less: a 30-frame delay
+/// late in a round would push the swap and the field computer into the round's end).
 pub fn runahead_at(frame: u32) -> u32 {
-    match (frame / 97) % 6 {
-        0 => 30,
-        1 => 12,
-        2 => RUNAHEAD,
-        3 => 8,
-        4 => RUNAHEAD,
-        _ => 6,
+    const BODY: [u32; 6] = [12, 4, 8, 4, 6, 12];
+    let f = frame.saturating_sub(1);
+    if f < RUNAHEAD_CHANGE {
+        return 30;
     }
+    let (r, t) = (f / ROUND, f % ROUND);
+    let body = if t >= RUNAHEAD_CHANGE { r } else { r - 1 };
+    BODY[body as usize % BODY.len()]
 }
+/// The round frame the run-ahead changes ([`runahead_at`]): after the take-control has landed at
+/// any run-ahead, before the script's first press (frame 120).
+pub const RUNAHEAD_CHANGE: u32 = 90;
 /// Logic frames per round.
 pub const ROUND: u32 = 660;
 /// The round frame of the mid-life class pick (after the round's fighting: it waits for the next
