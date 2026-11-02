@@ -80,9 +80,11 @@ pub trait LogicHost {
     fn log(&self, msg: &str);
     fn ground_height(&self, x: f32, y: f32) -> f32;
     fn is_walkable(&self, x: f32, y: f32) -> bool;
-    /// The ground's surface at a world point, for the impact effect: Zero Hour's terrain class
-    /// there (a [`crate::impacts::Surface`]). **Presentation only** — it is read in the logic step
-    /// but must never feed damage, movement or any other sim state (docs/CONTRACT.md).
+    /// The ground's surface at a world point (a [`crate::impacts::Surface`]): water where the
+    /// logic's water table covers the ground, else the map's tile class there
+    /// ([`crate::terrain`]). **Sim state**: a grenade's bounce scales by it, the plant check refuses
+    /// deep water by it, and the impact and blast cells it picks ride the events, so it is read
+    /// only from logic-side data every machine holds identically (docs/CONTRACT.md).
     fn surface_at(&self, _x: f32, _y: f32) -> crate::impacts::Surface {
         crate::impacts::Surface::Default
     }
@@ -215,7 +217,9 @@ pub struct LogicApi {
     pub work_site: Option<extern "C" fn(general: u32, pos: *const Vec3, reach: f32, out: *mut crate::building::Site) -> u32>,
     pub work: Option<extern "C" fn(general: u32, site: u32, rate: f32) -> f32>,
     pub choose_class: Option<extern "C" fn(player: i32, general: u32, index: i32)>,
-    /// ABI 26 (R8d): the ground's surface at a point (a `ZHBO_SURF_*`).
+    /// ABI 26 (R8d): the water table at a point (`ZHBO_SURF_WATER`, else `ZHBO_SURF_DEFAULT`);
+    /// the ground under it comes from the map grid (`zhbo_terrain_load`). An older bridge that
+    /// answers the tile class itself still works: any non-default answer is taken as it is.
     pub surface_at: Option<extern "C" fn(x: f32, y: f32) -> i32>,
 }
 
@@ -273,8 +277,14 @@ impl LogicHost for CLogicHost {
     }
 
     fn surface_at(&self, x: f32, y: f32) -> crate::impacts::Surface {
-        // An engine without the query (a shell, a test) reports the default cell.
-        crate::impacts::Surface::from_i32(self.0.surface_at.map_or(0, |f| f(x, y)))
+        // The engine answers the water table (`TerrainLogic::isUnderwater`, logic state); the
+        // ground under it is the map file's tile class (`crate::terrain`, the grid the bridge
+        // loads per map, never the client's terrain visual). An engine without the query (a shell,
+        // a test) and no loaded map report the default cell.
+        match crate::impacts::Surface::from_i32(self.0.surface_at.map_or(0, |f| f(x, y))) {
+            crate::impacts::Surface::Default => crate::terrain::surface_at(x, y),
+            water => water,
+        }
     }
 
     fn extent(&self) -> (Vec3, Vec3) {

@@ -381,7 +381,7 @@ pub struct Blast {
 
 /// The surface a blast at `at` goes off on: what it hit directly, else the ground there (BO2 passes
 /// the projectile's hit surface to its impact routine, `FUN_004c0ac0` -> `FUN_00533210`).
-/// **Presentation only**, like every surface (docs/CONTRACT.md).
+/// Read from logic data only, like every surface (docs/CONTRACT.md).
 pub fn blast_surface(host: &dyn LogicHost, at: Vec3, direct: Option<&ObjInfo>) -> Surface {
     match direct {
         Some(o) => Surface::of_object(Some(o)),

@@ -10401,3 +10401,40 @@ wears exactly the repaired class, the repair is a fixed point, and the result pa
 the card cap, slot fit, grenade caps and the spare-round cap. Payloads that do not decode are
 dropped. `a_received_class_ignores_the_receivers_dlc` keeps a DLC camo the receiver lacks, and
 `classrepair`'s lock test keeps a locked item on receipt.
+
+## Multiplayer hardening: the ground's surface comes from the map file, not the terrain visual (2026-11-01, branch `v1/mp-hardening`)
+
+`cbSurfaceAt` answered the ground's surface through `TheTerrainVisual->getTerrainTile`, and
+CONTRACT and `impacts.rs` called surfaces "presentation only". Both were wrong.
+* The surface feeds the sim. A grenade's bounce scales its velocity by the surface
+  (`Projectile::bounce_scales`), and the plant check refuses deep water by it.
+* `TerrainVisual` is a client subsystem. Its lookup reads the visual's own copy of the height
+  map (`W3DTerrainVisual::m_logicHeightMap`, despite the name). That copy happens to load on
+  `-headless` today, because `W3DTerrainVisual::init` still makes the render object. But nothing
+  in the engine promises that, and a client-side copy is the wrong place for a logic query to
+  look.
+
+The fix reads the same data the way the logic does. At the loading screen (`Zhbo_Preload`), and
+again on the first ground query of any map loaded without that, the bridge does two things. It
+reads the map file through `CachedFileInputStream`, as `W3DTerrainLogic::loadMap` does, which
+decompresses RefPack'd maps. It also enumerates `TheTerrainTypes`, classified by the same switch
+as before. Both go to the new `zhbo_terrain_load`. `zhbo_core::terrain` parses the `CkMp` chunk
+file (`HeightMapData`, then `BlendTileData` with its version-dependent layers) into a per-cell
+surface grid, using `WorldHeightMap::getTerrainNameAt`'s cell rule. `cbSurfaceAt` now answers
+only the logic's water table, and the core reads the ground from the grid. A file that does not
+parse clears the grid, so every machine then reads the default surface, which is still the same
+answer everywhere.
+
+**Gotcha: every shipped map is RefPack-compressed (`EAR\0`).** A Rust-side reader needs a RefPack
+decoder, so `zhbo_formats::refpack` is a bounds-checked port of the engine's `REF_decode`.
+
+**Verified.** Parser unit tests cover synthetic maps at chunk versions 3/4 and 5–8, clamping,
+NaN input and 500 corrupt files. The FFI round trip
+(`every_machine_reads_the_same_ground_from_the_map_file`) checks the load and query entry points
+with the water table on top. A real-install test (`every_shipped_map_reads_its_ground_surfaces`,
+`ZHBO_ZH_DIR`) decompresses and parses every `.map` in the install's archives. In every one, every
+cell's texture class names a `Terrain.ini` terrain type. In game, the bridge cross-checks the grid
+against the terrain visual's lookup on every fourth cell at load and logs the agreement. On Alpine
+Assault, the autotest's map, it reported 3,900 of 3,900 sampled cells agreeing (152,000 cells,
+248 terrain types), with the default autotest leg at 16/16 and `--classpick` passing.
+

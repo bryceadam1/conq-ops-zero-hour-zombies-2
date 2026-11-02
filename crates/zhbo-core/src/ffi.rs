@@ -212,6 +212,54 @@ pub unsafe extern "C" fn zhbo_load_impacts(text: *const c_char) -> i32 {
     crate::impacts::install(&text) as i32
 }
 
+/// Load a map's ground surfaces (`crate::terrain`): `bytes` is the map file as the engine reads it
+/// (decompressed, `CachedFileInputStream`), and `names`/`surfaces` are Zero Hour's terrain types in
+/// collection order, each name with its `ZHBO_SURF_*` (the bridge classifies `Terrain.ini`'s
+/// classes). Replaces the previous map's grid. Returns the grid's cell count, or -1 when the file
+/// does not parse (the grid is then cleared: every ground reads the default surface, the same on
+/// every machine). Pending for the next ABI bump (CONTRACT.md "Versioning").
+///
+/// # Safety
+/// `bytes` must point at `len` readable bytes (or be null with `len` 0); `names` and `surfaces`
+/// at `count` entries each, every name null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_terrain_load(bytes: *const u8, len: i32, names: *const *const c_char, surfaces: *const i32, count: i32) -> i32 {
+    let bytes: &[u8] = match usize::try_from(len) {
+        Ok(n) if n > 0 && !bytes.is_null() => unsafe { std::slice::from_raw_parts(bytes, n) },
+        _ => &[],
+    };
+    let mut terrain = Vec::new();
+    if let Ok(n) = usize::try_from(count) {
+        if !names.is_null() && !surfaces.is_null() {
+            for i in 0..n {
+                let (name, surface) = unsafe { (*names.add(i), *surfaces.add(i)) };
+                if !name.is_null() {
+                    terrain.push((unsafe { CStr::from_ptr(name) }.to_string_lossy().into_owned(), crate::impacts::Surface::from_i32(surface)));
+                }
+            }
+        }
+    }
+    match crate::terrain::parse_map(bytes, &terrain) {
+        Ok(grid) => {
+            let cells = grid.cells.len() as i32;
+            crate::terrain::install(Some(grid));
+            cells
+        }
+        Err(_) => {
+            crate::terrain::install(None);
+            -1
+        }
+    }
+}
+
+/// The loaded map grid's surface at a world point (a `ZHBO_SURF_*`; the default surface with no
+/// map loaded): what the sim's ground query reads under the water table. The bridge's load-time
+/// cross-check against the client's terrain visual uses it. Pending for the next ABI bump.
+#[no_mangle]
+pub extern "C" fn zhbo_terrain_surface_at(x: f32, y: f32) -> i32 {
+    crate::terrain::surface_at(x, y) as i32
+}
+
 /// Load the third-person shots' layer rows (`Data\ConquerOps\sound_layers.txt`, read by the
 /// bridge's `readTextFile`); until it runs another player's shot plays the converted close mix.
 /// See `crate::soundlayers`. Returns the number of layers installed (-1 for a null text).

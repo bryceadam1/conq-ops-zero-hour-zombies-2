@@ -8,6 +8,7 @@
 
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridgeInternal.h"
+#include "Common/MapReaderWriterInfo.h"
 namespace
 {
 // One engine Weapon per FX template: fireWeaponTemplate needs a firing Weapon instance.
@@ -15,6 +16,57 @@ std::map<std::string, Weapon *> s_fxWeapons;
 
 // Smoke log throttle (cbSmoke): at most one line a second.
 UnsignedInt s_smokeLastLog = 0;
+
+// The map whose ground surfaces the core holds (EnsureSurfaceGrid); empty after a reset.
+AsciiString s_surfaceMap;
+
+// Zero Hour's terrain class (Common/TerrainTypes.h, a Terrain.ini entry's Class) as the BO2 surface
+// whose impact cells and bounce scales it takes.
+int32_t surfaceOfClass(TerrainClass c)
+{
+	switch (c)
+	{
+		case TERRAIN_ASPHALT: return ZHBO_SURF_ASPHALT;
+		case TERRAIN_CONCRETE:
+		case TERRAIN_RESIDENTIAL:
+		case TERRAIN_URBAN:
+		case TERRAIN_CHINA:
+		case TERRAIN_COBBLESTONE_GRASS: return ZHBO_SURF_CONCRETE;
+		case TERRAIN_GRASS:
+		case TERRAIN_ACCENT_GRASS:
+		case TERRAIN_EASTERN_EUROPE_1:
+		case TERRAIN_EASTERN_EUROPE_2:
+		case TERRAIN_EASTERN_EUROPE_3:
+		case TERRAIN_SWISS_1:
+		case TERRAIN_SWISS_2:
+		case TERRAIN_SWISS_3:
+		case TERRAIN_FIELD:
+		case TERRAIN_BEACH_PARK: return ZHBO_SURF_GRASS;
+		case TERRAIN_SNOW_1:
+		case TERRAIN_SNOW_2:
+		case TERRAIN_SNOW_3:
+		case TERRAIN_RUGGED_SNOW:
+		case TERRAIN_FLAT_SNOW: return ZHBO_SURF_SNOW;
+		case TERRAIN_ROCK:
+		case TERRAIN_ACCENT_ROCK:
+		case TERRAIN_CLIFF:
+		case TERRAIN_RUGGED_MOUNTAIN:
+		case TERRAIN_TRANSITION: return ZHBO_SURF_ROCK;
+		case TERRAIN_WOOD: return ZHBO_SURF_WOOD;
+		case TERRAIN_SAND:
+		case TERRAIN_ACCENT_SAND:
+		case TERRAIN_DESERT_1:
+		case TERRAIN_DESERT_2:
+		case TERRAIN_DESERT_3:
+		case TERRAIN_LIVE_DESERT:
+		case TERRAIN_DRY_DESERT:
+		case TERRAIN_TROPICAL_BEACH: return ZHBO_SURF_SAND;
+		case TERRAIN_DIRT:
+		case TERRAIN_BLEND_EDGES:
+		case TERRAIN_NONE:
+		default: return ZHBO_SURF_DIRT;
+	}
+}
 
 
 void fillInfo(const Object *obj, const Object *viewer, ZhboObjInfo *out)
@@ -104,59 +156,86 @@ int32_t cbIsWalkable(float x, float y)
 
 int32_t cbSurfaceAt(float x, float y)
 {
-	// A water table over the ground: BO2's water cell.
+	// The water table over the ground: BO2's water cell. TerrainLogic's water is logic state.
+	// The ground under it is the core's map grid (zhbo_terrain_load, EnsureSurfaceGrid), read from
+	// the map file itself, never from the client's TheTerrainVisual: the surface feeds the sim (a
+	// grenade's bounce), so a peer with other graphics settings or no terrain visual at all must
+	// get the same answer (docs/CONTRACT.md "Multiplayer").
+	EnsureSurfaceGrid();
 	if (TheTerrainLogic && TheTerrainLogic->isUnderwater(x, y))
 		return ZHBO_SURF_WATER;
-	// Zero Hour's own terrain classification: the map's tile class at the point
-	// (Common/TerrainTypes.h). `getTerrainTile` reads the map's height-map tile indices, not a
-	// render product, and the logic already uses it for build placement
-	// (BuildAssistant::checkSampleBuildLocation), so this is a legal logic-step query.
-	// Presentation only: the surface never feeds damage (docs/CONTRACT.md).
-	TerrainType *tile = TheTerrainVisual ? TheTerrainVisual->getTerrainTile(x, y) : nullptr;
-	if (!tile)
-		return ZHBO_SURF_DEFAULT;
-	switch (tile->getClass())
+	return ZHBO_SURF_DEFAULT;
+}
+
+void EnsureSurfaceGrid()
+{
+	if (!TheTerrainLogic || !TheTerrainTypes)
+		return;
+	const AsciiString map = TheTerrainLogic->getSourceFilename();
+	if (map.isEmpty() || map == s_surfaceMap)
+		return;
+	s_surfaceMap = map;
+	// The map file as the logic reads it (W3DTerrainLogic::loadMap: CachedFileInputStream
+	// decompresses a RefPack'd map).
+	std::vector<char> bytes;
+	CachedFileInputStream in;
+	if (in.open(map))
 	{
-		case TERRAIN_ASPHALT: return ZHBO_SURF_ASPHALT;
-		case TERRAIN_CONCRETE:
-		case TERRAIN_RESIDENTIAL:
-		case TERRAIN_URBAN:
-		case TERRAIN_CHINA:
-		case TERRAIN_COBBLESTONE_GRASS: return ZHBO_SURF_CONCRETE;
-		case TERRAIN_GRASS:
-		case TERRAIN_ACCENT_GRASS:
-		case TERRAIN_EASTERN_EUROPE_1:
-		case TERRAIN_EASTERN_EUROPE_2:
-		case TERRAIN_EASTERN_EUROPE_3:
-		case TERRAIN_SWISS_1:
-		case TERRAIN_SWISS_2:
-		case TERRAIN_SWISS_3:
-		case TERRAIN_FIELD:
-		case TERRAIN_BEACH_PARK: return ZHBO_SURF_GRASS;
-		case TERRAIN_SNOW_1:
-		case TERRAIN_SNOW_2:
-		case TERRAIN_SNOW_3:
-		case TERRAIN_RUGGED_SNOW:
-		case TERRAIN_FLAT_SNOW: return ZHBO_SURF_SNOW;
-		case TERRAIN_ROCK:
-		case TERRAIN_ACCENT_ROCK:
-		case TERRAIN_CLIFF:
-		case TERRAIN_RUGGED_MOUNTAIN:
-		case TERRAIN_TRANSITION: return ZHBO_SURF_ROCK;
-		case TERRAIN_WOOD: return ZHBO_SURF_WOOD;
-		case TERRAIN_SAND:
-		case TERRAIN_ACCENT_SAND:
-		case TERRAIN_DESERT_1:
-		case TERRAIN_DESERT_2:
-		case TERRAIN_DESERT_3:
-		case TERRAIN_LIVE_DESERT:
-		case TERRAIN_DRY_DESERT:
-		case TERRAIN_TROPICAL_BEACH: return ZHBO_SURF_SAND;
-		case TERRAIN_DIRT:
-		case TERRAIN_BLEND_EDGES:
-		case TERRAIN_NONE:
-		default: return ZHBO_SURF_DIRT;
+		char buf[65536];
+		Int n;
+		while ((n = in.read(buf, sizeof(buf))) > 0)
+			bytes.insert(bytes.end(), buf, buf + n);
+		in.close();
 	}
+	// Zero Hour's terrain types in collection order (findTerrain's search order), each classified.
+	std::vector<AsciiString> names;
+	std::vector<int32_t> surfaces;
+	for (TerrainType *t = TheTerrainTypes->firstTerrain(); t; t = TheTerrainTypes->nextTerrain(t))
+	{
+		names.push_back(t->getName());
+		surfaces.push_back(surfaceOfClass(t->getClass()));
+	}
+	std::vector<const char *> namePtrs;
+	for (const AsciiString &n : names)
+		namePtrs.push_back(n.str());
+	const int32_t cells = zhbo_terrain_load(bytes.empty() ? nullptr : (const uint8_t *)bytes.data(), (int32_t)bytes.size(),
+		namePtrs.data(), surfaces.data(), (int32_t)namePtrs.size());
+	if (cells < 0)
+		logf("terrain: %s (%d bytes) did not parse; every ground reads the default surface", map.str(), (int)bytes.size());
+	else
+		logf("terrain: %s: %d cells of ground surface, %d terrain types", map.str(), (int)cells, (int)names.size());
+
+	// A cross-check where a terrain visual exists (it never decides anything): its own tile lookup
+	// (TerrainVisual::getTerrainTile, what this query used to read) against the grid, on every
+	// fourth cell of the map. A headless machine has nothing to compare and says so.
+	if (!TheTerrainVisual)
+	{
+		logf("terrain: no terrain visual on this machine; the grid alone answers");
+		return;
+	}
+	Region3D r;
+	TheTerrainLogic->getExtent(&r);
+	Int sampled = 0, agree = 0;
+	for (Real y = r.lo.y + 5.0f; y < r.hi.y; y += 40.0f)
+	{
+		for (Real x = r.lo.x + 5.0f; x < r.hi.x; x += 40.0f)
+		{
+			TerrainType *tile = TheTerrainVisual->getTerrainTile(x, y);
+			const int32_t visual = tile ? surfaceOfClass(tile->getClass()) : ZHBO_SURF_DEFAULT;
+			const int32_t grid = zhbo_terrain_surface_at(x, y);
+			++sampled;
+			if (visual == grid)
+				++agree;
+			else if (sampled - agree == 1)
+				logf("terrain: first disagreement at (%.0f, %.0f): visual %d, grid %d", x, y, (int)visual, (int)grid);
+		}
+	}
+	logf("terrain: the grid agrees with the terrain visual on %d of %d sampled cells", (int)agree, (int)sampled);
+}
+
+void ResetSurfaceGrid()
+{
+	s_surfaceMap.clear();
 }
 
 void cbExtent(ZhboVec3 *lo, ZhboVec3 *hi)

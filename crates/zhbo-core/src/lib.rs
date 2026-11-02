@@ -40,6 +40,7 @@ pub mod shield;
 pub mod soundlayers;
 pub mod sounds;
 pub mod strings;
+pub mod terrain;
 pub mod tuning;
 pub mod units;
 pub mod viewmodel;

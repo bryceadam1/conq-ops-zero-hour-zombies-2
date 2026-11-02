@@ -20,9 +20,13 @@
 //! ([`sound_name`], `zhbo_formats::fx::ImpactKind`), the way it plays the type's FX cell.
 //!
 //! A surface comes from what was hit: objects from their kind flags ([`Surface::of_object`], the
-//! same three-way split the overhead General's hits use) and the ground from Zero Hour's own
-//! terrain class through [`crate::host::LogicHost::surface_at`]. **Surface data is presentation
-//! only** — it never feeds damage, movement or any other sim state (docs/CONTRACT.md).
+//! same three-way split the overhead General's hits use) and the ground from the logic's water
+//! table and the map file's tile classes ([`crate::terrain`]) through
+//! [`crate::host::LogicHost::surface_at`]. **Surface data is sim state**: a grenade's bounce
+//! scales by it, the plant check refuses deep water by it, an object's surface sets bullet
+//! penetration's depth, and the cells it picks ride the events. So it is read only from data every
+//! machine of a lockstep game holds identically, never from the client's terrain visual
+//! (docs/CONTRACT.md).
 
 use crate::host::{objflags, ObjInfo};
 use std::sync::{OnceLock, RwLock};

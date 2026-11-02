@@ -450,6 +450,7 @@ void Zhbo_Reset()
 	// Every per-game static: engine state that a new game rebuilds (zhbo-core keeps its own
 	// surviving state behind zhbo_reset, called below). Each section owns its resets.
 	ResetFxWeapons();
+	ResetSurfaceGrid();
 	ResetRtsWeapons();
 	ResetHud();
 	ResetBuilding();
@@ -471,6 +472,8 @@ void Zhbo_Preload()
 	if (!s_ready)
 		return;
 	const double started = zhbo_platform::now();
+	// The map's ground surfaces, before the first logic step can ask for one.
+	EnsureSurfaceGrid();
 	// The mod's objects (the Generals, their grenades, C4 and other equipment): what the engine's
 	// own preload does for KINDOF_PRELOAD things, which retail only runs with -preload.
 	int objects = 0;

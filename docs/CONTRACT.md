@@ -654,13 +654,22 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   `fatal`, `impact_type`, `exit`); a shot that hits nothing emits none. A penetrating round
   (below) adds its exit impacts (`exit` set) and its onward entries. `Shot` stays once per shot (the
   gunshot and the viewmodel) and no longer names an impact.
-* **The surface is presentation data.** Objects are classified from the `objflags` the bridge
-  already reports (`INFANTRY → FLESH`, `VEHICLE|AIRCRAFT → METAL`, `STRUCTURE → CONCRETE`); the
-  ground from the new `LogicApi.surface_at(x, y)`, which answers Zero Hour's terrain class
-  (`TheTerrainVisual->getTerrainTile`, the same query the logic's build placement uses) and a water
-  table. The ground's surface is read in the logic step but **never feeds damage, movement or any other
-  sim state**: a peer whose terrain visual disagreed could only differ in its own screen. An
-  *object's* surface (its kind flags, sim state) does feed damage: bullet penetration's depth.
+* **The surface is sim state, read from logic data only.** Objects are classified from the
+  `objflags` the bridge already reports (`INFANTRY → FLESH`, `VEHICLE|AIRCRAFT → METAL`,
+  `STRUCTURE → CONCRETE`). The ground is water where the logic's water table covers it
+  (`LogicApi.surface_at(x, y)`, `TerrainLogic::isUnderwater`), else the map's tile class there,
+  from the core's grid (`zhbo_core::terrain`): at the loading screen (and on the first ground
+  query of a map it has not loaded) the bridge reads the map file as the logic does
+  (`CachedFileInputStream`, decompressed) and hands it, with Zero Hour's terrain types and each
+  one's class classified, to `zhbo_terrain_load`; the grid answers `WorldHeightMap::getTerrainNameAt`'s
+  cell (the cell under the point plus the border, its tile over four, the first texture class
+  holding it, that name's terrain type). It never reads `TheTerrainVisual`, the client's copy of
+  the height map: the surface feeds the sim — a grenade's bounce scales by it, the plant check
+  refuses deep water by it, an object's surface sets bullet penetration's depth, and the impact and
+  blast cells ride the events — so a peer with other graphics settings, or a `-headless` one,
+  must get the same answer. At load the bridge cross-checks the grid against the terrain visual's
+  lookup on every fourth cell where one exists (`ConquerOps.log`: `terrain: the grid agrees with
+  the terrain visual on N of M sampled cells`); the check decides nothing.
 * **Bullet penetration** (t6mp `FUN_005d0350`; `zhbo_core::penetration`). After its first hit a
   round goes on through up to `penetrationCount` (5) solids while its damage multiplier (1 at the
   muzzle) stays positive: each solid costs its chord (≥ 1 in; the targets' convex shapes, exact)
@@ -1101,6 +1110,13 @@ object to select overhead: the local General as he comes back alive from first p
 after `viewmodel_fired_left`: `ZhboClientOut` 4872 → 4876 bytes, asserted on both sides; nothing else
 moves. Archive `hud::VERSION` 83 at the same point (the weapon table's `UiText
 MP_CHANGE_CLASS_NEXT_SPAWN`, the mid-life class change's hint); the native blob formats are unchanged.
+
+**Pending for the next bump** (appended on `v1/mp-hardening`, no version moved): the free functions
+`zhbo_terrain_load(bytes, len, names, surfaces, count)` and `zhbo_terrain_surface_at(x, y)` (the
+map's ground surfaces, `zhbo_core::terrain`); `ZhboLogicApi.surface_at` keeps its slot and type but
+now answers the water table only (`ZHBO_SURF_WATER`, else `ZHBO_SURF_DEFAULT`), the core reading the
+ground from the grid (a non-default answer is still taken as it is, so an older bridge works). No
+struct size or field count changes.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
