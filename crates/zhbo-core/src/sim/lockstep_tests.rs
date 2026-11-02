@@ -270,10 +270,13 @@ fn play_match() -> (u32, u32, u32) {
             peer.logic(frame, &cmds, rts_shots);
         }
 
-        let h = a.sim.state_hash();
+        // The fingerprint Zero Hour's CRC carries (`zhbo_logic_crc`): its hash and, on a failure,
+        // the per-seat parts that name where the state went apart.
+        let h = a.sim.fingerprint();
+        assert!(h.active || frame < RUNAHEAD + 2, "frame {frame}: the match holds sim state");
         for (name, peer) in [("B", &b), ("C", &c)] {
             let at = format!("machine {name} diverged from A at frame {frame} (round {r}, t {t})");
-            assert_eq!(peer.sim.state_hash(), h, "{at}: the sim state");
+            assert_eq!(peer.sim.fingerprint(), h, "{at}: the sim state");
             assert_eq!(peer.host.objects, a.host.objects, "{at}: the engine objects");
             assert_eq!(peer.host.damage_log, a.host.damage_log, "{at}: damage");
             assert_eq!(peer.host.controlled, a.host.controlled, "{at}: control");
@@ -404,4 +407,181 @@ fn a_general_handed_to_an_ally_leaves_the_leavers_seat() {
     sim.take_control(&host, 1, 1);
     assert_eq!(sim.player(1).map(|p| p.general), Some(1), "the ally takes him into first person");
     assert_eq!(*host.controlled.borrow(), vec![1]);
+}
+
+/// A sim with every part of the state in use: two seats from a real match (mid-fight: a reload,
+/// the gun's pose, the RNG and the timers moving), then every optional piece of a player record
+/// set, a projectile, equipment that is down, a smoke screen and a deployed shield.
+fn populated_sim() -> Sim {
+    let mut a = Peer::new(0, 1);
+    let mut net = Net::default();
+    for frame in 1..=200 {
+        let t = frame - 1;
+        if t == 0 {
+            a.host.add(general(100, 0));
+            a.host.add(general(101, 1));
+        }
+        match t {
+            1 => {
+                net.send(frame, 0, Cmd::ChooseClass(100, 0, class_for(0, 0).to_wire_words()));
+                net.send(frame, 1, Cmd::ChooseClass(101, 0, class_for(0, 1).to_wire_words()));
+            }
+            3 => {
+                net.send(frame, 0, Cmd::TakeControl(100));
+                net.send(frame, 1, Cmd::TakeControl(101));
+            }
+            _ => {}
+        }
+        let cmds = net.take(frame);
+        a.logic(frame, &cmds, [0; 3]);
+        let (keys, look) = script(t, frame as u64 * 0x9E37_79B9);
+        a.render(&mut net, frame, 1, keys, look);
+    }
+    let mut sim = a.sim;
+    let cat = crate::weapons::catalog();
+    let def = |id: &str| cat.get(id).unwrap_or_else(|| panic!("{id} in the table"));
+    let p = sim.players[0].as_mut().expect("seat 0 in first person");
+    p.mode = Mode::FieldComputer { t: 0.25 };
+    p.hack = Some((500, 0.5));
+    p.hammer = Some(crate::building::Hammer { choice: 1, picked: true, raise: 0.5, turn: 0.25, at: Vec3::new(1.0, 2.0, 3.0), angle: 0.5 });
+    p.site = Some(crate::building::Site { id: 9, template: 3, kind: 1, percent: 40.0, name: [b'x'; 48] });
+    p.charge = Some(fire::MeleeCharge { target: 501, left: 0.25 });
+    p.optics = optics::Optics::filled_for_test();
+    let shock: &'static crate::shellshock::ShockDef = Box::leak(Box::new(crate::shellshock::ShockDef { name: "concussion_grenade".into(), ..Default::default() }));
+    p.shock.active = Some(crate::shellshock::Active { def: shock, duration: 2.0, left: 1.5, serial: 3 });
+    p.shock.queued = Some((0.5, "flashbang", 1.0));
+    p.body.sprint_started = Some(1.5);
+    p.body.stance_lerp = Some((1.0, 0.5, 1.0, 0.25));
+    p.arsenal.offhand = Some(crate::weapons::OffhandUse::Throwing { lethal: true, t: 0.25, fired: false });
+    let hand = crate::weapons::Hand { ammo: 5, cooldown: 0.1, reload: Some(crate::weapons::Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true, quick: false }), burst_left: 2, string: 3, recoil_acc: 0.5, since_shot: 1.0, rechamber_pending: true, rechamber_shots: 1, rechamber: Some(0.25), reload_owed: true };
+    let w = &mut p.arsenal.weapons[0];
+    w.alt_mode = Some(def("gl_an94_mp"));
+    w.reload = Some(crate::weapons::Reload::Shells { phase: crate::weapons::ShellPhase::Insert, t: 0.5, stop: false });
+    w.rechamber = Some(0.5);
+    w.left = Some(hand);
+    let frag = def("frag_grenade_mp");
+    let flight = crate::projectiles::Flight { gravity: 1.0, bounce_up: 0.5, bounce_along: 0.5, rest_speed: 2.0 };
+    sim.projectiles.push((
+        1,
+        crate::projectiles::Projectile { def: frag, owner: 101, pos: Vec3::new(1.0, 2.0, 3.0), vel: Vec3::new(4.0, 5.0, 6.0), fuse: 2.0, age: 0.5, object: 900, stuck_to: Some(501), resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands: true, travelled: 10.0, bounced: Some((Vec3::new(1.0, 1.0, 0.0), crate::impacts::Surface::Dirt)), struck: Some(true), last_struck: Some(502), flight },
+    ));
+    let mut placed = crate::equipment::Placed::new(def("claymore_mp"), 0, 100, 901, Vec3::new(5.0, 5.0, 0.0), 0.5, Some(503));
+    placed.triggered = Some(0.25);
+    sim.equipment.placed.push(placed);
+    sim.smokes.push((Vec3::new(9.0, 9.0, 0.0), 30.0, 12.0));
+    let shield = def("riotshield_mp");
+    let bearer = crate::shield::Bearer::of(0, Vec3::new(3.0, 3.0, 0.0), 0.5, shield, true).expect("the shield's box");
+    sim.deployed.push(deploy::Deployed { owner: 1, general: 101, def: shield, object: 902, bearer, damage_taken: 10.0, destroyed: Some(1.0), weapon: (1, crate::weapons::WeaponState::new(shield), true) });
+    sim
+}
+
+/// Change the `n`-th leaf of the hashed state (the parts [`Sim::fingerprint`] streams).
+fn perturb_state(sim: &mut Sim, n: &mut usize) -> bool {
+    use crate::statehash::StateHash;
+    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n)
+}
+
+/// Sensitivity: every leaf of the state (every scalar, string and definition of every player
+/// record, chosen class, projectile, piece of equipment, smoke and deployed shield) changes the
+/// hash, and changes exactly the part that holds it: its own seat's, or the world's.
+#[test]
+fn every_field_of_the_state_changes_the_hash_and_its_own_part() {
+    let sim = populated_sim();
+    let base = sim.fingerprint();
+    assert!(base.active);
+    let mut leaves = 0;
+    loop {
+        let mut s = sim.clone();
+        let mut n = leaves;
+        if !perturb_state(&mut s, &mut n) {
+            break;
+        }
+        let f = s.fingerprint();
+        assert_ne!(f.hash, base.hash, "leaf {leaves} did not change the hash");
+        let seats: Vec<usize> = (0..MAX_PLAYERS).filter(|&i| f.seats[i] != base.seats[i]).collect();
+        let world = f.world != base.world;
+        let frame = f.frame != base.frame;
+        assert_eq!(seats.len() + world as usize + frame as usize, 1, "leaf {leaves} changed one part: seats {seats:?}, world {world}, frame {frame}");
+        leaves += 1;
+    }
+    // Two full records, two classes and the world: a few hundred leaves, all reached.
+    assert!(leaves > 500, "the walk reached the state ({leaves} leaves)");
+}
+
+/// What is not state stays out: the presentation buffers and the step's scratch copies.
+#[test]
+fn presentation_and_scratch_do_not_enter_the_hash() {
+    let mut sim = populated_sim();
+    let h = sim.state_hash();
+    sim.emit(0, EventKind::Swapped);
+    sim.events.clear();
+    sim.emit(1, EventKind::Melee);
+    let def = crate::weapons::catalog().get("an94_mp").unwrap();
+    sim.tracers.push(ShotTracer { shooter: 100, def, target: 0, end: Vec3::new(1.0, 2.0, 3.0), left: false });
+    sim.shields.clear();
+    sim.equipment.shields.clear();
+    sim.equipment.guards.clear();
+    sim.combat_seen = 0b101;
+    assert_eq!(sim.state_hash(), h);
+}
+
+/// Stability: the hash is a function of the values alone. An equal state built apart (a clone, a
+/// definition at another address with the same id) hashes the same, and so does the same state
+/// after a reset and the same steps.
+#[test]
+fn equal_states_hash_equal_wherever_they_live() {
+    let sim = populated_sim();
+    assert_eq!(sim.clone().fingerprint(), sim.fingerprint());
+    let mut moved = sim.clone();
+    let p = moved.players[0].as_mut().unwrap();
+    let def = p.arsenal.weapons[0].def;
+    p.arsenal.weapons[0].def = Box::leak(Box::new(def.clone()));
+    assert!(!std::ptr::eq(moved.players[0].as_ref().unwrap().arsenal.weapons[0].def, def));
+    assert_eq!(moved.state_hash(), sim.state_hash(), "a definition is hashed by its id, not its address");
+    assert_eq!(populated_sim().fingerprint(), sim.fingerprint(), "the same match twice");
+}
+
+/// An idle sim adds nothing to Zero Hour's CRC (a game nobody played in first person CRCs as
+/// stock Zero Hour); a class, a General in first person or anything in the world makes it active.
+#[test]
+fn only_a_sim_that_holds_state_joins_the_crc() {
+    let mut sim = Sim::new();
+    assert!(!sim.fingerprint().active);
+    sim.frame = 300;
+    assert!(!sim.fingerprint().active, "the frame alone is no state");
+    sim.smokes.push((Vec3::ZERO, 1.0, 1.0));
+    assert!(sim.fingerprint().active, "a smoke screen");
+    let mut sim = populated_sim();
+    assert!(sim.fingerprint().active);
+    sim.reset();
+    assert!(!sim.fingerprint().active, "a new game");
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    sim.choose_class(4, 1, 0, &[]);
+    let f = sim.fingerprint();
+    assert!(f.active && f.seats[4].is_some() && f.seats.iter().filter(|s| s.is_some()).count() == 1, "a class picked overhead: {f:?}");
+}
+
+/// A mod-only divergence, the kind Zero Hour's object CRC cannot see (a round of ammo, a class
+/// change, a shellshock's clock, a cooldown), changes the hash on the next CRC frame, and the
+/// per-seat parts name the seat it is in.
+#[test]
+fn a_mod_only_divergence_is_seen_and_names_its_seat() {
+    let a = populated_sim();
+    let base = a.fingerprint();
+    type Edit = (&'static str, fn(&mut PlayerSim));
+    let edits: [Edit; 4] = [
+        ("ammo", |p| p.arsenal.weapons[1].ammo -= 1),
+        ("class", |p| p.class = Some("custom:other".into())),
+        ("shellshock", |p| p.shock.active.as_mut().unwrap().left -= 0.5),
+        ("cooldown", |p| p.arsenal.weapons[0].cooldown += 0.1),
+    ];
+    for (what, edit) in edits {
+        let mut b = a.clone();
+        edit(b.players[0].as_mut().unwrap());
+        let f = b.fingerprint();
+        assert_ne!(f.hash, base.hash, "{what}");
+        assert_ne!(f.seats[0], base.seats[0], "{what}: seat 0's part");
+        assert_eq!((f.seats[1], f.world), (base.seats[1], base.world), "{what}: nothing else");
+    }
 }

@@ -1,0 +1,15 @@
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+index 7eeb589c0..382470cb5 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+@@ -4721,6 +4721,10 @@ UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
+ 		CRCGEN_LOG(("CRC after AI for frame %d is 0x%8.8X", m_frame, xferCRC->getCRC()));
+ 	}
+ 
++	// ZHBO: the first-person sim's state (ammo, class, shellshock, cooldowns): a divergence there
++	// is a desync on the next CRC frame, not only once it moves or hurts an object
++	Zhbo_XferLogicCRC( xferCRC, isInGameLogicUpdate() );
++
+ 	if (xferCRC->getXferMode() == XFER_SAVE)
+ 	{
+ 		marker = "MARKER:GameSave";

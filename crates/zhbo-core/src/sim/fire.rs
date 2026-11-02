@@ -197,6 +197,8 @@ pub struct MeleeCharge {
     pub left: f32,
 }
 
+crate::statehash::state_hash!(struct MeleeCharge { target, left });
+
 impl Sim {
     /// The enemy a melee can reach within `range` (past the victim's hit radius), nearest first:
     /// in front of the General, alive, not an ally, not a structure or a deployed shield.

@@ -19,6 +19,7 @@ class GameWindow;
 enum NameKeyType CPP_11(: Int); // Common/STLTypedefs.h
 class Object;
 class DamageInfo;
+class Xfer;
 
 #include <string>
 /// A whole file from the game's file system as text (empty when missing). Shared by the glue's
@@ -52,6 +53,10 @@ void Zhbo_OnChooseClassMessage(Int playerIndex, const GameMessage *msg);
 void Zhbo_LogicStep(UnsignedInt frame);
 /// True while the object is driven by first-person input (its AI and physics must not run).
 Bool Zhbo_IsControlled(ObjectID id);
+/// The first-person sim's state in Zero Hour's logic CRC (patch 0020, GameLogic::getCRC after
+/// MARKER:TheAI): `MARKER:ConquerOps` and the sim's 64-bit state hash, when the sim holds state.
+/// `logicFrame` (the logic update's own CRC) also logs the per-seat parts.
+void Zhbo_XferLogicCRC(Xfer *xfer, Bool logicFrame);
 /// The Assault Shield in the damage path (patch 0017, top of Object::attemptDamage): scales the
 /// damage a held/stowed shield stops or a deployed shield's object takes (the core wears that down).
 void Zhbo_ShieldDamage(Object *obj, DamageInfo *info);

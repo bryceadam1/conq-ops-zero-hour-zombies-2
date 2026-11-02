@@ -62,6 +62,16 @@ pub const PERKS: [PerkDef; 16] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Perk(pub(crate) u8);
 
+impl crate::statehash::StateHash for Perk {
+    fn hash(&self, h: &mut crate::statehash::Hasher) {
+        crate::statehash::StateHash::hash(&self.0, h);
+    }
+    #[cfg(test)]
+    fn perturb(&mut self, n: &mut usize) -> bool {
+        crate::statehash::StateHash::perturb(&mut self.0, n)
+    }
+}
+
 impl Perk {
     pub const LIGHTWEIGHT: Perk = Perk(0);
     pub const HARDLINE: Perk = Perk(1);

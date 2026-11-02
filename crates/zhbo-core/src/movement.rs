@@ -121,6 +121,8 @@ pub enum Stance {
     Prone,
 }
 
+crate::statehash::state_hash!(enum Stance { Stand, Crouch, Prone });
+
 /// A solid footprint the player cannot walk through (structures, and optionally vehicles).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Blocker {
@@ -164,6 +166,11 @@ pub struct Body {
     pub stance_lerp: Option<(f32, f32, f32, f32)>,
     held_last: u32,
 }
+
+crate::statehash::state_hash!(struct Body {
+    pos, vel, on_ground, stance, eye_height, sprinting, time, sprint_started, sprint_ended, sprint_start_max,
+    sprint_exhausted, sprint_button_up, stance_lerp, held_last,
+});
 
 impl Body {
     pub fn new(pos: Vec3, tuning: &MoveTuning) -> Self {

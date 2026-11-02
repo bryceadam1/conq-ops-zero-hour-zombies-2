@@ -37,6 +37,7 @@ pub mod projectiles;
 pub mod sim;
 pub mod shellshock;
 pub mod shield;
+pub mod statehash;
 pub mod soundlayers;
 pub mod sounds;
 pub mod strings;

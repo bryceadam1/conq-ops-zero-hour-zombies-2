@@ -1,34 +1,44 @@
 //! The sim's lockstep fingerprint: one 64-bit hash of every piece of state a logic step reads and
-//! writes, so two peers fed the same replicated message stream can prove they agree, frame by
-//! frame (the two-peer harness in `lockstep_tests.rs`, and the in-engine CRC hook that
-//! docs/CONTRACT.md "Multiplayer" proposes).
+//! writes, so the peers of a match fed the same replicated message stream can prove they agree,
+//! frame by frame. The same hash is the sim's share of Zero Hour's own logic CRC
+//! (`zhbo_logic_crc`, host patch 0020: `GameLogic::getCRC` after `MARKER:TheAI`), so a mod-only
+//! divergence (ammo, a class, a shellshock, a cooldown) shows as Zero Hour's desync on the next CRC
+//! frame instead of only once it moves or hurts an object; and it is what the multiplayer gate
+//! (`lockstep_tests.rs`) compares.
 //!
-//! What is hashed is the deterministic state only: the player records, the chosen classes, the
-//! projectiles, the equipment, the smoke screens and the deployed shields, plus the frame. What is
-//! **not** hashed is presentation that legitimately differs per machine: [`Sim::events`] (each
-//! client drains it at its own render cadence, and a headless replay never does) and
-//! [`Sim::tracers`] (drained right after each step and drawn per viewer). The tuning, penetration
-//! table and hit bodies come from the installed data and never change during a game; the content
-//! check (the bridge's mod-content CRC) covers them.
+//! What is hashed is the deterministic state only, streamed field by field
+//! ([`crate::statehash`]): each seat's player record and chosen class, the projectiles, the
+//! equipment that is down, the smoke screens and the deployed shields, plus the frame. What is
+//! **not** hashed, each named in its `skip` list:
+//! * presentation that legitimately differs per machine: [`Sim::events`] (each client drains it
+//!   at its own render cadence, and a headless replay never does) and [`Sim::tracers`] (drained
+//!   right after each step and drawn per viewer);
+//! * per-step scratch rebuilt from the hashed state before it is read: [`Sim::shields`] and the
+//!   equipment's copies of it and of the guards, the equipment's shock hits, `combat_seen`;
+//! * the installed data, which never changes during a game and which the content CRC (the
+//!   bridge's mod-content CRC folded into the INI CRC) already proves equal: the tuning,
+//!   penetration table, bullet range and hit bodies.
 //!
-//! The hash runs over the state's `Debug` form, so a field added to any of these types is covered
-//! without anyone remembering to add it here; `f32`'s `Debug` prints the shortest string that
-//! round-trips the exact bits, so two states hash equal only when every float is bit-identical
-//! (`-0.0` and `0.0` differ; NaN payloads do not, which no sim value carries).
-use super::Sim;
-use std::fmt::Write;
+//! The hash is built from per-seat sub-hashes and one for the shared world, which the CRC log
+//! prints, so a desync names the seat (or the world) whose state went apart.
+use super::{Sim, MAX_PLAYERS};
+use crate::statehash::{Hasher, StateHash};
 
-/// FNV-1a over the bytes written to it.
-struct Fnv(u64);
-
-impl Write for Fnv {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        for b in s.bytes() {
-            self.0 ^= b as u64;
-            self.0 = self.0.wrapping_mul(0x100_0000_01b3);
-        }
-        Ok(())
-    }
+/// The fingerprint and its parts (`ZhboLogicCrc` on the C side).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fingerprint {
+    /// [`Sim::state_hash`]: the frame, every seat's sub-hash and the world's.
+    pub hash: u64,
+    /// Each seat's player record and chosen class; `None` for a seat with neither.
+    pub seats: [Option<u64>; MAX_PLAYERS],
+    /// The shared state: projectiles, equipment that is down, smoke screens, deployed shields.
+    pub world: u64,
+    pub frame: u32,
+    /// The sim holds state: a seat is in use or something is in the world. An idle sim (no seat holds a
+    /// record or a class: no General was deployed — an overhead General's RTS report is a seat
+    /// record too — and nobody picked a class) adds nothing to Zero Hour's CRC, so such a game CRCs
+    /// exactly as stock Zero Hour does.
+    pub active: bool,
 }
 
 impl Sim {
@@ -36,20 +46,61 @@ impl Sim {
     /// messages agree on it; anything a local presentation call could leave behind does not
     /// enter it.
     pub fn state_hash(&self) -> u64 {
-        let mut h = Fnv(0xcbf2_9ce4_8422_2325);
-        // A write to the hasher cannot fail.
-        let _ = write!(
-            h,
-            "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
-            self.frame,
-            self.players,
-            self.chosen,
-            self.projectiles,
-            self.equipment.placed,
-            self.smokes,
-            self.deployed,
-            self.shields,
-        );
-        h.0
+        self.fingerprint().hash
     }
+
+    /// The fingerprint with its per-seat and world parts.
+    pub fn fingerprint(&self) -> Fingerprint {
+        // Every field by name (no `..`): a new one does not compile until it is hashed or skipped
+        // here with its reason (see the module doc).
+        let Sim {
+            players,
+            projectiles,
+            equipment,
+            smokes,
+            frame,
+            chosen,
+            deployed,
+            tuning: _,
+            bullet_range: _,
+            penetration: _,
+            hit_body: _,
+            events: _,
+            tracers: _,
+            shields: _,
+            combat_seen: _,
+        } = self;
+        let mut seats = [None; MAX_PLAYERS];
+        for (i, seat) in seats.iter_mut().enumerate() {
+            let (Some(p), Some(c)) = (players.get(i), chosen.get(i)) else { continue };
+            if p.is_some() || c.is_some() {
+                let mut h = Hasher::new();
+                p.hash(&mut h);
+                c.hash(&mut h);
+                *seat = Some(h.finish());
+            }
+        }
+        let world = world_hash(projectiles, equipment, smokes, deployed);
+        let mut h = Hasher::new();
+        frame.hash(&mut h);
+        seats.hash(&mut h);
+        world.hash(&mut h);
+        let active = seats.iter().any(Option::is_some) || world != empty_world();
+        Fingerprint { hash: h.finish(), seats, world, frame: *frame, active }
+    }
+}
+
+fn world_hash(projectiles: &[(usize, crate::projectiles::Projectile)], equipment: &crate::equipment::Equipment, smokes: &[(crate::math::Vec3, f32, f32)], deployed: &[super::deploy::Deployed]) -> u64 {
+    let mut h = Hasher::new();
+    projectiles.hash(&mut h);
+    equipment.hash(&mut h);
+    smokes.hash(&mut h);
+    deployed.hash(&mut h);
+    h.finish()
+}
+
+/// The world's hash with nothing in it.
+fn empty_world() -> u64 {
+    static EMPTY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *EMPTY.get_or_init(|| world_hash(&[], &crate::equipment::Equipment::default(), &[], &[]))
 }

@@ -98,6 +98,8 @@ pub struct Level {
     pub since: f32,
 }
 
+crate::statehash::state_hash!(struct Level { level, from, since });
+
 /// The client's render-only zoom state: the hybrid's alt-scope fraction and the zoom direction.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ZoomView {

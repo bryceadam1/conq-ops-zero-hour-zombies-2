@@ -107,6 +107,8 @@ pub struct Breath {
     pub scale: f32,
 }
 
+crate::statehash::state_hash!(struct Breath { holding, used, scale });
+
 impl Default for Breath {
     fn default() -> Self {
         Breath { holding: false, used: 0.0, scale: 1.0 }
@@ -188,6 +190,8 @@ pub struct IdleSway {
     /// BO2's view idle angles this frame (degrees: pitch down, yaw left).
     pub angles: [f32; 2],
 }
+
+crate::statehash::state_hash!(struct IdleSway { time, stance, breath, aqs_left, aqs, angles });
 
 impl Default for IdleSway {
     fn default() -> Self {

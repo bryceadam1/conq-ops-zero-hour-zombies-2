@@ -412,6 +412,8 @@ pub struct Motion {
     airborne: bool,
 }
 
+crate::statehash::state_hash!(struct Motion { gun, bob, sprint, land, airborne });
+
 impl Motion {
     /// The gun's angles an aimed iron-sight shot follows, radians in the [`Pose`] convention (yaw
     /// left, pitch muzzle up): `GunPos::fire_angles`.

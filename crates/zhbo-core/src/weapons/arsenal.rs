@@ -26,6 +26,8 @@ pub struct Offhand {
     pub count: u16,
 }
 
+crate::statehash::state_hash!(struct Offhand { def, count });
+
 /// What the weapon layer wants the logic to do this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WeaponAction {
@@ -79,6 +81,8 @@ pub enum RaiseKind {
     Alt,
 }
 
+crate::statehash::state_hash!(enum RaiseKind { First, Normal, Quick, Empty, Alt });
+
 /// Offhand use in progress: BO2's offhand states 0x16-0x1d (Ghidra `FUN_008e2bb0` starts them for
 /// any offhand-slot weapon, grenade or equipment alike; MODLOG "Offhands run BO2's offhand states").
 /// Every `t` is weapon time, which runs at `fasttoss`/`fastequipmentuse`'s rate (G3).
@@ -106,6 +110,15 @@ pub enum OffhandUse {
     /// offhand's rate; another offhand may start now (`FUN_008e2bb0` allows 0x1d).
     Raising { lethal: bool, t: f32 },
 }
+
+crate::statehash::state_hash!(enum OffhandUse {
+    Starting { lethal, left },
+    Holding { lethal, held_for },
+    Throwing { lethal, t, fired },
+    Dropping { lethal, t },
+    Detonating { lethal, t, fired },
+    Raising { lethal, t },
+});
 
 impl OffhandUse {
     /// Whether the lethal slot's item (else the tactical's) is the one in use.
@@ -176,6 +189,14 @@ pub struct Arsenal {
     /// init, identically on every client).
     pub tuning: Tuning,
 }
+
+// `tuning` is the tuning pack, loaded once at init and the same on every machine (the content
+// CRC covers it).
+crate::statehash::state_hash!(struct Arsenal {
+    loadout, weapons, active, lethal, tactical, melee, class_melee, raise_left, raise_total, raise_kind, drop_left,
+    drop_total, previous, alt_pending, ads, since_sprint, melee_left, melee_recover_left, melee_delay_left, offhand,
+    plant_ok, swaps_pending, held_last, since_reload_press, cooked,
+} skip { tuning });
 
 /// One of BO2's weapon-state families, each of which a specialty speeds up (Ghidra G3,
 /// `FUN_008e0780`: while a state runs, `weaponTime -= msec / mult`, so it lasts `duration x mult`;

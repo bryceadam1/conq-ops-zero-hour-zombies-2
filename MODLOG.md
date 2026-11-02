@@ -10355,3 +10355,80 @@ items:
   it. CONTRACT/`impacts.rs` still call surfaces "presentation only"; that is inaccurate.
 * A real two-instance LAN test needs a debug macOS preset and a loopback alias (sudo). See
   TESTING.md, "Multiplayer in game".
+
+## Multiplayer: the sim's state is in Zero Hour's logic CRC (2026-11-01, branch `v1/mp-crc-hook`)
+
+**Problem.** Zero Hour's desync check (`GameLogic::getCRC`, sent as `MSG_LOGIC_CRC` every
+`NetCRCInterval` frames) covered objects, partitions, players and the AI, not the mod's sim. A
+divergence that stayed inside the sim — a round of ammo, a class, a shellshock's clock, a
+cooldown — went unnoticed until it moved or hurt an object, frames or minutes later, far from its
+cause.
+
+**Fix.**
+* `statehash.rs`: a streaming hash. Each sim type implements `StateHash` beside its definition,
+  through `state_hash!`, which destructures the struct **without `..`**: a field added later does
+  not compile until it is hashed or put in the impl's `skip` list with a reason. Floats go in by
+  bits, strings by length and bytes, options and lists with a tag or length, a weapon or shock
+  definition by its id (never its address). The mixing step is a bijection per input word, so any
+  single changed word changes the hash. Enum variants are tagged by a const FNV of their name.
+* `Sim::fingerprint` (`sim/lockstep.rs`): per-seat parts (the record and the chosen class), a
+  world part (projectiles, equipment that is down, smokes, deployed shields), and the hash over the
+  frame and the parts. `Sim::state_hash` is its hash, so the lockstep gate and the engine's CRC
+  compare the same thing. Skipped, by name: the events and tracers (presentation), the step's
+  scratch (the frame's shield bearers and guards, the shock hits, `combat_seen`), and installed
+  data the content CRC covers (tuning, penetration, hit bodies, `Arsenal::tuning`).
+* `zhbo_logic_crc(ZhboLogicCrc *out, int32_t log)` (152-byte struct; pending for the next ABI
+  bump) and host patch 0020: `GameLogic::getCRC` calls `Zhbo_XferLogicCRC` right after
+  `MARKER:TheAI`, which xfers `MARKER:ConquerOps` and the 64-bit hash when the sim holds state.
+  The logic frame's own CRC (`isInGameLogicUpdate()`) also logs the parts: a `ConquerOps.log` line
+  `crc frame F: <hash> world <hash> seats i:<hash> …`, and `CRCGEN_LOG` lines in `DEBUG_CRC` builds.
+
+**Decisions.**
+* **An idle sim adds nothing.** Until a General is deployed (his overhead RTS report already makes
+  a seat record) or a class is picked, the CRC is
+  byte-for-byte stock Zero Hour's: such a game's replay checks the same as it would without the
+  mod, and the hook costs nothing then. "Idle" is decided from the hashed state itself (no seat in
+  use and a world equal to the empty one), so every machine and a replay decide it alike.
+* **Where.** After `MARKER:TheAI`, inside the same xfer: the CRC is computed at the end of
+  `GameLogic::update`, after `Zhbo_LogicStep`, on every machine and in replay playback (the
+  recorder's own CRC moment), so all hash the same post-step state.
+* **What a mismatch does** (unchanged Zero Hour): in a network game `Network::setSawCRCMismatch`
+  opens `Menus/CRCMismatch.wnd`, starts the end-game timer and logs the desync into the replay;
+  in playback the recorder shows "GUI:CRCMismatch" with the frame and pauses; `-headless -replay`
+  prints `CRC Mismatch in Frame N` and exits non-zero. To localize: diff the two machines'
+  `crc frame` lines; the first differing seat (or `world`) is where the state went apart.
+
+**Cost.** 11 µs for a fingerprint of sixteen busy seats (release); the old `Debug`-formatting hash
+took 1.7 ms for the same state. The lockstep gate runs in 0.45 s.
+
+**Tests.** The sensitivity sweep (`every_field_of_the_state_changes_the_hash_and_its_own_part`)
+walks every leaf of a fully populated state (621: two seats from a real match with every option
+filled, a projectile, equipment, a smoke, a deployed shield) through the test-only
+`StateHash::perturb` and requires each to change the hash and exactly its own part. Also:
+presentation and scratch stay out; a clone or a definition at another address hashes equal; an
+idle sim is not in the CRC; a mod-only divergence (ammo, class, shellshock, cooldown) names seat 0
+alone; the stream's hash is pinned; `zhbo_logic_crc` over the ABI. The gate now compares the whole
+fingerprint, so a failure prints the seat that diverged.
+
+**Verified in game** (`cargo xtask build` into the worktree; macOS).
+* `autotest-mac.sh` (autopilot): all 16 checks pass; `ConquerOps.log` has a `crc frame` line every
+  100 frames from the spawn on.
+* **A replay of a real first-person game passes Zero Hour's replay CRC check.** A skirmish started
+  from the menus (Alpine Assault, one Medium Army), the General deployed from the Command Center,
+  T, a class picked, walked, fired, reloaded, the field computer, 7 min 44 s in all; then
+  `generalszh -headless -replay <file>`: no mismatch, exit 0, and the replay's 119 `crc frame`
+  lines are identical to the live game's, seat parts and all. The headless replay is the
+  never-rendering machine of the lockstep gate, in the real engine.
+* **Control:** the 17:30 replay recorded by a build without the hook passes the checks at frames
+  100–600 (the sim idle, the CRC stock) and fails at frame 700, the first CRC frame after the
+  General was deployed: the old recording lacks `MARKER:ConquerOps`. Replays are valid for the
+  build that recorded them (as before, R6 of the audit).
+
+**Gotcha: autopilot games are not replayable.** `ZHBO_AUTOPILOT` spawns the General and the
+enemies from the bridge's logic step for the *local* player, with no message; a replay's local
+player is the viewer, so playback spawns nothing (`CRC Mismatch in Frame 100`). Record replay
+tests with real input.
+
+**Gotcha.** `perturb` walks the same field list as `hash`, so it proves every *listed* field
+reaches the hash, not that a `skip` entry is right. A skip needs its reason in a comment at the
+call.

@@ -138,6 +138,7 @@ const _: () = {
     use std::mem::size_of;
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
+    assert!(size_of::<LogicCrc>() == 152);
     assert!(size_of::<ClientIn>() == 136);
     assert!(size_of::<ClientOut>() == 4876);
     assert!(size_of::<ClientHit>() == 44);
@@ -470,6 +471,57 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
         log_step(s, before, frame);
     });
+}
+
+/// The sim's share of Zero Hour's logic CRC (`ZhboLogicCrc`): [`crate::sim::Fingerprint`] for the
+/// C side. An empty seat's hash is 0.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LogicCrc {
+    pub hash: u64,
+    pub world: u64,
+    pub seats: [u64; MAX_PLAYERS],
+    pub frame: u32,
+    /// 1 when the sim holds state (the hash then joins the CRC), 0 when it is idle.
+    pub active: u32,
+}
+
+/// `GameLogic::getCRC` (host patch 0020, after `MARKER:TheAI`): the sim's state hash
+/// (`Sim::state_hash`, the multiplayer gate's) and its per-seat parts into `out`. Returns 1 when
+/// the sim holds state and the bridge folds the hash into the CRC, 0 when it is idle (no General
+/// deployed, no class picked: the CRC stays stock Zero Hour's) or not initialised. With `log`
+/// (the logic frame's own CRC, not a client-side or deep-dump one) an active sim also writes the
+/// parts to `ConquerOps.log`, so two machines' logs name the seat a desync started in.
+///
+/// # Safety
+/// `out` must point to a writable [`LogicCrc`] (or be null: nothing is written).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_logic_crc(out: *mut LogicCrc, log: i32) -> i32 {
+    let crc = with_state(|s| {
+        let f = s.sim.fingerprint();
+        if f.active && log != 0 {
+            use crate::host::LogicHost;
+            s.logic.log(&crc_line(&f));
+        }
+        f
+    });
+    let Some(f) = crc else { return 0 };
+    if !out.is_null() {
+        // # Safety: the caller passes a valid, writable LogicCrc (see above).
+        unsafe { *out = LogicCrc { hash: f.hash, world: f.world, seats: f.seats.map(|s| s.unwrap_or(0)), frame: f.frame, active: f.active as u32 } };
+    }
+    f.active as i32
+}
+
+/// The CRC frame's `ConquerOps.log` line: the hash, the world's part and each seat in use.
+fn crc_line(f: &crate::sim::Fingerprint) -> String {
+    let mut line = format!("crc frame {}: {:016x} world {:016x} seats", f.frame, f.hash, f.world);
+    for (i, s) in f.seats.iter().enumerate() {
+        if let Some(s) = s {
+            line.push_str(&format!(" {i}:{s:016x}"));
+        }
+    }
+    line
 }
 
 /// `ConquerOps.log` is the in-game oracle: lifecycle events, kills, and a once-per-second pose.
@@ -1260,6 +1312,31 @@ mod tests {
         assert_eq!(zhbo_logic_shield_damage(5, 3, -60.0, 0.0, 0.0, 12.0, 1, crate::host::damage_kind::SMALL_ARMS, 30.0), 1.0);
         SHIELD_HIT_COUNT.store(0, Ordering::Relaxed);
         SHIELD_COUNT.store(0, Ordering::Relaxed);
+    }
+
+    /// The CRC hook over the ABI: an idle sim adds nothing (the CRC stays stock Zero Hour's), a class
+    /// pick makes it active, and the reported hash and seats are the sim's own fingerprint.
+    #[test]
+    fn the_logic_crc_reports_the_sims_fingerprint_once_it_holds_state() {
+        let _g = state_lock();
+        let logic: LogicApi = unsafe { std::mem::zeroed() };
+        let client: ClientApi = unsafe { std::mem::zeroed() };
+        unsafe { zhbo_init(&logic, &client) };
+        let mut out = LogicCrc { active: 7, ..Default::default() };
+        assert_eq!(unsafe { zhbo_logic_crc(&mut out, 1) }, 0, "idle");
+        assert_eq!(out.active, 0);
+        let words = crate::classes::CustomClass { primary: "an94_mp".into(), ..crate::classes::CustomClass::default() }.to_wire_words();
+        unsafe { zhbo_logic_choose_class(2, 1, i32::MIN, words.as_ptr(), words.len() as i32) };
+        zhbo_logic_step(5);
+        assert_eq!(unsafe { zhbo_logic_crc(&mut out, 1) }, 1, "a seat holds a class");
+        let f = with_state(|s| s.sim.fingerprint()).unwrap();
+        assert_eq!((out.hash, out.world, out.frame, out.active), (f.hash, f.world, 5, 1));
+        assert_eq!(out.hash, with_state(|s| s.sim.state_hash()).unwrap(), "the lockstep gate's hash");
+        assert!(out.seats[2] != 0 && out.seats.iter().enumerate().all(|(i, &s)| (s != 0) == (i == 2)), "{:x?}", out.seats);
+        assert!(crc_line(&f).ends_with(&format!("seats 2:{:016x}", out.seats[2])));
+        assert_eq!(unsafe { zhbo_logic_crc(std::ptr::null_mut(), 0) }, 1, "null out is allowed");
+        zhbo_reset();
+        assert_eq!(unsafe { zhbo_logic_crc(&mut out, 0) }, 0, "a new game starts idle");
     }
 
     /// Every `zhbo_*` function the core exports is declared in `host/zhbo/zhbo_core.h`, and every

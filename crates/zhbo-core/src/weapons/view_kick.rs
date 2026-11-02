@@ -42,6 +42,8 @@ pub struct ViewKick {
     pub angle: [f32; 3],
 }
 
+crate::statehash::state_hash!(struct ViewKick { vel, angle });
+
 /// The recentre speed (deg/s²) for a single gun: [`centre_speed_hands`] with [`Hands::Single`].
 pub fn centre_speed(def: &WeaponDef, ads: f32, stance: usize) -> f32 {
     centre_speed_hands(def, Hands::Single, ads, stance)

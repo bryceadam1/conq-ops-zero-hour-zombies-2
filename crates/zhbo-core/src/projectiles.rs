@@ -29,6 +29,8 @@ pub struct Flight {
     pub rest_speed: f32,
 }
 
+crate::statehash::state_hash!(struct Flight { gravity, bounce_up, bounce_along, rest_speed });
+
 impl Flight {
     pub fn from_tuning(t: &crate::tuning::Tuning) -> Self {
         Flight { gravity: inches(t.bg_gravity), bounce_up: t.projectile_bounce, bounce_along: t.projectile_bounce_along, rest_speed: t.projectile_rest_speed }
@@ -79,6 +81,11 @@ pub struct Projectile {
     /// Gravity and bounce, from the tuning pack at launch.
     pub flight: Flight,
 }
+
+crate::statehash::state_hash!(struct Projectile {
+    def, owner, pos, vel, fuse, age, object, stuck_to, resting, self_blast_scale, self_stun_scale, lands, travelled,
+    bounced, struck, last_struck, flight,
+});
 
 /// What happened this step, for the client (sounds, hit markers).
 #[derive(Clone, Copy, Debug, PartialEq)]

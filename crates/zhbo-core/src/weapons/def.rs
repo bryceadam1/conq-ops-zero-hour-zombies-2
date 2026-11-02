@@ -600,6 +600,21 @@ pub struct WeaponDef {
     pub shield: Option<ShieldGeometry>,
 }
 
+/// A held or thrown weapon in the sim state is its definition by identity: the id, which names one
+/// definition of the installed table on every machine (the content CRC proves the tables agree).
+impl crate::statehash::StateHash for &'static WeaponDef {
+    fn hash(&self, h: &mut crate::statehash::Hasher) {
+        h.bytes(self.id.as_bytes());
+    }
+    #[cfg(test)]
+    fn perturb(&mut self, n: &mut usize) -> bool {
+        crate::statehash::take(n) && {
+            *self = Box::leak(Box::new(WeaponDef { id: format!("{}~", self.id), ..(*self).clone() }));
+            true
+        }
+    }
+}
+
 /// One posed shield collision box: BO2's riot-shield collmap (hit-location rank 101, above every
 /// body box) as the model's bounds on its tag. Inches, in the body's model space (x forward,
 /// y left, z up from the feet); `rot` (x, y, z, w) and `pos` place the box's own frame, whose x
@@ -611,6 +626,8 @@ pub struct ShieldBox {
     pub mins: [f32; 3],
     pub maxs: [f32; 3],
 }
+
+crate::statehash::state_hash!(struct ShieldBox { rot, pos, mins, maxs });
 
 impl ShieldBox {
     pub const NUMS: usize = 13;
@@ -773,6 +790,8 @@ pub enum Kind {
     #[default]
     Other,
 }
+
+crate::statehash::state_hash!(enum Kind { Claymore, Betty, C4, Shock, Trophy, Insertion, Sensor, Other });
 
 impl Kind {
     pub(crate) fn name(self) -> &'static str {

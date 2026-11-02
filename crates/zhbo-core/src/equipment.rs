@@ -141,6 +141,8 @@ pub struct Placed {
     pub stuck_to: Option<u32>,
 }
 
+crate::statehash::state_hash!(struct Placed { kind, def, owner, general, object, pos, yaw, age, triggered, charges, stuck_to });
+
 /// What happened to equipment this frame, for hit markers and sounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EquipEvent {
@@ -228,6 +230,11 @@ pub struct Equipment {
     /// The tuning pack's equipment numbers.
     pub tuning: EquipTuning,
 }
+
+// `shields` and `guards` are the frame's snapshots of the hashed players and deployed shields,
+// rebuilt at the start of every step; `shock_hits` is filled and drained inside the step;
+// `tuning` is the tuning pack (the content CRC covers it).
+crate::statehash::state_hash!(struct Equipment { placed } skip { shields, guards, shock_hits, tuning });
 
 impl Equipment {
     pub fn add(&mut self, mut p: Placed) {

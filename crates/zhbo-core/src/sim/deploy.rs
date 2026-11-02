@@ -49,6 +49,8 @@ pub struct Deployed {
     pub weapon: (usize, WeaponState, bool),
 }
 
+crate::statehash::state_hash!(struct Deployed { owner, general, def, object, bearer, damage_taken, destroyed, weapon });
+
 impl Deployed {
     pub fn standing(&self) -> bool {
         self.destroyed.is_none()
