@@ -540,3 +540,34 @@ fn a_flashed_shellshock_whites_the_view_out() {
     crate::nativevm::set_local_shock(None);
     assert_eq!(white(&draw_hud(&rec, &client, &sim)), Some(128));
 }
+
+/// A spectator following a General sees his HUD reduced to what BO2's spectator sees: his ammo,
+/// crosshair, compass and score, and the dead-spectate panel naming the switch keys; not the
+/// player's own hit marker, scorestreak column or key prompts.
+#[test]
+fn a_spectators_hud_is_the_followed_generals_reduced() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    crate::sim::tests::spawn(&mut sim, &host, 0, 1);
+    let mut client = Client::default();
+    let mut inp = ClientIn { local_player: 5, spectating: 1, dt: crate::units::LOGIC_DT, ..Default::default() };
+    for f in 1..80 {
+        client.frame(&mut sim, &inp);
+        sim.step(&host, f);
+        inp.logic_frame = f;
+    }
+    assert!(client.is_following());
+    client.hud.hitmarker = 0.5;
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let mut prims = Vec::new();
+    draw(&rec, &mut prims, &client, &sim, client.viewed);
+    render(&prims, &rec);
+    let images = rec.images.borrow();
+    assert!(images.iter().any(|i| i == "ZHBO_Mat_hud_shoutcasting_change_tab"), "the panel");
+    assert!(images.iter().any(|i| i.starts_with("ZHBO_Mat_hud_mp_vis_left_lower")), "his score panel");
+    assert!(!images.iter().any(|i| i.contains("damage_feedback")), "no hit marker");
+    assert!(!images.iter().any(|i| i.contains("hud_mp_vis_ks_dpad")), "no scorestreak column");
+    let texts = rec.texts.borrow();
+    assert!(texts.iter().any(|t| t.contains("[LMB]") && t.contains("[RMB]") && t.contains("Spectating")), "{texts:?}");
+}

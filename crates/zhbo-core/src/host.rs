@@ -183,6 +183,11 @@ pub trait ClientHost {
     fn image_quad(&self, _name: &str, _corners: [(f32, f32); 4], _argb: u32) -> bool {
         false
     }
+    /// A player's display name (the spectator's switch bar names the followed player, BO2's
+    /// `DeadSpectate.playerName`; ABI: `ClientApi::player_name`). A host without it names nobody.
+    fn player_name(&self, _player: i32) -> Option<String> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -241,6 +246,9 @@ pub struct ClientApi {
     /// A looping 2D event at `gain` × its volume, started if needed; `gain <= 0` stops it (a
     /// shellshock's ringing, `shellshock::Presented`). Appended after `sound_gain`.
     pub sound_loop: Option<extern "C" fn(event: *const c_char, gain: f32)>,
+    /// A player's display name as UTF-8 into `out` (at most `cap` bytes, NUL-terminated); returns
+    /// its length, 0 when there is none (the spectator's switch bar). Appended after `sound_loop`.
+    pub player_name: Option<extern "C" fn(player: i32, out: *mut c_char, cap: i32) -> i32>,
 }
 
 fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
@@ -473,6 +481,14 @@ impl ClientHost for CClientHost {
         if let Some(f) = self.0.ghost {
             f(template, &pos, angle, legal as i32);
         }
+    }
+
+    fn player_name(&self, player: i32) -> Option<String> {
+        let f = self.0.player_name?;
+        let mut buf = [0u8; 64];
+        let n = f(player, buf.as_mut_ptr() as *mut c_char, buf.len() as i32);
+        let n = usize::try_from(n).ok().filter(|&n| n > 0)?.min(buf.len() - 1);
+        Some(String::from_utf8_lossy(&buf[..n]).into_owned())
     }
 }
 

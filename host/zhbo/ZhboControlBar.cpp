@@ -152,7 +152,11 @@ public:
 			return nullptr;
 		Drawable *draw = TheInGameUI->getFirstSelectedDrawable();
 		Object *obj = draw ? draw->getObject() : nullptr;
-		return isGeneral(obj) ? obj : nullptr;
+		// Only the local player's own General: an observer (or an enemy) selecting someone else's
+		// must not put the class set up on it, even as a UI-only override.
+		if (!isGeneral(obj) || obj->getControllingPlayer() != ThePlayerList->getLocalPlayer())
+			return nullptr;
+		return obj;
 	}
 
 	/// The class button the engine is dispatching right now (it still carries WIN_STATE_SELECTED

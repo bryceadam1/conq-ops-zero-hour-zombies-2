@@ -282,6 +282,24 @@ int32_t cbCash(int32_t player)
 	return p ? (int32_t)p->getMoney()->countMoney() : 0;
 }
 
+// A player's display name (the spectator's switch bar). The HUD's text path is ASCII
+// (cachedText translates through AsciiString), so the name is narrowed the same way.
+int32_t cbPlayerName(int32_t player, char *out, int32_t cap)
+{
+	if (!out || cap <= 0)
+		return 0;
+	out[0] = 0;
+	const Player *p = ThePlayerList ? ThePlayerList->getNthPlayer(player) : nullptr;
+	if (!p)
+		return 0;
+	AsciiString name;
+	name.translate(p->getPlayerDisplayName());
+	const Int n = std::min<Int>(name.getLength(), cap - 1);
+	memcpy(out, name.str(), (size_t)n);
+	out[n] = 0;
+	return n;
+}
+
 void ResetHud()
 {
 	// Mapped images are reset per game (TheMappedImageCollection): the cached pointers go

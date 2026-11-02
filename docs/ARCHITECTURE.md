@@ -96,8 +96,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   profile (`profile.rs`), `classwire.rs` a custom class's pick payload (catalog tokens),
   `menu.rs` the shell menu.
 - `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
-  frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness).
-  Nothing in it reaches the sim except through the input messages it emits.
+  frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness, and
+  `spectate.rs`: the spectating client of an observer, a defeated player or a replay viewer, which
+  follows first-person Generals at the sim's aim and sends nothing). Nothing in it reaches the sim
+  except through the input messages it emits.
 - `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
   impact effect), `soundlayers.rs` (third-person shots' per-layer distance curves).
 - `math.rs` (the world-space vector math, and `math::det`: the sim's transcendental functions through the pure-Rust `libm` crate, the one external dependency of the sim, so every lockstep peer computes the same bits — `the_sim_calls_no_platform_libm` keeps sim-reachable code off the platform libm), `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),

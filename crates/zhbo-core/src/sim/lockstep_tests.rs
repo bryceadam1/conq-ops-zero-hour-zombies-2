@@ -11,7 +11,9 @@
 //! picked by index, fire, aim, reload, sprint, both offhands, melee, the alt mode, the weapon
 //! swap, stances, a mid-life class change after combat (the class waits for the next spawn), the
 //! field computer and the overhead General's RTS report, and a death and a fresh General every
-//! round (the chosen class comes in with him).
+//! round (the chosen class comes in with him). A spectating observer machine (an observer seat, a
+//! replay viewer: `ClientIn::spectating`) renders too, follows the Generals in first person,
+//! switches and goes overhead, and must never send a thing.
 use super::tests::{general, soldier, FakeHost};
 use super::*;
 use crate::classes::CustomClass;
@@ -127,6 +129,40 @@ impl Peer {
             self.renders += 1;
         }
     }
+
+    /// A spectating machine's rendered frames (an observer seat, a replay's playback, a defeated
+    /// player who stayed): `observed` is the seat the engine observes, `keys`/`buttons` the
+    /// spectator's own switch and view presses. It follows first-person Generals and must never
+    /// send a thing — every `ClientOut` it makes is checked, and nothing reaches the network.
+    fn spectate(&mut self, frame: u32, frames: u32, observed: i32, keys: KeySet, buttons: u32) -> bool {
+        let mut followed = false;
+        for _ in 0..frames {
+            let inp = ClientIn {
+                dt: LOGIC_DT / frames as f32,
+                local_player: observed,
+                logic_frame: frame,
+                keys,
+                mouse_dx: 25.0,
+                mouse_buttons: buttons,
+                input_allowed: 1,
+                screen_w: 1280.0,
+                screen_h: 720.0,
+                class_button: 1,
+                class_pick_force: 1,
+                spectating: 1,
+                ..Default::default()
+            };
+            let out = self.client.frame(&mut self.sim, &inp);
+            let at = format!("the spectator at frame {frame}");
+            assert_eq!(out.send_input, 0, "{at} sent input");
+            assert_eq!(out.choose_class, 0, "{at} picked a class");
+            assert_eq!(out.select_object, 0, "{at} selected an object");
+            assert_eq!(out.capture_mouse, 0, "{at} captured the mouse");
+            followed |= self.client.is_following();
+            self.renders += 1;
+        }
+        followed
+    }
 }
 
 /// What a player does on frame `t` of a round: the keys held and the mouse moved.
@@ -207,13 +243,17 @@ fn rounds() -> u32 {
     n.div_ceil(2).max(4)
 }
 
-/// The match on three machines: A (player 0's), B (player 1's) and C, which never renders.
+/// The match on four machines: A (player 0's), B (player 1's), C, which never renders, and D, a
+/// spectating observer.
 /// Returns how many frames ran and A's and B's render counts.
 fn play_match() -> (u32, u32, u32) {
     let mut a = Peer::new(0, 0x0A11_CE5E_ED00_0001);
     let mut b = Peer::new(1, 0x0B0B_5EED_0000_0002);
-    // An observer seat with no General of its own.
+    // An observer seat with no General of its own, that never renders (a headless replay check).
     let mut c = Peer::new(3, 0x0C0C_5EED_0000_0003);
+    // A spectating observer seat that renders and follows the Generals in first person.
+    let mut d = Peer::new(4, 0x0D0D_5EED_0000_0004);
+    let mut followed = 0;
     let mut net = Net::default();
     // The players' own hands: one script stream per player (each machine only ever reads its
     // own player's).
@@ -233,7 +273,7 @@ fn play_match() -> (u32, u32, u32) {
         let ids = [100 + 2 * r, 101 + 2 * r];
         // The engine's own logic, the same on every machine: a fresh General per player each
         // round (facing each other across the squad), and the round's end kills both.
-        for peer in [&mut a, &mut b, &mut c] {
+        for peer in [&mut a, &mut b, &mut c, &mut d] {
             if t == 0 {
                 let mut g0 = general(ids[0], 0);
                 g0.pos = Vec3::new(0.0, 10.0, 0.0);
@@ -266,12 +306,12 @@ fn play_match() -> (u32, u32, u32) {
         // Overhead, the General's Zero Hour weapon fires now and then (the RTS report's shots).
         let rts_shots = if t > 395 && t.is_multiple_of(5) { [1, 0, 0] } else { [0; 3] };
         let cmds = net.take(frame);
-        for peer in [&mut a, &mut b, &mut c] {
+        for peer in [&mut a, &mut b, &mut c, &mut d] {
             peer.logic(frame, &cmds, rts_shots);
         }
 
         let h = a.sim.state_hash();
-        for (name, peer) in [("B", &b), ("C", &c)] {
+        for (name, peer) in [("B", &b), ("C", &c), ("D", &d)] {
             let at = format!("machine {name} diverged from A at frame {frame} (round {r}, t {t})");
             assert_eq!(peer.sim.state_hash(), h, "{at}: the sim state");
             assert_eq!(peer.host.objects, a.host.objects, "{at}: the engine objects");
@@ -289,12 +329,27 @@ fn play_match() -> (u32, u32, u32) {
         let fa = 1 + (a.next() % 3) as u32;
         a.render(&mut net, frame, fa, ka, la);
         b.render(&mut net, frame, 1, kb, lb);
+        // The spectator: its own seat, then the engine observes player 1 for a while; it switches
+        // with the attack and aim buttons and goes overhead and back with the view key.
+        let observed = if (ROUND / 2..ROUND).contains(&t) && r % 2 == 1 { 1 } else { 4 };
+        let mut keys = KeySet::default();
+        let mut buttons = 0;
+        match t {
+            150 => keys.set_down(Key::MouseRight, true),
+            170 => keys.set_down(Key::MouseLeft, true),
+            250 => keys.set_down(Bindings::default().field_computer, true),
+            330 => buttons = crate::input::mouse_buttons::MIDDLE,
+            _ => {}
+        }
+        let fd = 1 + (d.next() % 2) as u32;
+        followed += d.spectate(frame, fd, observed, keys, buttons) as u32;
     }
+    assert!(followed > ROUND, "the spectator followed the Generals in first person ({followed} frames)");
     assert_eq!(c.sim.events.len(), MAX_EVENTS, "the machine that never renders sat at the event cap");
     (frame, a.renders, b.renders)
 }
 
-/// The gate: every weapon, every feature, three machines, one result.
+/// The gate: every weapon, every feature, four machines, one result.
 #[test]
 fn every_machine_agrees_on_every_frame_of_a_long_match() {
     let (frames, ra, rb) = play_match();

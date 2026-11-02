@@ -19,6 +19,7 @@
 use crate::building::{self, work_text};
 use crate::client::{Client, ViewMode};
 use crate::host::{objflags, ClientHost, ObjInfo};
+use crate::input::Key;
 use crate::math::Vec3;
 use crate::sim::{Mode, PlayerSim, Sim};
 
@@ -33,6 +34,7 @@ pub mod rewards;
 pub mod score;
 pub mod scoreboard;
 mod shapes;
+pub mod spectate;
 pub mod sprites;
 pub mod state;
 #[cfg(test)]
@@ -125,6 +127,7 @@ pub fn materials() -> impl Iterator<Item = &'static str> {
         .chain(score::MATERIALS.iter())
         .chain(rewards::MATERIALS.iter())
         .chain(damage::MATERIALS.iter())
+        .chain(spectate::MATERIALS.iter())
         .chain(["damage_feedback", "hud_horizontal_compass_minimap"].iter())
         .copied()
 }
@@ -220,6 +223,12 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
         crate::classui::draw_screen(prims, w, h, &client.class_screen_view());
     }
 
+    // A spectator overhead with a General to follow: the way back into first person.
+    let spectating = client.spectator.is_some();
+    if spectating && !in_fps && client.spectator.as_ref().is_some_and(|s| s.overhead) && !crate::client::spectate::candidates(sim).is_empty() {
+        spectate::draw_overhead_prompt(&l, prims, crate::input::key_name(client.cfg.bindings.field_computer));
+    }
+
     let Some(p) = player.filter(|_| in_fps) else {
         host.ghost(0, Vec3::ZERO, 0.0, false);
         return;
@@ -256,24 +265,41 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             // BO2's scope overlay: up while the reticle zoom is, when the viewmodel is not drawn.
             draw_scope_overlay(prims, w, h, p, st.ads_zoom_in);
             draw_crosshair(prims, w, h, s, client, p, zoom);
-            draw_hitmarker(prims, w, h, client);
-            draw_score_popup(&l, prims, client);
-            draw_hint(&l, prims, client);
-            draw_hack(prims, w, h, s, client);
-            if p.hammer.is_none() && !p.building {
+            // What is the player's alone — his hit marker, score popup, hints, hack bar and the
+            // prompts naming his keys — a spectator does not see (BO2's script HUD elements belong
+            // to the player; the spectator's own prompts are the dead-spectate panel's).
+            if !spectating {
+                draw_hitmarker(prims, w, h, client);
+                draw_score_popup(&l, prims, client);
+                draw_hint(&l, prims, client);
+                draw_hack(prims, w, h, s, client);
+            }
+            if p.hammer.is_none() && !p.building && !spectating {
                 draw_reload_prompt(prims, w, h, s, p);
                 draw_breath_hint(&l, prims, p, crate::input::key_name(client.cfg.bindings.sprint));
             }
         }
-        draw_build(host, prims, w, h, s, client, p, !tablet_up && !map_open);
+        if spectating {
+            host.ghost(0, Vec3::ZERO, 0.0, false);
+        } else {
+            draw_build(host, prims, w, h, s, client, p, !tablet_up && !map_open);
+        }
         if !scoped {
             let reveal = |pos: Vec3| sim.reveals(local_player, pos);
             draw_minimap(host, prims, &l, client.yaw, p, &reveal);
             draw_compass(prims, &l, client.yaw);
         }
         score::draw(&l, prims, team_color(host, p), host.cash(local_player).max(0) as u32);
-        let can_build = !host.build_options(p.general).is_empty();
-        rewards::draw(&l, prims, tablet_up, p.hammer.is_some(), can_build, st.weapon_ms());
+        if spectating {
+            let name = host.player_name(local_player).unwrap_or_default();
+            let b = &client.cfg.bindings;
+            let panel = spectate::Panel { name: &name, prev_key: crate::input::key_name(Key::MouseLeft), next_key: crate::input::key_name(Key::MouseRight), view_key: crate::input::key_name(b.field_computer) };
+            spectate::draw(&l, prims, &panel);
+        } else {
+            // The scorestreak column is the player's own commands (the tablet, the hammer).
+            let can_build = !host.build_options(p.general).is_empty();
+            rewards::draw(&l, prims, tablet_up, p.hammer.is_some(), can_build, st.weapon_ms());
+        }
         let alt_key = crate::input::key_name(client.cfg.bindings.alt_mode);
         ammo::draw(&l, prims, p, st.weapon_ms(), st.clock, alt_key);
         if map_open {

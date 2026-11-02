@@ -195,9 +195,35 @@ std::map<ObjectID, UnsignedInt> s_generalBuilds;
 } // namespace
 
 Autopilot s_autopilot = {};
-void autopilotSpawn()
+
+// The player the test scene is built for. In the recorded game that is the local player; a
+// replay's playback runs the same logic step with the ReplayObserver as the local player, so the
+// scene goes to the first human player instead, the one the recording's local player was in a
+// skirmish (the only seat a scripted run plays). Every machine and every playback then spawns the
+// same objects, and the recorded take-control finds its General.
+static Player *autopilotPlayer()
 {
 	Player *local = ThePlayerList->getLocalPlayer();
+	if (local && local->isPlayerActive() && !(TheRecorder && TheRecorder->isPlaybackMode()))
+		return local;
+	for (Int i = 0; i < ThePlayerList->getPlayerCount(); ++i)
+	{
+		Player *p = ThePlayerList->getNthPlayer(i);
+		if (p && p->getPlayerType() == PLAYER_HUMAN && !p->isPlayerObserver() && p->getPlayerTemplate() && p->isPlayableSide())
+			return p;
+	}
+	return local;
+}
+
+// A replay's playback: the recording carries every message the scripted run sent.
+static Bool autopilotPlayback()
+{
+	return TheRecorder && TheRecorder->isPlaybackMode();
+}
+
+void autopilotSpawn()
+{
+	Player *local = autopilotPlayer();
 	if (s_config.force_radar && TheRadar)
 		TheRadar->forceOn(local->getPlayerIndex(), TRUE);
 	Object *cc = nullptr;
@@ -269,7 +295,7 @@ void autopilotSpawn()
 	s_autopilot.spawnFrame = TheGameLogic->getFrame();
 	// ZHBO_AUTOPILOT=manual: the scene only; the player starts overhead and does the rest.
 	const Bool manual = s_config.autopilot_manual;
-	if (!s_autopilot.rts && !manual && !s_autopilot.build)
+	if (!s_autopilot.rts && !manual && !s_autopilot.build && !autopilotPlayback())
 		Zhbo_RequestTakeControl(general);
 }
 
@@ -281,7 +307,7 @@ void rtsAutopilotWave(UnsignedInt frame)
 	if (!general || (t != 230 && t != 410 && t != 500))
 		return;
 	const Bool close = t == 500;
-	Player *local = ThePlayerList->getLocalPlayer();
+	Player *local = autopilotPlayer();
 	for (Int p = 0; p < ThePlayerList->getPlayerCount(); ++p)
 	{
 		Player *enemy = ThePlayerList->getNthPlayer(p);
@@ -474,9 +500,44 @@ void rtsAutopilotFrame(UnsignedInt frame)
 	}
 }
 
+// ZHBO_AUTOTEST_SKIRMISH: from the main menu, open Skirmish and press its Start, as a player's
+// clicks would (the replay test needs a recorded game, and a loaded save records none). Once per run.
+void autopilotShellFrame()
+{
+	static Int s_step = 0;
+	static double s_at = 0.0;
+	if (!s_config.autotest_skirmish || s_step >= 2 || !TheShell || !TheWindowManager)
+		return;
+	const double now = zhbo_platform::now();
+	if (s_at == 0.0)
+		s_at = now;
+	if (s_step == 0 && now - s_at > 3.0 && TheShell->getScreenCount() == 1)
+	{
+		s_step = 1;
+		s_at = now;
+		TheShell->push("Menus/SkirmishGameOptionsMenu.wnd");
+		logLine("autotest: opened Skirmish");
+		return;
+	}
+	if (s_step == 1 && now - s_at > 3.0)
+	{
+		const NameKeyType startId = TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:ButtonStart");
+		GameWindow *start = TheWindowManager->winGetWindowFromId(nullptr, startId);
+		GameWindow *parent = start ? start->winGetParent() : nullptr;
+		while (parent && parent->winGetParent())
+			parent = parent->winGetParent();
+		if (!start || !parent)
+			return;
+		s_step = 2;
+		TheWindowManager->winSendSystemMsg(parent, GBM_SELECTED, (WindowMsgData)start, startId);
+		logLine("autotest: pressed Start");
+	}
+}
+
 void autopilotFrame()
 {
-	if (!s_autopilot.enabled)
+	// A replay plays back what the scripted run sent; nothing is sent again.
+	if (!s_autopilot.enabled || autopilotPlayback())
 		return;
 	const UnsignedInt frame = TheGameLogic->getFrame();
 	if (!s_autopilot.spawned)

@@ -29,6 +29,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/PlayerTemplate.h"
+#include "Common/Recorder.h"
 #include "Common/Radar.h"
 #include "Common/Team.h"
 #include "Common/TerrainTypes.h"
@@ -44,6 +45,7 @@
 #include "GameClient/GadgetPushButton.h"
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
+#include "GameClient/Shell.h"
 #include "Common/NameKeyGenerator.h"
 #include "GameClient/GameClient.h"
 #include "GameClient/GameFont.h"
@@ -91,6 +93,7 @@ struct ZhboConfig
 	Real showcase_angle = 0.0f;
 	Bool closeup = FALSE;		 // ZHBO_CLOSEUP: follow the General closely in captures
 	Real closeup_zoom = 0.0f;
+	Bool autotest_skirmish = FALSE; // ZHBO_AUTOTEST_SKIRMISH: start a skirmish from the main menu (a replay is recorded)
 };
 extern ZhboConfig s_config;
 void readConfig();
@@ -169,6 +172,7 @@ int32_t cbCash(int32_t player);
 void cbSound(const char *event, const ZhboVec3 *at);
 void cbSoundGain(const char *event, const ZhboVec3 *at, float gain);
 void cbSoundLoop(const char *event, float gain);
+int32_t cbPlayerName(int32_t player, char *out, int32_t cap);
 void cbClip(float x, float y, float w, float h);
 int32_t cbRadar(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *youPx);
 int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);
@@ -266,6 +270,7 @@ struct Autopilot
 };
 extern Autopilot s_autopilot;
 void autopilotFrame();
+void autopilotShellFrame();
 void autopilotSpawn();
 void rtsAutopilotWave(UnsignedInt frame);
 void trackGeneralBuilds(UnsignedInt frame);

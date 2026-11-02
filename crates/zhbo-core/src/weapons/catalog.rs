@@ -597,6 +597,14 @@ UiText MP_CHANGE_CLASS_NEXT_SPAWN
   Text = Your class will change the next time you spawn
 End
 
+UiText MPUI_SPECTATING
+  Text = Spectating
+End
+
+UiText MPUI_FIRST_PERSON_VIEW
+  Text = 1st Person View
+End
+
 Perk LIGHTWEIGHT
   Name = Lightweight
   Description = Move faster.  Take no damage when falling.
