@@ -10355,3 +10355,50 @@ items:
   it. CONTRACT/`impacts.rs` still call surfaces "presentation only"; that is inaccurate.
 * A real two-instance LAN test needs a debug macOS preset and a loopback alias (sudo). See
   TESTING.md, "Multiplayer in game".
+
+## The `--build` leg's first-person half: the script's heading drifted a frame (2026-11-01, branch `v1/build-leg-fix`)
+
+**Symptom.** On main, `autotest-mac.sh --build` failed its whole first-person half: "can't place
+Slth_GLASupplyStash at (1295, 1845): legal-build code 3". The only object the log listed was the
+General himself, so it looked as if the hammer ignored his own footprint, or placed from a stale
+position after the classless-spawn change.
+
+**Root cause.** Neither. It was a script bug in `ZhboAutopilot.cpp`. After the overhead build, the
+autopilot searches for open ground. It checks a heading `a` with the hammer's own rule (the site
+`max(50, radius + 15)` ahead, turned a notch or two), sets the General's orientation to `a`, and
+sends Take Control. That order lands on a later logic frame, and `Sim::take_control` starts first
+person from his orientation then. In between, his AI was still turning him after the build. His
+locomotor turns at 500 degrees a second (`ColonelBurtonGroundLocomotor`), so one frame is a
+16.7-degree step. Every recorded run started first person 16.5 to 16.8 degrees off the checked
+heading, in either direction (285 checked, 301.6 used; 60 checked, 43.5 used). The hammer's site
+went with the view onto ground nobody had checked. Whether that ground was clear depended on where
+the General ended his build, so the leg was flaky, not broken outright. In the failing runs, the
+site met the Command Center: its footprint once, and its factory exit area (the second pass of
+`BuildAssistant::isLocationClearOfObjects`) another time. The class pick did not cause it; it only
+moved the clock.
+
+**Why the log blamed the General.** The old refusal diagnostic listed objects whose *centres* were
+within 1.5 × the structure's radius. That catches the General a few metres away. It never catches
+a big structure whose centre is far off but whose footprint or exit reaches the site. `cbCanPlace`
+now lists what Zero Hour itself weighs: whatever the footprint touches
+(`iteratePotentialCollisions`), with the relationship, busy, immobile and disabled flags that decide
+the check, and every structure in the second pass's range, with its facing and exit width.
+
+**Fix.** The autopilot idles the General's AI (`aiIdle(CMD_FROM_AI)`) before it moves and faces
+him, so nothing turns him while Take Control is on its way. The product is unchanged: first person
+starting from the General's orientation when the order lands is right (a real player's click is an
+order like any other). The hammer clears the General by design (`PLACE_CLEAR` 15 > his 10 radius,
+and Zero Hour lets an idle ally stand in a footprint).
+
+**Test.** The build leg has a new check, "first person: faces it". It compares the autopilot's
+chosen heading with the first `player N pos … yaw` after it and requires them to agree within 1
+degree. All four earlier logs fail it, the two that passed by luck included. Run 3 of the fix
+reproduced the original failing geometry exactly (285 degrees, General at (1261, 1900)). It entered
+first person at yaw −1.31 (285 degrees) and placed, built and repaired the stash.
+
+**Verified.** `cargo xtask build`; `--build` three times in a row, 18/18 each (the new check
+included). The runs covered all three geometries seen so far: 285 degrees from where he built,
+60 degrees after the move of 100, and 255 degrees. The other legs ran once on this branch, on top
+of mp-audit's patches 0018/0019, and all passed: default 16/16, `--classpick` 12/12, `--rts`
+16/16, `--scope` 1/1, `--w3d-ads` 2/2, `--input` 3/3. `cargo test --workspace` and `cargo clippy
+--workspace --all-targets` are clean.

@@ -93,6 +93,12 @@ void buildTestStructureDone(Object *obj)
 		// structure could go (as near as the hammer puts it). His own workers wander about: if
 		// there is none where he stands, he is moved to where there is.
 		s_autopilot.buildPhase = BUILD_FPS;
+		// Stop him first. Take Control lands as an order on a later logic frame, and first person
+		// starts from his orientation then; an AI still turning him (his locomotor's 500 degrees a
+		// second is a 16.7-degree step a frame) would hand the hammer a heading this search never
+		// checked, and the structure lands in the command center's exit instead of open ground.
+		if (AIUpdateInterface *ai = general->getAIUpdateInterface())
+			ai->aiIdle(CMD_FROM_AI);
 		const ThingTemplate *what = obj->getTemplate();
 		const Real ahead = std::max(50.0f, what->getTemplateGeometryInfo().getBoundingCircleRadius() + 15.0f);
 		const UnsignedInt checks = BuildAssistant::TERRAIN_RESTRICTIONS | BuildAssistant::CLEAR_PATH
