@@ -10355,3 +10355,86 @@ items:
   it. CONTRACT/`impacts.rs` still call surfaces "presentation only"; that is inaccurate.
 * A real two-instance LAN test needs a debug macOS preset and a loopback alias (sudo). See
   TESTING.md, "Multiplayer in game".
+
+## Spectators: observers, replay viewers and defeated players follow, and send nothing (2026-11-01, branch `v1/mp-spectator`)
+
+**Root cause (audit L3).** The bridge gave the client `rts::getObservedOrLocalPlayer()` as its
+local player, and nothing told the client that this machine only watches. An observer slot, a
+replay's ReplayObserver, or a defeated player who picked seat N in Zero Hour's observer list
+(only with the TheSuperHackers player-observer option) ran as N's own client. It flew into N's
+first person, turned the view with its own mouse, captured the cursor, and sent `FpsInput` and
+a `MSG_CREATE_SELECTED_GROUP` every frame. The sim dropped them because the sender was not the
+owner, so nothing desynced, but the view was not what N saw.
+
+**Fix.**
+* `ZhboClientIn.spectating` = `!ThePlayerList->getLocalPlayer()->isPlayerActive()` (ZH's own
+  "observing" test: an observer seat, a defeated player) or `TheRecorder->isPlaybackMode()`.
+* The spectating client (`client/spectate.rs`) never sends input, a class pick or
+  `select_object`, never captures the mouse, and has no class screen.
+* **Who is followed** is the core's choice, so following works without the engine option. The
+  engine's observed seat is adopted when it changes: it is followed in first person, or watched
+  overhead.
+* **Controls.** BO2's dead-spectate bar (`hud/deadspectate.lua`: `DualButtonPrompt(...,
+  "mouse1", "mouse2")`): attack follows the previous first-person General, aim the next, as a
+  cut. BO2's spectate-mode button (`mouse3`) toggles third and first person; here the middle
+  button or the field-computer key toggles the overhead view.
+* **When the followed General dies** or leaves first person, the view cuts to the next General.
+  With none left it flies out overhead, then follows the next General who enters. An unclassed
+  General (behind his class screen) is never followed: BO2 does not spectate an unspawned player.
+* **The view** is his eye at the sim's own aim: `PlayerSim.input` yaw/pitch (what every peer
+  stepped on) plus the sim's view kick, interpolated across the logic frame exactly like the eye.
+  The viewmodel, sounds, impacts, flinch and shellshock are his.
+* **The HUD is his.** `zhbo_client_draw_hud` draws the followed seat, and `Client::viewed` drives
+  the native viewmodel's camos and reticles. It is reduced to what a BO2 spectator sees: the ammo
+  area, crosshair, compass, minimap and score panel, with no hit marker, score popup, hints, work
+  bars, key prompts, scorestreak column, map or scoreboard. BO2's script HUD elements belong to
+  the player; ammoarea/scorearea only refresh on `BIT_SPECTATING_CLIENT`. On top sits BO2's
+  dead-spectate panel, at the Lua's own numbers: 300 × 60, bottom -120,
+  `hud_shoutcasting_change_tab` and `hud_shoutcasting_viewing_box_dead`, "[LMB] Spectating
+  [RMB]", the name through the new `ClientApi.player_name`, and the view button. Overhead, the
+  prompt "[F] 1st Person View" shows while a General can be followed. The strings are the
+  install's `MPUI_SPECTATING` = "Spectating" and `MPUI_FIRST_PERSON_VIEW` = "1st Person View",
+  both in `en_code_post_gfx_mp.ff`. "Overhead View" is the mod's own label.
+* **The local player's General dies as he is defeated.** The events since the last frame belong
+  to the view that was presented, and on the frame he becomes a spectator the view is still his.
+  So his own death plays out (the banner and the fly-out), and only then does the client follow
+  someone. Followed Generals' deaths get no banner.
+* **Found and fixed:** the command bar's class set went up on any selected unclassed General,
+  even an enemy's or an observer's selection (a UI-only override, but wrong). `selectedGeneral`
+  is now only the local player's own.
+
+**Replays.** The autopilot's scene was built for `getLocalPlayer()`. In playback that is the
+ReplayObserver, so the scene was never spawned and the recorded take-control found no General.
+`autopilotPlayer()` now builds it for the first human seat (the recording's local player in a
+skirmish), and in playback the client-side harness sends nothing (the recording carries every
+message). A loaded save records no replay (`RecorderClass::updateRecord` starts on
+`MSG_NEW_GAME` with a skirmish/LAN/online mode only), so `ZHBO_AUTOTEST_SKIRMISH` opens Skirmish
+from the main menu and presses Start for `autotest-mac.sh --replay`.
+
+**ABI** (pending; no version bump): `ZhboClientIn.spectating` sits in the old tail padding, so
+`ZhboClientIn` stays 136 bytes; the offset (132) is asserted on both sides.
+`ZhboClientApi.player_name` is appended (fields 15 → 16). The archive gains the two materials
+and two `UiText` keys, so `hud::VERSION` must move too.
+
+**Verified.** `cargo test --workspace`; clippy is clean. The lockstep gate now has a fourth
+machine: a spectating observer that renders 1–2 frames per logic frame, switches, goes overhead
+and back, and has the engine's observed seat changed under it. Every `ClientOut` it produces is
+checked to be silent, and its state hash matches the others on every frame. The real-install
+suite is green (the emblem test needs `ZHBO_ZH_DIR`). Conformance is unchanged: weapons 1,979 / 11,
+cac 0 / 4 BO2-only, 12 gap clusters.
+
+**In game** (`autotest-mac.sh --replay`, private `cargo xtask build --dist`, 5/5 PASS). The test
+records a fresh skirmish: the General enters first person at frame 61, kills a rebel and enters
+again at frame 726. It then plays the replay back with `-loadreplay`. The General enters first
+person again at frame 61, from the recorded messages. The viewer logs `spectator: following seat
+2's General 226` and then once a second its view beside the recorded aim, e.g. view yaw -2.567 /
+aim -2.541, view pitch -0.115 / aim -0.120 (within one logic frame's turn). The viewer sends
+nothing. Screenshot `~/.opencode/plan/mp-spectator/at-replay/shot.bmp.000450.png`: the followed
+General's pistol, his ammo and score, and the dead-spectate panel with his name. Zero Hour's Last
+Replay was restored byte-identical.
+
+**Integration with mp-latency's prediction (`client/predict.rs`).** Its `predicting` condition
+must add `self.spectator.is_none()`, and becoming a spectator must `predict.reset()`. Otherwise
+a following spectator acks the followed seat's record into the own-player predictor, and
+`advance` is keyed to `inp.local_player`. A spectator sends nothing, so nothing is ever in flight
+and the predictor must stay empty: the followed view comes from the sim record, as here.
