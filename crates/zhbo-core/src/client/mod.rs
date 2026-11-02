@@ -4,9 +4,10 @@
 //! Nothing here affects the lockstep simulation except through the input messages it emits.
 
 use crate::classui::cues;
+use crate::host::LogicHost;
 use crate::input::{buttons, pack_move, FpsInput, Key, KeySet, MAX_PITCH};
 use crate::math::{dir_from_angles, lerp_angle, smoothstep, wrap_angle, Vec3};
-use crate::sim::{EventKind, Mode, Sim};
+use crate::sim::{EventKind, Mode, PlayerSim, Sim};
 use crate::sounds::{self, Cues};
 use crate::units::LOGIC_DT;
 use crate::viewmodel::{self, Viewmodel};
@@ -276,6 +277,11 @@ pub struct ClientOut {
     /// alive, so his command bar — the class set while he has no class — is up again), 0 = none.
     /// Appended at the end of the struct (ABI rule).
     pub select_object: u32,
+    /// With `send_input`: the logic frame this machine showed as the input was made (the sim's
+    /// frame then). The message carries it: the sim resolves the input's shots against that frame
+    /// (`sim::antilag`) and this client's prediction knows which inputs the record holds
+    /// (`client::predict`). Appended at the end of the struct (ABI rule).
+    pub input_seen_frame: u32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -314,6 +320,7 @@ impl Default for ClientOut {
             view_roll: 0.0,
             viewmodel_fired_left: 0,
             select_object: 0,
+            input_seen_frame: 0,
         }
     }
 }
@@ -330,6 +337,8 @@ pub enum ViewMode {
 /// The in-game test harness's scripted input; release builds can strip it.
 #[cfg(feature = "autopilot")]
 pub mod autopilot;
+mod events;
+pub mod predict;
 pub mod tracers;
 #[cfg(feature = "autopilot")]
 pub use autopilot::{Autopilot, Scripted};
@@ -490,6 +499,9 @@ pub struct Client {
     /// the first-person one), for the host layer's per-viewer choice after each logic step, and
     /// the own gun's tracers for the viewmodel pass.
     pub tracers: tracers::ViewTracers,
+    /// The local player's prediction over his inputs in flight (`predict`): what first person is
+    /// drawn from while the engine's logic is available to it ([`Client::frame_with`]).
+    pub predict: predict::Predictor,
 }
 
 impl Default for Client {
@@ -541,6 +553,7 @@ impl Client {
             ui_clock: 0.0,
             menu_prev: crate::classui::MenuPrev::default(),
             tracers: tracers::ViewTracers::default(),
+            predict: predict::Predictor::default(),
         }
     }
 
@@ -819,8 +832,16 @@ impl Client {
         None
     }
 
-    /// Run one rendered frame.
+    /// Run one rendered frame without the engine's logic at hand: nothing is predicted, first
+    /// person follows the sim's record.
     pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
+        self.frame_with(sim, None, inp)
+    }
+
+    /// Run one rendered frame. With `host` (the engine's logic, only read here) the local player's
+    /// first person is predicted over his inputs in flight (`predict`), as BO2's client predicts
+    /// its own player over the commands the server has not acknowledged.
+    pub fn frame_with(&mut self, sim: &mut Sim, host: Option<&dyn LogicHost>, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
         self.ui_clock += dt;
         // The sim's record names the General the local player is commanding, in first person or
@@ -839,27 +860,47 @@ impl Client {
         self.hud.map_open = false;
         self.hud.scoreboard_open = false;
 
-        // Track logic frames for eye interpolation.
+        // Track logic frames for eye interpolation: the render clock since the frame's logic step,
+        // carried across steps (a frame rate that does not divide 30 Hz otherwise draws the eye
+        // unevenly: zeroing it on the step's render frame dropped that frame's time), and one
+        // frame's step back when the render missed some (not the eye of frames ago).
         if let Some(p) = &player {
             if inp.logic_frame != self.seen_frame {
+                let ticks = inp.logic_frame.wrapping_sub(self.seen_frame).clamp(1, 8);
                 self.seen_frame = inp.logic_frame;
-                self.since_logic = 0.0;
-                self.eye_prev = self.eye_curr;
-                self.eye_curr = p.body.eye();
+                self.since_logic = (self.since_logic + dt - LOGIC_DT * ticks as f32).clamp(0.0, LOGIC_DT);
+                let eye = p.body.eye();
+                self.eye_prev = if ticks > 1 { eye - (eye - self.eye_curr) * (1.0 / ticks as f32) } else { self.eye_curr };
+                self.eye_curr = eye;
                 self.kick_prev = self.kick_curr;
                 // The sim's aim offset: the view kick and the scope's idle sway.
                 let (yaw, pitch) = p.aim_offset();
                 self.kick_curr = (yaw, pitch, p.view_kick.roll());
             } else {
-                self.since_logic += dt;
+                self.since_logic = (self.since_logic + dt).min(LOGIC_DT);
             }
         }
         let alpha = (self.since_logic / LOGIC_DT).clamp(0.0, 1.0);
         let eye = self.eye_prev.lerp(self.eye_curr, alpha);
 
-        self.consume_events(sim, inp, player.as_ref().map(|p| p.body.pos));
+        // The prediction runs in first person on a classed General (behind the class screen
+        // nothing goes out to predict). The sim's record says which inputs it took in: they leave
+        // the flight, and what their predictions presented is owed against the sim's own events.
+        let predicting = host.is_some() && matches!(self.view, ViewMode::Fps) && player.as_ref().is_some_and(|p| p.is_first_person() && p.class.is_some());
+        let owed = match (&player, predicting) {
+            (Some(p), true) => Some(self.predict.ack(p)),
+            _ => {
+                self.predict.reset();
+                None
+            }
+        };
+        self.tracers.predicted = predicting;
+        self.consume_events(sim, inp, player.as_ref().map(|p| p.body.pos), owed);
         self.tick_hud(dt);
-        self.hud.lui.tick(dt, player.as_ref().filter(|p| p.is_first_person()));
+        // What first person shows: the prediction (last frame's, until this frame's below), else
+        // the sim's record.
+        let shown = self.predict.view().cloned().or_else(|| player.clone());
+        self.hud.lui.tick(dt, shown.as_ref().filter(|p| p.is_first_person()));
 
         // A forced open (the lobby's Create a Class button or the command bar's entry) keeps the
         // screen up even when a class is already chosen, so a kit can be replaced.
@@ -897,7 +938,7 @@ impl Client {
 
         let aspect = if inp.screen_h > 0.0 { inp.screen_w / inp.screen_h } else { 16.0 / 9.0 };
         let base_fov = horizontal_fov(self.cfg.cg_fov, aspect);
-        let hfov = horizontal_fov(self.view_fov(dt, player.as_ref()), aspect);
+        let hfov = horizontal_fov(self.view_fov(dt, shown.as_ref()), aspect);
         self.last_hfov = hfov;
 
         let first_person = player.as_ref().is_some_and(|p| p.is_first_person());
@@ -959,13 +1000,39 @@ impl Client {
                         self.yaw = wrap_angle(self.yaw + cap(-inp.mouse_dx * sens, look.max_yaw_speed));
                         self.pitch = (self.pitch + cap(-inp.mouse_dy * sens * inv, look.max_pitch_speed)).clamp(-MAX_PITCH, MAX_PITCH);
                     }
+                    // This frame's input goes out first: the prediction steps it at once.
+                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed, sim.frame);
+                    let predicted = match (predicting, host) {
+                        (true, Some(host)) => {
+                            let sent = (out.send_input != 0).then_some((out.input_seen_frame, out.input));
+                            let adv = self.predict.advance(sim, host, inp.local_player.max(0) as usize, sent, dt);
+                            let view = self.predict.view().cloned();
+                            self.present_predicted(inp, view.as_ref(), adv);
+                            view
+                        }
+                        _ => None,
+                    };
+                    let p: &PlayerSim = predicted.as_ref().unwrap_or(p);
+                    // The view kick moves the camera with the aim (BO2 adds it to the view angles):
+                    // the sim's, interpolated across the logic frame like the eye; predicted, the
+                    // prediction's last two frames at its render clock.
+                    let (eye, kick) = match (predicted.is_some(), self.predict.eye(), self.predict.view_prev()) {
+                        (true, Some(e), Some(prev)) => {
+                            let a = self.predict.alpha();
+                            let ((py, pp), (ny, np)) = (prev.aim_offset(), p.aim_offset());
+                            let (pr, nr) = (prev.view_kick.roll(), p.view_kick.roll());
+                            (e, (py + (ny - py) * a, pp + (np - pp) * a, pr + (nr - pr) * a))
+                        }
+                        _ => {
+                            let lerp = |a: f32, b: f32| a + (b - a) * alpha;
+                            (eye, (lerp(self.kick_prev.0, self.kick_curr.0), lerp(self.kick_prev.1, self.kick_curr.1), lerp(self.kick_prev.2, self.kick_curr.2)))
+                        }
+                    };
                     out.camera_override = 1;
                     out.eye = eye;
-                    // The view kick moves the camera with the aim (BO2 adds it to the view angles):
-                    // the sim's, interpolated across the logic frame like the eye.
-                    let kick_yaw = self.kick_prev.0 + (self.kick_curr.0 - self.kick_prev.0) * alpha;
-                    let kick_pitch = self.kick_prev.1 + (self.kick_curr.1 - self.kick_prev.1) * alpha + self.hud.flinch_pitch.to_radians();
-                    let kick_roll = self.kick_prev.2 + (self.kick_curr.2 - self.kick_prev.2) * alpha;
+                    let kick_yaw = kick.0;
+                    let kick_pitch = kick.1 + self.hud.flinch_pitch.to_radians();
+                    let kick_roll = kick.2;
                     // A shellshock's view kick turns the view only (t6mp `FUN_00510270` turns the
                     // refdef's axes; the aim, which the input carries, is untouched).
                     let loops = &mut self.cues.loops;
@@ -1009,7 +1076,6 @@ impl Client {
                         out.viewmodel_ads = p.arsenal.ads;
                         crate::nativevm::ffi::set_left_clip(f.left);
                     }
-                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed);
                 }
             }
             ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov } => {
@@ -1101,7 +1167,8 @@ impl Client {
         self.view = ViewMode::Entering { t: 0.0, from_pos: inp.rts_cam_pos, from_dir: from_dir.normalized_or_zero(), from_hfov };
     }
 
-    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool, hammer: bool, unclassed: bool) {
+    /// This frame's first-person input (`seen_frame`: the sim frame on screen, carried with it).
+    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool, hammer: bool, unclassed: bool, seen_frame: u32) {
         let (mut held, mut fwd, mut right) = if allowed { self.read_buttons(inp) } else { (0, 0.0, 0.0) };
         if !allowed {
             fwd = 0.0;
@@ -1138,6 +1205,7 @@ impl Client {
             self.last_sent_frame = Some(inp.logic_frame);
             out.send_input = 1;
             out.input_general = self.general;
+            out.input_seen_frame = seen_frame;
             out.input = FpsInput {
                 held,
                 pressed: self.latch,
@@ -1149,223 +1217,9 @@ impl Client {
         }
     }
 
-    fn consume_events(&mut self, sim: &mut Sim, inp: &ClientIn, body_pos: Option<Vec3>) {
-        let me = inp.local_player;
-        let mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
-        // Other players' shots: BO2's third-person chain, layer by layer at the listener's distance.
-        for e in sim.events.iter().filter(|e| e.player != me) {
-            let Some(p) = sim.player(e.player) else { continue };
-            match e.kind {
-                EventKind::Shot { origin, .. } => self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, origin, body_pos),
-                // An offhand leaving another player's hand: its third-person `fireSound` at them
-                // (`sounds::remote_offhand`), as BO2 plays it for everyone but the thrower.
-                EventKind::Thrown { lethal } => {
-                    let def = if lethal { p.arsenal.lethal.def } else { p.arsenal.tactical.def };
-                    if let Some(cue) = sounds::remote_offhand(def) {
-                        self.cues.play_at(cue, p.body.eye());
-                    }
-                }
-                EventKind::Planted { kind } => {
-                    let set_down = [p.arsenal.lethal.def, p.arsenal.tactical.def].into_iter().find(|d| d.equipment_kind == kind && d.place == crate::weapons::Place::Plant);
-                    if let Some(cue) = set_down.and_then(sounds::remote_offhand) {
-                        self.cues.play_at(cue, p.body.eye());
-                    }
-                }
-                _ => {}
-            }
-        }
-        sim.events.clear();
-        self.hits_len = 0;
-        // The weapon in hand after the step: its sounds for this frame's shots, swing and throws.
-        let held = sim.player(me).map(|p| (p.arsenal.current().def, p.arsenal.current().ammo, p.arsenal.current().string, p.arsenal.lethal.def, p.arsenal.tactical.def));
-        let fire = held.map_or(sounds::FIRE, |(def, ..)| sounds::fire_for(def));
-        let left_fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::left_fire_for(p.arsenal.current().def));
-        let swing = sim.player(me).map_or(sounds::MELEE_SWING, |p| sounds::melee_swing_for(p.arsenal.melee_weapon()));
-        let shots = mine.iter().filter(|k| matches!(k, EventKind::Shot { left: false, .. })).count();
-        // A dual-wield pair's left gun plays its own `_lh` shot.
-        for _ in mine.iter().filter(|k| matches!(k, EventKind::Shot { left: true, .. })) {
-            self.cues.play(left_fire);
-        }
-        if let Some((def, ammo, string, ..)) = held {
-            // A fire string's opening (`fireStartSoundPlayer`: a burst's recording) plays once, on
-            // the frame its first round leaves — the trigger string was empty before this step.
-            if let Some(start) = sounds::some(def.fire_start_sound.as_str()).filter(|_| shots > 0 && string as usize <= shots) {
-                self.cues.play(start);
-            }
-            for i in 0..shots {
-                // The gunshot is per shot; the impact is per pellet and comes from its own event (a
-                // shot into the air no longer plays a hard-surface sound). The last one this frame
-                // left the magazine at `ammo`.
-                self.cues.play(if i + 1 == shots { sounds::shot_for(def, ammo, fire) } else { fire });
-            }
-        }
-        for kind in mine {
-            match kind {
-                EventKind::EnteredFps { general } => {
-                    if let Some(p) = sim.player(me) {
-                        self.start_entering(inp, general, p.yaw, p.body.eye());
-                    }
-                }
-                EventKind::ReturnedToRts { general } => {
-                    self.general = general;
-                    self.begin_leaving(inp, body_pos.unwrap_or(self.eye_curr));
-                }
-                EventKind::GeneralDied { .. } => {
-                    self.hud.death_banner = DEATH_BANNER_TIME;
-                    self.hud.lui.deaths += 1;
-                    if !matches!(self.view, ViewMode::Rts) {
-                        self.begin_leaving(inp, self.eye_curr - Vec3::new(0.0, 0.0, 10.0));
-                    }
-                }
-                EventKind::HitMarker { headshot, kill } => {
-                    self.cues.play(sounds::HIT_MARKER);
-                    self.hud.hitmarker = HITMARKER_TIME;
-                    self.hud.hitmarker_kill = kill;
-                    self.hud.hitmarker_head = headshot;
-                    if kill {
-                        self.hud.lui.kills += 1;
-                        if self.hud.score_popup <= 0.0 {
-                            self.hud.score_points = 0;
-                        }
-                        self.hud.score_points += KILL_POINTS;
-                        self.hud.score_popup = SCORE_POPUP_TIME;
-                    }
-                }
-                EventKind::Recoil { gun_kick } => {
-                    // The view kick is the sim's and never moves the mouse aim (BO2 keeps it out of
-                    // `cl.viewangles`). The gun itself kicks on G5's spring, not with the camera.
-                    self.vm_kick = Some(gun_kick);
-                    self.hud.muzzle = 0.05;
-                }
-                EventKind::Flinch { pitch_deg } => self.hud.flinch_pitch += pitch_deg,
-                EventKind::Damaged { amount } => {
-                    self.cues.play(sounds::HURT);
-                    self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
-                }
-                // A pellet landed: BO2's impact FX (the bridge plays it from `ClientOut.hits`) and
-                // the impact table's sound for the gun's type and the surface here (`sounds::impact_cue`).
-                EventKind::Impact { at, dir, surface, head, fatal, impact_type, exit } => {
-                    let cue = if exit { sounds::exit_cue(impact_type, surface) } else { sounds::impact_cue(impact_type, surface) };
-                    if let Some(cue) = cue {
-                        self.cues.play_at(cue, at);
-                    }
-                    if self.hits_len < CLIENT_HITS {
-                        self.hits[self.hits_len] = ClientHit {
-                            point: at,
-                            dir,
-                            surface: surface as i32,
-                            head: head as i32,
-                            fatal: fatal as i32,
-                            impact_type,
-                            exit: exit as i32,
-                        };
-                        self.hits_len += 1;
-                    }
-                }
-                EventKind::Shot { left: false, .. } => self.vm_events.shot = true,
-                EventKind::Shot { left: true, .. } => self.vm_events.left_shot = true,
-                EventKind::ReloadStarted => self.vm_events.reload_started = true,
-                EventKind::Swapped => self.vm_events.swapped = true,
-                EventKind::FieldComputerOpened => {}
-                EventKind::ClassChosen { .. } => {
-                    // No cue here: BO2's class change applies silently on spawn. The menu already
-                    // played the equip when the pick was made (and the command bar does too).
-                    // A pick landed: the forced screen closes, and the next spawn's pick returns.
-                    self.class_pick_forced = false;
-                }
-                EventKind::Melee => self.cues.play(swing),
-                EventKind::MeleeHit => {
-                    if let Some((def, ..)) = held.filter(|(def, ..)| !def.melee_hit_sound.is_empty()) {
-                        self.cues.play(def.melee_hit_sound.as_str());
-                    }
-                }
-                EventKind::OffhandReady { lethal } => {
-                    self.cues.play(held.map_or(sounds::PULL_PIN, |(_, _, _, l, t)| sounds::pullback_for(if lethal { l } else { t })))
-                }
-                EventKind::Thrown { lethal } => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
-                EventKind::Launched => self.cues.play(held.map_or(sounds::FIRE_LAUNCHER, |(def, ammo, ..)| sounds::shot_for(def, ammo, sounds::launch_for(def)))),
-                EventKind::Exploded { at, sound, impact_type, surface } => {
-                    for cue in sounds::explosion_cues(sound, impact_type, surface).into_iter().flatten() {
-                        self.cues.play_at(cue, at);
-                    }
-                }
-                EventKind::Bounced { at, sound } => {
-                    if let Some(cue) = sounds::some(sound) {
-                        self.cues.play_at(cue, at);
-                    }
-                }
-                EventKind::Dud { at, sound, surface } => {
-                    for cue in sounds::dud_cues(sound, surface).into_iter().flatten() {
-                        self.cues.play_at(cue, at);
-                    }
-                }
-                EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
-                EventKind::Hacking { progress } => {
-                    self.hud.hack_progress = progress;
-                    self.hud.hack_shown = 0.15;
-                }
-                EventKind::Hacked => self.hud.hack_shown = 0.0,
-                EventKind::AltToggled => self.vm_events.swapped = true,
-                EventKind::Planted { kind } => {
-                    use crate::equipment::Kind;
-                    if matches!(kind, Kind::Claymore | Kind::Betty | Kind::Trophy | Kind::Insertion) {
-                        // The planted item's own sound: the player's lethal or tactical of that kind.
-                        let def = held.and_then(|(_, _, _, l, t)| [l, t].into_iter().find(|d| d.equipment_kind == kind));
-                        self.cues.play(def.map_or(sounds::PLANT, sounds::plant_for));
-                    }
-                }
-                EventKind::Detonated => self.cues.play(sounds::DETONATE),
-                // The shield going down plays the plant (BO2's own `wpn_riotshield_plant` is a
-                // notetrack sound the mod does not convert yet).
-                EventKind::ShieldDeployed { at } => self.cues.play_at(sounds::SHIELD_PLANT, at),
-                EventKind::ShieldPickedUp => self.vm_events.swapped = true,
-                EventKind::ShieldDestroyed { at, .. } => self.cues.play_at(sounds::SHIELD_DESTROY, at),
-                // A shield hit: the shield's own impact sound and a metal spark (no blood).
-                EventKind::ShieldHit { at, dir, knife, impact_type } => {
-                    self.cues.play_at(if knife { sounds::SHIELD_HIT_KNIFE } else { sounds::SHIELD_HIT_BULLET }, at);
-                    if self.hits_len < CLIENT_HITS {
-                        let surface = crate::impacts::Surface::Metal as i32;
-                        self.hits[self.hits_len] = ClientHit { point: at, dir, surface, head: 0, fatal: 0, impact_type, exit: 0 };
-                        self.hits_len += 1;
-                    }
-                }
-                EventKind::DestroyedEquipment => {}
-                // BO2's weapon hint ("Cannot Plant Here"): set afresh, drawn by the HUD.
-                // BO2's `iprintlnbold` hints: the plant refusal, and a mid-life class pick that
-                // waits for the next spawn (`MP_CHANGE_CLASS_NEXT_SPAWN`).
-                EventKind::CantPlant { .. } | EventKind::ClassAtNextSpawn { .. } => self.hud.hint = crate::sim::event_hint(&kind).map(|k| (k, 0.0)),
-                EventKind::Hammer { .. } => self.vm_events.swapped = true,
-                EventKind::BuildPlaced { .. } => {
-                    self.cues.play(sounds::PLANT);
-                    self.note("Structure placed: hold [F] at it to build");
-                }
-                EventKind::BuildRefused { status } => {
-                    self.cues.play(sounds::DRY_FIRE);
-                    self.note(match status {
-                        crate::building::status::NO_MONEY => "Not enough money",
-                        crate::building::status::LOCKED => "Not available yet",
-                        crate::building::status::BUSY => "Someone else is repairing it",
-                        _ => "Can't build there",
-                    });
-                }
-                EventKind::Working { percent, .. } => {
-                    self.hud.build_percent = percent;
-                    if self.hud.build_shown <= 0.0 {
-                        self.hud.build_blow = 0.0;
-                    }
-                    self.hud.build_shown = 0.15;
-                }
-                EventKind::WorkDone { kind } => {
-                    self.hud.build_shown = 0.0;
-                    self.cues.play(sounds::PLANT);
-                    self.note(crate::building::work_text(kind).done);
-                }
-            }
-        }
-    }
-
     fn begin_leaving(&mut self, inp: &ClientIn, target: Vec3) {
-        let from_pos = self.eye_curr;
+        // From where first person's camera was (the prediction's eye while predicting).
+        let from_pos = if matches!(self.view, ViewMode::Fps) && self.predict.active() { self.view_eye } else { self.eye_curr };
         let from_dir = dir_from_angles(self.yaw, self.pitch);
         // Where the overhead camera will be once centred on the General: as it was when first
         // person started (its angle, height and zoom), only its pivot moved to the General.

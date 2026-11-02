@@ -10680,3 +10680,98 @@ needs the line marker, and the marker is a claim a reviewer must check. A new sc
 **Not done.** Received classes are still not validated against the picker's lock (R1). A
 non-owner can therefore field the Peacekeeper with a hand-edited profile, as BO2's server would
 not allow.
+
+## Multiplayer: first person under the lockstep's input delay — prediction, BO2's antilag, the 30 Hz eye (2026-11-01, branch `v1/mp-latency`)
+
+Zero Hour runs a command its run-ahead after it was sent: 30 frames as a game starts, then
+`ceil(p90 latency × 1.1 × fps)`, at least 4 (133 ms on a LAN, 200–330 ms online). In a skirmish
+there is no `TheNetwork` and the command list is read on the next logic update, so the run-ahead is
+1 frame there. Only the mouse look was local. Movement, every fire cue, ADS, reloads and swaps
+waited the run-ahead, and a moving target had to be led by it.
+
+**Prediction (`client/predict.rs`, `sim/predict.rs`).** This follows BO2's client, which predicts
+its own player over the commands the server has not acknowledged and draws everything first person
+shows from that prediction.
+* Each input now carries the sim frame on the sender's screen (`ZhboClientOut.input_seen_frame`,
+  the message's seventh argument). The record keeps the latest one (`PlayerSim::seen_frame`).
+* The client drops the inputs the record holds. On every logic frame it steps a copy of the sim
+  (`Sim::scratch`) over the rest with the sim's own `step_player` (`Sim::predict_step`), through a
+  `Sandbox` host that forwards the engine's reads and drops every write.
+* So a prediction is exactly what the sim will compute when the world it reads has not changed:
+  `a_predicted_step_is_the_sims_step_and_touches_nothing` compares body, aim, kick, ammo, ADS and
+  the RNG.
+* The camera, view kick, zoom, viewmodel clip, HUD and cues read the predicted record. The weapon's
+  events (shot, recoil, impacts, hit marker, reload, swap, alt, melee, offhands, launch, hammer,
+  plant hint) are presented once, when an input is first predicted. When the sim takes the input
+  in, its own events of those kinds are matched one for one, and only the ones nobody predicted
+  are presented. A predicted hit marker cannot know of a kill (the sandbox hurts nobody), so the
+  sim's marker confirms the kill (kill style, count, popup) with no second sound.
+* The own gun's tracers come from the prediction (`ViewTracers::predicted`).
+* A reconciliation that moves the eye is carried as an error that decays with a 0.1 s time
+  constant. Beyond 48 units the view snaps.
+
+**Antilag (`sim/antilag.rs`).** BO2's server rewinds players before it traces. t6mp `FUN_0066b6e0`
+clamps the target time to `now − 400` ms and only rewinds when it is more than 50 ms (one 20 Hz
+snapshot) back. `FUN_006efd30` interpolates positions and angles between the two cached snapshots
+around that time (`FUN_006efb50`: the cache's 50 ms frames). The raw decompiles are in
+`~/.opencode/plan/mp-latency/antilag*.c`.
+
+The sim does the same:
+* Each step keeps the first-person Generals' position, yaw and body state, and the shield bearers.
+* `fire_round` traces against the input's seen frame, at most `AntilagMaxRewind` back (new tuning
+  key, 400 ms = 12 frames).
+* No interpolation is needed: the shooter saw exactly one logic frame. For the same reason the
+  50 ms floor is not ported: rewinding exactly one frame is still right here.
+* Only the sim's bodies are rewound, as BO2 rewinds only players.
+
+**The 30 Hz eye.** The eye interpolation zeroed its render clock on the render frame that saw a new
+logic frame. That dropped that frame's time, so a render rate that does not divide 30 Hz (45 Hz:
+displayed times stepped 11, 33, 22 ms…) drew the eye unevenly. After a missed frame it also lerped
+from an eye two frames old. The clock now carries across steps (`since + dt − ticks × LOGIC_DT`),
+and a multi-frame advance interpolates one frame's step. The prediction's eye uses the same carry
+between its last two frames.
+
+**Measured** (`cargo test -p zhbo-core latency -- --nocapture`, 120 Hz render, ms from key down):
+
+| run-ahead | predicted: camera / flash / sound / ammo / hit marker / ADS / reload | unpredicted |
+|---|---|---|
+| 1 (skirmish) | 8 / 0 / 0 / 0 / 0 / 0 / 0 | 42 / 33 / 33 / 33 / 33 / 33 / 33 |
+| 4 (LAN) | 8 / 0 / 0 / 0 / 0 / 0 / 0 | 142 / 133 … |
+| 8 | 8 / 0 … | 275 / 267 … |
+| 12 | 8 / 0 … | 408 / 400 … |
+| 30 | 8 / 0 … | 1008 / 1000 … |
+
+* At 30 Hz render the camera takes 33 ms: the next rendered frame.
+* Mispredictions are 0 in a still world.
+* A run-ahead changing 30 → 12 → 4 → 8 → 4 → 6 mispredicts the inputs in flight at each change
+  (93 of 758) and snaps nothing.
+* Strafing General tracked as the shooter's screen shows him: hit rate 1.00 with the antilag at
+  4/8/12 frames, against 0.25/0.13/0.13 without it.
+* The lockstep gate now runs with both players' clients predicting and the run-ahead changing over
+  the match. It stays green: the three machines' hashes and engine calls agree on every frame.
+
+**Gotchas.**
+* The prediction calls the engine's logic reads from `zhbo_client_frame`, the render-time call. The
+  reads are valid there and nothing changes the logic between steps. Any new `LogicHost` write
+  must be added to `Sandbox` as a no-op, or a prediction would reach the engine.
+* `step_player` on the copy must see the predicted General where the prediction has him. The
+  engine still has him at the last real step, and the step's teleport check (> 8 units) would pull
+  him back. The sandbox answers `object`/`query` for him with the predicted pose and health.
+* An observer or replay viewer still acts as the observed player's client (audit L3) and would
+  now predict its own ignored inputs. The spectator fix (send nothing) turns prediction off with
+  it: with nothing in flight the view is the sim's record.
+
+**ABI (pending the next bump, no version change).**
+* `ZhboClientOut.input_seen_frame` is appended: 4876 → 4880 bytes.
+* `zhbo_logic_fps_input(player, general, input, seen_frame)` is appended.
+* `MSG_ZHBO_FPS_INPUT` gets a seventh argument. The bridge reads it when present, so older replays
+  still go through `zhbo_logic_input`.
+
+**In game** (this branch's `cargo xtask build` into a private work dir and dist; a skirmish, run-ahead
+1, so the prediction is live with one input in flight): `autotest-mac.sh` default leg 16/16,
+`--classpick` 12/12, `--rts` 16/16. Not yet run: a real two-machine LAN game.
+
+**The game lock's wait.** `pgrep -f Generals` matches the shell of any agent whose waiting command
+line contains the word: the user-data path "Command and Conquer Generals Zero Hour Data", or the
+`pgrep -f Generals` check itself. A waiter written that way deadlocks on itself. Wait on
+`pgrep -x generalszh` plus the lock directory instead.

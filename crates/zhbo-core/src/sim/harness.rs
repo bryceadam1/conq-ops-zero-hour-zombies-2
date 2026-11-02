@@ -26,6 +26,20 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Zero Hour's minimum run-ahead (`MIN_RUNAHEAD`): a command sent on logic frame `f` executes
 /// on frame `f + RUNAHEAD` on every peer.
 pub const RUNAHEAD: u32 = 4;
+/// The run-ahead over the match, as Zero Hour adapts it (`Network::processRunAheadCommand`, one
+/// value for every peer from the frame it is set): 30 as a game starts, then down to what the
+/// latency needs and back up, so commands pile onto one frame (it shrank: the last input wins,
+/// every press counts) or leave a frame without any (it grew: the last one holds).
+pub fn runahead_at(frame: u32) -> u32 {
+    match (frame / 97) % 6 {
+        0 => 30,
+        1 => 12,
+        2 => RUNAHEAD,
+        3 => 8,
+        4 => RUNAHEAD,
+        _ => 6,
+    }
+}
 /// Logic frames per round.
 pub const ROUND: u32 = 660;
 /// The round frame of the mid-life class pick (after the round's fighting: it waits for the next
@@ -38,23 +52,48 @@ pub const FIELD_COMPUTER: u32 = 625;
 #[derive(Clone, Debug)]
 pub enum Cmd {
     TakeControl(u32),
-    Input(u32, FpsInput),
+    /// The input and the frame its machine showed as it was made (`ClientOut::input_seen_frame`).
+    Input(u32, FpsInput, u32),
     /// `MSG_ZHBO_CHOOSE_CLASS`: the list index (a preset), or a custom class's wire words.
     ChooseClass(u32, usize, Vec<u32>),
 }
 
 /// Zero Hour's lockstep command lists: per execution frame, the commands in a fixed order (by
 /// player, then the order each player sent them), the same on every peer.
-#[derive(Default)]
 pub struct Net {
     frames: BTreeMap<u32, Vec<(i32, u32, Cmd)>>,
     sent: u32,
+    /// The run-ahead in force (Zero Hour's `m_runAhead`); a fixed one when `schedule` is off.
+    pub runahead: u32,
+    schedule: bool,
+    /// `getExecutionFrame`'s floor: an execution frame never goes back (`m_lastExecutionFrame`).
+    last_execution: u32,
+}
+
+impl Default for Net {
+    fn default() -> Self {
+        Net { frames: BTreeMap::new(), sent: 0, runahead: RUNAHEAD, schedule: false, last_execution: 0 }
+    }
 }
 
 impl Net {
+    /// A fixed run-ahead (the latency harness's).
+    pub fn with_runahead(runahead: u32) -> Self {
+        Net { runahead, ..Default::default() }
+    }
+
+    /// The run-ahead changing over the match ([`runahead_at`]), as in a network game.
+    pub fn scheduled() -> Self {
+        Net { schedule: true, ..Default::default() }
+    }
+
     pub fn send(&mut self, now: u32, player: i32, cmd: Cmd) {
         self.sent += 1;
-        let list = self.frames.entry(now + RUNAHEAD).or_default();
+        let runahead = if self.schedule { runahead_at(now) } else { self.runahead };
+        // `Network::getExecutionFrame`: now plus the run-ahead, never before the last one.
+        let at = (now + runahead).max(self.last_execution);
+        self.last_execution = at;
+        let list = self.frames.entry(at).or_default();
         list.push((player, self.sent, cmd));
         list.sort_by_key(|(p, n, _)| (*p, *n));
     }
@@ -100,7 +139,7 @@ impl Peer {
         for (player, cmd) in cmds {
             match cmd {
                 Cmd::TakeControl(g) => self.sim.take_control(&self.host, *player, *g),
-                Cmd::Input(g, input) => self.sim.input(*player, *g, *input),
+                Cmd::Input(g, input, seen) => self.sim.input_seen(*player, *g, *input, *seen),
                 Cmd::ChooseClass(g, index, words) => self.sim.choose_class(*player, *g, *index, words),
             }
         }
@@ -129,9 +168,11 @@ impl Peer {
                 screen_h: 720.0,
                 ..Default::default()
             };
-            let out = self.client.frame(&mut self.sim, &inp);
+            // The engine's logic at hand, as in the game: the client predicts its own player
+            // (`client::predict`), which must leave the sim and the engine untouched.
+            let out = self.client.frame_with(&mut self.sim, Some(&self.host), &inp);
             if out.send_input != 0 {
-                net.send(frame, self.local, Cmd::Input(out.input_general, out.input));
+                net.send(frame, self.local, Cmd::Input(out.input_general, out.input, out.input_seen_frame));
             }
             self.renders += 1;
         }
@@ -259,7 +300,9 @@ pub fn play(m: &Match) -> Report {
     // A seat with no General of its own, past the players'.
     let observer = m.players.max(3) as i32;
     peers.push(Peer::new(observer, 0x0C0C_5EED_0000_0003));
-    let mut net = Net::default();
+    // The run-ahead changes over the match as Zero Hour adapts it, under the players' predicting
+    // clients.
+    let mut net = Net::scheduled();
     // The players' own hands: one script stream per player (each machine only ever reads its
     // own player's).
     let mut hand = [0x1111_2222_3333_4444u64, 0x5555_6666_7777_8888, 0x9999_AAAA_BBBB_CCCC, 0xDDDD_EEEE_FFFF_0001];
@@ -324,7 +367,8 @@ pub fn play(m: &Match) -> Report {
         // The fingerprint Zero Hour's CRC carries (`zhbo_logic_crc`): its hash and, on a failure,
         // the per-seat parts that name where the state went apart.
         let h = first.sim.fingerprint();
-        assert!(h.active || frame < RUNAHEAD + 2, "frame {frame}: the match holds sim state");
+        // (Inactive only until the first picks, sent on frame 2, execute.)
+        assert!(h.active || frame < 2 + runahead_at(2), "frame {frame}: the match holds sim state");
         for (i, peer) in rest.iter().enumerate() {
             let at = format!("machine {} (seat {}) diverged from seat 0's at frame {frame} (round {r}, t {t})", i + 1, peer.local);
             assert_eq!(peer.sim.fingerprint(), h, "{at}: the sim state");
@@ -352,6 +396,14 @@ pub fn play(m: &Match) -> Report {
     }
     let observer = peers.last().expect("the observer");
     assert_eq!(observer.sim.events.len(), MAX_EVENTS, "the machine that never renders sat at the event cap");
+    // The players' machines predicted their own players all match long, through every run-ahead
+    // change, and still agreed with the one that predicts nothing.
+    // (Seats 2 and 3 render on every other logic frame only, so they predict half as often.)
+    for peer in &peers[..m.players] {
+        let s = peer.client.predict.stats;
+        let floor = if peer.local < 2 { frame / 2 } else { frame / 4 };
+        assert!(s.acked > floor, "seat {}'s machine predicted ({s:?})", peer.local);
+    }
     report.frames = frame;
     report.renders = peers.iter().map(|p| p.renders).collect();
     report

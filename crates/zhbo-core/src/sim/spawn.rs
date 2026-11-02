@@ -143,6 +143,7 @@ impl Sim {
             arsenal: Arsenal::unarmed(),
             rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ self.frame),
             input: FpsInput { yaw, ..Default::default() },
+            seen_frame: 0,
             pressed_accum: 0,
             health,
             max_health,

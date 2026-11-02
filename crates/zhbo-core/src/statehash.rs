@@ -222,6 +222,19 @@ impl<T: StateHash> StateHash for Vec<T> {
     }
 }
 
+impl<T: StateHash> StateHash for std::collections::VecDeque<T> {
+    fn hash(&self, h: &mut Hasher) {
+        h.word(self.len() as u64);
+        for v in self {
+            v.hash(h);
+        }
+    }
+    #[cfg(test)]
+    fn perturb(&mut self, n: &mut usize) -> bool {
+        self.iter_mut().any(|v| v.perturb(n))
+    }
+}
+
 impl<T: StateHash, const N: usize> StateHash for [T; N] {
     fn hash(&self, h: &mut Hasher) {
         for v in self {

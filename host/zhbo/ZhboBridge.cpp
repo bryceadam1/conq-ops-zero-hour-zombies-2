@@ -581,7 +581,12 @@ void Zhbo_OnInputMessage(Int playerIndex, const GameMessage *msg)
 	input.move_packed = msg->getArgument(3)->integer;
 	input.yaw = msg->getArgument(4)->real;
 	input.pitch = msg->getArgument(5)->real;
-	zhbo_logic_input(playerIndex, (uint32_t)msg->getArgument(0)->objectID, &input);
+	// The seventh argument: the frame the sender's machine showed (lag-compensated shots, its
+	// prediction's acknowledgement). A message without it (an older replay) is resolved as it is.
+	if (msg->getArgumentCount() >= 7)
+		zhbo_logic_fps_input(playerIndex, (uint32_t)msg->getArgument(0)->objectID, &input, (uint32_t)msg->getArgument(6)->integer);
+	else
+		zhbo_logic_input(playerIndex, (uint32_t)msg->getArgument(0)->objectID, &input);
 }
 
 void Zhbo_OnChooseClassMessage(Int playerIndex, const GameMessage *msg)
@@ -816,6 +821,7 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 		msg->appendIntegerArgument(s_out.input.move_packed);
 		msg->appendRealArgument(s_out.input.yaw);
 		msg->appendRealArgument(s_out.input.pitch);
+		msg->appendIntegerArgument((Int)s_out.input_seen_frame);
 	}
 
 	// One-shot: the pick menu's class choice goes to the General (and to every client, since the

@@ -352,6 +352,11 @@ impl HitBodies<'_> {
 pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32, bodies: &HitBodies, rifle: bool) -> Vec<Target> {
     let mut objs = Vec::new();
     host.query(eye, range, shooter, &mut objs);
+    targets_of(&objs, shooter, bodies, rifle)
+}
+
+/// [`gather_targets`] over objects already queried (and maybe rewound, [`antilag::rewind`]).
+fn targets_of(objs: &[ObjInfo], shooter: u32, bodies: &HitBodies, rifle: bool) -> Vec<Target> {
     let mut targets: Vec<Target> = objs
         .iter()
         .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
@@ -460,8 +465,16 @@ impl Sim {
         let dir = dir_from_angles(p.fire_yaw + radius * det::cos(angle), p.fire_pitch + radius * det::sin(angle));
 
         let range = def.bullet_range(self.bullet_range);
-        let bodies = HitBodies { poses: self.hit_body(), states: &self.hit_states() };
-        let mut targets = gather_targets(host, eye, range, p.general, &bodies, def.traits.rifle_bullet);
+        // The players as the shooter saw them (BO2's antilag rewind, `sim::antilag`).
+        let then = self.rewind_frame(p).cloned();
+        let mut states = self.hit_states();
+        let mut objs = Vec::new();
+        host.query(eye, range, p.general, &mut objs);
+        if let Some(then) = &then {
+            antilag::rewind(&mut objs, &mut states, then);
+        }
+        let bodies = HitBodies { poses: self.hit_body(), states: &states };
+        let mut targets = targets_of(&objs, p.general, &bodies, def.traits.rifle_bullet);
         // A deployed shield's object is the sim's to hit (its box, below), not a target.
         targets.retain(|t| !self.deployed.iter().any(|d| d.object != 0 && d.object == t.id));
         let ground = |x: f32, y: f32| host.ground_height(x, y);
@@ -507,7 +520,8 @@ impl Sim {
         // body it is tested against is the hit-location box the trace struck.
         let hit_id = if let HitResult::Object { id, .. } = hit { Some(id) } else { None };
         let enemy = |b: &crate::shield::Bearer| b.general != p.general && targets.iter().any(|t| t.id == b.general);
-        if let Some((_, t)) = crate::shield::blocking(&self.shields, &enemy, eye, dir, reach, range, hit_id) {
+        let shields = then.as_ref().map_or(&self.shields, |f| &f.shields);
+        if let Some((_, t)) = crate::shield::blocking(shields, &enemy, eye, dir, reach, range, hit_id) {
             let at = eye + dir * t;
             self.round_effects(host, &round, 0, at);
             self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });

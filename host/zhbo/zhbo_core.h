@@ -289,6 +289,10 @@ typedef struct ZhboClientOut
 	/* One-shot: select this object overhead (the local General as he comes back alive from first
 	   person), 0 = none. */
 	uint32_t select_object;
+	/* With send_input: the logic frame this machine showed as the input was made (the core's sim
+	   frame then). MSG_ZHBO_FPS_INPUT carries it as its seventh argument, for zhbo_logic_fps_input
+	   (lag-compensated shots, the sender's prediction). Pending for the next ABI bump. */
+	uint32_t input_seen_frame;
 } ZhboClientOut;
 
 /* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
@@ -415,6 +419,10 @@ int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.in
 void zhbo_reset(void);
 void zhbo_logic_take_control(int32_t player, uint32_t general);
 void zhbo_logic_input(int32_t player, uint32_t general, const ZhboFpsInput *input);
+/* MSG_ZHBO_FPS_INPUT with its seventh argument, seen_frame: the frame the sender's machine showed
+   (ZhboClientOut.input_seen_frame). The input's shots are resolved against that frame (BO2's antilag,
+   sim/antilag.rs) and the sender's prediction is acknowledged by it. Pending for the next ABI bump. */
+void zhbo_logic_fps_input(int32_t player, uint32_t general, const ZhboFpsInput *input, uint32_t seen_frame);
 /* The pick menu's choice (see classes.rs): the General assumes the class at the shared list's index.
    A custom class appends its wire words after the index as [len, word...]; payload/len are null/0 for a
    plain list pick. */
@@ -590,7 +598,7 @@ float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, f
 typedef struct ZhboLogicCrc
 {
 	uint64_t hash;      /* Sim::state_hash: the frame, every seat's part and the world's */
-	uint64_t world;     /* projectiles, equipment that is down, smoke screens, deployed shields */
+	uint64_t world;     /* projectiles, equipment that is down, smoke screens, deployed shields, the antilag history */
 	uint64_t seats[16]; /* each seat's player record and chosen class; 0 for an empty seat */
 	uint32_t frame;     /* the sim's frame (its last step) */
 	uint32_t active;    /* the return value */
@@ -635,7 +643,7 @@ static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs"
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboLogicCrc) == 152, "ZhboLogicCrc layout must match ffi.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4876, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4880, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 44, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");

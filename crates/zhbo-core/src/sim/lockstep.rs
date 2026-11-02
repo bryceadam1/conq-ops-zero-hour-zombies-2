@@ -8,7 +8,9 @@
 //!
 //! What is hashed is the deterministic state only, streamed field by field
 //! ([`crate::statehash`]): each seat's player record and chosen class, the projectiles, the
-//! equipment that is down, the smoke screens and the deployed shields, plus the frame. What is
+//! equipment that is down, the smoke screens, the deployed shields and the antilag history (the
+//! first-person Generals and shields of the last frames, which decide what a shot hits), plus the
+//! frame. What is
 //! **not** hashed, each named in its `skip` list:
 //! * presentation that legitimately differs per machine: [`Sim::events`] (each client drains it
 //!   at its own render cadence, and a headless replay never does) and [`Sim::tracers`] (drained
@@ -19,7 +21,8 @@
 //!   equipment's copies of it and of the guards, the equipment's shock hits, `combat_seen`;
 //! * the installed data, which never changes during a game and which the content CRC (the
 //!   bridge's mod-content CRC folded into the INI CRC) already proves equal: the tuning,
-//!   penetration table, bullet range and hit bodies.
+//!   penetration table, bullet range and hit bodies, and the antilag rewind cap (`antilag_frames`,
+//!   from the tuning pack).
 //!
 //! The hash is built from per-seat sub-hashes and one for the shared world, which the CRC log
 //! prints, so a desync names the seat (or the world) whose state went apart.
@@ -33,7 +36,7 @@ pub struct Fingerprint {
     pub hash: u64,
     /// Each seat's player record and chosen class; `None` for a seat with neither.
     pub seats: [Option<u64>; MAX_PLAYERS],
-    /// The shared state: projectiles, equipment that is down, smoke screens, deployed shields.
+    /// The shared state: projectiles, equipment that is down, smoke screens, deployed shields, the antilag history.
     pub world: u64,
     pub frame: u32,
     /// The sim holds state: a seat is in use or something is in the world. An idle sim (no seat holds a
@@ -63,6 +66,7 @@ impl Sim {
             frame,
             chosen,
             deployed,
+            history,
             tuning: _,
             bullet_range: _,
             penetration: _,
@@ -72,6 +76,7 @@ impl Sim {
             shields: _,
             combat_seen: _,
             emitted: _,
+            antilag_frames: _,
         } = self;
         let mut seats = [None; MAX_PLAYERS];
         for (i, seat) in seats.iter_mut().enumerate() {
@@ -83,12 +88,20 @@ impl Sim {
                 *seat = Some(h.finish());
             }
         }
-        let world = world_hash(projectiles, equipment, smokes, deployed);
+        let things = world_hash(projectiles, equipment, smokes, deployed);
+        // The antilag history joins the world's part, but not the idle test: every step records
+        // a frame, an empty one when nobody is in first person.
+        let world = {
+            let mut h = Hasher::new();
+            things.hash(&mut h);
+            history.hash(&mut h);
+            h.finish()
+        };
         let mut h = Hasher::new();
         frame.hash(&mut h);
         seats.hash(&mut h);
         world.hash(&mut h);
-        let active = seats.iter().any(Option::is_some) || world != empty_world();
+        let active = seats.iter().any(Option::is_some) || things != empty_world();
         Fingerprint { hash: h.finish(), seats, world, frame: *frame, active }
     }
 }

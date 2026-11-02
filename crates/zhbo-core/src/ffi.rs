@@ -140,7 +140,7 @@ const _: () = {
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<LogicCrc>() == 152);
     assert!(size_of::<ClientIn>() == 136);
-    assert!(size_of::<ClientOut>() == 4876);
+    assert!(size_of::<ClientOut>() == 4880);
     assert!(size_of::<ClientHit>() == 44);
     assert!(size_of::<crate::sim::RtsWeapons>() == 192);
     assert!(size_of::<crate::sim::RtsIcons>() == 240);
@@ -473,6 +473,22 @@ pub unsafe extern "C" fn zhbo_logic_input(player: i32, general: u32, input: *con
     }
     let input = *input;
     with_state(|s| s.sim.input(player, general, input));
+}
+
+/// `MSG_ZHBO_FPS_INPUT` with its seventh argument: the logic frame the sender's machine showed when
+/// it made the input (`ZhboClientOut.input_seen_frame`). Its shots are resolved against that frame
+/// (`sim::antilag`) and the sender's prediction is acknowledged by it (`client::predict`).
+/// Appended to the ABI after `zhbo_logic_input`, which stays for a message without the argument.
+///
+/// # Safety
+/// `input` must point to a valid [`FpsInput`].
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_logic_fps_input(player: i32, general: u32, input: *const FpsInput, seen_frame: u32) {
+    if input.is_null() {
+        return;
+    }
+    let input = *input;
+    with_state(|s| s.sim.input_seen(player, general, input, seen_frame));
 }
 
 /// The pick menu's choice (see `classes.rs`): the General assumes the class at the shared list's
@@ -1074,7 +1090,8 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
     }
     let inp = *input;
     let result = with_state(|s| {
-        let out = s.client.frame(&mut s.sim, &inp);
+        // The engine's logic is at hand (read only): the local first person is predicted.
+        let out = s.client.frame_with(&mut s.sim, Some(&s.logic), &inp);
         for r in std::mem::take(&mut s.client.cues.queue) {
             if r.gain == 1.0 {
                 s.client_host.sound(r.event, r.at);

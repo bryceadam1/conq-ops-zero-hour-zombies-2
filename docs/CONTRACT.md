@@ -33,7 +33,11 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 * Damage: BO2 damage (100 HP scale) × `BO2_TO_ZH_DAMAGE` (1.5; a Ranger has 180 HP).
 * Angles: radians. Yaw 0 = +X, counter-clockwise (same as `Object::getOrientation`). Pitch + is up,
   clamped to ±85°.
-* Time: logic runs at 30 Hz (`LOGIC_DT`). The client runs per rendered frame with real `dt`.
+* Time: logic runs at 30 Hz (`LOGIC_DT`). The client runs per rendered frame with real `dt`. The
+  first-person eye and view kick are drawn between two logic frames at the render clock (the time
+  since the frame's step, carried across steps so a render rate that does not divide 30 Hz stays
+  even): the predicted record's last two frames while the client predicts (`client::predict`), the
+  sim record's last two otherwise.
 
 ## Channels
 
@@ -61,6 +65,33 @@ replicated messages alone. The rules, and what enforces each:
   sounds, shellshock presentation, viewer) never writes the sim's deterministic state: the look
   and the shellshock's look scaling are applied before the input is *sent*, so the angles in the
   message are what every peer uses.
+* **The input carries the frame its sender saw.** `MSG_ZHBO_FPS_INPUT` is `(objectID, held,
+  pressed, move, yaw, pitch, seen_frame)`: the seventh argument is the core's sim frame on the
+  sender's screen as the client made the input (`ZhboClientOut.input_seen_frame`), handed to
+  `zhbo_logic_fps_input` (a six-argument message, from an older replay, goes to `zhbo_logic_input`:
+  seen frame 0). The record keeps the latest (`PlayerSim::seen_frame`, hashed with it). Several
+  inputs on one frame (the run-ahead shrank): the last one's keys, move, look and seen frame, every
+  one's presses; a frame with none (it grew): the last one holds.
+* **Lag-compensated hitscan (BO2's antilag).** Every step ends by keeping each first-person
+  General's position, yaw and body state and the Assault Shields (`sim/antilag.rs`, the last
+  `AntilagMaxRewind` frames: the tuning pack's 400 ms, t6mp `FUN_0066b6e0`'s cap, 12 frames). A
+  bullet (`fire_round`, through penetration and the shield check) is traced against the frame its
+  input was seen at, no older than the cap; seen now or not reported: as things stand. Only the
+  sim's bodies are rewound, as BO2 rewinds only players: Zero Hour's units and an overhead General
+  stand where they are. Melee, projectiles and equipment are not rewound. The history is a pure
+  function of the stepped state, so `state_hash` leaves it out.
+* **The local player's prediction is presentation.** The client (`client/predict.rs`) predicts its
+  own first-person General over the inputs in flight by running the sim's own step for him
+  (`Sim::predict_step`) on a copy of the sim (`Sim::scratch`) through `sim::predict::Sandbox`,
+  which forwards the engine's reads (`object`, `query`, terrain, build options, work sites) and
+  drops every write (no pose, control, damage, heal, spawn, destroy, FX, capture, place, work, log;
+  `damage` answers no kill). It runs in `zhbo_client_frame` (the bridge's render-time call into the
+  core, where the logic's reads are valid and unchanging) and its copy is thrown away; its events
+  are presented once (the weapon's: shot, recoil, impacts, hit marker, reload, swap, alt, melee,
+  offhand, launch, hammer, the plant hint) and the sim's own of those kinds are matched against
+  them when the record takes the input in (a predicted kill is confirmed by the sim's marker). The
+  own gun's tracers come from the prediction (`ViewTracers::predicted`). The lockstep gate runs
+  with predicting clients.
 * **`Sim::events` and `Sim::tracers` are presentation, never sim input.** Each client drains the
   events at its own render cadence, a headless replay check never does (the buffer then sits at its
   512 cap and evicts from the front), and the tracers are drawn per viewer. A sim decision taken
@@ -133,10 +164,13 @@ replicated messages alone. The rules, and what enforces each:
   "run this logic on all their machines"), so host patch 0019 checks a General against his side's
   build set (`Zhbo_BuildCommandSet`) on every machine instead of his current set.
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
-  player records, chosen classes, projectiles, equipment that is down, smokes, deployed shields,
-  the frame) and leaves out the presentation above, the step's scratch copies (the frame's shield
-  bearers and guards, the shock hits) and the installed data the content CRC covers (tuning,
-  penetration, hit bodies). It streams the values field by field (`statehash.rs`: every type names
+  player records with each input's seen frame, chosen classes, projectiles, equipment that is
+  down, smokes, deployed shields, the antilag history of the last frames' first-person Generals
+  and shields, the frame) and leaves out the presentation above, the step's scratch copies (the
+  frame's shield bearers and guards, the shock hits) and the installed data the content CRC covers
+  (tuning, the antilag rewind cap, penetration, hit bodies). The history is in the world's part
+  but not in the idle test (every step records a frame, an empty one with nobody in first
+  person). It streams the values field by field (`statehash.rs`: every type names
   every field, floats by their bits, a weapon or shock definition by its id; no addresses, no map
   order), about 11 µs for sixteen busy seats in a release build. `Sim::fingerprint` also gives
   each seat's part (its record and chosen class) and the world's. The multiplayer gate
@@ -1153,6 +1187,13 @@ profile). Archive `hud::VERSION` 82 at the same point (the weapon table's `Spawn
 converted beside the crossbow, the
 per-optic reticle names and art, the patch-zone reference materials, the body's per-set W3D clips
 and INI); the native blob formats are unchanged.
+
+**Pending for the next bump** (mp-latency, no version change yet): `ZhboClientOut.input_seen_frame`
+(`uint32_t`, the sim frame on screen as the input was made) is appended after `select_object`:
+`ZhboClientOut` 4876 → 4880 bytes, asserted on both sides; the free function
+`zhbo_logic_fps_input(player, general, input, seen_frame)` is appended after `zhbo_logic_input`
+(which stays, for a message without the seventh argument). `MSG_ZHBO_FPS_INPUT` gains its seventh
+argument. The API tables do not change.
 
 **ABI 29** (no-classless-spawn's integration): `ZhboClientOut.select_object` (`uint32_t`, one-shot
 object to select overhead: the local General as he comes back alive from first person) is appended

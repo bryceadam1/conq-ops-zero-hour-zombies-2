@@ -82,7 +82,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   reaches the host, as BO2's damage callback does), `shock.rs` (which shellshock a first-person
   General gets from a blast: the GSC's `shellshock()` sources), `lockstep.rs` (the state's
   fingerprint, `Sim::fingerprint`/`state_hash`: per-seat and world sub-hashes, the multiplayer
-  gate's and Zero Hour's logic CRC's share), and test code: `fakehost.rs` (`FakeHost`, the flat
+  gate's and Zero Hour's logic CRC's share), `antilag.rs` (BO2's antilag: the first-person
+  Generals of the last frames, and the frame a shot is resolved against), `predict.rs` (the
+  client's prediction's half in the sim: `Sim::scratch`, `Sim::predict_step` and the `Sandbox`
+  host that reads the engine and writes nothing), and test code: `fakehost.rs` (`FakeHost`, the flat
   fake engine world) and `harness.rs` (the lockstep match: peers, the replicated command stream
   with the run-ahead, each machine's render cadence; `roster_classes`, every item the editor offers
   as legal classes), compiled for the crate's own tests and, behind zhbo-core's `harness` feature,
@@ -107,8 +110,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   profile (`profile.rs`), `classwire.rs` a custom class's pick payload (catalog tokens),
   `menu.rs` the shell menu.
 - `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
-  frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness).
-  Nothing in it reaches the sim except through the input messages it emits.
+  frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness,
+  `events.rs`: the sim's events as the local player hears and sees them, and `predict.rs`: the
+  local player's prediction over his inputs in flight, which first person is drawn from). Nothing in it reaches the sim except through the input messages it emits.
 - `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
   impact effect), `terrain.rs` (the ground's surface per height-map cell, parsed from the map
   file the bridge hands it: the logic-side answer under the sim's ground query),
