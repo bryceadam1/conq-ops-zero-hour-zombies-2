@@ -763,6 +763,17 @@ impl Sim {
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         }
+        // Zero Hour gave him to another player: a network game hands a leaving player's assets to
+        // a living ally (`onSelfDestruct` with `transferAssets`). This seat no longer commands
+        // him; his new owner's own seat takes him over on its next report or take-control. Kept,
+        // the old record would drive the General with the leaver's last input forever (or fight
+        // the new owner's record for his pose).
+        if info.owner_player != idx as i32 {
+            if p.is_first_person() {
+                self.return_to_rts(host, idx, p);
+            }
+            return false;
+        }
         p.shock.step();
         if !p.is_first_person() {
             // Overhead: hits still count as combat (BO2's damage callback sets `hasdonecombat`),

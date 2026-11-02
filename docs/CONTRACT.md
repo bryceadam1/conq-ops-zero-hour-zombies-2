@@ -75,6 +75,10 @@ replicated messages alone. The rules, and what enforces each:
   `the_sim_calls_no_platform_libm` test fails on any `f32` transcendental call in a sim-reachable
   file (everything except the client, HUD, class screens, LUI, renderer passes, conformance oracle,
   sounds and the C ABI module).
+* **A seat commands only its own General.** Ownership is checked at take-control and on every
+  step: a network game hands a leaving player's assets to a living ally (`onSelfDestruct` with
+  `transferAssets`), and the leaver's record then lets go of the General (back to RTS control, AI
+  on) instead of driving him with the last input it received.
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
   player records, chosen classes, projectiles, equipment, smokes, deployed shields, the frame) and
   leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)

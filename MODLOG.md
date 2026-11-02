@@ -10243,3 +10243,19 @@ squaring, or `__powisf2`) is the backend's choice. `det::powi` is `libm::powf(x,
 **Out of scope.** Zero Hour still refuses a cross-build join: the exe CRC covers the binary. A
 Mac ↔ PC match is therefore not possible yet anyway. This change makes it possible later, and it
 removes the cross-CPU risk for same-binary Windows games today.
+
+## Multiplayer audit: a General given to an ally leaves the leaver's seat (2026-11-01, branch `v1/mp-audit`)
+
+In this engine build, a network player who leaves does not just lose his objects: `processDestroyPlayerCommand` sends `MSG_SELF_DESTRUCT` with `transferAssets = TRUE` (non-retail CRC), and `onSelfDestruct`
+gives his objects to a living ally. A General in first person goes with them. The sim checked
+ownership only at take-control. The leaver's `PlayerSim` therefore kept the General, kept him
+`controlled` (no AI), and drove him with the last `MSG_ZHBO_FPS_INPUT` it had. A leaver who
+quit while running and firing left a General who ran and fired forever. Every peer saw the same
+thing, so it was not a desync, but it was broken. An ally who then took control got a second
+record fighting the first for the pose.
+
+`Sim::step_player` now drops a record whose General's `owner_player` is no longer the seat. A
+first-person one goes back to RTS control first, so his AI resumes. The new owner's seat takes
+him over on its next RTS report or take-control. Test:
+`a_general_handed_to_an_ally_leaves_the_leavers_seat`. The rule is in CONTRACT.md, "Multiplayer
+(lockstep)".

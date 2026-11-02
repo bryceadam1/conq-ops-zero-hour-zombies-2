@@ -374,3 +374,34 @@ fn combat_is_seen_even_when_the_event_buffer_is_full() {
     assert_eq!(sim.events.len(), MAX_EVENTS, "the buffer stayed at its cap");
     assert!(sim.player(0).unwrap().combat, "the shot counted as combat with the buffer full");
 }
+
+/// A player who leaves a network game hands his assets to a living ally (Zero Hour's
+/// `onSelfDestruct` with `transferAssets`), his first-person General among them. The leaver's seat
+/// lets go of him at once (his last input would otherwise drive him forever) and the ally can take
+/// him into first person as his own.
+#[test]
+fn a_general_handed_to_an_ally_leaves_the_leavers_seat() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    super::tests::spawn(&mut sim, &host, 0, 1);
+    // He was running forward when his player left.
+    let run = FpsInput { move_packed: crate::input::pack_move(1.0, 0.0), ..Default::default() };
+    for f in 1..=10 {
+        sim.input(0, 1, run);
+        sim.step(&host, f);
+    }
+    assert_eq!(*host.controlled.borrow(), vec![1]);
+    for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 1) {
+        o.owner_player = 1;
+    }
+    sim.step(&host, 11);
+    assert!(sim.player(0).is_none(), "the leaver's seat let go of him");
+    assert!(host.controlled.borrow().is_empty(), "his AI runs again");
+    let at = host.get(1).pos;
+    sim.step(&host, 12);
+    assert_eq!(host.get(1).pos, at, "nothing drives him with the leaver's input");
+    sim.take_control(&host, 1, 1);
+    assert_eq!(sim.player(1).map(|p| p.general), Some(1), "the ally takes him into first person");
+    assert_eq!(*host.controlled.borrow(), vec![1]);
+}
