@@ -135,6 +135,7 @@ impl Sim {
             deployed: self.deployed.clone(),
             combat_seen: 0,
             emitted: 0,
+            antilag_hits: Vec::new(),
             history: self.history.clone(),
             antilag_frames: self.antilag_frames,
         }

@@ -7,6 +7,7 @@ use super::harness::{capped, play, script, Cmd, Match, Net, Peer, MIDLIFE_PICK, 
 use super::tests::{general, soldier, FakeHost};
 use super::*;
 use crate::classes::CustomClass;
+use crate::client::ClientIn;
 
 /// Round `r`'s custom class for a player: the catalog's slot weapons in turn as the primary, with
 /// an offhand pair and perks that cycle too.
@@ -463,6 +464,8 @@ fn presentation_and_scratch_do_not_enter_the_hash() {
     sim.equipment.shields.clear();
     sim.equipment.guards.clear();
     sim.combat_seen = 0b101;
+    sim.emitted += 7;
+    sim.antilag_hits.push((100, 101, 3));
     assert_eq!(sim.state_hash(), h);
 }
 
@@ -525,4 +528,125 @@ fn a_mod_only_divergence_is_seen_and_names_its_seat() {
         assert_ne!(f.seats[0], base.seats[0], "{what}: seat 0's part");
         assert_eq!((f.seats[1], f.world), (base.seats[1], base.world), "{what}: nothing else");
     }
+}
+
+/// The two-instance in-engine test's script (`ZHBO_AUTOPILOT=mp`, `scripts/mptest-mac.sh`), headless
+/// on the same lockstep harness: two machines, each running the multiplayer autopilot for its own
+/// player only (the shooter and the target), a third that never renders, and the engine side the
+/// bridge plays in game (take control once each General stands at the meeting point; a fresh
+/// General from the Command Center when one dies). The script must reach every step it claims —
+/// the picks, the sidearm, the throw, the fight, a death, the respawned General coming back with
+/// his class and no pick, the field computer — with every machine agreeing on every frame.
+#[cfg(feature = "autopilot")]
+#[test]
+fn the_multiplayer_autopilot_fights_in_lockstep() {
+    use crate::client::Autopilot;
+    let _g = crate::profile::lock();
+    crate::profile::reset();
+    let peer = |local: i32, seed: u64, shooter: Option<bool>| {
+        let mut p = Peer::bare(local, seed);
+        p.client.autopilot = shooter.map(|mp_shooter| Autopilot { mp: true, mp_shooter, ..Default::default() });
+        p
+    };
+    let mut a = peer(0, 0x0A11_CE5E_ED00_0001, Some(true));
+    let mut b = peer(1, 0x0B0B_5EED_0000_0002, Some(false));
+    let mut c = peer(3, 0x0C0C_5EED_0000_0003, None);
+    let mut net = Net::default();
+    // Standing at the meeting point, facing each other (the bridge's walk ends 120 apart).
+    for p in [&mut a, &mut b, &mut c] {
+        p.host.add(general(100, 0));
+        let mut g = general(101, 1);
+        g.pos = Vec3::new(120.0, 0.0, 0.0);
+        g.yaw = std::f32::consts::PI;
+        p.host.add(g);
+    }
+    let mut generals = [100u32, 101u32];
+    let mut next_id = 102;
+    let mut seen: Vec<Event> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    for frame in 1..=30 * 45 {
+        // The bridge: take control a little apart (each machine's walk ends on its own), and a
+        // dead General's replacement from the Command Center a few seconds later.
+        if frame == 10 {
+            net.send(frame, 0, Cmd::TakeControl(generals[0]));
+        }
+        if frame == 40 {
+            net.send(frame, 1, Cmd::TakeControl(generals[1]));
+        }
+        for (i, g) in generals.into_iter().enumerate() {
+            let dead = a.host.objects.borrow().iter().any(|o| o.id == g && o.has(objflags::DEAD));
+            if dead {
+                let id = next_id;
+                next_id += 1;
+                generals[i] = id;
+                for p in [&mut a, &mut b, &mut c] {
+                    let mut fresh = general(id, i as i32);
+                    fresh.pos = Vec3::new(if i == 0 { -60.0 } else { 180.0 }, 0.0, 0.0);
+                    p.host.add(fresh);
+                }
+                net.send(frame + 90, i as i32, Cmd::TakeControl(id));
+            }
+        }
+        let cmds = net.take(frame);
+        for p in [&mut a, &mut b, &mut c] {
+            p.logic(frame, &cmds, [0; 3]);
+        }
+        let h = a.sim.fingerprint();
+        assert_eq!(b.sim.fingerprint(), h, "B diverged from A at frame {frame}");
+        assert_eq!(c.sim.fingerprint(), h, "C diverged from A at frame {frame}");
+        seen.append(&mut c.sim.events);
+        // Each player's machine: its client runs the autopilot and the bridge sends what it says.
+        for p in [&mut a, &mut b] {
+            let inp = ClientIn { dt: LOGIC_DT, local_player: p.local, logic_frame: frame, input_allowed: 1, screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
+            let out = p.client.frame_with(&mut p.sim, Some(&p.host), &inp);
+            if out.choose_class != 0 {
+                let words = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
+                let index = if words.is_empty() { (out.choose_class - 1) as usize } else { 0 };
+                net.send(frame, p.local, Cmd::ChooseClass(out.choose_class_general, index, words));
+            }
+            if out.send_input != 0 {
+                net.send(frame, p.local, Cmd::Input(out.input_general, out.input, out.input_seen_frame));
+            }
+            lines.append(&mut p.client.autopilot.as_mut().unwrap().log);
+        }
+    }
+    let count = |player: i32, f: &dyn Fn(&EventKind) -> bool| seen.iter().filter(|e| e.player == player && f(&e.kind)).count();
+    for player in [0, 1] {
+        assert!(count(player, &|k| matches!(k, EventKind::ClassChosen { .. })) >= 1, "player {player} picked a class");
+        assert!(count(player, &|k| matches!(k, EventKind::Shot { .. })) >= 2, "player {player} fired");
+        assert!(count(player, &|k| matches!(k, EventKind::Swapped)) >= 2, "player {player} swapped to the sidearm and back");
+        assert!(count(player, &|k| matches!(k, EventKind::Thrown { lethal: true })) >= 1, "player {player} threw the lethal");
+    }
+    assert!(count(1, &|k| matches!(k, EventKind::GeneralDied { .. })) >= 1, "the shooter killed the target's General");
+    assert_eq!(count(0, &|k| matches!(k, EventKind::GeneralDied { .. })), 0, "the target's short burst did not kill the shooter");
+    assert!(count(0, &|k| matches!(k, EventKind::FieldComputerOpened)) >= 1, "the shooter left through the field computer");
+    // The target's next General came in with his class (a pick is only offered to the classless).
+    assert_eq!(count(1, &|k| matches!(k, EventKind::EnteredFps { .. })), 2, "the target's second General was taken into first person");
+    assert_eq!(count(1, &|k| matches!(k, EventKind::ClassChosen { .. })), 1, "his class came back with him: no second pick");
+    assert!(count(1, &|k| matches!(k, EventKind::FieldComputerOpened)) >= 1, "the respawned General left through the field computer");
+    assert!(lines.iter().any(|l| l.contains("the fight starts (the other General is in first person)")), "the fight waited for the other General: {lines:?}");
+    // One line per General at least (headless every viewmodel index is -1, so a swap logs nothing
+    // new; in game each weapon change logs its own).
+    assert!(lines.iter().filter(|l| l.contains("in hand")).count() >= 3, "each side logged what it holds: {lines:?}");
+    crate::profile::reset();
+}
+
+/// In a network game the other players' Generals are in first person on their own machines; here
+/// they must still show their class weapon in their hands (the native third person, the only one
+/// with the attachments and the camo). Only the General this machine looks through is left out:
+/// his body is hidden and the viewmodel draws his arms. (The pass once skipped every first-person
+/// General, which is the same thing in single player and wrong for everyone else's.)
+#[test]
+fn a_remote_first_person_general_keeps_his_third_person() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.add(general(2, 1));
+    let mut sim = Sim::new();
+    super::tests::spawn(&mut sim, &host, 0, 1);
+    super::tests::spawn(&mut sim, &host, 1, 2);
+    assert!(sim.player(0).unwrap().is_first_person() && sim.player(1).unwrap().is_first_person());
+    let posed = |viewer: Option<u32>| sim.native_poses(None, viewer).iter().map(|p| p.general).collect::<Vec<_>>();
+    assert_eq!(posed(Some(1)), vec![2], "player 0's machine draws player 1's General, not its own");
+    assert_eq!(posed(Some(2)), vec![1], "and player 1's machine the other way round");
+    assert_eq!(posed(None), vec![1, 2], "an overhead viewer sees both");
 }

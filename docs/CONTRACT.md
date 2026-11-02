@@ -217,6 +217,15 @@ replicated messages alone. The rules, and what enforces each:
   `DEBUG_CRC` builds log the same parts in the engine's CRC log (`CRCGEN_LOG`, dumped on a
   mismatch): diff the two machines' lines and the first differing seat (or the world) is where the
   state went apart.
+  In game, `ZHBO_STATE_HASH_LOG=1` logs the fingerprint after every step (`state hash: frame N
+  <hash> world <hash> seats <seat>:<hash> …`, the CRC frame line's parts): the two-instance test
+  (`scripts/mptest-mac.sh`) and a two-machine session compare the machines' lines, and the bridge
+  logs Zero Hour's own mismatch (`TheNetwork->sawCRCMismatch`, otherwise only on screen in a
+  release build).
+* **Third person is per viewer.** Each machine draws every General's native third-person weapon
+  (`zhbo_client_native_poses`) except the one its own client looks through in first person (his
+  body is hidden; the viewmodel draws his arms). The other players' Generals are in first person
+  on their own machines, and here they show their class weapon, attachments and camo.
 
 ## The shell menu ABI (the lobby's create-a-class)
 

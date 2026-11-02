@@ -530,6 +530,9 @@ impl Sim {
         }
         match hit {
             HitResult::Object { id, point, distance, location } => {
+                if let Some(seen) = then.as_ref().filter(|f| f.pose(id).is_some()).map(|f| f.frame) {
+                    self.antilag_hits.push((p.general, id, seen));
+                }
                 self.round_effects(host, &round, id, point);
                 let general = p.general;
                 let last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult: 1.0, fx: true });

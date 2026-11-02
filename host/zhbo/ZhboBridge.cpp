@@ -157,14 +157,29 @@ std::string readTextFile(const char *path)
 	return text;
 }
 
-// The player's create-a-class profile: a text file in the game's user-data directory, next to the
-// mod's log. Not in a BIG file (it is the player's own, written at runtime). The path is built the
-// same way the log's is, so both land in the same place.
-static std::string profilePath()
+// A file of the mod's in the game's user-data directory. Several game instances on one machine
+// (the engine's multi-instance mode: the two-instance multiplayer test) share that directory; like
+// the engine's own Options_Instance02.ini, every instance after the first gets its own copy
+// (ConquerOps_Instance02.log, ...), so two running games never write each other's log or profile.
+static std::string userDataFile(const char *stem, const char *ext)
 {
 	std::string path = TheGlobalData ? TheGlobalData->getPath_UserData().str() : "";
-	path += "ConquerOps.profile";
+	path += stem;
+	if (rts::ClientInstance::getInstanceId() > 1u)
+	{
+		char suffix[32];
+		snprintf(suffix, sizeof(suffix), "_Instance%02u", rts::ClientInstance::getInstanceId());
+		path += suffix;
+	}
+	path += ext;
 	return path;
+}
+
+// The player's create-a-class profile: a text file in the game's user-data directory, next to the
+// mod's log. Not in a BIG file (it is the player's own, written at runtime).
+static std::string profilePath()
+{
+	return userDataFile("ConquerOps", ".profile");
 }
 
 // The profile file's text (empty when there is none yet).
@@ -207,6 +222,7 @@ void readConfig()
 	s_config.autopilot_rts = s_config.autopilot_enabled && strcmp(autopilot, "rts") == 0;
 	s_config.autopilot_build = s_config.autopilot_enabled && strcmp(autopilot, "build") == 0;
 	s_config.autopilot_classpick = s_config.autopilot_enabled && strcmp(autopilot, "classpick") == 0;
+	s_config.autopilot_mp = s_config.autopilot_enabled && strcmp(autopilot, "mp") == 0;
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
 	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
@@ -352,9 +368,7 @@ void Zhbo_Init()
 	if (s_ready)
 		return;
 
-	AsciiString logPath = TheGlobalData->getPath_UserData();
-	logPath.concat("ConquerOps.log");
-	s_log = fopen(logPath.str(), "w");
+	s_log = fopen(userDataFile("ConquerOps", ".log").c_str(), "w");
 
 	if (zhbo_abi_version() != ZHBO_ABI_VERSION)
 	{
@@ -479,6 +493,18 @@ void Zhbo_Init()
 
 	s_lastTick = zhbo_platform::now();
 	s_ready = TRUE;
+}
+
+// A resolution change (the options menu, a live window resize, a second instance applying its own
+// Options_InstanceNN.ini) rebuilds the whole ControlBar from its INI (InGameUI::recreateControlBar,
+// host patch 0023): every injected button and made set is gone, so the Command Center has no Deploy
+// General and the General no build or class menu. Put them back.
+void Zhbo_ControlBarRebuilt()
+{
+	if (!s_ready)
+		return;
+	logLine("the control bar was rebuilt (a resolution change); adding the Conquer Ops buttons again");
+	zhboInjectConstructButtons();
 }
 
 void Zhbo_Reset()
@@ -617,6 +643,20 @@ void Zhbo_LogicStep(UnsignedInt frame)
 {
 	if (!s_ready)
 		return;
+	// Zero Hour's own desync check (MSG_LOGIC_CRC every CRC interval) shows its mismatch only on
+	// screen in a release build: put it in the log too, once, for the multiplayer test.
+	static Bool s_crcMismatchLogged = FALSE;
+	if (frame <= 1)
+		s_crcMismatchLogged = FALSE;
+	// Where a game's frames begin in the log: the shell map runs the logic too (its frames, and the
+	// state hash lines, count from 0 as well), so a comparison must take the match's alone.
+	if (frame == 1)
+		logf("game start: %s", TheGameLogic->isInShellGame() ? "the shell map" : (TheNetwork ? "a network game" : "a local game"));
+	if (!s_crcMismatchLogged && TheNetwork && TheNetwork->sawCRCMismatch())
+	{
+		s_crcMismatchLogged = TRUE;
+		logf("multiplayer: Zero Hour reported a CRC mismatch (a desync) by frame %u", (unsigned)frame);
+	}
 	// Objects must be created inside GameLogic::update: W3DModelDraw only resolves weapon barrel
 	// bones while the logic is updating, and a drawable created outside it sizes its recoil state
 	// to zero and later crashes in handleWeaponFireFX when it fires.

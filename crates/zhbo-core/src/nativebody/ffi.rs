@@ -171,7 +171,18 @@ impl State {
                 }
                 Ok(None) => return LOADING,
                 Ok(Some(l)) => {
-                    self.log_once(format!("ZW{:02}{} composed: {} bones, {} vertices, {} surfaces", l.key.1, l.key.0 as char, l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
+                    // Per General, with the camo: the multiplayer test matches this against the
+                    // other machine's own "in hand" line for the same General.
+                    self.log_once(format!(
+                        "General {general} weapon {} camo {} composed (ZW{:02}{}): {} bones, {} vertices, {} surfaces",
+                        l.key.1,
+                        camo.unwrap_or("none"),
+                        l.key.1,
+                        l.key.0 as char,
+                        l.skeleton.bones.len(),
+                        l.mesh.vertices.len(),
+                        l.mesh.surfaces.len()
+                    ));
                     self.rigs.insert(general, Rig { loaded: l, #[cfg(feature = "renderer")] gpu: Default::default() });
                 }
             }

@@ -16,7 +16,8 @@
 //!   at its own render cadence, and a headless replay never does) and [`Sim::tracers`] (drained
 //!   right after each step and drawn per viewer), and `emitted`, the count of every event ever
 //!   emitted (the log's bookkeeping across the event cap: it only grows with `events`, which a
-//!   client drains, and nothing in the step reads it);
+//!   client drains, and nothing in the step reads it), and `antilag_hits`, the log's record of
+//!   rewound hits (drained after every step, read by nothing in it);
 //! * per-step scratch rebuilt from the hashed state before it is read: [`Sim::shields`] and the
 //!   equipment's copies of it and of the guards, the equipment's shock hits, `combat_seen`;
 //! * the installed data, which never changes during a game and which the content CRC (the
@@ -76,6 +77,7 @@ impl Sim {
             shields: _,
             combat_seen: _,
             emitted: _,
+            antilag_hits: _,
             antilag_frames: _,
         } = self;
         let mut seats = [None; MAX_PLAYERS];

@@ -1,0 +1,21 @@
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
+index 4329f9c1b..f941e367f 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
+@@ -28,6 +28,7 @@
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #define DEFINE_SHADOW_NAMES
+ 
+@@ -6047,6 +6048,8 @@ void InGameUI::recreateControlBar()
+ 	delete TheControlBar;
+ 	TheControlBar = NEW ControlBar;
+ 	TheControlBar->init();
++	// ZHBO: the new control bar is the INI's alone: Conquer Ops puts its buttons and sets back.
++	Zhbo_ControlBarRebuilt();
+ }
+ 
+ // TheSuperHackers @bugfix bobtista 20/07/2026 Retail never changed resolution mid-match, so no path

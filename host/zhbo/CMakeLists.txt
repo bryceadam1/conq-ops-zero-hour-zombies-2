@@ -34,6 +34,11 @@ target_sources(z_gameenginedevice PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/ZhboViewmodel.cpp
 )
 
+# The engine's network auto-start driver (-autoNetworkMode direct, a debug-build feature) in the
+# release build too, for the two-instance multiplayer test (scripts/mptest-mac.sh). Host patch 0022
+# makes it act only when GGC_NETWORK_AUTOSTART is set, so a player's run is unchanged.
+target_compile_definitions(z_gameengine PRIVATE RTS_NETWORK_AUTOSTART)
+
 # Patched engine files in z_gameengine and z_gameenginedevice include ZhboBridge.h.
 target_include_directories(z_gameengine PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(z_gameenginedevice PUBLIC ${CMAKE_CURRENT_LIST_DIR})

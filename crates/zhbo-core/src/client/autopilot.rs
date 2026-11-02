@@ -70,6 +70,24 @@ pub struct Autopilot {
     pub(crate) classpick_wait_reset: bool,
     /// The previous `t`, to notice the reset between first-person sessions.
     pub(crate) classpick_last_t: f32,
+    /// The two-instance multiplayer run (`ZHBO_AUTOPILOT=mp`, [`Autopilot::mp_input`]).
+    pub mp: bool,
+    /// Its part: the shooter fires the long burst, the other the short one
+    /// (`ZHBO_AUTOPILOT_ROLE`, [`crate::config::MpRole`]).
+    pub mp_shooter: bool,
+    /// First-person sessions so far (the client counts each take-control).
+    pub(crate) session: u32,
+    pub(crate) in_fps: bool,
+    /// The view angles (yaw, pitch) at the other player's General this frame, when he is in first
+    /// person too; set by the client from the sim before the script runs.
+    pub(crate) mp_aim: Option<(f32, f32)>,
+    /// When the fight started this session: the first moment the other General was there to aim
+    /// at (the two machines take control a few seconds apart).
+    pub(crate) mp_fight: Option<f32>,
+    /// What his own General holds in third person, last logged (general, viewmodel, camo).
+    pub(crate) mp_holds: Option<(u32, i32, Option<String>)>,
+    /// Log lines for `ConquerOps.log` (drained by the FFI layer after the frame).
+    pub log: Vec<String>,
 }
 
 /// What the autopilot does in one frame: keys held, mouse movement (counts: x, y) and wheel notches.
@@ -86,11 +104,22 @@ pub struct Scripted {
     /// classed General (the RTS run's first-person phase) does not turn the pick key into a weapon
     /// swap.
     pub class_pick: Option<Key>,
+    /// Turn the view to these angles (yaw, pitch radians) this frame: the multiplayer run aims at
+    /// the other General. The look is local; the angles travel in the input message as always.
+    pub look: Option<(f32, f32)>,
 }
 
 impl Autopilot {
+    /// The same run, its state cleared (a new game).
+    pub fn fresh(&self) -> Autopilot {
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, mp: self.mp, mp_shooter: self.mp_shooter, ..Default::default() }
+    }
+
     /// What it does at time `t`.
     pub fn input_at(&mut self, b: &Bindings) -> Scripted {
+        if self.mp {
+            return self.mp_input(b);
+        }
         if self.scope {
             return self.scope_input(b);
         }
@@ -272,6 +301,86 @@ impl Autopilot {
             scripted.keys.set_down(b.forward, true);
         }
         scripted
+    }
+
+    /// The two-instance multiplayer run (`ZHBO_AUTOPILOT=mp`): one script per machine, each for its
+    /// own player only; the C++ side builds his General at the Command Center, walks him to the
+    /// meeting point and takes control. The first session picks the class (the seeded custom
+    /// when the profile has one, else the first preset), steps forward and sideways, then — once
+    /// the other General is in first person to aim at — swaps to the sidearm and fires it, swaps
+    /// back, throws the lethal wide of him (so the throw is covered without settling the fight),
+    /// fires the primary at him (the shooter a long aimed burst, the target a short one from the
+    /// hip), and opens the field computer. A General who died comes back from the Command Center:
+    /// his second session must arrive with the class (no pick screen), walks, and leaves overhead.
+    /// Every time is measured from the take-control; the fight's from its start.
+    pub fn mp_input(&mut self, b: &Bindings) -> Scripted {
+        let t = self.t;
+        let mut keys = KeySet::default();
+        // Only pressed while the spawn's pick is really up: a respawned General has his class.
+        let pick = (0.3..0.4).contains(&t).then(custom_class_key);
+        if self.session >= 2 {
+            if (0.6..1.6).contains(&t) {
+                keys.set_down(b.forward, true);
+            }
+            if (2.4..2.5).contains(&t) {
+                keys.set_down(b.field_computer, true);
+            }
+            return Scripted { keys, class_pick: pick, ..Default::default() };
+        }
+        if (0.6..1.2).contains(&t) {
+            keys.set_down(b.forward, true);
+        }
+        if (1.2..1.6).contains(&t) {
+            keys.set_down(b.right, true);
+        }
+        let fight = match self.mp_fight {
+            Some(start) => start,
+            // Wait for him (at most half a minute: a lone run still exercises the rest).
+            None if t >= 1.8 && (self.mp_aim.is_some() || t >= 30.0) => {
+                self.mp_fight = Some(t);
+                self.log.push(format!("autopilot mp: the fight starts ({})", if self.mp_aim.is_some() { "the other General is in first person" } else { "nobody to aim at" }));
+                t
+            }
+            None => return Scripted { keys, class_pick: pick, ..Default::default() },
+        };
+        let c = t - fight;
+        let mut look = self.mp_aim;
+        // The sidearm: up, two shots once its first raise is done (a little wide of him: the
+        // fight is the primaries'), back to the primary.
+        if (0.2..0.3).contains(&c) || (2.6..2.7).contains(&c) {
+            keys.set_down(b.swap, true);
+        }
+        if (1.6..2.4).contains(&c) {
+            look = self.mp_aim.map(|(yaw, pitch)| (yaw + 0.2, pitch));
+        }
+        if (1.8..1.9).contains(&c) || (2.1..2.2).contains(&c) {
+            keys.set_down(b.fire, true);
+        }
+        // The lethal, cooked and thrown a quarter turn off the line to him.
+        if (3.2..4.2).contains(&c) {
+            look = self.mp_aim.map(|(yaw, pitch)| (yaw + std::f32::consts::FRAC_PI_2, pitch.max(0.2)));
+        }
+        if (3.4..3.8).contains(&c) {
+            keys.set_down(b.lethal, true);
+        }
+        // The primary at him: the target's short burst from the hip first, then the shooter's
+        // long aimed one. The shooter's fight starts a couple of seconds before the target's (he
+        // waited at the meeting point; the target's clock starts after his own entry), so the
+        // windows are far enough apart that the target fires before he is killed.
+        if self.mp_shooter {
+            if (7.5..13.0).contains(&c) {
+                keys.set_down(b.ads, true);
+            }
+            if (8.0..13.0).contains(&c) {
+                keys.set_down(b.fire, true);
+            }
+        } else if (5.0..5.3).contains(&c) {
+            keys.set_down(b.fire, true);
+        }
+        if (15.0..15.1).contains(&c) {
+            keys.set_down(b.field_computer, true);
+        }
+        Scripted { keys, class_pick: pick, look, ..Default::default() }
     }
 
     /// The scope-overlay run (`ZHBO_AUTOPILOT=scope`): pick the seeded AS50 class and hold ADS from

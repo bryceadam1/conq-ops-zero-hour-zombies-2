@@ -10858,3 +10858,62 @@ must add `self.spectator.is_none()`, and becoming a spectator must `predict.rese
 a following spectator acks the followed seat's record into the own-player predictor, and
 `advance` is keyed to `inp.local_player`. A spectator sends nothing, so nothing is ever in flight
 and the predictor must stay empty: the followed view comes from the sim record, as here.
+
+## Two instances on one Mac: the in-engine LAN test (2026-11-01, branch `v1/mp-two-instance`)
+
+`scripts/mptest-mac.sh` (also `autotest-mac.sh --mp`) runs two instances of the staged release
+build. They host and join a LAN game by themselves on Tournament Desert, and each player's
+autopilot plays his own General against the other's.
+
+**How it fits on one machine.**
+* The engine's `NetworkAutoStart` (`-autoNetworkMode direct`) is a debug-build feature. The mod's
+  build now compiles it into release (`RTS_NETWORK_AUTOSTART`, `host/zhbo/CMakeLists.txt`). Host
+  patch 0020 makes it act only when `GGC_NETWORK_AUTOSTART` is set; without it the arguments are
+  ignored. The driver also lifts the single-instance lock: the host is instance 2, the joiner 3.
+* No `sudo ifconfig lo0 alias`. With `GGC_LOOPBACK_INSTANCE_PORTS`, the transport keeps
+  127.0.0.<id> as the instance's identity but binds 127.0.0.1 at port + 100 × id. Sends,
+  broadcasts and received sender addresses are mapped in `Transport.cpp`, so the lobby and the
+  game code run unchanged.
+* Each instance after the first writes `ConquerOps_InstanceNN.log` / `.profile`, the same way
+  the engine writes `Options_InstanceNN.ini`.
+* Gotcha: the patch's `#if NETWORK_AUTOSTART_ENABLED` in `NetworkAutoStart.cpp` must come after
+  the header that defines it. The first build linked no driver: undefined symbols, not a
+  compile error.
+
+**Lockstep-safe scripting (`ZHBO_AUTOPILOT=mp`).** The run spawns nothing. Each machine orders
+its General at its own Command Center (`MSG_QUEUE_UNIT_CREATE`, after selecting the CC) and
+walks him to a meeting point 60 units off the bases' midpoint (`MSG_DO_MOVETO`). It takes
+control once he arrives or stops. A dead General is ordered again and taken straight back.
+
+The core's `mp_input` script then plays the fight:
+* Aims at the other first-person General every frame (`Scripted::look`). The look is local; the
+  angles travel in the input.
+* Swaps to the sidearm and fires it a little wide, swaps back.
+* Throws the lethal a quarter turn off the line, then fires the primary: the shooter a long
+  aimed burst, the target (`ZHBO_AUTOPILOT_ROLE=target`) a short one first.
+* Opens the field computer.
+
+The target's second life must come in with his class and no pick. The same script runs headless
+on the lockstep harness (`the_multiplayer_autopilot_fights_in_lockstep`): three machines, every
+frame's hash equal.
+
+**The per-frame hash in game.** `ZHBO_STATE_HASH_LOG=1` logs `state hash: frame N HASH` after
+every step. Gotcha: the shell map runs the logic too, and its frames also count from 0. A naive
+join compared shell frames with match frames and reported a "desync" from frame 756. The bridge
+now logs `game start: a network game | a local game | the shell map` at frame 1, and the script
+compares only the network game's lines. The bridge also logs Zero Hour's own CRC mismatch
+(`TheNetwork->sawCRCMismatch`), which a release build otherwise shows only on screen.
+
+**Found and fixed on the way.**
+* **A remote first-person General drew no class weapon.** `Sim::native_poses` skipped every
+  first-person General: right in single player, wrong for everyone else's General in a network
+  game. They are in first person on their own machines, so here they showed the stock W3D
+  weapon, without attachments or camo. Now only the General this client looks through is left
+  out (`Client::first_person_general`). The native body's `composed` line now names the
+  General, weapon and camo, and the test matches it against the other machine's "in hand" line.
+* **A resolution change dropped the Deploy General button.** `InGameUI::recreateControlBar` (the
+  options menu, a live resize, or here a new instance applying its own `Options_Instance03.ini`)
+  deletes the ControlBar and re-reads the INI. That loses every injected button and made set:
+  the Command Center had no Deploy General, and the General had no build or class menu. Host
+  patch 0021 calls `Zhbo_ControlBarRebuilt`, which injects again. A pointer-change check was not
+  enough: the new ControlBar can be allocated at the old address.

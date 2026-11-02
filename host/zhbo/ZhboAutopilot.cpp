@@ -8,6 +8,7 @@
 
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridgeInternal.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 namespace
 {
 void findCommandCenter(Object *obj, void *userData)
@@ -196,6 +197,236 @@ void repairTestFrame(UnsignedInt frame)
 	logf("General repaired %s overhead in %.1f s (a dozer: %.1f s)", built->getTemplate()->getName().str(), secs, dozerSecs);
 }
 
+// ZHBO_AUTOPILOT=mp: the two-instance multiplayer test (scripts/mptest-mac.sh). Nothing is spawned
+// into the logic — every machine would have to spawn it identically — so each machine plays its
+// own player the way a person would, through the replicated messages only: it orders a General
+// from its Command Center, walks him to a meeting point between the two bases, and takes control;
+// the core's script (zhbo-core client/autopilot.rs `mp_input`) fights. A General who dies is
+// ordered again from the Command Center and taken once more (his class comes back with him).
+enum MpPhase
+{
+	MP_ORDER,		// order a General at the Command Center
+	MP_BUILDING,	// wait for him to come out
+	MP_WALK,		// walk him to the meeting point
+	MP_FIGHT,		// first person (the core's script)
+	MP_RESPAWN,		// he died: order the next one, and take him straight into first person
+	MP_DONE
+};
+
+// The meeting point is this far from the midpoint between the two Command Centers, on our side:
+// the two Generals end up about twice this apart, inside rifle range.
+const Real MP_STANDOFF = 60.0f;
+// A walk ends when he is this close to the point, or stops for this long, or takes this long.
+const Real MP_ARRIVED = 30.0f;
+const UnsignedInt MP_WALK_STALL = 2 * LOGICFRAMES_PER_SECOND;
+const UnsignedInt MP_WALK_LIMIT = 90 * LOGICFRAMES_PER_SECOND;
+
+void findGeneralOf(Object *obj, void *userData)
+{
+	Object **found = (Object **)userData;
+	if (!*found && isGeneral(obj) && !obj->isEffectivelyDead())
+		*found = obj;
+}
+
+Object *mpCommandCenter(Player *p)
+{
+	Object *cc = nullptr;
+	if (p)
+		p->iterateObjects(findCommandCenter, &cc);
+	return cc;
+}
+
+// The other side's Command Center: the first enemy player who has one.
+Object *mpEnemyCommandCenter(Player *local)
+{
+	for (Int i = 0; i < ThePlayerList->getPlayerCount(); ++i)
+	{
+		Player *p = ThePlayerList->getNthPlayer(i);
+		if (p == local || !p->getPlayerTemplate() || local->getRelationship(p->getDefaultTeam()) != ENEMIES)
+			continue;
+		if (Object *cc = mpCommandCenter(p))
+			return cc;
+	}
+	return nullptr;
+}
+
+void mpSelect(Object *obj)
+{
+	TheInGameUI->deselectAllDrawables();
+	if (obj->getDrawable())
+		TheInGameUI->selectDrawable(obj->getDrawable());
+	GameMessage *group = TheMessageStream->appendMessage(GameMessage::MSG_CREATE_SELECTED_GROUP);
+	group->appendBooleanArgument(TRUE);
+	group->appendObjectIDArgument(obj->getID());
+}
+
+// Order a General from the Command Center as its button would: the General construct button in
+// its command set (injected at startup, the side's own), a production id, MSG_QUEUE_UNIT_CREATE.
+Bool mpOrderGeneral(Object *cc)
+{
+	const CommandSet *set = TheControlBar->findCommandSet(cc->getCommandSetString());
+	ProductionUpdateInterface *pu = cc->getProductionUpdateInterface();
+	for (Int i = 0; set && pu && i < MAX_COMMANDS_PER_SET; ++i)
+	{
+		const CommandButton *b = set->getCommandButton(i);
+		const ThingTemplate *what = b && b->getCommandType() == GUI_COMMAND_UNIT_BUILD ? b->getThingTemplate() : nullptr;
+		if (!what || !what->getName().startsWith("ZHBO_General_"))
+			continue;
+		const CanMakeType can = TheBuildAssistant->canMakeUnit(cc, what);
+		if (can != CANMAKE_OK)
+		{
+			logf("autopilot mp: the Command Center cannot make %s yet (%d)", what->getName().str(), (int)can);
+			return FALSE;
+		}
+		mpSelect(cc);
+		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_QUEUE_UNIT_CREATE);
+		msg->appendIntegerArgument(what->getTemplateID());
+		msg->appendIntegerArgument(pu->requestUniqueUnitID());
+		logf("autopilot mp: ordered %s at the Command Center", what->getName().str());
+		return TRUE;
+	}
+	AsciiString names;
+	for (Int i = 0; set && i < MAX_COMMANDS_PER_SET; ++i)
+		if (const CommandButton *b = set->getCommandButton(i))
+		{
+			names.concat(b->getName());
+			names.concat(b->getThingTemplate() ? "(" : "");
+			names.concat(b->getThingTemplate() ? b->getThingTemplate()->getName().str() : "");
+			names.concat(b->getThingTemplate() ? ") " : " ");
+		}
+	logf("autopilot mp: the Command Center %s (set %s, production %s) has no General button: %s", cc->getTemplate()->getName().str(),
+		cc->getCommandSetString().str(), pu ? "yes" : "no", names.str());
+	return FALSE;
+}
+
+void mpSetPhase(Int phase, UnsignedInt frame)
+{
+	s_autopilot.mpPhase = phase;
+	s_autopilot.phaseFrame = frame;
+}
+
+void mpAutopilotFrame(UnsignedInt frame)
+{
+	Player *local = ThePlayerList->getLocalPlayer();
+	if (!local || s_autopilot.mpPhase == MP_DONE)
+		return;
+	Object *cc = mpCommandCenter(local);
+	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
+	if (general && general->isEffectivelyDead())
+		general = nullptr;
+	switch (s_autopilot.mpPhase)
+	{
+		case MP_ORDER:
+		case MP_RESPAWN:
+			// At most once a second until the order goes through (this runs every rendered frame;
+			// the Command Center may still be busy).
+			if (cc && frame >= s_autopilot.mpNextTry)
+			{
+				s_autopilot.mpNextTry = frame + LOGICFRAMES_PER_SECOND;
+				if (mpOrderGeneral(cc))
+				{
+					s_autopilot.mpRespawning = s_autopilot.mpPhase == MP_RESPAWN;
+					s_autopilot.general = INVALID_ID;
+					mpSetPhase(MP_BUILDING, frame);
+				}
+			}
+			break;
+		case MP_BUILDING:
+		{
+			Object *fresh = general;
+			if (!fresh)
+			{
+				local->iterateObjects(findGeneralOf, &fresh);
+				if (!fresh)
+					break;
+				s_autopilot.general = fresh->getID();
+				s_autopilot.mpStillSince = frame;
+				logf("autopilot mp: my General is %u", (unsigned)fresh->getID());
+			}
+			// Give him a second to step out of the Command Center before ordering him about.
+			if (frame - s_autopilot.mpStillSince < LOGICFRAMES_PER_SECOND)
+				break;
+			Object *enemy = mpEnemyCommandCenter(local);
+			if (s_autopilot.mpRespawning || !cc || !enemy)
+			{
+				// The second life is taken where he stands: the fight is over.
+				logLine(s_autopilot.mpRespawning ? "autopilot mp: taking control of the next General" : "autopilot mp: no enemy Command Center; taking control here");
+				Zhbo_RequestTakeControl(fresh);
+				mpSetPhase(MP_FIGHT, frame);
+				break;
+			}
+			const Coord3D *mine = cc->getPosition();
+			const Coord3D *theirs = enemy->getPosition();
+			Real dx = mine->x - theirs->x, dy = mine->y - theirs->y;
+			const Real len = sqrtf(dx * dx + dy * dy);
+			dx = len > 1.0f ? dx / len : 1.0f;
+			dy = len > 1.0f ? dy / len : 0.0f;
+			Coord3D meet;
+			meet.set((mine->x + theirs->x) * 0.5f + dx * MP_STANDOFF, (mine->y + theirs->y) * 0.5f + dy * MP_STANDOFF, 0.0f);
+			meet.z = TheTerrainLogic->getGroundHeight(meet.x, meet.y);
+			s_autopilot.mpMeet = meet;
+			mpSelect(fresh);
+			GameMessage *move = TheMessageStream->appendMessage(GameMessage::MSG_DO_MOVETO);
+			move->appendLocationArgument(meet);
+			logf("autopilot mp: walking to the meeting point (%.0f, %.0f), %.0f from the enemy Command Center", meet.x, meet.y, len * 0.5f - MP_STANDOFF);
+			s_autopilot.mpLastPos = *fresh->getPosition();
+			s_autopilot.mpStillSince = frame;
+			mpSetPhase(MP_WALK, frame);
+			break;
+		}
+		case MP_WALK:
+		{
+			if (!general)
+			{
+				mpSetPhase(MP_RESPAWN, frame);
+				break;
+			}
+			const Coord3D *at = general->getPosition();
+			const Real mx = at->x - s_autopilot.mpLastPos.x, my = at->y - s_autopilot.mpLastPos.y;
+			if (mx * mx + my * my > 1.0f)
+			{
+				s_autopilot.mpLastPos = *at;
+				s_autopilot.mpStillSince = frame;
+			}
+			const Real ex = at->x - s_autopilot.mpMeet.x, ey = at->y - s_autopilot.mpMeet.y;
+			const Bool arrived = ex * ex + ey * ey < MP_ARRIVED * MP_ARRIVED;
+			const Bool stalled = frame - s_autopilot.mpStillSince > MP_WALK_STALL && frame - s_autopilot.phaseFrame > MP_WALK_STALL;
+			if (arrived || stalled || frame - s_autopilot.phaseFrame > MP_WALK_LIMIT)
+			{
+				logf("autopilot mp: %s at (%.0f, %.0f) after %.0f s; taking control", arrived ? "arrived" : "stopped", at->x, at->y,
+					(frame - s_autopilot.phaseFrame) / (Real)LOGICFRAMES_PER_SECOND);
+				Zhbo_RequestTakeControl(general);
+				mpSetPhase(MP_FIGHT, frame);
+			}
+			break;
+		}
+		case MP_FIGHT:
+		{
+			const Bool controlled = general && zhbo_logic_is_controlled((uint32_t)general->getID());
+			if (controlled)
+			{
+				s_autopilot.controlledFrame = frame;
+				break;
+			}
+			// Not (yet, or any longer) in first person: give the take-control a few seconds to land.
+			if (s_autopilot.controlledFrame == 0 && general && frame - s_autopilot.phaseFrame < 10 * LOGICFRAMES_PER_SECOND)
+				break;
+			if (!general && !s_autopilot.mpRespawning)
+			{
+				logLine("autopilot mp: my General died; ordering the next one");
+				s_autopilot.controlledFrame = 0;
+				mpSetPhase(MP_RESPAWN, frame);
+				break;
+			}
+			logf("autopilot mp: done (%s)", general ? "back overhead" : "died again");
+			mpSetPhase(MP_DONE, frame);
+			break;
+		}
+		default:
+			break;
+	}
+}
+
 // Structures Generals are building: when each started, to log how long it took.
 std::map<ObjectID, UnsignedInt> s_generalBuilds;
 } // namespace
@@ -230,6 +461,13 @@ static Bool autopilotPlayback()
 void autopilotSpawn()
 {
 	Player *local = autopilotPlayer();
+	// The multiplayer run spawns nothing (see mpAutopilotFrame): it starts at the Command Center.
+	if (s_config.autopilot_mp)
+	{
+		logLine("autopilot mp: ordering a General at the Command Center");
+		s_autopilot.spawnFrame = TheGameLogic->getFrame();
+		return;
+	}
 	if (s_config.force_radar && TheRadar)
 		TheRadar->forceOn(local->getPlayerIndex(), TRUE);
 	Object *cc = nullptr;
@@ -551,6 +789,11 @@ void autopilotFrame()
 	if (s_autopilot.showcase)
 	{
 		showcaseFrame(frame);
+		return;
+	}
+	if (s_config.autopilot_mp)
+	{
+		mpAutopilotFrame(frame);
 		return;
 	}
 	if (s_autopilot.rts)

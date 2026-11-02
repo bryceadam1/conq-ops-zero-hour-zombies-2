@@ -134,6 +134,12 @@ impl Peer {
         Peer { host, sim: Sim::new(), client: Client::default(), local, seed, renders: 0 }
     }
 
+    /// A machine with an empty world (no squad): the two-instance script's test, whose Generals
+    /// face each other across open ground as the bridge's walk leaves them.
+    pub fn bare(local: i32, seed: u64) -> Self {
+        Peer { host: FakeHost::default(), sim: Sim::new(), client: Client::default(), local, seed, renders: 0 }
+    }
+
     pub fn cadence(&mut self) -> u64 {
         self.seed ^= self.seed << 13;
         self.seed ^= self.seed >> 7;
