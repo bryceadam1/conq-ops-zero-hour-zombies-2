@@ -865,7 +865,6 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
         let general = |event: &str, alias: &Option<String>, kind: Kind| alias.as_ref().map(|a| DynSfx { event: event.into(), layers: vec![a.clone()], kind, limit: 2 });
         if *id == l.lethal {
             events.extend(general(zhbo_core::sounds::THROW, &w.fire_sound_player, Kind::Player));
-            events.extend(general(zhbo_core::sounds::PULL_PIN, &w.pullback_sound_player, Kind::Player));
             events.extend(general(zhbo_core::sounds::EXPLOSION, &w.projectile_explosion_sound, Kind::World));
         }
         // The Assault Shield's own cues (`sounds::SHIELD_SOUNDS`): heard where they happen.

@@ -139,6 +139,12 @@ pub struct Hammer {
 
 crate::statehash::state_hash!(struct Hammer { choice, picked, raise, turn, at, angle });
 
+/// The nearest the hammer places a structure whose footprint has `radius`: [`PLACE_MIN`], or
+/// [`PLACE_CLEAR`] clear of the footprint when that is farther (`zhbo_hammer_place_near`).
+pub fn place_near(radius: f32) -> f32 {
+    PLACE_MIN.max(radius + PLACE_CLEAR)
+}
+
 /// Where the hammer places a structure: the ground the line of sight meets (from `eye` along unit
 /// `dir`), [`PLACE_MIN`] to [`PLACE_RANGE`] ahead and clear of a footprint of `radius`; looking up
 /// past that range places it at the range's end.
@@ -146,7 +152,7 @@ pub fn place_point(eye: Vec3, dir: Vec3, radius: f32, ground: impl Fn(f32, f32) 
     const STEP: f32 = 4.0;
     let flat = Vec3::new(dir.x, dir.y, 0.0).normalized_or_zero();
     let at = |ahead: f32| {
-        let near = PLACE_MIN.max(radius + PLACE_CLEAR);
+        let near = place_near(radius);
         let p = eye + flat * ahead.clamp(near, PLACE_RANGE.max(near));
         Vec3::new(p.x, p.y, ground(p.x, p.y))
     };
@@ -176,5 +182,8 @@ mod tests {
         assert!((near.x - PLACE_MIN).abs() < 0.01, "looking down: not on top of him {near:?}");
         let big = place_point(eye, Vec3::new(0.1, 0.0, -1.0).normalized_or_zero(), 80.0, |_, _| 0.0);
         assert!((big.x - 80.0 - PLACE_CLEAR).abs() < 0.01, "a big one clear of him {big:?}");
+        // The harness's `--build` layout asks the same distance over the ABI.
+        assert_eq!(crate::ffi::zhbo_hammer_place_near(0.0), PLACE_MIN);
+        assert_eq!(crate::ffi::zhbo_hammer_place_near(80.0), 80.0 + PLACE_CLEAR);
     }
 }

@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 29u
+#define ZHBO_ABI_VERSION 30u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -190,7 +190,7 @@ typedef struct ZhboClientApi
 	void (*sound_loop)(const char *event, float gain);
 	/* a player's display name as UTF-8 into out (cap bytes, NUL-terminated); returns its length, 0
 	   for none: the spectator's switch bar names the followed player (deadspectate.lua).
-	   Appended; pending the next ABI bump. */
+	   Appended in ABI 30. */
 	int32_t (*player_name)(int32_t player, char *out, int32_t cap);
 } ZhboClientApi;
 
@@ -232,8 +232,8 @@ typedef struct ZhboClientIn
 	/* This machine only watches: !ThePlayerList->getLocalPlayer()->isPlayerActive() (an observer
 	   seat, a defeated player who stays) or a replay's playback. The core then sends no sim input,
 	   never captures the mouse and follows first-person Generals (client/spectate.rs). It fills
-	   the struct's tail padding (size unchanged, offset asserted). Appended; pending the next ABI
-	   bump. */
+	   the struct's tail padding (size unchanged, offset asserted). Appended in ABI
+	   30. */
 	int32_t spectating;
 } ZhboClientIn;
 
@@ -302,7 +302,7 @@ typedef struct ZhboClientOut
 	uint32_t select_object;
 	/* With send_input: the logic frame this machine showed as the input was made (the core's sim
 	   frame then). MSG_ZHBO_FPS_INPUT carries it as its seventh argument, for zhbo_logic_fps_input
-	   (lag-compensated shots, the sender's prediction). Pending for the next ABI bump. */
+	   (lag-compensated shots, the sender's prediction). ABI 30. */
 	uint32_t input_seen_frame;
 } ZhboClientOut;
 
@@ -432,7 +432,7 @@ void zhbo_logic_take_control(int32_t player, uint32_t general);
 void zhbo_logic_input(int32_t player, uint32_t general, const ZhboFpsInput *input);
 /* MSG_ZHBO_FPS_INPUT with its seventh argument, seen_frame: the frame the sender's machine showed
    (ZhboClientOut.input_seen_frame). The input's shots are resolved against that frame (BO2's antilag,
-   sim/antilag.rs) and the sender's prediction is acknowledged by it. Pending for the next ABI bump. */
+   sim/antilag.rs) and the sender's prediction is acknowledged by it. ABI 30. */
 void zhbo_logic_fps_input(int32_t player, uint32_t general, const ZhboFpsInput *input, uint32_t seen_frame);
 /* The pick menu's choice (see classes.rs): the General assumes the class at the shared list's index.
    A custom class appends its wire words after the index as [len, word...]; payload/len are null/0 for a
@@ -605,7 +605,7 @@ float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, f
    the sim holds state (the bridge xfers `hash` into the CRC), 0 when it is idle (no General deployed
    and no class picked: the CRC stays stock Zero Hour's) or not initialised. `log` non-zero (the
    logic frame's own CRC) also writes the parts to ConquerOps.log when active. `out` may be null.
-   Pending for the next ABI bump (appended after ABI 29; the integrator bumps). */
+   ABI 30. */
 typedef struct ZhboLogicCrc
 {
 	uint64_t hash;      /* Sim::state_hash: the frame, every seat's part and the world's */
@@ -619,13 +619,13 @@ int32_t zhbo_logic_crc(ZhboLogicCrc *out, int32_t log);
 /* The map's ground surfaces (terrain.rs): `bytes` is the map file as CachedFileInputStream reads it
    (decompressed), `names`/`surfaces` Zero Hour's terrain types in collection order with each one's
    ZHBO_SURF_*. Replaces the previous map's grid; returns its cell count, or -1 when the file does
-   not parse (the grid is cleared). Pending for the next ZHBO_ABI_VERSION bump. */
+   not parse (the grid is cleared). ABI 30. */
 int32_t zhbo_terrain_load(const uint8_t *bytes, int32_t len, const char *const *names, const int32_t *surfaces, int32_t count);
 /* The loaded grid's ZHBO_SURF_* at a world point (ZHBO_SURF_DEFAULT with no map): the ground the
-   sim reads under the water table. Pending for the next ZHBO_ABI_VERSION bump. */
+   sim reads under the water table. ABI 30. */
 int32_t zhbo_terrain_surface_at(float x, float y);
 
-/* The multiplayer content fingerprint (content.rs; appended after ABI 29, pending the next bump):
+/* The multiplayer content fingerprint (content.rs; ABI 30):
    each part's hash and the total the lobbies compare. Parts, in order: Zero Hour's own INI CRC,
    the weapon table's sim fields, the class-pick vocabulary, the tuning pack, the class list, the
    ZHBO_LOADOUT/ZHBO_AUTOPILOT settings, the mod build. Presentation (localized text, DLC art and
@@ -646,6 +646,9 @@ int32_t zhbo_content_mismatch(const uint32_t *theirs, char *out, int32_t cap);
 /* Online (a staging room carries only the total): "Conquer Ops content <ours>, the game's <theirs>"
    (LAN:ZHBO_ContentVersus), UTF-8; length, or -1 before zhbo_content_crc. */
 int32_t zhbo_content_versus(uint32_t theirs, char *out, int32_t cap);
+/* The nearest the first-person hammer places a structure whose footprint has bounding radius
+   `radius` (building::place_near: PLACE_MIN, or PLACE_CLEAR clear of the footprint). ABI 30. */
+float zhbo_hammer_place_near(float radius);
 
 #ifdef __cplusplus
 }

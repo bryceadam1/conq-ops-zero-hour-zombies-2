@@ -13,7 +13,6 @@ pub const FIRE_PISTOL: &str = "ZHBO_BO2_FirePistol";
 
 pub const FIRE_LAUNCHER: &str = "ZHBO_BO2_FireLauncher";
 pub const EXPLOSION: &str = "ZHBO_BO2_Explosion";
-pub const PULL_PIN: &str = "ZHBO_BO2_PullPin";
 pub const THROW: &str = "ZHBO_BO2_Throw";
 pub const MELEE_SWING: &str = "ZHBO_BO2_MeleeSwing";
 /// Equipment planted, and the C4 detonator.
@@ -309,9 +308,12 @@ pub fn remote_offhand(def: &'static crate::weapons::WeaponDef) -> Option<&'stati
     some(def.npc_fire_sound.as_str())
 }
 
-/// The pull-back: the offhand's own (`pullbackSoundPlayer`), else the pin.
-pub fn pullback_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
-    some(def.pullback_sound.as_str()).unwrap_or(PULL_PIN)
+/// The pull-back: the offhand's own (`pullbackSoundPlayer`), else nothing. BO2 names one for
+/// three offhands only (the Semtex's charge, the Shock Charge's arm, the Sensor Grenade's twist);
+/// the frag and the rest play none, so there is no global stand-in (the converter could never
+/// build one: it came from the default lethal's own empty alias).
+pub fn pullback_for(def: &'static crate::weapons::WeaponDef) -> Option<&'static str> {
+    some(def.pullback_sound.as_str())
 }
 
 /// A melee swing with `def` in hand: its own swipe (`meleeSwipeSoundPlayer`), else the knife's.
@@ -593,7 +595,7 @@ mod tests {
     fn the_defs_own_events_replace_the_globals_when_present() {
         let leak = |d: crate::weapons::WeaponDef| -> &'static crate::weapons::WeaponDef { Box::leak(Box::new(d)) };
         let plain = leak(Default::default());
-        assert_eq!((launch_for(plain), throw_for(plain), pullback_for(plain), melee_swing_for(plain)), (FIRE_LAUNCHER, THROW, PULL_PIN, MELEE_SWING));
+        assert_eq!((launch_for(plain), throw_for(plain), pullback_for(plain), melee_swing_for(plain)), (FIRE_LAUNCHER, THROW, None, MELEE_SWING));
         assert_eq!(explosion_cues("", 0, crate::impacts::Surface::Dirt), [Some(EXPLOSION), None]);
         let strela = leak(crate::weapons::WeaponDef { fire_sound: "A".into(), fire_last_sound: "LAST".into(), ..Default::default() });
         assert_eq!(launch_for(strela), "A");
@@ -601,7 +603,7 @@ mod tests {
         assert_eq!(shot_for(strela, 1, "A"), "A");
         assert_eq!(shot_for(plain, 0, FIRE), FIRE);
         let semtex = leak(crate::weapons::WeaponDef { fire_sound: "T".into(), pullback_sound: "P".into(), melee_swipe_sound: "S".into(), ..Default::default() });
-        assert_eq!((throw_for(semtex), pullback_for(semtex), melee_swing_for(semtex)), ("T", "P", "S"));
+        assert_eq!((throw_for(semtex), pullback_for(semtex), melee_swing_for(semtex)), ("T", Some("P"), "S"));
         assert_eq!(explosion_cues("B", 0, crate::impacts::Surface::Dirt), [None, Some("B")], "no table cell: the def's own only");
         // Overridden to nothing, or to BO2's silent alias: no cue.
         assert_eq!(some(NO_SOUND), None);

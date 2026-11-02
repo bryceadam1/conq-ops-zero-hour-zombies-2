@@ -190,7 +190,9 @@ impl Client {
                     }
                 }
                 EventKind::OffhandReady { lethal } => {
-                    self.cues.play(held.map_or(sounds::PULL_PIN, |(_, _, _, l, t)| sounds::pullback_for(if lethal { l } else { t })))
+                    if let Some(cue) = held.and_then(|(_, _, _, l, t)| sounds::pullback_for(if lethal { l } else { t })) {
+                        self.cues.play(cue);
+                    }
                 }
                 EventKind::Thrown { lethal } => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
                 EventKind::Launched => self.cues.play(held.map_or(sounds::FIRE_LAUNCHER, |(def, ammo, ..)| sounds::shot_for(def, ammo, sounds::launch_for(def)))),

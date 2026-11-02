@@ -126,7 +126,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 29;
+pub const ABI_VERSION: u32 = 30;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -223,7 +223,7 @@ pub unsafe extern "C" fn zhbo_load_impacts(text: *const c_char) -> i32 {
 /// collection order, each name with its `ZHBO_SURF_*` (the bridge classifies `Terrain.ini`'s
 /// classes). Replaces the previous map's grid. Returns the grid's cell count, or -1 when the file
 /// does not parse (the grid is then cleared: every ground reads the default surface, the same on
-/// every machine). Pending for the next ABI bump (CONTRACT.md "Versioning").
+/// every machine). ABI 30.
 ///
 /// # Safety
 /// `bytes` must point at `len` readable bytes (or be null with `len` 0); `names` and `surfaces`
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn zhbo_terrain_load(bytes: *const u8, len: i32, names: *c
 
 /// The loaded map grid's surface at a world point (a `ZHBO_SURF_*`; the default surface with no
 /// map loaded): what the sim's ground query reads under the water table. The bridge's load-time
-/// cross-check against the client's terrain visual uses it. Pending for the next ABI bump.
+/// cross-check against the client's terrain visual uses it. ABI 30.
 #[no_mangle]
 pub extern "C" fn zhbo_terrain_surface_at(x: f32, y: f32) -> i32 {
     crate::terrain::surface_at(x, y) as i32
@@ -999,6 +999,14 @@ pub unsafe extern "C" fn zhbo_content_versus(theirs: u32, out: *mut c_char, cap:
     let text = crate::strings::text("LAN:ZHBO_ContentVersus").replacen("%s", &crate::content::short(c.total), 1).replacen("%s", &crate::content::short(theirs), 1);
     write_c_str(out, cap, &text);
     text.len() as i32
+}
+
+/// The nearest the first-person hammer places a structure whose footprint has bounding radius
+/// `radius` (`building::place_near`): the in-game harness lays its `--build` test out with it
+/// instead of copying the numbers. ABI 30.
+#[no_mangle]
+pub extern "C" fn zhbo_hammer_place_near(radius: f32) -> f32 {
+    crate::building::place_near(radius)
 }
 
 /// The first-person FXList names for the weapon on viewmodel `vm`: its muzzle flash (`viewFlashEffect`)

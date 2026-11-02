@@ -1207,46 +1207,36 @@ converted beside the crossbow, the
 per-optic reticle names and art, the patch-zone reference materials, the body's per-set W3D clips
 and INI); the native blob formats are unchanged.
 
-**Pending for the next bump** (mp-latency, no version change yet): `ZhboClientOut.input_seen_frame`
-(`uint32_t`, the sim frame on screen as the input was made) is appended after `select_object`:
-`ZhboClientOut` 4876 → 4880 bytes, asserted on both sides; the free function
-`zhbo_logic_fps_input(player, general, input, seen_frame)` is appended after `zhbo_logic_input`
-(which stays, for a message without the seventh argument). `MSG_ZHBO_FPS_INPUT` gains its seventh
-argument. The API tables do not change.
-
 **ABI 29** (no-classless-spawn's integration): `ZhboClientOut.select_object` (`uint32_t`, one-shot
 object to select overhead: the local General as he comes back alive from first person) is appended
 after `viewmodel_fired_left`: `ZhboClientOut` 4872 → 4876 bytes, asserted on both sides; nothing else
 moves. Archive `hud::VERSION` 83 at the same point (the weapon table's `UiText
 MP_CHANGE_CLASS_NEXT_SPAWN`, the mid-life class change's hint); the native blob formats are unchanged.
 
-**Pending for the next bump** (appended after ABI 29; `ZHBO_ABI_VERSION` is unchanged until the
-integrator bumps): the free function `zhbo_logic_crc(ZhboLogicCrc *out, int32_t log)` and the struct
-`ZhboLogicCrc` (`uint64_t hash, world, seats[16]; uint32_t frame, active`: 152 bytes, asserted on
-both sides) for host patch 0020 (the multiplayer CRC hook). No API-table field and no existing
-struct moves.
-
-**Pending for the next bump** (appended on `v1/mp-hardening`, no version moved): the free functions
+**ABI 30** (the multiplayer round's integration, one bump for every append since 29):
+`ZhboClientOut.input_seen_frame` (`uint32_t`, the sim frame on screen as the input was made) is
+appended after `select_object`: `ZhboClientOut` 4876 → 4880 bytes; `ZhboClientIn.spectating`
+(`int32_t`, after `class_button`) fills the struct's tail padding, so `ZhboClientIn` stays 136 bytes
+and the field's offset 132 is asserted on both sides; `ZhboClientApi.player_name(player, out, cap)`
+is appended after `sound_loop` (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 15 → 16). New free
+functions: `zhbo_logic_fps_input(player, general, input, seen_frame)` after `zhbo_logic_input` (which
+stays, for a `MSG_ZHBO_FPS_INPUT` without its new seventh argument, the seen frame);
+`zhbo_logic_crc(ZhboLogicCrc *out, int32_t log)` with the struct `ZhboLogicCrc` (`uint64_t hash,
+world, seats[16]; uint32_t frame, active`: 152 bytes) for host patch 0020 (the logic CRC hook);
 `zhbo_terrain_load(bytes, len, names, surfaces, count)` and `zhbo_terrain_surface_at(x, y)` (the
-map's ground surfaces, `zhbo_core::terrain`); `ZhboLogicApi.surface_at` keeps its slot and type but
-now answers the water table only (`ZHBO_SURF_WATER`, else `ZHBO_SURF_DEFAULT`), the core reading the
-ground from the grid (a non-default answer is still taken as it is, so an older bridge works). No
-struct size or field count changes.
-
-**Pending for the next bump** (appended after ABI 29 without a version change, per the round's
-rule): the free functions `zhbo_content_crc`, `zhbo_content_label`, `zhbo_content_mismatch` and
-`zhbo_content_versus`, and the struct `ZhboContentCrc` (`ZHBO_CONTENT_PARTS` 7 parts + the total,
-32 bytes, asserted on both sides). No existing struct or table moves. The weapon table gains the
-top-level `InstalledDlc` line (archive `hud::VERSION`), and the LAN messages gain `zhboContent`
-(host patch 0021; builds without it cannot join builds with it — the INI CRC differs anyway).
-
-**Pending for the next bump** (appended, `ZHBO_ABI_VERSION` and `hud::VERSION` left to the
-integrator): `ZhboClientIn.spectating` (`int32_t`, after `class_button`; it fills the struct's tail
-padding, so `ZhboClientIn` stays 136 bytes and the field's offset 132 is asserted on both sides);
-`ZhboClientApi.player_name(player, out, cap)` after `sound_loop` (`ZHBO_CLIENT_API_FIELDS` /
-`CLIENT_API_FIELDS` 15 → 16). The archive gains two converted HUD materials
-(`hud_shoutcasting_change_tab`, `hud_shoutcasting_viewing_box_dead`) and two `UiText` keys
-(`MPUI_SPECTATING`, `MPUI_FIRST_PERSON_VIEW`), so `hud::VERSION` must move too.
+map's ground surfaces, `zhbo_core::terrain`); `zhbo_content_crc`, `zhbo_content_label`,
+`zhbo_content_mismatch` and `zhbo_content_versus` with the struct `ZhboContentCrc`
+(`ZHBO_CONTENT_PARTS` 7 parts + the total, 32 bytes) for host patches 0018/0021 (the lobby content
+check); and `zhbo_hammer_place_near(radius)` (the hammer's nearest placement, `building::place_near`,
+which the autopilot's `--build` layout used to copy by hand). Meanings: `ZhboLogicApi.surface_at`
+keeps its slot and type but answers the water table only (`ZHBO_SURF_WATER`, else
+`ZHBO_SURF_DEFAULT`), the core reading the ground from the grid (a non-default answer is still taken
+as it is); the LAN `GameToJoin`/`GameNotJoined` messages gain `zhboContent` (host patch 0021; builds
+without it cannot join builds with it — the INI CRC differs anyway). Every struct size above is
+asserted on both sides. Archive `hud::VERSION` 84 at the same point (the weapon table's top-level
+`InstalledDlc` line and `CacSlot` now a sim field of the content fingerprint; the spectator HUD's two
+converted materials `hud_shoutcasting_change_tab` and `hud_shoutcasting_viewing_box_dead` and two
+`UiText` keys `MPUI_SPECTATING` and `MPUI_FIRST_PERSON_VIEW`); the native blob formats are unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

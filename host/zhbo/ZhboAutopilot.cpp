@@ -100,7 +100,7 @@ void buildTestStructureDone(Object *obj)
 		if (AIUpdateInterface *ai = general->getAIUpdateInterface())
 			ai->aiIdle(CMD_FROM_AI);
 		const ThingTemplate *what = obj->getTemplate();
-		const Real ahead = std::max(50.0f, what->getTemplateGeometryInfo().getBoundingCircleRadius() + 15.0f);
+		const Real ahead = zhbo_hammer_place_near(what->getTemplateGeometryInfo().getBoundingCircleRadius());
 		const UnsignedInt checks = BuildAssistant::TERRAIN_RESTRICTIONS | BuildAssistant::CLEAR_PATH
 			| BuildAssistant::NO_OBJECT_OVERLAP | BuildAssistant::SHROUD_REVEALED;
 		const Coord3D start = *general->getPosition();

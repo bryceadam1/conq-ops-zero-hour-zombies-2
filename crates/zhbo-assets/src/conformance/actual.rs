@@ -707,7 +707,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
                 let event = if d.empty_fire_sound.is_empty() { "ZHBO_BO2_DryFire" } else { d.empty_fire_sound.as_str() };
                 sh.sound(event)
             }
-            "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::pullback_for(d)),
+            "pullback_sound_player" if thrown => zhbo_core::sounds::pullback_for(d).and_then(|e| sh.sound(e)),
             // The def field only: the impact-type/surface sound BO2 plays first is the impact
             // table's (`impacts.txt`), not `projExplosionSound`.
             "projectile_explosion_sound" if explodes => own(&d.explode_sound),
