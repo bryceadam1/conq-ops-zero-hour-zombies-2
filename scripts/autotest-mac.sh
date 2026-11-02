@@ -43,7 +43,8 @@
 # needs no permissions. The input test posts real key and mouse events and needs Accessibility
 # permission for the app running this script (System Settings > Privacy & Security).
 #
-# Environment: ZHBO_ZH_DIR and ZHBO_BO2_DIR as for the launcher; OUT for the results folder.
+# Environment: ZHBO_ZH_DIR and ZHBO_BO2_DIR as for the launcher; OUT for the results folder; DIST
+# for a build other than the default dist (`cargo xtask build --dist`).
 set -euo pipefail
 
 mode=autopilot
@@ -59,7 +60,7 @@ mode=autopilot
 [[ "${1:-}" == "--replay" ]] && mode=replay
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-dist="$HOME/Library/Application Support/ConquerOps/dist"
+dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
 userdata="$HOME/Library/Application Support/Command and Conquer Generals Zero Hour Data"
 log="$userdata/ConquerOps.log"
 out="${OUT:-${TMPDIR:-/tmp}/ConquerOps-$mode}"

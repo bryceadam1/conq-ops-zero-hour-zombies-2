@@ -289,7 +289,7 @@ int32_t cbPlayerName(int32_t player, char *out, int32_t cap)
 	if (!out || cap <= 0)
 		return 0;
 	out[0] = 0;
-	const Player *p = ThePlayerList ? ThePlayerList->getNthPlayer(player) : nullptr;
+	Player *p = ThePlayerList ? ThePlayerList->getNthPlayer(player) : nullptr;
 	if (!p)
 		return 0;
 	AsciiString name;
