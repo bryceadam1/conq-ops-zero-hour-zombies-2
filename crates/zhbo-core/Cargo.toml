@@ -21,6 +21,10 @@ autopilot = []
 zhbo-requirements = { path = "../zhbo-requirements" }
 zhbo-native = { path = "../zhbo-native" }
 zhbo-gfx = { path = "../zhbo-gfx", optional = true }
+# The sim's transcendental functions (`math::det`): a pure-Rust port of musl's libm, so every
+# platform's lockstep peers compute the same bits (the platform libm differs across macOS, Windows
+# and Linux, and across CPU feature paths).
+libm = "0.2"
 
 [[example]]
 # The headless viewmodel sweep (docs/TESTING.md): it draws through the wgpu renderer.

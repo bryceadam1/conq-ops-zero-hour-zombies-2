@@ -323,7 +323,7 @@ impl PlayerSim {
         let left = dir_from_angles(self.yaw + std::f32::consts::FRAC_PI_2, 0.0);
         let up = dir_from_angles(self.yaw, self.pitch + std::f32::consts::FRAC_PI_2);
         let w = f * local.x + left * local.y + up * local.z;
-        (w.y.atan2(w.x), w.z.clamp(-1.0, 1.0).asin())
+        (crate::math::det::atan2(w.y, w.x), crate::math::det::asin(w.z.clamp(-1.0, 1.0)))
     }
 
     /// Each held weapon paired with the class camo it wears (`_class.gsc:585-682`): the primary
@@ -696,7 +696,7 @@ impl Sim {
                     }
                 }
                 Outcome::Landed { at, stuck_to } => {
-                    let yaw = proj.vel.y.atan2(proj.vel.x);
+                    let yaw = crate::math::det::atan2(proj.vel.y, proj.vel.x);
                     let p = Placed::new(proj.def, *owner, proj.owner, proj.object, at, yaw, stuck_to);
                     self.emit(*owner, EventKind::Planted { kind: p.kind });
                     self.equipment.add(p);

@@ -66,6 +66,15 @@ replicated messages alone. The rules, and what enforces each:
   512 cap and evicts from the front), and the tracers are drawn per viewer. A sim decision taken
   from either diverges between peers; `hasdonecombat` comes from the emit itself
   (`Sim::combat_seen`), not from an index window into the events.
+* **Bit-identical floats on every platform.** `+ - * /` and `sqrt` are IEEE-exact, and neither
+  Rust nor the engine (`-ffp-contract=off`, MSVC `/fp:precise`) fuses a multiply and an add. The
+  transcendental functions are the gap: `f32::sin` and its kin call the platform C library, whose
+  last-place results differ across macOS, Windows (whose UCRT picks code paths by CPU feature) and
+  Linux. The engine routes its own through TheSuperHackers' GameMath (`USE_DETERMINISTIC_MATH`);
+  the core routes the sim's through `math::det` (musl's libm, ported to Rust). The
+  `the_sim_calls_no_platform_libm` test fails on any `f32` transcendental call in a sim-reachable
+  file (everything except the client, HUD, class screens, LUI, renderer passes, conformance oracle,
+  sounds and the C ABI module).
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
   player records, chosen classes, projectiles, equipment, smokes, deployed shields, the frame) and
   leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)

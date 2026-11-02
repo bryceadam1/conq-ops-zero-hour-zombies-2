@@ -449,7 +449,7 @@ impl Motion {
             self.land = 1.0;
         }
         self.airborne = !p.body.on_ground;
-        self.land *= (-dt * LAND_RECOVER).exp();
+        self.land *= crate::math::det::exp(-dt * LAND_RECOVER);
 
         if let Some(impulse) = shot {
             self.gun.spring.kick(impulse);

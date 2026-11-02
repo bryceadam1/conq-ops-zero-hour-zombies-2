@@ -265,7 +265,7 @@ pub fn screen(d: &ShockDef, left: f32) -> Screen {
 
 /// The flashed layers' fade curve (`FUN_00510560`): `(sin((x − 0.5)·π) + 1) / 2`, 0 at 0 and 1 at 1.
 pub fn ease(x: f32) -> f32 {
-    ((x - 0.5) * std::f32::consts::PI).sin() * 0.5 + 0.5
+    crate::math::det::sin((x - 0.5) * std::f32::consts::PI) * 0.5 + 0.5
 }
 
 /// How much of the saved screen a blurred shock lays over this frame's (the `shellshock`
@@ -276,7 +276,7 @@ pub fn blur_alpha(blur: f32, dt: f32) -> f32 {
     if blur <= 0.0 || !blur.is_finite() || !dt.is_finite() {
         return 0.0;
     }
-    (-dt.max(0.0) / blur).exp()
+    crate::math::det::exp(-dt.max(0.0) / blur)
 }
 
 /// The view kick's noise: 128 points per axis, BO2's layout (`FUN_00510b00` reads a 128-entry table
@@ -325,7 +325,7 @@ pub fn kick(d: &ShockDef, duration: f32, elapsed: f32, fade: f32) -> (f32, f32) 
     let base = (dur_ms.wrapping_mul(61).wrapping_add(i as i32) & 127) as usize;
     let axis = |k: usize| cubic(std::array::from_fn(|j| noise(base + j)[k]), frac) * amp;
     let (kx, ky) = (axis(0), axis(1));
-    (kx.atan(), ky.atan2((1.0 + kx * kx).sqrt()))
+    (crate::math::det::atan(kx), crate::math::det::atan2(ky, (1.0 + kx * kx).sqrt()))
 }
 
 /// The AudioEvent a shock's loop alias is converted to (`zhbo_assets::sfx`, looping).

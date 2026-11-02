@@ -206,7 +206,7 @@ pub fn spread_range(def: &WeaponDef, view_height: f32, accuracy: bool, t: &Tunin
         let f = ((view_height - t.view_height_crouch) / (t.player_standing_view_height - t.view_height_crouch).max(1e-3)).clamp(0.0, 1.0);
         lerp(ducked, stand, f)
     };
-    let stack = if def.fire == FireMode::Stacked && def.clip > 1 { def.traits.stack_fire.1.powi(def.clip as i32 - 1) } else { 1.0 };
+    let stack = if def.fire == FireMode::Stacked && def.clip > 1 { crate::math::det::powi(def.traits.stack_fire.1, def.clip as i32 - 1) } else { 1.0 };
     let m = stack * if accuracy { t.perk_weap_spread_multiplier } else { 1.0 };
     (min * m, max * m)
 }

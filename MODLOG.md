@@ -10203,3 +10203,43 @@ With the old code the gate fails at frame 1805 (round 4, the first shot after th
 **Gotcha.** The state hash runs over `Debug`, so it costs a few hundred µs per frame. That is fine
 for the tests and for a Zero Hour CRC interval, but not for every frame of a real game. f32's
 `Debug` is the shortest round-trip form, so `-0.0` and `0.0` hash differently.
+
+## Multiplayer audit: the sim's transcendental functions go through `libm` (2026-11-01, branch `v1/mp-audit`)
+
+The engine is built to be bit-identical across architectures. `USE_DETERMINISTIC_MATH` routes
+its trig and exp through TheSuperHackers' GameMath, and it compiles with `-ffp-contract=off` /
+`/fp:precise`. The core's sim did not match that. About twenty sim-reachable sites called
+`f32::sin`/`cos`/`sin_cos`/`atan`/`atan2`/`asin`/`exp`/`powi`, and those call the platform C
+library: Apple's libm, the Windows UCRT (which picks FMA3 paths by CPU), glibc. Their last-place
+results differ.
+
+Affected sites:
+* `math::dir_from_angles` and `basis_xy`: every shot, every move.
+* The movement and hitscan box rotations.
+* The shield arcs.
+* The projectile and planted yaws.
+* The thrown-velocity angle and the spread cone.
+* The deployed shield's slope.
+* The idle sway, the gun pose and the viewmodel motion the server keeps for aimed shots.
+* The stacked-fire `powi`.
+
+Any of them could desync a Mac and a PC, or two PCs with different CPUs, a few ulps at a time.
+Lockstep amplifies that into a divergence.
+
+**Fix.** `math::det` wraps the `libm` crate, a pure-Rust port of musl that was already in the
+lock file through wgpu, so no new download. Every sim-reachable site calls it now.
+`the_sim_calls_no_platform_libm` scans the core's sources: any `f32` transcendental call outside
+the presentation modules fails the build's tests, with the file and line. Presentation code (the
+client's camera, the HUD, the class screens, LUI, the renderer passes, the conformance oracle)
+still uses std, because it differs per machine by design.
+
+`det` agrees with the platform libm to the ulp scale (`det_matches_the_platform_libm_to_the_ulp_scale`).
+The existing fake-host tests all pass unchanged. That is expected: they compare within
+tolerances, or compare runs against each other.
+
+**Gotcha.** `f32::powi` is not a libm call but an LLVM builtin, and its expansion (repeated
+squaring, or `__powisf2`) is the backend's choice. `det::powi` is `libm::powf(x, n as f32)`.
+
+**Out of scope.** Zero Hour still refuses a cross-build join: the exe CRC covers the binary. A
+Mac ↔ PC match is therefore not possible yet anyway. This change makes it possible later, and it
+removes the cross-CPU risk for same-binary Windows games today.
