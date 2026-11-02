@@ -5,7 +5,8 @@
 ** beneath is inert, and its draw callback runs the Rust core's menu frame, which draws through
 ** the stored ZhboClientApi callbacks (valid during a draw, as with the stock menus) and plays its
 ** sounds through the stored sound callback (TheAudio works in the shell). The profile one-shot
-** writes the file through the same zhbo_profile_write path the in-game screen uses.
+** writes the file through the same zhbo_profile_write path the in-game screen uses. The lobbies'
+** Create a Class button (Skirmish, LAN and online game setup: host patch 0018) is built here too.
 **
 ** This program is free software: you can redistribute it and/or modify it under the terms of the
 ** GNU General Public License as published by the Free Software Foundation, either version 3 of the
@@ -161,4 +162,104 @@ void Zhbo_MenuFrame()
 	evictTexts();
 	if (out.closed)
 		Zhbo_CloseClassMenu();
+}
+
+// ------------------------------------------------------------------------------------------------
+// The lobbies' Create a Class button
+// ------------------------------------------------------------------------------------------------
+
+NameKeyType Zhbo_CreateClassButtonID(const char *wnd)
+{
+	AsciiString name;
+	name.format("%s:ButtonCreateClass", wnd);
+	return TheNameKeyGenerator->nameToKey(name);
+}
+
+GameWindow *Zhbo_EnsureCreateClassButton(GameWindow *menuParent, const char *wnd, const char *panelName, const char *titleLineName, GameWindow *startButton)
+{
+	if (menuParent == nullptr || TheWindowManager == nullptr)
+		return nullptr;
+	// The layout's windows are destroyed when the shell pops the menu, so a cached pointer is stale
+	// on a later visit: look the button up on this layout (a shipped .wnd element with the id would
+	// win too) and build it only when it is missing. Idempotent within one layout.
+	const NameKeyType id = Zhbo_CreateClassButtonID(wnd);
+	if (GameWindow *have = TheWindowManager->winGetWindowFromId(menuParent, id))
+		return have;
+	const auto find = [&](const char *child) -> GameWindow *
+	{
+		if (child == nullptr)
+			return nullptr;
+		AsciiString name;
+		name.format("%s:%s", wnd, child);
+		return TheWindowManager->winGetWindowFromId(menuParent, TheNameKeyGenerator->nameToKey(name));
+	};
+
+	// Same size and font as the menu's Start button, so it reads as one of the shell's own.
+	Int w = 174, h = 36;
+	GameFont *font = nullptr;
+	if (startButton)
+	{
+		startButton->winGetSize(&w, &h);
+		font = startButton->winGetFont();
+	}
+	if (font == nullptr)
+		font = TheWindowManager->winFindFont("Times New Roman", 14, FALSE);
+
+	// The empty top-right corner of the menu's panel, in its title row: every game setup menu has
+	// the same panel-and-title-line layout (SubParent / GadgetParent / FadeParent over the line
+	// under the title). The button fits between the panel's top and that line, so a menu whose
+	// title row is shorter than the Start button (online: 38 px) gets a shorter button. Without the
+	// panel, the menu's lower right. gogoGadgetPushButton takes parent-relative coordinates.
+	Int px = 0, py = 0, pw = 0, ph = 0;
+	menuParent->winGetScreenPosition(&px, &py);
+	menuParent->winGetSize(&pw, &ph);
+	Int x = pw - w - 20, y = ph - h - 20;
+	if (GameWindow *panel = find(panelName))
+	{
+		Int rx = 0, ry = 0, rw = 0, rh = 0;
+		panel->winGetScreenPosition(&rx, &ry);
+		panel->winGetSize(&rw, &rh);
+		x = rx - px + rw - w - 4;
+		y = ry - py + 4;
+		if (GameWindow *line = find(titleLineName))
+		{
+			Int lx = 0, ly = 0;
+			line->winGetScreenPosition(&lx, &ly);
+			const Int room = ly - ry - 4 - 2;
+			if (room > 12 && room < h)
+				h = room;
+		}
+	}
+
+	WinInstanceData instData;
+	instData.init();
+	BitSet(instData.m_style, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK);
+	// The plain draw path, not WIN_STATUS_IMAGE: the image path paints only the gadget's images,
+	// and assignDefaultGadgetLook assigns none here (the retail shell uses its own Buttons-* images).
+	GameWindow *button = TheWindowManager->gogoGadgetPushButton(menuParent,
+		WIN_STATUS_ENABLED | WIN_STATUS_NO_FOCUS, x, y, w, h, &instData, font, FALSE);
+	if (button == nullptr)
+		return nullptr;
+	// Set the text and its colours directly: assignDefaultGadgetLook skips them when defaultVisual
+	// is FALSE, and an undefined colour has zero alpha (an invisible button). The text colours are
+	// the Start button's; the fill is the menu panel's dark style.
+	GadgetButtonSetText(button, UnicodeString(L"Create a Class"));
+	button->winSetEnabledTextColors(TheWindowManager->winMakeColor(255, 255, 255, 255),
+		TheWindowManager->winMakeColor(0, 0, 0, 255));
+	button->winSetDisabledTextColors(TheWindowManager->winMakeColor(62, 64, 92, 255),
+		TheWindowManager->winMakeColor(31, 32, 47, 255));
+	button->winSetHiliteTextColors(TheWindowManager->winMakeColor(186, 255, 12, 255),
+		TheWindowManager->winMakeColor(0, 2, 0, 255));
+	GadgetButtonSetEnabledColor(button, TheWindowManager->winMakeColor(2, 2, 2, 220));
+	GadgetButtonSetEnabledBorderColor(button, TheWindowManager->winMakeColor(47, 55, 168, 255));
+	GadgetButtonSetHiliteColor(button, TheWindowManager->winMakeColor(24, 32, 60, 235));
+	GadgetButtonSetHiliteBorderColor(button, TheWindowManager->winMakeColor(186, 255, 12, 255));
+	GadgetButtonSetDisabledColor(button, TheWindowManager->winMakeColor(16, 16, 20, 220));
+	GadgetButtonSetDisabledBorderColor(button, TheWindowManager->winMakeColor(64, 64, 80, 255));
+	button->winSetTooltip(UnicodeString(L"Browse, edit and manage your custom classes"));
+	// The id a .wnd element would have, so the menu's system handler routes its clicks through
+	// the same comparison.
+	button->winSetWindowId(id);
+	logf("create-a-class: lobby button added to %s", wnd);
+	return button;
 }

@@ -23,6 +23,7 @@
 #include "Common/AudioEventRTS.h"
 #include "Common/ActionManager.h"
 #include "Common/BuildAssistant.h"
+#include "Common/crc.h"
 #include "Common/File.h"
 #include "Common/FileSystem.h"
 #include "Common/AudioHandleSpecialValues.h"
@@ -259,6 +260,38 @@ void releaseClientState()
 	memset(&s_out, 0, sizeof(s_out));
 }
 
+// Multiplayer: every peer's sim must run on the same data, but each player converted the weapon
+// table, and keeps the tuning pack and the classes, on his own machine; the engine's INI CRC
+// (GameEngine::init, computed before Zhbo_Init) covers only the INI files the engine itself loads
+// (the converted archive's Object/Weapon/FXList INIs among them), not these. Fold the exact texts
+// the core was handed, and the sim inputs the environment can set (ZHBO_LOADOUT changes the base
+// kit, ZHBO_AUTOPILOT spawns and picks inside the logic step), into m_iniCRC: the lobbies compare
+// it (online staging rooms refuse a mismatch; LAN does since host patch 0018), and replays record
+// and check it, so different content fails in the lobby instead of desyncing mid-match.
+static void foldModContentIntoIniCrc(const std::string &table, const std::string &tuning, const std::string &classes)
+{
+	CRC crc;
+	const UnsignedInt engine = TheGlobalData->m_iniCRC;
+	crc.computeCRC(&engine, sizeof(engine));
+	const auto add = [&crc](const char *text)
+	{
+		// Length-prefixed, so moving bytes from one part to the next changes the CRC.
+		const UnsignedInt n = text ? (UnsignedInt)strlen(text) : 0u;
+		crc.computeCRC(&n, sizeof(n));
+		if (n > 0)
+			crc.computeCRC(text, (Int)n);
+	};
+	add(table.c_str());
+	add(tuning.c_str());
+	add(classes.c_str());
+	add(getenv("ZHBO_LOADOUT"));
+	add(getenv("ZHBO_AUTOPILOT"));
+	const UnsignedInt mod = crc.get();
+	TheWritableGlobalData->m_iniCRC = mod;
+	logf("multiplayer: content CRC %08X (engine INI %08X + weapon table %u, tuning %u, classes %u bytes)",
+		(unsigned)mod, (unsigned)engine, (unsigned)table.size(), (unsigned)tuning.size(), (unsigned)classes.size());
+}
+
 // ------------------------------------------------------------------------------------------------
 // Public entry points
 // ------------------------------------------------------------------------------------------------
@@ -356,8 +389,11 @@ void Zhbo_Init()
 		logLine("weapons: no converted BO2 weapon table; using the built-in one");
 	}
 	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
-	zhbo_load_tuning(readTextFile(zhbo_names::TUNING_PATH).c_str());
-	zhbo_load_classes(readTextFile(zhbo_names::CLASSES_PATH).c_str());
+	const std::string tuning = readTextFile(zhbo_names::TUNING_PATH);
+	zhbo_load_tuning(tuning.c_str());
+	const std::string classes = readTextFile(zhbo_names::CLASSES_PATH);
+	zhbo_load_classes(classes.c_str());
+	foldModContentIntoIniCrc(table, tuning, classes);
 	// BO2's impact table (R8d): the FXLists the converted archive carries for each bucket and
 	// surface. Without it (or without the archive) no impact FX plays; the sound still does.
 	const std::string impacts = readTextFile(zhbo_names::IMPACT_FX_PATH);

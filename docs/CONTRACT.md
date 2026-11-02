@@ -79,6 +79,15 @@ replicated messages alone. The rules, and what enforces each:
   step: a network game hands a leaving player's assets to a living ally (`onSelfDestruct` with
   `transferAssets`), and the leaver's record then lets go of the General (back to RTS control, AI
   on) instead of driving him with the last input it received.
+* **The same content on every machine, checked in the lobby.** Each player converts the weapon
+  table (and keeps the tuning pack and the classes) on his own machine, and a different install (a
+  DLC, a patch level, another converter version, `ZHBO_LOADOUT`) makes a different sim. The
+  engine's INI CRC covers only what the engine loads (the converted archive's INIs among them), so
+  `Zhbo_Init` folds the texts the core was handed — the weapon table, the tuning pack, the classes —
+  and the sim inputs the environment sets (`ZHBO_LOADOUT`, `ZHBO_AUTOPILOT`) into `m_iniCRC`
+  (`ConquerOps.log`: `multiplayer: content CRC …`). Online staging rooms already refuse a mismatched
+  INI CRC; host patch 0018 makes Zero Hour's LAN join check it too (the exe CRC stays unchecked
+  there, as in stock Zero Hour), and replays record it in their header.
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
   player records, chosen classes, projectiles, equipment, smokes, deployed shields, the frame) and
   leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)
@@ -91,8 +100,11 @@ replicated messages alone. The rules, and what enforces each:
 
 ## The shell menu ABI (the lobby's create-a-class)
 
-The lobby's Create a Class button opens the class screens *in the shell* (BO2's lobby create-a-class:
-edit/manage classes outside a match). The window is the engine's — a full-screen modal window built
+The lobbies' Create a Class button opens the class screens *in the shell* (BO2's lobby
+create-a-class: edit/manage classes outside a match). Every game setup menu has it — Skirmish, LAN
+and online (GameSpy) — built in code by the bridge (`Zhbo_EnsureCreateClassButton`, host patch 0018;
+no `.wnd` is shipped) in the empty top-right corner of the menu's panel, fitted above its title
+line. The window is the engine's — a full-screen modal window built
 in code by the bridge (`host/zhbo/ZhboMenu.cpp`, on the engine's own modal-dialog pattern; host patch
 0015 retargets the button to it) — and the screen is the same `classui` screens the in-game `Client`
 hosts, driven by a small `MenuState` (`crates/zhbo-core/src/menu.rs`) with no `Sim` and no match.

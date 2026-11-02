@@ -10259,3 +10259,49 @@ first-person one goes back to RTS control first, so his AI resumes. The new owne
 him over on its next RTS report or take-control. Test:
 `a_general_handed_to_an_ally_leaves_the_leavers_seat`. The rule is in CONTRACT.md, "Multiplayer
 (lockstep)".
+
+## Multiplayer audit: Create a Class in the LAN and online lobbies; mismatched content is refused in the lobby (2026-11-01, branch `v1/mp-audit`)
+
+**Lobby button.** Patch 0014 built the Skirmish lobby's button inline in
+`SkirmishGameOptionsMenu.cpp`. That code now lives in the bridge as
+`Zhbo_EnsureCreateClassButton` (`ZhboMenu.cpp`), and host patch 0018 calls it from all three game
+setup menus: Skirmish, LAN (`LanGameOptionsMenu.wnd`) and online (`GameSpyGameOptionsMenu.wnd`).
+I read the three retail layouts from the player's own `WindowZH.big`. They share one shape: a
+panel (`SubParent` / `GadgetParent` / `FadeParent`) with a title line under its top edge
+(`Line` / `LINE` at y 83 / 93 / 80 of 600), and the panel's top-right corner is empty in all
+three. No window overlaps the button's rect there.
+
+The online title row is only 38 px tall, shorter than the 36 px Start button plus margins, so the
+helper fits the button's height between the panel top and the line. For Skirmish nothing
+changes: there is room for the full 36 px.
+
+The classes stay the player's own (his profile). Only the pick goes over the wire, as before.
+`Zhbo_Reset` closes the shell screen when the host starts the match.
+
+**Content check.** Every player converts the 61 MB weapon table from his own Black Ops II and
+keeps his own tuning pack and classes. A DLC, a patch level, a converter version or
+`ZHBO_LOADOUT` changes the sim. The engine's INI CRC is computed in `GameEngine::init` before
+`Zhbo_Init`, and it covers only the INIs the engine loads: the converted archive's Object, Weapon
+and FXList files are included, the core's tables are not.
+
+`Zhbo_Init` now folds the exact texts handed to the core, length-prefixed, plus `ZHBO_LOADOUT`
+and `ZHBO_AUTOPILOT`, into `m_iniCRC`, and logs `multiplayer: content CRC …`. That gives each
+check:
+* **Online:** staging rooms already refuse a mismatched INI CRC (`JoinFailedCRCMismatch`).
+* **LAN:** Zero Hour builds skip the LAN CRC check entirely (`#if !RTS_ZEROHOUR`, "@todo Enable
+  CRC checks!"). Patch 0018 checks the INI CRC there too. The exe CRC stays unchecked, so builds
+  of the same source on different platforms can still join each other.
+* **Replays:** they record the INI CRC in their header and warn on mismatch.
+
+**Gotcha.** `ZHBO_AUTOPILOT` is in the content CRC, so an autotest instance and a normal one
+have different CRCs (1AE22359 vs 11AE215C in the two legs here) and cannot join each other.
+That is intended: the autopilot spawns and picks inside the logic step.
+
+**Verified.**
+* `cargo xtask build` into a private work dir: clean, no new warnings in the touched files.
+* `autotest-mac.sh` default leg 16/16 on this build.
+* `--build` leg: its overhead half passes. The first-person half fails identically on main's
+  dist (see the audit report, "found elsewhere").
+
+**Not verified.** No one has clicked the LAN or online buttons in game yet (the autotests load a
+save game and never visit a lobby).

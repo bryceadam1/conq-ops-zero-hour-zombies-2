@@ -136,6 +136,9 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite
    the profile file.
 6. **Escape** on the list closes back to the skirmish lobby (and the lobby's Escape works again).
+   The LAN lobby (**Network → LAN → Create Game**) and the online game setup screen carry the same
+   button in the same corner (`create-a-class: lobby button added to LanGameOptionsMenu.wnd` /
+   `GameSpyGameOptionsMenu.wnd` in `ConquerOps.log`), opening the same screen.
 7. Start a match: the saved class appears on the in-game pick screen (the set's five custom
    slots, then the default classes), which is **pick-only** (no editor, no delete/copy, untouched
    slots are inert — BO2 creates classes only in the lobby); the
@@ -325,6 +328,26 @@ input path. `ZHBO_AUTOPILOT=manual` sets up the scene without scripted input, an
 Scripting real keys: `hold <VK> <ms>` needs a hex VK code (`hold 0x57 2500` for W); on SDL,
 `scanmode on` switches `hold`/`press` to scan codes. macOS holds keys by code with
 `osascript key code`, or `cliclick` for the mouse.
+
+## Multiplayer in game (two instances; not yet runnable on one Mac)
+
+The headless gate (`cargo test -p zhbo-core lockstep`, the Layers table) is the multiplayer check
+today. A real two-instance LAN match needs, on this engine build:
+
+* **A second instance.** A playable run takes the single-instance lock (`rts::ClientInstance`;
+  the second one bails with "Generals is already running"). Multi-instance is on for `-headless`
+  runs, for `RTS_MULTI_INSTANCE` (the debug presets' `config-debug.cmake`) and for
+  `-autoNetworkMode direct` (`NetworkAutoStart`, `RTS_DEBUG` builds only: it hosts or joins a LAN
+  game by itself with `-autoNetworkHost <n>` / `-autoNetworkJoin <ip>`, `-autoNetworkMap`). The
+  macOS presets build release only, so a debug macOS preset is the first step.
+* **An address per instance.** Each extra instance enumerates `127.0.0.<id>`
+  (`IPEnumeration.cpp`). Linux routes all of 127/8; macOS only has 127.0.0.1 until
+  `sudo ifconfig lo0 alias 127.0.0.2 up` (once per boot).
+* **Then:** two instances on one map, each taking control of its General, with the same
+  `ConquerOps.log` `multiplayer: content CRC` line, and Zero Hour's own CRC check (`MSG_LOGIC_CRC`
+  every `CRCInterval` frames) never reporting a mismatch. Two machines (or the Windows VM and the
+  Mac) work today without any of the above, if both run the same build: Zero Hour's online lobby
+  compares the exe CRC.
 
 ## macOS test notes
 

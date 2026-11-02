@@ -15,6 +15,8 @@ class AsciiString;
 class CommandButton;
 class GameMessage;
 class GameMessageTranslator;
+class GameWindow;
+enum NameKeyType CPP_11(: Int); // Common/STLTypedefs.h
 class Object;
 class DamageInfo;
 
@@ -69,6 +71,15 @@ void Zhbo_OpenClassMenu();
 void Zhbo_CloseClassMenu();
 /// Whether the shell class screen is up.
 Bool Zhbo_ClassMenuOpen();
+/// The game setup menus' Create a Class button (patch 0018: the Skirmish, LAN and online
+/// lobbies; a click calls Zhbo_OpenClassMenu). Its window id in menu `wnd`
+/// ("LanGameOptionsMenu.wnd"): `<wnd>:ButtonCreateClass`, the id a shipped element would carry.
+NameKeyType Zhbo_CreateClassButtonID(const char *wnd);
+/// Find or build the button on `menuParent`'s layout (the mod ships no .wnd): the Start button's
+/// size and font, in the top-right corner of the panel `panelName`, fitted above the title line
+/// `titleLineName` (both child names in `wnd`; null when the menu has none). Call it from the
+/// menu's Init on every visit: the layout's windows die with the menu.
+GameWindow *Zhbo_EnsureCreateClassButton(GameWindow *menuParent, const char *wnd, const char *panelName, const char *titleLineName, GameWindow *startButton);
 /// One menu frame: fills ZhboMenuIn, calls zhbo_menu_frame, writes the profile one-shot, closes
 /// on request. Called by the shell window's draw callback (ZhboMenu.cpp).
 void Zhbo_MenuFrame();
