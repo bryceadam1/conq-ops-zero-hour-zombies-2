@@ -495,9 +495,9 @@ pub unsafe extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, inde
         use crate::host::LogicHost;
         // The engine dispatches messages before `zhbo_logic_step`, so `log_step`'s snapshot
         // already contains the event; log the pick here (the user-facing "assumed the ... class").
-        let before = s.sim.events.len();
+        let before = s.sim.emitted;
         s.sim.choose_class(player, general, index, payload);
-        for e in s.sim.events.iter().skip(before) {
+        for e in s.sim.events.iter().skip(s.sim.first_event_since(before)) {
             if let Some(line) = crate::sim::describe_event(e) {
                 s.logic.log(&line);
             }
@@ -508,7 +508,7 @@ pub unsafe extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, inde
 #[no_mangle]
 pub extern "C" fn zhbo_logic_step(frame: u32) {
     with_state(|s| {
-        let before = s.sim.events.len();
+        let before = s.sim.emitted;
         drain_shield_hits(s);
         s.sim.step(&s.logic, frame);
         // The step's tracer bullets, as this machine's viewer sees them (client-only FX).
@@ -516,7 +516,7 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
-        log_step(s, before, frame);
+        log_step(s, s.sim.first_event_since(before), frame);
     });
 }
 
@@ -596,9 +596,9 @@ pub unsafe extern "C" fn zhbo_logic_rts_update(
     let target = (!target.is_null()).then(|| *target);
     // His orders' throws, plants and knife strikes happen here, before the logic step: log them too.
     let r = with_state(|s| {
-        let before = s.sim.events.len();
+        let before = s.sim.emitted;
         let r = s.sim.rts_update(&s.logic, player, general, current_slot, shots, target);
-        log_events(s, before);
+        log_events(s, s.sim.first_event_since(before));
         r
     })
     .unwrap_or_default();

@@ -22,6 +22,12 @@ mod plant;
 mod rts;
 mod spawn;
 mod lockstep;
+/// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
+/// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
+#[cfg(any(test, feature = "harness"))]
+pub mod fakehost;
+#[cfg(any(test, feature = "harness"))]
+pub mod harness;
 #[cfg(test)]
 mod hit_tests;
 #[cfg(test)]
@@ -486,6 +492,9 @@ pub struct Sim {
     /// replay never does, and the buffer's cap then evicts the newest step's own events from an
     /// index window), so a sim decision taken from them diverged between peers.
     combat_seen: u32,
+    /// Every event ever emitted (presentation bookkeeping, not hashed): the log tells a step's
+    /// new events by it, since at the [`MAX_EVENTS`] cap the buffer's length no longer moves.
+    pub emitted: u64,
 }
 
 impl Default for Sim {
@@ -512,6 +521,7 @@ impl Sim {
             shields: Vec::new(),
             deployed: Vec::new(),
             combat_seen: 0,
+            emitted: 0,
         }
     }
 
@@ -556,10 +566,18 @@ impl Sim {
             self.events.remove(0);
         }
         self.events.push(Event { player: player as i32, kind });
+        self.emitted += 1;
     }
 
     pub fn player(&self, player: i32) -> Option<&PlayerSim> {
         self.players.get(usize::try_from(player).ok()?)?.as_ref()
+    }
+
+    /// Where the events emitted since `emitted` was `since` start in [`Sim::events`] (at the cap
+    /// the oldest went from the front, so a buffer's length cannot tell).
+    pub fn first_event_since(&self, since: u64) -> usize {
+        let new = usize::try_from(self.emitted.saturating_sub(since)).unwrap_or(usize::MAX);
+        self.events.len().saturating_sub(new)
     }
 
     /// Ids of Generals currently driven by first-person input (their AI and physics are suspended).

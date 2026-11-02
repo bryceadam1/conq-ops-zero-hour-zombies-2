@@ -14,6 +14,7 @@ pub mod xf;
 pub mod character;
 pub mod generals;
 pub mod impacts;
+mod lockstep_gate;
 pub mod ini;
 pub mod emblems;
 pub mod paks;

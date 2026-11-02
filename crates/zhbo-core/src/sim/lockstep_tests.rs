@@ -1,182 +1,12 @@
-//! The multiplayer determinism gate: the peers of one lockstep match, each with its own engine
-//! world (a [`FakeHost`]), its own [`Sim`] and its own [`Client`] for its own local player, fed
-//! the same replicated command stream with Zero Hour's run-ahead. Each player's machine renders at
-//! its own cadence and does its own presentation (its client drains `Sim::events`, plays the
-//! tracers for its own viewer, keeps its own camera, look and HUD). Every logic frame the two sims
-//! must agree on [`Sim::state_hash`] and on everything they told the engine.
-//!
-//! The match: two human players, each with a General, against each other and a squad of enemy
-//! soldiers, over rounds that cycle every slot weapon of the catalog through a custom class sent
-//! as its wire words (the profile is the sender's alone: only the words travel), with the presets
-//! picked by index, fire, aim, reload, sprint, both offhands, melee, the alt mode, the weapon
-//! swap, stances, a mid-life class change after combat (the class waits for the next spawn), the
-//! field computer and the overhead General's RTS report, and a death and a fresh General every
-//! round (the chosen class comes in with him).
+//! The multiplayer determinism gate on the built-in catalog: the harness's match
+//! ([`super::harness`]: the peers, the replicated command stream with Zero Hour's run-ahead, each
+//! machine's own render cadence and presentation, a machine that never renders) over rounds that
+//! cycle every slot weapon of the catalog through a custom class sent as its wire words. The
+//! full-roster gate over a real install is `zhbo-assets`' (`the_install_roster_plays_in_lockstep`).
+use super::harness::{capped, play, script, Cmd, Match, Net, Peer, MIDLIFE_PICK, ROUND};
 use super::tests::{general, soldier, FakeHost};
 use super::*;
 use crate::classes::CustomClass;
-use crate::client::{Bindings, Client, ClientIn};
-use crate::input::{Key, KeySet};
-use std::collections::BTreeMap;
-
-/// Zero Hour's minimum run-ahead (`MIN_RUNAHEAD`): a command sent on logic frame `f` executes
-/// on frame `f + RUNAHEAD` on every peer.
-const RUNAHEAD: u32 = 4;
-/// Logic frames per round.
-const ROUND: u32 = 420;
-
-/// One replicated `GameMessage` the mod sends, as the logic dispatcher hands it to the core.
-#[derive(Clone, Debug)]
-enum Cmd {
-    TakeControl(u32),
-    Input(u32, FpsInput),
-    /// `MSG_ZHBO_CHOOSE_CLASS`: the list index (a preset), or a custom class's wire words.
-    ChooseClass(u32, usize, Vec<u32>),
-}
-
-/// Zero Hour's lockstep command lists: per execution frame, the commands in a fixed order (by
-/// player, then the order each player sent them), the same on every peer.
-#[derive(Default)]
-struct Net {
-    frames: BTreeMap<u32, Vec<(i32, u32, Cmd)>>,
-    sent: u32,
-}
-
-impl Net {
-    fn send(&mut self, now: u32, player: i32, cmd: Cmd) {
-        self.sent += 1;
-        let list = self.frames.entry(now + RUNAHEAD).or_default();
-        list.push((player, self.sent, cmd));
-        list.sort_by_key(|(p, n, _)| (*p, *n));
-    }
-
-    fn take(&mut self, frame: u32) -> Vec<(i32, Cmd)> {
-        self.frames.remove(&frame).unwrap_or_default().into_iter().map(|(p, _, c)| (p, c)).collect()
-    }
-}
-
-/// One machine of the match.
-struct Peer {
-    host: FakeHost,
-    sim: Sim,
-    client: Client,
-    /// This machine's player (`ThePlayerList->getLocalPlayer()`).
-    local: i32,
-    /// This machine's own render cadence (a xorshift of its own).
-    seed: u64,
-    renders: u32,
-}
-
-impl Peer {
-    fn new(local: i32, seed: u64) -> Self {
-        let host = FakeHost::default();
-        // The enemy squad (an RTS player's soldiers) between and around the two Generals.
-        for (i, x) in [60.0, 90.0, 120.0, 150.0].into_iter().enumerate() {
-            host.add(soldier(500 + i as u32, 2, x));
-        }
-        Peer { host, sim: Sim::new(), client: Client::default(), local, seed, renders: 0 }
-    }
-
-    fn next(&mut self) -> u64 {
-        self.seed ^= self.seed << 13;
-        self.seed ^= self.seed >> 7;
-        self.seed ^= self.seed << 17;
-        self.seed
-    }
-
-    /// The logic frame: the frame's commands in the engine's dispatch order, the overhead
-    /// Generals' RTS report (the bridge's `rtsWeapons`, before the step), the step, and this
-    /// machine's tracers (`zhbo_logic_step` hands them to the viewer right after the step).
-    fn logic(&mut self, frame: u32, cmds: &[(i32, Cmd)], rts_shots: [u32; 3]) {
-        for (player, cmd) in cmds {
-            match cmd {
-                Cmd::TakeControl(g) => self.sim.take_control(&self.host, *player, *g),
-                Cmd::Input(g, input) => self.sim.input(*player, *g, *input),
-                Cmd::ChooseClass(g, index, words) => self.sim.choose_class(*player, *g, *index, words),
-            }
-        }
-        let generals: Vec<(i32, u32)> = self.host.objects.borrow().iter().filter(|o| o.id < 500 && !o.has(objflags::DEAD)).map(|o| (o.owner_player, o.id)).collect();
-        for (player, g) in generals {
-            self.sim.rts_update(&self.host, player, g, 0, rts_shots, None);
-        }
-        self.sim.step(&self.host, frame);
-        self.client.tracers.play(&self.host, &mut self.sim.tracers);
-    }
-
-    /// This machine's rendered frames for one logic frame (`frames` of them; 0 = it rendered
-    /// none). The local player's client turns `keys`/`look` into its input and the bridge sends
-    /// it; everything else the client does is this machine's own presentation.
-    fn render(&mut self, net: &mut Net, frame: u32, frames: u32, keys: KeySet, look: (f32, f32)) {
-        for _ in 0..frames {
-            let inp = ClientIn {
-                dt: LOGIC_DT / frames as f32,
-                local_player: self.local,
-                logic_frame: frame,
-                keys,
-                mouse_dx: look.0 / frames as f32,
-                mouse_dy: look.1 / frames as f32,
-                input_allowed: 1,
-                screen_w: 1280.0,
-                screen_h: 720.0,
-                ..Default::default()
-            };
-            let out = self.client.frame(&mut self.sim, &inp);
-            if out.send_input != 0 {
-                net.send(frame, self.local, Cmd::Input(out.input_general, out.input));
-            }
-            self.renders += 1;
-        }
-    }
-}
-
-/// What a player does on frame `t` of a round: the keys held and the mouse moved.
-fn script(t: u32, rng: u64) -> (KeySet, (f32, f32)) {
-    let b = Bindings::default();
-    let mut keys = KeySet::default();
-    let mut hold = |k: Key| keys.set_down(k, true);
-    // Small aim corrections, both ways.
-    let jitter = |shift: u32| ((rng >> shift) % 9) as f32 - 4.0;
-    let look = (jitter(3), jitter(11) * 0.5);
-    match t {
-        // Fire aimed bursts, then from the hip.
-        120..=169 => {
-            hold(b.ads);
-            hold(b.fire);
-        }
-        170..=189 => hold(b.fire),
-        190..=199 => hold(b.reload),
-        200..=219 => {
-            hold(b.forward);
-            hold(b.sprint);
-        }
-        // Cook the lethal, let go; then the tactical.
-        222..=245 => hold(b.lethal),
-        252..=275 => hold(b.tactical),
-        // Knife taps.
-        280..=300 if t.is_multiple_of(7) => hold(b.melee),
-        // Stances and a jump, strafing.
-        301..=306 => {
-            hold(b.crouch);
-            hold(b.left);
-        }
-        307..=309 => hold(b.jump),
-        310..=313 => {
-            hold(b.prone);
-            hold(b.right);
-        }
-        // The alt mode in, a press to fire it, and back out.
-        318 => hold(b.alt_mode),
-        322..=330 => hold(b.fire),
-        335 => hold(b.alt_mode),
-        // The swap to the second weapon and a few shots with it.
-        340 => hold(b.swap),
-        348..=362 => hold(b.fire),
-        // The field computer: back overhead.
-        390 => hold(b.field_computer),
-        _ => {}
-    }
-    (keys, look)
-}
 
 /// Round `r`'s custom class for a player: the catalog's slot weapons in turn as the primary, with
 /// an offhand pair and perks that cycle too.
@@ -207,108 +37,17 @@ fn rounds() -> u32 {
     n.div_ceil(2).max(4)
 }
 
-/// The custom class words a player's UI sends in round `r`: `pick` 0 is the round's opening pick,
-/// 1 the mid-life one.
-type Picks<'a> = &'a dyn Fn(u32, i32, u32) -> Vec<u32>;
-
 /// The catalog cycle's picks: round `r`'s class, then round `r + 1`'s mid-life.
 fn catalog_picks(r: u32, player: i32, pick: u32) -> Vec<u32> {
     class_for(r + pick, player).to_wire_words()
 }
 
 /// The match on three machines: A (player 0's), B (player 1's) and C, which never renders, over
-/// `rounds` rounds whose custom classes `picks` sends (round 0 opens with the presets by index).
-/// Returns how many frames ran and A's and B's render counts.
-fn play_match(rounds: u32, picks: Picks) -> (u32, u32, u32) {
-    let mut a = Peer::new(0, 0x0A11_CE5E_ED00_0001);
-    let mut b = Peer::new(1, 0x0B0B_5EED_0000_0002);
-    // An observer seat with no General of its own.
-    let mut c = Peer::new(3, 0x0C0C_5EED_0000_0003);
-    let mut net = Net::default();
-    // The players' own hands: one script stream per player (each machine only ever reads its
-    // own player's).
-    let mut hand = [0x1111_2222_3333_4444u64, 0x5555_6666_7777_8888u64];
-    let mut next = |p: usize| {
-        let s = &mut hand[p];
-        *s ^= *s << 13;
-        *s ^= *s >> 7;
-        *s ^= *s << 17;
-        *s
-    };
-    let total = rounds * ROUND;
-    let mut frame = 0;
-    while frame < total {
-        frame += 1;
-        let (r, t) = ((frame - 1) / ROUND, (frame - 1) % ROUND);
-        let ids = [100 + 2 * r, 101 + 2 * r];
-        // The engine's own logic, the same on every machine: a fresh General per player each
-        // round (facing each other across the squad), and the round's end kills both.
-        for peer in [&mut a, &mut b, &mut c] {
-            if t == 0 {
-                let mut g0 = general(ids[0], 0);
-                g0.pos = Vec3::new(0.0, 10.0, 0.0);
-                let mut g1 = general(ids[1], 1);
-                g1.pos = Vec3::new(200.0, -10.0, 0.0);
-                g1.yaw = std::f32::consts::PI;
-                peer.host.add(g0);
-                peer.host.add(g1);
-            }
-            if t == ROUND - 2 {
-                for o in peer.host.objects.borrow_mut().iter_mut().filter(|o| ids.contains(&o.id)) {
-                    o.flags |= objflags::DEAD;
-                }
-            }
-        }
-        // The picks and take-controls each player's own UI sends for him.
-        for (p, &g) in ids.iter().enumerate() {
-            let player = p as i32;
-            match t {
-                // Round 0 by preset index from the overhead command bar, then customs.
-                1 if r == 0 => net.send(frame, player, Cmd::ChooseClass(g, p, vec![])),
-                // The engine carries at most the ABI payload (the bridge's `payload[64]`).
-                1 => net.send(frame, player, Cmd::ChooseClass(g, 0, capped(picks(r, player, 0)))),
-                3 => net.send(frame, player, Cmd::TakeControl(g)),
-                // Mid-life after the fight: the class waits for the next spawn (or, in the grace
-                // period of round 0, before any combat, it lands at once).
-                365 => net.send(frame, player, Cmd::ChooseClass(g, 0, capped(picks(r, player, 1)))),
-                _ => {}
-            }
-        }
-        // Overhead, the General's Zero Hour weapon fires now and then (the RTS report's shots).
-        let rts_shots = if t > 395 && t.is_multiple_of(5) { [1, 0, 0] } else { [0; 3] };
-        let cmds = net.take(frame);
-        for peer in [&mut a, &mut b, &mut c] {
-            peer.logic(frame, &cmds, rts_shots);
-        }
-
-        let h = a.sim.state_hash();
-        for (name, peer) in [("B", &b), ("C", &c)] {
-            let at = format!("machine {name} diverged from A at frame {frame} (round {r}, t {t})");
-            assert_eq!(peer.sim.state_hash(), h, "{at}: the sim state");
-            assert_eq!(peer.host.objects, a.host.objects, "{at}: the engine objects");
-            assert_eq!(peer.host.damage_log, a.host.damage_log, "{at}: damage");
-            assert_eq!(peer.host.controlled, a.host.controlled, "{at}: control");
-            assert_eq!(*peer.host.spawned.borrow(), *a.host.spawned.borrow(), "{at}: spawns");
-            assert_eq!(*peer.host.destroyed.borrow(), *a.host.destroyed.borrow(), "{at}: destroys");
-            assert_eq!(*peer.host.disabled.borrow(), *a.host.disabled.borrow(), "{at}: disables");
-        }
-
-        // Each player's machine renders its own frames: A at a ragged 1-3 per logic frame, B at
-        // one; C never.
-        let (ka, la) = script(t, next(0));
-        let (kb, lb) = script(t, next(1));
-        let fa = 1 + (a.next() % 3) as u32;
-        a.render(&mut net, frame, fa, ka, la);
-        b.render(&mut net, frame, 1, kb, lb);
-    }
-    assert_eq!(c.sim.events.len(), MAX_EVENTS, "the machine that never renders sat at the event cap");
-    (frame, a.renders, b.renders)
-}
-
-/// What the engine's message can carry of a payload: [`crate::classwire::PAYLOAD_WORDS`] words.
-fn capped(mut words: Vec<u32>) -> Vec<u32> {
-    words.truncate(crate::classwire::PAYLOAD_WORDS);
-    words
+/// `rounds` rounds whose custom classes `picks` sends. Returns how many frames ran and A's and B's
+/// render counts.
+fn play_match(rounds: u32, picks: &dyn Fn(u32, i32, u32) -> Vec<u32>) -> (u32, u32, u32) {
+    let r = play(&Match { players: 2, rounds, picks });
+    (r.frames, r.renders[0], r.renders[1])
 }
 
 /// The gate: every weapon, every feature, three machines, one result.
@@ -317,6 +56,34 @@ fn every_machine_agrees_on_every_frame_of_a_long_match() {
     let (frames, ra, rb) = play_match(rounds(), &catalog_picks);
     assert!(frames >= 4 * ROUND);
     assert!(ra > rb, "the machines rendered at different cadences ({ra} vs {rb})");
+}
+
+/// The roster's classes on the built-in catalog, three players and their machines: the shape of
+/// `zhbo-assets`' full-roster gate (`the_install_roster_plays_in_lockstep`), kept short here (six
+/// rounds) — every class the roster builds is legal, and the first eighteen are worn, fought with
+/// and agreed on, frame by frame.
+#[test]
+fn the_roster_plays_in_lockstep_on_three_players_machines() {
+    use crate::classmenu::{Draft, PICK_10};
+    let classes = super::harness::roster_classes();
+    let o = crate::classmenu::offer();
+    for item in o.primary.iter().chain(&o.secondary).chain(&o.lethal).chain(&o.tactical) {
+        let has = |c: &CustomClass| [&c.primary, &c.secondary].iter().any(|id| crate::classmenu::items::given_parts(id).0 == *item) || c.lethal == *item || c.tactical == *item;
+        assert!(classes.iter().any(has), "the roster carries {item}");
+    }
+    for c in &classes {
+        assert!(crate::classrepair::repair_received(&mut c.clone()).is_empty(), "a legal class: {c:?}");
+        assert!(Draft::from_custom(c).spent() <= PICK_10);
+    }
+    let picks = |r: u32, p: i32, pick: u32| classes[((r + pick) as usize * 3 + p as usize) % classes.len()].to_wire_words();
+    let report = play(&Match { players: 3, rounds: 6, picks: &picks });
+    assert_eq!(report.renders.len(), 4);
+    assert_eq!(report.renders[3], 0, "the observer never rendered");
+    assert!(report.renders[2] > 0 && report.renders[2] < report.renders[0], "seat 2's machine skipped frames");
+    for label in ["worn:", "fired:", "projectile:"] {
+        assert!(report.seen.iter().any(|s| s.starts_with(label)), "{label} {:?}", report.seen);
+    }
+    assert!(report.seen.iter().any(|s| s.starts_with("thrown:") || s.starts_with("planted:")), "{:?}", report.seen);
 }
 
 /// The match really fought: the gate is only worth something if the scripted rounds reach the
@@ -335,7 +102,7 @@ fn the_lockstep_match_exercises_the_sim() {
         match t {
             1 => net.send(frame, 0, Cmd::ChooseClass(g, 0, class_for(r, 0).to_wire_words())),
             3 => net.send(frame, 0, Cmd::TakeControl(g)),
-            365 => net.send(frame, 0, Cmd::ChooseClass(g, 0, class_for(r + 1, 0).to_wire_words())),
+            MIDLIFE_PICK => net.send(frame, 0, Cmd::ChooseClass(g, 0, class_for(r + 1, 0).to_wire_words())),
             _ => {}
         }
         if t == ROUND - 2 {
@@ -390,6 +157,31 @@ fn combat_is_seen_even_when_the_event_buffer_is_full() {
     assert!(fired, "the General fired");
     assert_eq!(sim.events.len(), MAX_EVENTS, "the buffer stayed at its cap");
     assert!(sim.player(0).unwrap().combat, "the shot counted as combat with the buffer full");
+}
+
+/// R5: at the event cap the buffer's length stops moving, so "the events past the old length"
+/// was nothing and `ConquerOps.log` went quiet on a machine that rendered nothing (a minimised
+/// window). The log reads a step's events from the emit count instead.
+#[test]
+fn a_full_event_buffer_still_tells_the_log_this_steps_events() {
+    let mut sim = Sim::new();
+    for _ in 0..MAX_EVENTS {
+        sim.emit(0, EventKind::Swapped);
+    }
+    let before = sim.emitted;
+    assert_eq!(sim.first_event_since(before), MAX_EVENTS, "nothing new yet");
+    sim.emit(0, EventKind::Melee);
+    sim.emit(0, EventKind::ReloadStarted);
+    assert_eq!(sim.events.len(), MAX_EVENTS);
+    let first = sim.first_event_since(before);
+    let new: Vec<EventKind> = sim.events[first..].iter().map(|e| e.kind).collect();
+    assert_eq!(new, vec![EventKind::Melee, EventKind::ReloadStarted]);
+    // More new events than the buffer holds: all of it is new.
+    let before = sim.emitted;
+    for _ in 0..MAX_EVENTS + 5 {
+        sim.emit(0, EventKind::Swapped);
+    }
+    assert_eq!(sim.first_event_since(before), 0);
 }
 
 /// A player who leaves a network game hands his assets to a living ally (Zero Hour's

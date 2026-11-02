@@ -112,7 +112,10 @@ replicated messages alone. The rules, and what enforces each:
   leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)
   runs one match on three machines — two players' machines at different render cadences, each
   with its own client and viewer, and one that never renders — and requires the same hash, and the
-  same engine calls, on every frame. The hash is not yet folded into Zero Hour's own
+  same engine calls, on every frame; the full-roster gate (zhbo-assets,
+  `the_install_roster_plays_in_lockstep`) runs the same harness (`sim/harness.rs`) over the
+  player's own install's every weapon, alt mode, attachment and offhand on three players' machines
+  and an observer's. The hash is not yet folded into Zero Hour's own
   `GameLogic::getCRC` (that needs an appended ABI function and a host patch; see MODLOG, the
   multiplayer audit), so today a mod-only divergence shows in the engine's CRC only once it moves
   or hurts an object.

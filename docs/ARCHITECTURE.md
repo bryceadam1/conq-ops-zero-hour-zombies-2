@@ -80,7 +80,12 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   the MMS's characters, the target finder's spotting and marks), `guard.rs` (the victim's class
   perks against another General's blasts — Flak Jacket, Tactical Mask — applied where the damage
   reaches the host, as BO2's damage callback does), `shock.rs` (which shellshock a first-person
-  General gets from a blast: the GSC's `shellshock()` sources).
+  General gets from a blast: the GSC's `shellshock()` sources), `lockstep.rs` (`Sim::state_hash`,
+  the lockstep fingerprint), and test code: `fakehost.rs` (`FakeHost`, the flat fake engine world)
+  and `harness.rs` (the lockstep match: peers, the replicated command stream with the run-ahead,
+  each machine's render cadence; `roster_classes`, every item the editor offers as legal classes),
+  compiled for the crate's own tests and, behind zhbo-core's `harness` feature, for zhbo-assets'
+  real-install gate (a dev-dependency only; the shipped static library never has it).
 - `shellshock.rs`: BO2's shellshocks (`ShockDef`, the weapon table's `Shock` blocks converted from
   the install's `shock/*.shock` files) and their effect while one runs — the run-speed scale (the
   sim), the look control (the client's mouse look), and the presentation: the screen layers (the

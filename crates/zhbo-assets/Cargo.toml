@@ -14,3 +14,7 @@ zhbo-core = { path = "../zhbo-core" }
 claxon = "0.4"
 png = "0.17"
 
+
+[dev-dependencies]
+# The lockstep harness, for the full-roster gate (src/lockstep_gate.rs).
+zhbo-core = { path = "../zhbo-core", features = ["harness"] }

@@ -10438,3 +10438,46 @@ against the terrain visual's lookup on every fourth cell at load and logs the ag
 Assault, the autotest's map, it reported 3,900 of 3,900 sampled cells agreeing (152,000 cells,
 248 terrain types), with the default autotest leg at 16/16 and `--classpick` passing.
 
+## Multiplayer hardening: the lockstep gate over the install's whole roster (2026-11-01, branch `v1/mp-hardening`)
+
+The lockstep gate cycled only the built-in catalog's 13 slot weapons. The harness (peers, the
+replicated command stream with the run-ahead, render cadences, the script) moved out of
+`lockstep_tests.rs` into `sim/harness.rs`, and `FakeHost` moved into `sim/fakehost.rs`. Both are
+compiled for zhbo-core's own tests and, behind the new `harness` feature, for zhbo-assets as a
+dev-dependency only. The shipped static library never has them. `harness::play` takes 2–4
+players (each with a machine, plus an observer's machine that never renders) and returns
+coverage labels. `harness::roster_classes` turns every item the editor offers into legal Pick-10
+classes:
+* each primary with its attachments packed into compatible pairs, never two alt-mode attachments
+  together, since a combination has one alt;
+* each secondary with each attachment alone;
+* every lethal, tactical and perk tier in turn.
+
+The new real-install test `the_install_roster_plays_in_lockstep` (zhbo-assets) plays all 230 of
+them over the launcher's own converted table. That is 78 rounds and ~51,000 frames, on seats 0–2
+with ragged, steady and skipping render cadences plus the observer, with the hash and every
+engine call equal on every frame. It asserts everything was reached: every item fired (a shot, a
+launch, a deployed shield, or its projectile in flight), every attachment worn, every alt mode
+fired, every offhand used (the Black Hat, which needs a target, carried), the crossbow's
+explosive bolt, and the concussion and flashbang shellshocks. It runs in ~5 min release, about
+1.5 min of play and the rest conversion.
+
+**Gotchas the real data showed (the built-in catalog hid them all).**
+* A real frag is ready ~1.6 s after the press and thrown ~0.7 s later, which swallowed the
+  tactical's press 0.2 s behind it. Not one tactical was thrown.
+* Facing Generals killed each other in the firefight, so nothing after it ran. Harness Generals
+  now have 10⁶ health; the damage still lands and is hashed.
+* A sprint and a lethal cancel a reload. The alt mode shares the magazine, so most alt bursts
+  were dry.
+* A melee still swinging, or a prone stance, refuses the alt key.
+* The Hybrid optic's `dualoptic` alt toggles only on hold-breath while fully aimed, never on the
+  alt key.
+* A launcher's or shield's first raise is 1.5 s. A held trigger is not a fresh press for a
+  semi-automatic.
+
+The round is 660 frames now, with the beats spaced for these. The built-in gate uses the same
+script.
+
+R5 (logging): at the 512-event cap, `log_step` skipped "the events past the old length", so a
+machine that rendered nothing logged nothing. `Sim::emitted` counts every emit (not hashed), and
+`first_event_since` finds a step's events from it (`a_full_event_buffer_still_tells_the_log_this_steps_events`).
