@@ -164,7 +164,7 @@ impl Sim {
             p.body.pos = info.pos;
             p.yaw = target.map_or(info.yaw, |t| {
                 let to = t - info.pos;
-                if to.length_xy() > 1e-3 { to.y.atan2(to.x) } else { info.yaw }
+                if to.length_xy() > 1e-3 { crate::math::det::atan2(to.y, to.x) } else { info.yaw }
             });
             for _ in 0..strikes {
                 let damage = p.arsenal.melee.melee_damage;

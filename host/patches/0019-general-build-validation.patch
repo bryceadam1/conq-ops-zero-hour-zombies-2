@@ -1,0 +1,26 @@
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/System/BuildAssistant.cpp b/GeneralsMD/Code/GameEngine/Source/Common/System/BuildAssistant.cpp
+index d2cb9230b..e61ae5046 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/System/BuildAssistant.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/System/BuildAssistant.cpp
+@@ -30,6 +30,7 @@
+ 
+ // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/BuildAssistant.h"
+ #include "Common/GlobalData.h"
+@@ -1254,7 +1255,12 @@ Bool BuildAssistant::isPossibleToMakeUnit( Object *builder, const ThingTemplate
+ 		return FALSE;
+ 
+ 	// get the command set for the producer object
+-	const CommandSet *commandSet = TheControlBar->findCommandSet( builder->getCommandSetString() );
++	// ZHBO: a Conquer Ops General builds from his side's worker menu. The command bar shows it as a
++	// UI-only command-set override on the machine whose player opened it, so the logic must not
++	// read the override (every other machine would refuse the construction: a desync). Every
++	// machine checks the General against the same build set instead.
++	const AsciiString zhboBuildSet = Zhbo_BuildCommandSet( builder );
++	const CommandSet *commandSet = TheControlBar->findCommandSet( zhboBuildSet.isNotEmpty() ? zhboBuildSet : builder->getCommandSetString() );
+ 
+ 	// if no command set we cannot build anything
+ 	if( commandSet == nullptr )

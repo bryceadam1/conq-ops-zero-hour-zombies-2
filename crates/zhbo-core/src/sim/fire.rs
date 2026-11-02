@@ -9,6 +9,7 @@
 use super::*;
 use crate::impacts::Surface;
 use crate::weapons::FireMode;
+use crate::math::det;
 use crate::penetration;
 
 impl Sim {
@@ -389,9 +390,9 @@ pub fn throw_velocity(from: Vec3, to: Vec3, speed: f32) -> Vec3 {
     let v2 = speed * speed;
     let disc = v2 * v2 - g * (g * range * range + 2.0 * rise * v2);
     let tan = if disc >= 0.0 { (v2 - disc.sqrt()) / (g * range) } else { 1.0 };
-    let angle = tan.atan();
+    let angle = det::atan(tan);
     let along = flat.normalized_or_zero();
-    along * (speed * angle.cos()) + Vec3::new(0.0, 0.0, speed * angle.sin())
+    along * (speed * det::cos(angle)) + Vec3::new(0.0, 0.0, speed * det::sin(angle))
 }
 
 /// BO2's tracer cadence (`FUN_007c65c0`): a per-shooter byte countdown, clamped down to the
@@ -454,7 +455,7 @@ impl Sim {
         // Random point in the spread cone (polar mapping of two uniform samples).
         let angle = jitter.0 * std::f32::consts::PI;
         let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
-        let dir = dir_from_angles(p.fire_yaw + radius * angle.cos(), p.fire_pitch + radius * angle.sin());
+        let dir = dir_from_angles(p.fire_yaw + radius * det::cos(angle), p.fire_pitch + radius * det::sin(angle));
 
         let range = def.bullet_range(self.bullet_range);
         let bodies = HitBodies { poses: self.hit_body(), states: &self.hit_states() };

@@ -503,7 +503,7 @@ pub fn push_out(p: Vec3, radius: f32, blocker: &Blocker) -> Option<Vec3> {
             if p.z >= top {
                 return None;
             }
-            let (s, c) = yaw.sin_cos();
+            let (s, c) = crate::math::det::sin_cos(yaw);
             let rel = Vec3::new(p.x - center.x, p.y - center.y, 0.0);
             // Into box-local space.
             let lx = rel.x * c + rel.y * s;

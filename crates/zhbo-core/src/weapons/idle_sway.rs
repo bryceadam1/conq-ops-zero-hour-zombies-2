@@ -30,6 +30,7 @@
 //! - **Hold breath** (`FUN_008e4860`): see [`Breath`].
 
 use super::def::WeaponDef;
+use crate::math::det;
 use crate::tuning::Tuning;
 
 /// `DAT_00c733ac`: the clock's 1000 per second.
@@ -229,7 +230,7 @@ impl IdleSway {
             if aqs_on && style == 1 {
                 a *= self.aqs;
             }
-            let (sp, sy) = ((self.time * PITCH_FREQ).sin(), (self.time * YAW_FREQ).sin());
+            let (sp, sy) = (det::sin(self.time * PITCH_FREQ), det::sin(self.time * YAW_FREQ));
             self.angles = [sp * a * AMOUNT_TO_DEG, sy * a * AMOUNT_TO_DEG];
             if aqs_on && style == 2 {
                 let push = (self.aqs - 1.0) * def.zoom.anti_quickscope.sway_factor * AMOUNT_TO_DEG;
@@ -275,7 +276,7 @@ pub fn gun_angles(def: &WeaponDef, ads: f32, time: f32, stance: f32) -> [f32; 3]
         a *= 1.0 - ads;
     }
     a *= AMOUNT_TO_DEG;
-    [(time * PITCH_FREQ).sin() * a, (time * YAW_FREQ).sin() * a, (time * ROLL_FREQ).sin() * a]
+    [det::sin(time * PITCH_FREQ) * a, det::sin(time * YAW_FREQ) * a, det::sin(time * ROLL_FREQ) * a]
 }
 
 #[cfg(test)]

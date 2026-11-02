@@ -7,6 +7,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Layer | What it covers | How |
 |---|---|---|
 | Unit tests | sim, weapons, movement, hitscan, HUD, formats, requirements | `cargo test --workspace` |
+| Multiplayer determinism (the lockstep gate) | one match on three machines fed the same replicated command stream with Zero Hour's run-ahead (4 frames): player 0's machine renders a ragged 1–3 client frames per logic frame, player 1's one, and a third (a headless replay check or a minimised observer) none, so its `Sim::events` sit at their cap; each machine's own `Client` makes its own player's input from scripted keys and mouse and does its own presentation (drains the events, plays the tracers for its own viewer). Rounds cycle every slot weapon of the catalog through custom classes sent as wire words (presets by index in round 0): fire, ADS, reload, sprint, both offhands, melee, stances, the alt mode, the swap, a mid-life pick after combat, the field computer and the overhead RTS report, then a death and a fresh General. Every frame the three `Sim::state_hash`es and every engine call (objects, damage, control, spawns, destroys, disables) must agree; a single-peer run asserts the systems were reached | `cargo test -p zhbo-core lockstep` (`sim/lockstep_tests.rs`) |
 | Shot impacts (R8d) | the surface vocabulary and the converted table (classification, default-cell and blood-variant fallbacks); the sim's per-pellet `Impact` event and its absence on a miss; the client record and its cap; the ABI lookup; every converted gun's bucket and cells resolve to a converted FXList | `cargo test -p zhbo-core impacts`; `cargo test --workspace`; the real-install check: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets converts_from_real_install -- --ignored` (asserts each gun's `ImpactType`, `pellets <= 8`, and that every row names an `FXList` in the effects INI) |
 | Projectile damage | every projectile hurts a BO2 soldier by BO2's data at 150, 600 and 1200 inches, straight at him and into the ground beside him: the strike's `iDamage`, the impact fuse and its arming distance, a bolt's spawned grenade going off on its fuse, a sticky grenade's fuse, the blast's falloff, BO2's kill verdict (`conformance::projectile`, its synthetic crossbow/rocket/launcher-grenade/grenade tests and the built-in table); the sim's bolt striking then its grenade going off in the victim (`sim::tests::a_crossbow_bolt_strikes_then_its_spawned_grenade_goes_off_in_him`); the converter's `SpawnedGrenade` and `stickiness` (`weapons::tests::a_bolt_spawns_its_grenade_and_stickiness_is_bo2s`) | `cargo test -p zhbo-core conformance::projectile sim::tests::a_crossbow`; `cargo test -p zhbo-assets a_bolt_spawns`; the sweep over every converted projectile (the launchers, the under-barrel grenades, every crossbow combination, the ballistic knife, the thrown offhands, `explosive_bolt_mp`) and the defs' spawned grenade and stickiness against the install: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets every_projectile_hurts_by_bo2s_data -- --ignored --nocapture` |
 | Bullet penetration | BO2's walk (`FUN_005d0350`): depth table and perk, chord falloff, the 30 in FX gap and the client's two-effect budget, the ground stopping a round (`penetration::tests`); fake-host shots through a thin wall (half damage behind, the exit impact) and FMJ through a wall that stops the plain round (`sim::tests`); exit rows and exit sound families | `cargo test -p zhbo-core penetration impacts sim::tests::a_round_through`; `cargo test -p zhbo-assets impacts`; the real-install check that the tuning pack's depths are patch_mp's `info/bullet_penetration_mp` and the defs' `penetrateType`: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_penetration_table_is_the_installs -- --ignored` |
@@ -135,6 +136,9 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite
    the profile file.
 6. **Escape** on the list closes back to the skirmish lobby (and the lobby's Escape works again).
+   The LAN lobby (**Network → LAN → Create Game**) and the online game setup screen carry the same
+   button in the same corner (`create-a-class: lobby button added to LanGameOptionsMenu.wnd` /
+   `GameSpyGameOptionsMenu.wnd` in `ConquerOps.log`), opening the same screen.
 7. Start a match: the saved class appears on the in-game pick screen (the set's five custom
    slots, then the default classes), which is **pick-only** (no editor, no delete/copy, untouched
    slots are inert — BO2 creates classes only in the lobby); the
@@ -324,6 +328,26 @@ input path. `ZHBO_AUTOPILOT=manual` sets up the scene without scripted input, an
 Scripting real keys: `hold <VK> <ms>` needs a hex VK code (`hold 0x57 2500` for W); on SDL,
 `scanmode on` switches `hold`/`press` to scan codes. macOS holds keys by code with
 `osascript key code`, or `cliclick` for the mouse.
+
+## Multiplayer in game (two instances; not yet runnable on one Mac)
+
+The headless gate (`cargo test -p zhbo-core lockstep`, the Layers table) is the multiplayer check
+today. A real two-instance LAN match needs, on this engine build:
+
+* **A second instance.** A playable run takes the single-instance lock (`rts::ClientInstance`;
+  the second one bails with "Generals is already running"). Multi-instance is on for `-headless`
+  runs, for `RTS_MULTI_INSTANCE` (the debug presets' `config-debug.cmake`) and for
+  `-autoNetworkMode direct` (`NetworkAutoStart`, `RTS_DEBUG` builds only: it hosts or joins a LAN
+  game by itself with `-autoNetworkHost <n>` / `-autoNetworkJoin <ip>`, `-autoNetworkMap`). The
+  macOS presets build release only, so a debug macOS preset is the first step.
+* **An address per instance.** Each extra instance enumerates `127.0.0.<id>`
+  (`IPEnumeration.cpp`). Linux routes all of 127/8; macOS only has 127.0.0.1 until
+  `sudo ifconfig lo0 alias 127.0.0.2 up` (once per boot).
+* **Then:** two instances on one map, each taking control of its General, with the same
+  `ConquerOps.log` `multiplayer: content CRC` line, and Zero Hour's own CRC check (`MSG_LOGIC_CRC`
+  every `CRCInterval` frames) never reporting a mismatch. Two machines (or the Windows VM and the
+  Mac) work today without any of the above, if both run the same build: Zero Hour's online lobby
+  compares the exe CRC.
 
 ## macOS test notes
 

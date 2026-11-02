@@ -68,7 +68,7 @@ impl EquipTuning {
         EquipTuning {
             arm_time: t.equipment_arm_time,
             claymore_range: inches(t.scr_weaponobject_radius),
-            claymore_cos: t.scr_weaponobject_coneangle.to_radians().cos(),
+            claymore_cos: crate::math::det::cos(t.scr_weaponobject_coneangle.to_radians()),
             claymore_min_dist: inches(t.scr_weaponobject_mindist),
             claymore_grace: t.scr_weaponobject_graceperiod,
             betty_range: inches(t.betty_radius),

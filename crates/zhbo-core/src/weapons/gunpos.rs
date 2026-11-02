@@ -27,6 +27,7 @@
 
 use super::def::WeaponDef;
 use super::recoil::GunKickSpring;
+use crate::math::det;
 use crate::tuning::Tuning;
 use std::f32::consts::PI;
 
@@ -240,8 +241,8 @@ pub fn bob_angles(def: &WeaponDef, i: &GunInput, t: &Tuning) -> [f32; 3] {
         };
         a.min(t.bg_weapon_bob_max)
     };
-    let vert = ((2.0 * c).sin() + 0.2 * (4.0 * c + PI / 2.0).sin()) * 0.75 * amp(false);
-    let horiz = |c: f32, a: f32| c.sin() * a;
+    let vert = (det::sin(2.0 * c) + 0.2 * det::sin(4.0 * c + PI / 2.0)) * 0.75 * amp(false);
+    let horiz = |c: f32, a: f32| det::sin(c) * a;
     // The roll keeps only the curve's non-positive half: `FUN_008f0160` at 0x008f02b0 negates the
     // result, `FCOMIP`s it with 0 and stores 0 when `−f < 0` (G4's `max(0, …)` misread it).
     let mut out = [-vert, -horiz(c, amp(true)), horiz(c - 0.4712, amp(true) * t.bob_roll).min(0.0)];

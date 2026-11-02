@@ -242,7 +242,7 @@ impl Projectile {
             }
         }
         if self.object != 0 {
-            let yaw = self.vel.y.atan2(self.vel.x);
+            let yaw = crate::math::det::atan2(self.vel.y, self.vel.x);
             host.set_pose(self.object, self.pos, yaw, false);
         }
         None
@@ -299,7 +299,7 @@ impl Projectile {
     /// `stuck_to` (else resting there), on `def`'s own fuse, with the bolt's owner and self-harm
     /// scales.
     pub fn spawned(&self, def: &'static WeaponDef, at: Vec3, stuck_to: Option<u32>, host: &dyn LogicHost) -> Projectile {
-        let yaw = self.vel.y.atan2(self.vel.x);
+        let yaw = crate::math::det::atan2(self.vel.y, self.vel.x);
         let mut p = Projectile::launch(def, self.owner, at, Vec3::ZERO, def.fuse_time, host, yaw);
         p.vel = Vec3::ZERO;
         p.stuck_to = stuck_to;

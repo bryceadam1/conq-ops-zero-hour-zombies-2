@@ -506,6 +506,12 @@ AsciiString zhboBuildSetFor(const Object *general)
 	return ZhboControlBarAccess::buildSetFor(general);
 }
 
+AsciiString Zhbo_BuildCommandSet(const Object *builder)
+{
+	// Lockstep-safe: the set follows from the General's controlling player's side only.
+	return isGeneral(builder) && TheControlBar ? zhboBuildSetFor(builder) : AsciiString::TheEmptyString;
+}
+
 void zhboInjectConstructButtons()
 {
 	if (!TheControlBar)

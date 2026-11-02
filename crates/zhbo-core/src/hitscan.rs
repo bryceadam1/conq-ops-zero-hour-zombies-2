@@ -59,7 +59,7 @@ pub fn ray_vs_target(origin: Vec3, dir: Vec3, max_t: f32, target: &Target) -> Op
 
 /// A turn by `-yaw` about +Z: world offsets into a target's own frame.
 fn unyaw(v: Vec3, yaw: f32) -> Vec3 {
-    let (s, c) = yaw.sin_cos();
+    let (s, c) = crate::math::det::sin_cos(yaw);
     Vec3::new(v.x * c + v.y * s, -v.x * s + v.y * c, v.z)
 }
 
@@ -232,7 +232,7 @@ pub fn contains(target: &Target, point: Vec3) -> bool {
         Shape::Sphere { radius } => (o - Vec3::new(0.0, 0.0, radius)).length() <= radius,
         Shape::Cylinder { radius, height } => o.x * o.x + o.y * o.y <= radius * radius && (0.0..=height).contains(&o.z),
         Shape::Box { half_x, half_y, height, yaw } => {
-            let (s, c) = yaw.sin_cos();
+            let (s, c) = crate::math::det::sin_cos(yaw);
             let (x, y) = (o.x * c + o.y * s, -o.x * s + o.y * c);
             x.abs() <= half_x && y.abs() <= half_y && (0.0..=height).contains(&o.z)
         }

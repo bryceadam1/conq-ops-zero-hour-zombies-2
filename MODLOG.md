@@ -10164,3 +10164,194 @@ player's live General. The dead General cannot be selected, so this is the inten
   * `--w3d-ads` 2/2
   * `--input` 3/3: Escape → back overhead → General reselected → T → 6 → SMG class → W
 * `zhbo-gfx.log` has no errors on the default, `--scope` and `--w3d-ads` legs.
+
+## Multiplayer audit: the lockstep gate, and `hasdonecombat` read from a drained buffer (2026-11-01, branch `v1/mp-audit`)
+
+The mod has never run in a Zero Hour network game. This branch audits what would break there; the
+full findings are in the audit report (`~/.opencode/plan/mp-audit/FINDINGS.md`). This entry
+covers the first fix.
+
+**The gate.** There was a single-process determinism test, `identical_inputs_are_deterministic`:
+two sims fed the same inputs. It never ran a client, so it could not catch local presentation
+leaking into the sim. `sim/lockstep_tests.rs` now runs one match on three machines. Each machine
+has its own `FakeHost`, its own `Sim` and its own `Client` for its own local player, and all three
+are fed one replicated command list with Zero Hour's minimum run-ahead of 4 frames:
+* Player 0's machine renders 1–3 client frames per logic frame.
+* Player 1's machine renders one.
+* The third machine never renders. It stands for a headless replay check (`-simReplay`) or a
+  minimised observer.
+
+Each player's input comes from his own machine's client, made from scripted keys and mouse
+movement, as in the game. The rounds cycle every slot weapon of the catalog through custom
+classes sent as wire words. Every frame the three `Sim::state_hash`es (new, `sim/lockstep.rs`: a
+hash of the deterministic state's `Debug` form, without the presentation buffers) and every engine
+call must agree.
+
+**What it caught.** `Sim::step` decided `hasdonecombat` (`PlayerSim::combat`) like this:
+`self.events[before..].iter().any(is_combat)`. `Sim::events` is presentation. The client clears it
+on every render frame. A machine that renders nothing (the headless replay check, or a minimised
+window) leaves it at its 512 cap. At the cap, `emit` removes from the front, so the step's own
+events land below `before` and are never seen. The never-rendering machine therefore never set
+`combat`, and a mid-life class pick after a fight changed its kit at once. Every other machine
+held that pick for the next spawn (`MP_CHANGE_CLASS_NEXT_SPAWN`).
+
+With the old code the gate fails at frame 1805 (round 4, the first shot after the buffer filled):
+`machine C diverged from A ... the sim state`. The fix: `emit` sets a per-seat bit,
+`Sim::combat_seen`, and the step reads that bit. The rule is now in CONTRACT.md, "Multiplayer
+(lockstep)": `Sim::events` and `Sim::tracers` are never sim input.
+
+**Gotcha.** The state hash runs over `Debug`, so it costs a few hundred µs per frame. That is fine
+for the tests and for a Zero Hour CRC interval, but not for every frame of a real game. f32's
+`Debug` is the shortest round-trip form, so `-0.0` and `0.0` hash differently.
+
+## Multiplayer audit: the sim's transcendental functions go through `libm` (2026-11-01, branch `v1/mp-audit`)
+
+The engine is built to be bit-identical across architectures. `USE_DETERMINISTIC_MATH` routes
+its trig and exp through TheSuperHackers' GameMath, and it compiles with `-ffp-contract=off` /
+`/fp:precise`. The core's sim did not match that. About twenty sim-reachable sites called
+`f32::sin`/`cos`/`sin_cos`/`atan`/`atan2`/`asin`/`exp`/`powi`, and those call the platform C
+library: Apple's libm, the Windows UCRT (which picks FMA3 paths by CPU), glibc. Their last-place
+results differ.
+
+Affected sites:
+* `math::dir_from_angles` and `basis_xy`: every shot, every move.
+* The movement and hitscan box rotations.
+* The shield arcs.
+* The projectile and planted yaws.
+* The thrown-velocity angle and the spread cone.
+* The deployed shield's slope.
+* The idle sway, the gun pose and the viewmodel motion the server keeps for aimed shots.
+* The stacked-fire `powi`.
+
+Any of them could desync a Mac and a PC, or two PCs with different CPUs, a few ulps at a time.
+Lockstep amplifies that into a divergence.
+
+**Fix.** `math::det` wraps the `libm` crate, a pure-Rust port of musl that was already in the
+lock file through wgpu, so no new download. Every sim-reachable site calls it now.
+`the_sim_calls_no_platform_libm` scans the core's sources: any `f32` transcendental call outside
+the presentation modules fails the build's tests, with the file and line. Presentation code (the
+client's camera, the HUD, the class screens, LUI, the renderer passes, the conformance oracle)
+still uses std, because it differs per machine by design.
+
+`det` agrees with the platform libm to the ulp scale (`det_matches_the_platform_libm_to_the_ulp_scale`).
+The existing fake-host tests all pass unchanged. That is expected: they compare within
+tolerances, or compare runs against each other.
+
+**Gotcha.** `f32::powi` is not a libm call but an LLVM builtin, and its expansion (repeated
+squaring, or `__powisf2`) is the backend's choice. `det::powi` is `libm::powf(x, n as f32)`.
+
+**Out of scope.** Zero Hour still refuses a cross-build join: the exe CRC covers the binary. A
+Mac ↔ PC match is therefore not possible yet anyway. This change makes it possible later, and it
+removes the cross-CPU risk for same-binary Windows games today.
+
+## Multiplayer audit: a General given to an ally leaves the leaver's seat (2026-11-01, branch `v1/mp-audit`)
+
+In this engine build, a network player who leaves does not just lose his objects: `processDestroyPlayerCommand` sends `MSG_SELF_DESTRUCT` with `transferAssets = TRUE` (non-retail CRC), and `onSelfDestruct`
+gives his objects to a living ally. A General in first person goes with them. The sim checked
+ownership only at take-control. The leaver's `PlayerSim` therefore kept the General, kept him
+`controlled` (no AI), and drove him with the last `MSG_ZHBO_FPS_INPUT` it had. A leaver who
+quit while running and firing left a General who ran and fired forever. Every peer saw the same
+thing, so it was not a desync, but it was broken. An ally who then took control got a second
+record fighting the first for the pose.
+
+`Sim::step_player` now drops a record whose General's `owner_player` is no longer the seat. A
+first-person one goes back to RTS control first, so his AI resumes. The new owner's seat takes
+him over on its next RTS report or take-control. Test:
+`a_general_handed_to_an_ally_leaves_the_leavers_seat`. The rule is in CONTRACT.md, "Multiplayer
+(lockstep)".
+
+## Multiplayer audit: Create a Class in the LAN and online lobbies; mismatched content is refused in the lobby (2026-11-01, branch `v1/mp-audit`)
+
+**Lobby button.** Patch 0014 built the Skirmish lobby's button inline in
+`SkirmishGameOptionsMenu.cpp`. That code now lives in the bridge as
+`Zhbo_EnsureCreateClassButton` (`ZhboMenu.cpp`), and host patch 0018 calls it from all three game
+setup menus: Skirmish, LAN (`LanGameOptionsMenu.wnd`) and online (`GameSpyGameOptionsMenu.wnd`).
+I read the three retail layouts from the player's own `WindowZH.big`. They share one shape: a
+panel (`SubParent` / `GadgetParent` / `FadeParent`) with a title line under its top edge
+(`Line` / `LINE` at y 83 / 93 / 80 of 600), and the panel's top-right corner is empty in all
+three. No window overlaps the button's rect there.
+
+The online title row is only 38 px tall, shorter than the 36 px Start button plus margins, so the
+helper fits the button's height between the panel top and the line. For Skirmish nothing
+changes: there is room for the full 36 px.
+
+The classes stay the player's own (his profile). Only the pick goes over the wire, as before.
+`Zhbo_Reset` closes the shell screen when the host starts the match.
+
+**Content check.** Every player converts the 61 MB weapon table from his own Black Ops II and
+keeps his own tuning pack and classes. A DLC, a patch level, a converter version or
+`ZHBO_LOADOUT` changes the sim. The engine's INI CRC is computed in `GameEngine::init` before
+`Zhbo_Init`, and it covers only the INIs the engine loads: the converted archive's Object, Weapon
+and FXList files are included, the core's tables are not.
+
+`Zhbo_Init` now folds the exact texts handed to the core, length-prefixed, plus `ZHBO_LOADOUT`
+and `ZHBO_AUTOPILOT`, into `m_iniCRC`, and logs `multiplayer: content CRC …`. That gives each
+check:
+* **Online:** staging rooms already refuse a mismatched INI CRC (`JoinFailedCRCMismatch`).
+* **LAN:** Zero Hour builds skip the LAN CRC check entirely (`#if !RTS_ZEROHOUR`, "@todo Enable
+  CRC checks!"). Patch 0018 checks the INI CRC there too. The exe CRC stays unchecked, so builds
+  of the same source on different platforms can still join each other.
+* **Replays:** they record the INI CRC in their header and warn on mismatch.
+
+**Gotcha.** `ZHBO_AUTOPILOT` is in the content CRC, so an autotest instance and a normal one
+have different CRCs (1AE22359 vs 11AE215C in the two legs here) and cannot join each other.
+That is intended: the autopilot spawns and picks inside the logic step.
+
+**Verified.**
+* `cargo xtask build` into a private work dir: clean, no new warnings in the touched files.
+* `autotest-mac.sh` default leg 16/16 on this build.
+* `--build` leg: its overhead half passes. The first-person half fails identically on main's
+  dist (see the audit report, "found elsewhere").
+
+**Not verified.** No one has clicked the LAN or online buttons in game yet (the autotests load a
+save game and never visit a lobby).
+
+## Multiplayer audit: the General's Build menu was a desync (2026-11-01, branch `v1/mp-audit`)
+
+The command bar shows the General's Build menu by putting a command-set override on his
+`Object` (`Zhbo_OnZhboCommand`, `setCommandSetStringOverride`). The class set does the same.
+The comment called this "UI only", but it is Object state, and it is set only on the machine
+whose player clicked. Zero Hour's logic reads an object's command set:
+`BuildAssistant::isPossibleToMakeUnit` scans it for the construct button, and its own comment
+says "we want to have all players run this logic on all their machines". `buildObjectNow` and
+`DozerAIUpdate::construct` both call it. An overhead `MSG_DOZER_CONSTRUCT` from a General
+therefore built on the ordering machine, whose override was up, and was refused on every other
+machine, whose General still had his own set. Result: a structure and its cost on one machine
+only. First-person building was safe, because `BuildMenuOn` applies the override inside the
+logic callback on every machine.
+
+Host patch 0019 makes `isPossibleToMakeUnit` check a General against
+`Zhbo_BuildCommandSet(builder)` on every machine. That is his side's worker menu, which depends
+only on his controlling player's template. Every other builder keeps reading its own command
+set. The class set's override has no other logic reader on a General: no upgrades, and scripts
+do not drive human Generals. The ZH CRC does not include the command-set string
+(`Object::crc`), which is why a desync like this would have shown up only later, as a missing
+building.
+
+**Verified.**
+* `cargo xtask build` (private work dir).
+* `autotest-mac.sh --build`, overhead half: build menu, structure ordered, started, finished at
+  2.1× a dozer's time, the same as on main.
+
+## Multiplayer audit: what is still open (2026-11-01, branch `v1/mp-audit`)
+
+**Converter determinism.** Two players with the same install must get a byte-identical archive,
+or the content CRC refuses them. I rebuilt `ConquerOps_BO2.big` from this branch
+(`build-archive`, 2 min 18 s) and compared it member by member with the dist's, which was built
+at 16:19 from main. All 47,108 members are byte-identical, including the 61 MB `weapons.ini`.
+The table carries no paths or timestamps.
+
+**Open.** The audit report (`~/.opencode/plan/mp-audit/FINDINGS.md`) lists these as separate
+items:
+* Zero Hour's `GameLogic::getCRC` does not cover the mod's state. That needs an appended
+  `zhbo_logic_crc` and a host patch: ABI 30.
+* Lockstep input delay. The run-ahead starts at 30 frames, then adapts to at least 4 frames
+  (133 ms). Mouse look is already local. Movement, firing and ADS wait the run-ahead.
+  Proposed: local presentation prediction and lag-compensated hitscan.
+* Observers and replay viewers act as the observed player's client.
+* Different DLC or patch levels can never play together.
+* Received custom classes are not validated.
+* The surface lookup reads `TheTerrainVisual` from the logic, and the grenade bounce depends on
+  it. CONTRACT/`impacts.rs` still call surfaces "presentation only"; that is inaccurate.
+* A real two-instance LAN test needs a debug macOS preset and a loopback alias (sudo). See
+  TESTING.md, "Multiplayer in game".

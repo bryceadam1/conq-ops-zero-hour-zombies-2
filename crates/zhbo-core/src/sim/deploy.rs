@@ -98,8 +98,8 @@ impl Sim {
         let depth = inches((g.held.maxs[0] - g.held.mins[0]) * 0.5).max(1e-3);
         let width = inches((g.held.maxs[1] - g.held.mins[1]) * 0.5).max(1e-3);
         let h = |v: Vec3| host.ground_height(v.x, v.y);
-        let pitch = ((h(at + fwd * depth) - h(at - fwd * depth)) / (2.0 * depth)).atan().to_degrees().abs();
-        let roll = ((h(at + right * width) - h(at - right * width)) / (2.0 * width)).atan().to_degrees().abs();
+        let pitch = crate::math::det::atan((h(at + fwd * depth) - h(at - fwd * depth)) / (2.0 * depth)).to_degrees().abs();
+        let roll = crate::math::det::atan((h(at + right * width) - h(at - right * width)) / (2.0 * width)).to_degrees().abs();
         if pitch > t.riotshield_deploy_pitch_max || roll > t.riotshield_deploy_roll_max {
             return None;
         }

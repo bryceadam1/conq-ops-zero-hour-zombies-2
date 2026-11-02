@@ -49,10 +49,67 @@ Both network messages are ordinary lockstep `GameMessage`s, so they are replicat
 recorded in replays. Everything in `sim` is deterministic given identical inputs (no wall-clock time,
 xorshift RNG seeded from the General id and frame, objects sorted by id before use).
 
+## Multiplayer (lockstep)
+
+Every peer of a Zero Hour network game (and a replay's playback) runs the same logic frames over
+the same command lists, so the core's sim must reach the same state on every machine from the
+replicated messages alone. The rules, and what enforces each:
+
+* **Only the messages feed the sim.** `MSG_ZHBO_TAKE_CONTROL`, `MSG_ZHBO_FPS_INPUT` and
+  `MSG_ZHBO_CHOOSE_CLASS` (a custom class as its catalog-token wire words) are the sim's inputs;
+  the logic callbacks read only logic-side engine state. The local client (its camera, look, HUD,
+  sounds, shellshock presentation, viewer) never writes the sim's deterministic state: the look
+  and the shellshock's look scaling are applied before the input is *sent*, so the angles in the
+  message are what every peer uses.
+* **`Sim::events` and `Sim::tracers` are presentation, never sim input.** Each client drains the
+  events at its own render cadence, a headless replay check never does (the buffer then sits at its
+  512 cap and evicts from the front), and the tracers are drawn per viewer. A sim decision taken
+  from either diverges between peers; `hasdonecombat` comes from the emit itself
+  (`Sim::combat_seen`), not from an index window into the events.
+* **Bit-identical floats on every platform.** `+ - * /` and `sqrt` are IEEE-exact, and neither
+  Rust nor the engine (`-ffp-contract=off`, MSVC `/fp:precise`) fuses a multiply and an add. The
+  transcendental functions are the gap: `f32::sin` and its kin call the platform C library, whose
+  last-place results differ across macOS, Windows (whose UCRT picks code paths by CPU feature) and
+  Linux. The engine routes its own through TheSuperHackers' GameMath (`USE_DETERMINISTIC_MATH`);
+  the core routes the sim's through `math::det` (musl's libm, ported to Rust). The
+  `the_sim_calls_no_platform_libm` test fails on any `f32` transcendental call in a sim-reachable
+  file (everything except the client, HUD, class screens, LUI, renderer passes, conformance oracle,
+  sounds and the C ABI module).
+* **A seat commands only its own General.** Ownership is checked at take-control and on every
+  step: a network game hands a leaving player's assets to a living ally (`onSelfDestruct` with
+  `transferAssets`), and the leaver's record then lets go of the General (back to RTS control, AI
+  on) instead of driving him with the last input it received.
+* **The same content on every machine, checked in the lobby.** Each player converts the weapon
+  table (and keeps the tuning pack and the classes) on his own machine, and a different install (a
+  DLC, a patch level, another converter version, `ZHBO_LOADOUT`) makes a different sim. The
+  engine's INI CRC covers only what the engine loads (the converted archive's INIs among them), so
+  `Zhbo_Init` folds the texts the core was handed — the weapon table, the tuning pack, the classes —
+  and the sim inputs the environment sets (`ZHBO_LOADOUT`, `ZHBO_AUTOPILOT`) into `m_iniCRC`
+  (`ConquerOps.log`: `multiplayer: content CRC …`). Online staging rooms already refuse a mismatched
+  INI CRC; host patch 0018 makes Zero Hour's LAN join check it too (the exe CRC stays unchecked
+  there, as in stock Zero Hour), and replays record it in their header.
+* **No logic reads a UI-only override.** The General's Build menu and class set are command-set
+  overrides the bridge puts on the object on the machine whose player opened them. Zero Hour's
+  logic reads an object's command set in its construction check (`BuildAssistant::isPossibleToMakeUnit`,
+  "run this logic on all their machines"), so host patch 0019 checks a General against his side's
+  build set (`Zhbo_BuildCommandSet`) on every machine instead of his current set.
+* **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
+  player records, chosen classes, projectiles, equipment, smokes, deployed shields, the frame) and
+  leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)
+  runs one match on three machines — two players' machines at different render cadences, each
+  with its own client and viewer, and one that never renders — and requires the same hash, and the
+  same engine calls, on every frame. The hash is not yet folded into Zero Hour's own
+  `GameLogic::getCRC` (that needs an appended ABI function and a host patch; see MODLOG, the
+  multiplayer audit), so today a mod-only divergence shows in the engine's CRC only once it moves
+  or hurts an object.
+
 ## The shell menu ABI (the lobby's create-a-class)
 
-The lobby's Create a Class button opens the class screens *in the shell* (BO2's lobby create-a-class:
-edit/manage classes outside a match). The window is the engine's — a full-screen modal window built
+The lobbies' Create a Class button opens the class screens *in the shell* (BO2's lobby
+create-a-class: edit/manage classes outside a match). Every game setup menu has it — Skirmish, LAN
+and online (GameSpy) — built in code by the bridge (`Zhbo_EnsureCreateClassButton`, host patch 0018;
+no `.wnd` is shipped) in the empty top-right corner of the menu's panel, fitted above its title
+line. The window is the engine's — a full-screen modal window built
 in code by the bridge (`host/zhbo/ZhboMenu.cpp`, on the engine's own modal-dialog pattern; host patch
 0015 retargets the button to it) — and the screen is the same `classui` screens the in-game `Client`
 hosts, driven by a small `MenuState` (`crates/zhbo-core/src/menu.rs`) with no `Sim` and no match.

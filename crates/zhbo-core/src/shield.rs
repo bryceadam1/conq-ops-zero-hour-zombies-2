@@ -87,14 +87,14 @@ impl Bearer {
     /// World → body inches.
     fn body_of(&self, v: Vec3, point: bool) -> [f32; 3] {
         let d = if point { v - self.pos } else { v };
-        let (s, c) = self.yaw.sin_cos();
+        let (s, c) = crate::math::det::sin_cos(self.yaw);
         let k = if point { 1.0 / ZH_PER_INCH } else { 1.0 };
         [(d.x * c + d.y * s) * k, (-d.x * s + d.y * c) * k, d.z * k]
     }
 
     /// Body inches → world.
     fn world_of(&self, v: [f32; 3], point: bool) -> Vec3 {
-        let (s, c) = self.yaw.sin_cos();
+        let (s, c) = crate::math::det::sin_cos(self.yaw);
         let k = if point { ZH_PER_INCH } else { 1.0 };
         let w = Vec3::new((v[0] * c - v[1] * s) * k, (v[0] * s + v[1] * c) * k, v[2] * k);
         if point {
@@ -142,7 +142,7 @@ impl Bearer {
         let (origin, fwd) = self.tag();
         let dot = (at - origin).normalized_or_zero().dot(fwd);
         let arcs = [(30.0f32, t.shield_blast_protection_30), (60.0, t.shield_blast_protection_60), (120.0, t.shield_blast_protection_120), (180.0, t.shield_blast_protection_180)];
-        arcs.into_iter().find(|(arc, _)| dot > (arc * 0.5).to_radians().cos()).map_or(0.0, |(_, p)| p)
+        arcs.into_iter().find(|(arc, _)| dot > crate::math::det::cos((arc * 0.5).to_radians())).map_or(0.0, |(_, p)| p)
     }
 }
 

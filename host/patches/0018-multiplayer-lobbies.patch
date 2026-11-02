@@ -1,0 +1,235 @@
+diff --git a/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp b/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp
+index 6993a5af4..c976ec01b 100644
+--- a/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp
++++ b/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp
+@@ -294,9 +294,15 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
+ 			if (TheGlobalData->m_netMinPlayers > 0) {
+ #endif
+ // TheSuperHackers @todo Enable CRC checks!
++// ZHBO: Zero Hour checks the INI CRC too. Conquer Ops folds its own sim data (the weapon table,
++// tuning pack and classes each player converted from his own install) into m_iniCRC
++// (Zhbo_Init), so a joiner whose content differs is refused here, in the lobby, instead of
++// desyncing mid-match. The exe CRC stays unchecked in Zero Hour, as before.
++			if (msg->GameToJoin.iniCRC != TheGlobalData->m_iniCRC
+ #if !RTS_ZEROHOUR
+-			if (msg->GameToJoin.iniCRC != TheGlobalData->m_iniCRC ||
+-					msg->GameToJoin.exeCRC != TheGlobalData->m_exeCRC)
++				|| msg->GameToJoin.exeCRC != TheGlobalData->m_exeCRC
++#endif
++				)
+ 			{
+ 				DEBUG_LOG(("LANAPI::handleRequestJoin - join denied because of CRC mismatch. CRCs are them/us INI:%X/%X exe:%X/%X",
+ 					msg->GameToJoin.iniCRC, TheGlobalData->m_iniCRC,
+@@ -307,7 +313,6 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
+ 				reply.GameNotJoined.playerIP = senderIP;
+ 				canJoin = false;
+ 			}
+-#endif
+ #if defined(RTS_DEBUG)
+ 			}
+ #endif
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
+index fc821e24c..1fb6d4820 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
+@@ -28,6 +28,7 @@
+ // Description: Lan Game Options Menu
+ ///////////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ 
+ #include "Common/PlayerTemplate.h"
+@@ -111,6 +112,7 @@ static NameKeyType textEntryChatID = NAMEKEY_INVALID;
+ static NameKeyType textEntryMapDisplayID = NAMEKEY_INVALID;
+ static NameKeyType buttonBackID = NAMEKEY_INVALID;
+ static NameKeyType buttonStartID = NAMEKEY_INVALID;
++static NameKeyType buttonCreateClassID = NAMEKEY_INVALID; // ZHBO
+ static NameKeyType buttonChatID = NAMEKEY_INVALID;
+ static NameKeyType buttonSelectMapID = NAMEKEY_INVALID;
+ static NameKeyType checkboxLimitSuperweaponsID = NAMEKEY_INVALID;
+@@ -675,6 +677,7 @@ void InitLanGameGadgets()
+ 	parentLanGameOptionsID = TheNameKeyGenerator->nameToKey( "LanGameOptionsMenu.wnd:LanGameOptionsMenuParent" );
+ 	buttonBackID = TheNameKeyGenerator->nameToKey( "LanGameOptionsMenu.wnd:ButtonBack" );
+ 	buttonStartID = TheNameKeyGenerator->nameToKey( "LanGameOptionsMenu.wnd:ButtonStart" );
++	buttonCreateClassID = Zhbo_CreateClassButtonID( "LanGameOptionsMenu.wnd" ); // ZHBO
+ 	textEntryChatID = TheNameKeyGenerator->nameToKey( "LanGameOptionsMenu.wnd:TextEntryChat" );
+ 	textEntryMapDisplayID = TheNameKeyGenerator->nameToKey( "LanGameOptionsMenu.wnd:TextEntryMapDisplay" );
+ 	listboxChatWindowLanGameID = TheNameKeyGenerator->nameToKey( "LanGameOptionsMenu.wnd:ListboxChatWindowLanGame" );
+@@ -849,6 +852,9 @@ void LanGameOptionsMenuInit( WindowLayout *layout, void *userData )
+ 	EnableSlotListUpdates(FALSE);
+ 	InitLanGameGadgets();
+ 	EnableSlotListUpdates(TRUE);
++	// ZHBO: BO2's lobby create-a-class, as in the Skirmish lobby: the shell class screen. The
++	// classes are the player's own (his profile); the pick goes over the wire in the match.
++	Zhbo_EnsureCreateClassButton( parentLanGameOptions, "LanGameOptionsMenu.wnd", "GadgetParent", "LINE", buttonStart );
+ 	Int start = 0;
+ 
+ 	// Make sure the text fields are clear
+@@ -1297,6 +1303,10 @@ WindowMsgHandledType LanGameOptionsMenuSystem( GameWindow *window, UnsignedInt m
+ 					mapSelectLayout->bringForward();
+ 
+ 				}
++				else if ( controlID == buttonCreateClassID ) // ZHBO
++				{
++					Zhbo_OpenClassMenu();
++				}
+ 				else if ( controlID == buttonStartID )
+ 				{
+ 					if (TheLAN->AmIHost())
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+index 432eb56e6..558838ef5 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+@@ -1031,88 +1031,13 @@ static void handleCreateClassClick()
+   Zhbo_OpenClassMenu();
+ }
+ 
+-// The mod never ships the base game's .wnd files, so SkirmishGameOptionsMenu.wnd may not carry a
+-// ButtonCreateClass element. When the lookup comes up empty we build the button in code and parent
+-// it to the skirmish menu, on the pattern of ZhboControlBarAccess::injectConstructButtons. A shipped
+-// .wnd element, if the art later provides one, takes precedence and this does nothing. Called from
+-// the menu's Init, once the layout is settled, so the parent's own rect is real.
+-static GameWindow *injectCreateClassButton( GameWindow *parent )
+-{
+-  if( parent == nullptr )
+-    return nullptr;
+-
+-  // Same size and font as the neighbouring Start button, so it reads as one of the shell's own.
+-  Int w = 174, h = 36;
+-  GameFont *font = nullptr;
+-  if( buttonStart )
+-  {
+-    buttonStart->winGetSize( &w, &h );
+-    font = buttonStart->winGetFont();
+-  }
+-  if( font == nullptr )
+-    font = TheWindowManager->winFindFont( "Times New Roman", 14, FALSE );
+-
+-  // Sit in the empty top-right of the menu's panel, aligned with the title row. Anchored to the
+-  // panel (a named sibling) so it scales with the layout; fall back to the parent's lower-right.
+-  // gogoGadgetPushButton takes parent-relative coordinates, unlike winGetScreenPosition.
+-  Int px = 0, py = 0, pw = 0, ph = 0;
+-  parent->winGetScreenPosition( &px, &py );
+-  parent->winGetSize( &pw, &ph );
+-  Int x = pw - w - 20, y = ph - h - 20;
+-  GameWindow *panel = TheWindowManager->winGetWindowFromId( parent,
+-    TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:SubParent" ) );
+-  if( panel )
+-  {
+-    Int rx = 0, ry = 0, rw = 0, rh = 0;
+-    panel->winGetScreenPosition( &rx, &ry );
+-    panel->winGetSize( &rw, &rh );
+-    x = rx - px + rw - w - 4;
+-    y = ry - py + 4;
+-  }
+-
+-  WinInstanceData instData;
+-  instData.init();
+-  BitSet( instData.m_style, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK );
+-
+-  // The plain draw path, not WIN_STATUS_IMAGE: the image path paints only the gadget's images, and
+-  // assignDefaultGadgetLook assigns none here (the retail shell uses its own Buttons-* images).
+-  GameWindow *button = TheWindowManager->gogoGadgetPushButton( parent,
+-    WIN_STATUS_ENABLED | WIN_STATUS_NO_FOCUS, x, y, w, h, &instData, font, FALSE );
+-  if( button == nullptr )
+-    return nullptr;
+-
+-  // Set the text and its colours directly: assignDefaultGadgetLook skips them when defaultVisual is
+-  // FALSE, and an undefined colour has zero alpha, which is what made the old button invisible.
+-  // The text colours are the Start button's; the fill is the menu panel's dark style.
+-  GadgetButtonSetText( button, UnicodeString( L"Create a Class" ) );
+-  button->winSetEnabledTextColors( TheWindowManager->winMakeColor( 255, 255, 255, 255 ),
+-                                   TheWindowManager->winMakeColor( 0, 0, 0, 255 ) );
+-  button->winSetDisabledTextColors( TheWindowManager->winMakeColor( 62, 64, 92, 255 ),
+-                                    TheWindowManager->winMakeColor( 31, 32, 47, 255 ) );
+-  button->winSetHiliteTextColors( TheWindowManager->winMakeColor( 186, 255, 12, 255 ),
+-                                  TheWindowManager->winMakeColor( 0, 2, 0, 255 ) );
+-  GadgetButtonSetEnabledColor( button, TheWindowManager->winMakeColor( 2, 2, 2, 220 ) );
+-  GadgetButtonSetEnabledBorderColor( button, TheWindowManager->winMakeColor( 47, 55, 168, 255 ) );
+-  GadgetButtonSetHiliteColor( button, TheWindowManager->winMakeColor( 24, 32, 60, 235 ) );
+-  GadgetButtonSetHiliteBorderColor( button, TheWindowManager->winMakeColor( 186, 255, 12, 255 ) );
+-  GadgetButtonSetDisabledColor( button, TheWindowManager->winMakeColor( 16, 16, 20, 220 ) );
+-  GadgetButtonSetDisabledBorderColor( button, TheWindowManager->winMakeColor( 64, 64, 80, 255 ) );
+-  button->winSetTooltip( UnicodeString( L"Browse, edit and manage your custom classes" ) );
+-
+-  // Give the button the same id the .wnd element would have, so the menu's system handler routes
+-  // its clicks through the same comparison.
+-  button->winSetWindowId( buttonCreateClassID );
+-  return button;
+-}
+-
+-/// Make sure the Create a Class button exists. The layout's windows are destroyed when the shell
+-/// pops the menu, so the cached pointer is stale on a later visit: look the button up on the fresh
+-/// layout and rebuild it only when it is missing. Idempotent within one layout.
++/// Make sure the Create Class button exists on this layout: the .wnd element if the art ever
++/// carries one, else the bridge builds it (the mod never ships the base .wnd files) in the empty
++/// top-right of the menu's panel. Shared with the LAN and online lobbies (ZhboMenu.cpp).
+ static void ensureCreateClassButton()
+ {
+-  buttonCreateClass = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, buttonCreateClassID );
+-  if( buttonCreateClass == nullptr )
+-    buttonCreateClass = injectCreateClassButton( parentSkirmishGameOptions );
++  buttonCreateClass = Zhbo_EnsureCreateClassButton( parentSkirmishGameOptions, "SkirmishGameOptionsMenu.wnd",
++    "SubParent", "Line", buttonStart );
+   DEBUG_ASSERTCRASH(buttonCreateClass, ("Could not create the buttonCreateClass"));
+ }
+ 
+@@ -1132,7 +1057,7 @@ void InitSkirmishGameGadgets()
+ 	staticTextGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:StaticTextGameSpeed" );
+   checkBoxLimitSuperweaponsID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:CheckboxLimitSuperweapons" );
+   comboBoxStartingCashID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:ComboBoxStartingCash" );
+-	buttonCreateClassID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:ButtonCreateClass" );
++	buttonCreateClassID = Zhbo_CreateClassButtonID( "SkirmishGameOptionsMenu.wnd" );
+ 
+ 	// Initialize the pointers to our gadgets
+ 	parentSkirmishGameOptions = TheWindowManager->winGetWindowFromId( nullptr, parentSkirmishGameOptionsID );
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp
+index bd1a4c40d..120f0fca3 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp
+@@ -29,6 +29,7 @@
+ ///////////////////////////////////////////////////////////////////////////////////////
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/GameEngine.h"
+ #include "Common/GameState.h"
+@@ -189,6 +190,7 @@ static NameKeyType textEntryChatID = NAMEKEY_INVALID;
+ static NameKeyType textEntryMapDisplayID = NAMEKEY_INVALID;
+ static NameKeyType buttonBackID = NAMEKEY_INVALID;
+ static NameKeyType buttonStartID = NAMEKEY_INVALID;
++static NameKeyType buttonCreateClassID = NAMEKEY_INVALID; // ZHBO
+ static NameKeyType buttonChatID = NAMEKEY_INVALID;
+ static NameKeyType buttonSelectMapID = NAMEKEY_INVALID;
+ static NameKeyType windowMapID = NAMEKEY_INVALID;
+@@ -1118,6 +1120,7 @@ void InitWOLGameGadgets()
+ 	parentWOLGameSetupID = TheNameKeyGenerator->nameToKey( "GameSpyGameOptionsMenu.wnd:GameSpyGameOptionsMenuParent" );
+ 	buttonBackID = TheNameKeyGenerator->nameToKey( "GameSpyGameOptionsMenu.wnd:ButtonBack" );
+ 	buttonStartID = TheNameKeyGenerator->nameToKey( "GameSpyGameOptionsMenu.wnd:ButtonStart" );
++	buttonCreateClassID = Zhbo_CreateClassButtonID( "GameSpyGameOptionsMenu.wnd" ); // ZHBO
+ 	textEntryChatID = TheNameKeyGenerator->nameToKey( "GameSpyGameOptionsMenu.wnd:TextEntryChat" );
+ 	textEntryMapDisplayID = TheNameKeyGenerator->nameToKey( "GameSpyGameOptionsMenu.wnd:TextEntryMapDisplay" );
+ 	listboxGameSetupChatID = TheNameKeyGenerator->nameToKey( "GameSpyGameOptionsMenu.wnd:ListboxChatWindowGameSpyGameSetup" );
+@@ -1371,6 +1374,9 @@ void WOLGameSetupMenuInit( WindowLayout *layout, void *userData )
+ 	EnableSlotListUpdates(FALSE);
+ 	InitWOLGameGadgets();
+ 	EnableSlotListUpdates(TRUE);
++	// ZHBO: BO2's lobby create-a-class, as in the Skirmish lobby: the shell class screen. The
++	// classes are the player's own (his profile); the pick goes over the wire in the match.
++	Zhbo_EnsureCreateClassButton( parentWOLGameSetup, "GameSpyGameOptionsMenu.wnd", "FadeParent", "LINE", buttonStart );
+ 	TheGameSpyInfo->registerTextWindow(listboxGameSetupChat);
+ 
+ 	//The dialog needs to react differently depending on whether it's the host or not.
+@@ -2735,6 +2741,10 @@ WindowMsgHandledType WOLGameSetupMenuSystem( GameWindow *window, UnsignedInt msg
+ 					WOLMapSelectLayout->hide( FALSE );
+ 					WOLMapSelectLayout->bringForward();
+ 				}
++				else if ( controlID == buttonCreateClassID ) // ZHBO
++				{
++					Zhbo_OpenClassMenu();
++				}
+ 				else if ( controlID == buttonStartID )
+ 				{
+ 					savePlayerInfo();
