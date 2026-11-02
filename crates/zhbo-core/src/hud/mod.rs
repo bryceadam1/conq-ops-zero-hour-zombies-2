@@ -201,7 +201,9 @@ fn draw_shellshock(prims: &mut Vec<Prim>, w: f32, h: f32, screen: crate::shellsh
 }
 
 pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: &Sim, local_player: i32) {
-    let player = sim.player(local_player);
+    // First person is drawn from the client's prediction of the local player while it runs (the
+    // ammo leaves the counter as the shot leaves the gun), else from the sim's record.
+    let player = client.predict.view().or_else(|| sim.player(local_player));
     let (w, h) = host.screen_size();
     let s = (h / 720.0).max(0.5);
     let l = frame::Lui::new(w, h);

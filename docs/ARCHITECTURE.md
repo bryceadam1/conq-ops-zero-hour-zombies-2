@@ -79,7 +79,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   the MMS's characters, the target finder's spotting and marks), `guard.rs` (the victim's class
   perks against another General's blasts — Flak Jacket, Tactical Mask — applied where the damage
   reaches the host, as BO2's damage callback does), `shock.rs` (which shellshock a first-person
-  General gets from a blast: the GSC's `shellshock()` sources).
+  General gets from a blast: the GSC's `shellshock()` sources), `antilag.rs` (BO2's antilag: the
+  first-person Generals of the last frames, and the frame a shot is resolved against), `predict.rs`
+  (the client's prediction's half in the sim: `Sim::scratch`, `Sim::predict_step` and the
+  `Sandbox` host that reads the engine and writes nothing).
 - `shellshock.rs`: BO2's shellshocks (`ShockDef`, the weapon table's `Shock` blocks converted from
   the install's `shock/*.shock` files) and their effect while one runs — the run-speed scale (the
   sim), the look control (the client's mouse look), and the presentation: the screen layers (the
@@ -96,8 +99,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   profile (`profile.rs`), `classwire.rs` a custom class's pick payload (catalog tokens),
   `menu.rs` the shell menu.
 - `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
-  frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness).
-  Nothing in it reaches the sim except through the input messages it emits.
+  frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness,
+  `events.rs`: the sim's events as the local player hears and sees them, and `predict.rs`: the
+  local player's prediction over his inputs in flight, which first person is drawn from). Nothing in it reaches the sim except through the input messages it emits.
 - `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
   impact effect), `soundlayers.rs` (third-person shots' per-layer distance curves).
 - `math.rs` (the world-space vector math, and `math::det`: the sim's transcendental functions through the pure-Rust `libm` crate, the one external dependency of the sim, so every lockstep peer computes the same bits — `the_sim_calls_no_platform_libm` keeps sim-reachable code off the platform libm), `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),

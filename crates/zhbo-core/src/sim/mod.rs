@@ -11,6 +11,7 @@
 ** License, or (at your option) any later version.
 */
 
+pub mod antilag;
 mod build;
 pub mod deploy;
 pub mod guard;
@@ -22,10 +23,13 @@ mod plant;
 mod rts;
 mod spawn;
 mod lockstep;
+pub mod predict;
 #[cfg(test)]
 mod hit_tests;
 #[cfg(test)]
 mod lockstep_tests;
+#[cfg(test)]
+mod latency_tests;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
@@ -269,6 +273,11 @@ pub struct PlayerSim {
     pub arsenal: Arsenal,
     pub rng: Rng,
     pub input: FpsInput,
+    /// The logic frame the sender's machine showed when it sent [`PlayerSim::input`] (its
+    /// `Sim::frame` then; 0: not reported). It travels in the input message, so every peer reads the
+    /// same: the latest one's shots are resolved against the world of that frame ([`antilag`]), and
+    /// the sender's client knows which of its inputs this record already holds (its prediction).
+    pub seen_frame: u32,
     pressed_accum: u32,
     pub health: f32,
     pub max_health: f32,
@@ -415,6 +424,7 @@ impl PlayerSim {
             arsenal: Arsenal::with_loadout(crate::weapons::Loadout::test_kit()),
             rng: Rng::new(1),
             input: FpsInput::default(),
+            seen_frame: 0,
             pressed_accum: 0,
             health: 500.0,
             max_health: 500.0,
@@ -486,6 +496,10 @@ pub struct Sim {
     /// replay never does, and the buffer's cap then evicts the newest step's own events from an
     /// index window), so a sim decision taken from them diverged between peers.
     combat_seen: u32,
+    /// The rewindable world of the last frames ([`antilag`]): what a shot is resolved against.
+    pub history: antilag::History,
+    /// `AntilagMaxRewind` in logic frames.
+    pub antilag_frames: u32,
 }
 
 impl Default for Sim {
@@ -512,6 +526,8 @@ impl Sim {
             shields: Vec::new(),
             deployed: Vec::new(),
             combat_seen: 0,
+            history: antilag::History::default(),
+            antilag_frames: antilag::max_rewind_frames(crate::tuning::Tuning::default().antilag_max_rewind),
         }
     }
 
@@ -541,6 +557,7 @@ impl Sim {
         sim.bullet_range = crate::units::inches(t.bulletrange);
         sim.penetration = crate::penetration::Penetration::from_tuning(t);
         sim.equipment.tuning = crate::equipment::EquipTuning::from_tuning(t);
+        sim.antilag_frames = antilag::max_rewind_frames(t.antilag_max_rewind);
         sim
     }
 
@@ -567,14 +584,23 @@ impl Sim {
         self.players.iter().flatten().filter(|p| p.is_first_person()).map(|p| p.general)
     }
 
-    /// `MSG_ZHBO_FPS_INPUT`: latest input for a player's General.
+    /// `MSG_ZHBO_FPS_INPUT` without a seen frame (the sim's own tests, an old sender): latest
+    /// input for a player's General, resolved against the world as it is.
     pub fn input(&mut self, player: i32, general: u32, input: FpsInput) {
+        self.input_seen(player, general, input, 0);
+    }
+
+    /// `MSG_ZHBO_FPS_INPUT`: latest input for a player's General, sent while its machine showed
+    /// logic frame `seen_frame` ([`PlayerSim::seen_frame`]). Several in one frame (the run-ahead
+    /// shrank): the last one's held keys, move, look and seen frame, every one's presses.
+    pub fn input_seen(&mut self, player: i32, general: u32, input: FpsInput, seen_frame: u32) {
         let Ok(idx) = usize::try_from(player) else { return };
         if let Some(Some(p)) = self.players.get_mut(idx) {
             if p.general == general {
                 let input = input.sanitized();
                 p.pressed_accum |= input.pressed;
                 p.input = input;
+                p.seen_frame = seen_frame;
             }
         }
     }
@@ -609,6 +635,7 @@ impl Sim {
             s.2 -= LOGIC_DT;
         }
         self.smokes.retain(|s| s.2 > 0.0);
+        self.record_history();
     }
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {

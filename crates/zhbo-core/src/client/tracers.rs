@@ -50,6 +50,9 @@ pub struct ViewTracers {
     pub pending: Vec<OwnTracer>,
     /// This rendered frame's, for the bridge to draw from the viewmodel's flash tag.
     pub frame: Vec<OwnTracer>,
+    /// The client predicts the viewer's first person (`client::predict`): his own tracers come
+    /// from the prediction as his shots do, and the sim's are not drawn again.
+    pub predicted: bool,
 }
 
 impl ViewTracers {
@@ -62,7 +65,9 @@ impl ViewTracers {
                 continue;
             }
             if self.viewer.first_person != 0 && s.shooter == self.viewer.first_person {
-                self.pending.push(OwnTracer { fx_weapon, end: s.end, left: s.left });
+                if !self.predicted {
+                    self.pending.push(OwnTracer { fx_weapon, end: s.end, left: s.left });
+                }
             } else {
                 host.fire_fx(s.shooter, fx_weapon, s.target, s.end);
             }
