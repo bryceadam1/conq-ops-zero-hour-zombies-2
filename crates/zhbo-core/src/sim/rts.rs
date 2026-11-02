@@ -72,6 +72,8 @@ pub struct RtsState {
     pub gun: i32,
 }
 
+crate::statehash::state_hash!(struct RtsState { lock, tactical, melee, gun });
+
 impl Default for RtsState {
     fn default() -> Self {
         RtsState { lock: -1, tactical: false, melee: false, gun: 0 }

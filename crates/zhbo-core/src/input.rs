@@ -41,6 +41,8 @@ pub struct FpsInput {
     pub pitch: f32,
 }
 
+crate::statehash::state_hash!(struct FpsInput { held, pressed, move_packed, yaw, pitch });
+
 impl FpsInput {
     pub fn move_axes(&self) -> (f32, f32) {
         unpack_move(self.move_packed)

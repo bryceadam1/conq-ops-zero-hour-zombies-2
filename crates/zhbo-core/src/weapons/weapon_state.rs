@@ -21,12 +21,16 @@ pub enum Reload {
     Shells { phase: ShellPhase, t: f32, stop: bool },
 }
 
+crate::statehash::state_hash!(enum Reload { Magazine { t, length, add_at, added, empty, quick }, Shells { phase, t, stop } });
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ShellPhase {
     Start,
     Insert,
     End,
 }
+
+crate::statehash::state_hash!(enum ShellPhase { Start, Insert, End });
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeaponState {
@@ -79,6 +83,11 @@ pub struct WeaponState {
     pub left: Option<Hand>,
 }
 
+crate::statehash::state_hash!(struct WeaponState {
+    def, main, alt_mode, ammo, reserve, cooldown, reload, burst_left, bloom, spin, raised_once, alt_ammo, alt_reserve,
+    string, recoil_acc, since_shot, rechamber_pending, rechamber_shots, rechamber, reload_owed, zoom, quick_reload, left,
+});
+
 /// One gun's own magazine and timers: what BO2 keeps per hand (`ammoCount[hand]`, the left hand's
 /// weapon state `ps+0x1d4` and times `ps+0x54`/`+0x58`). The right hand's live in [`WeaponState`]
 /// itself; [`WeaponState::swap_hand`] trades them so one set of rules runs either hand.
@@ -98,6 +107,11 @@ pub struct Hand {
     pub rechamber: Option<f32>,
     pub reload_owed: bool,
 }
+
+crate::statehash::state_hash!(struct Hand {
+    ammo, cooldown, reload, burst_left, string, recoil_acc, since_shot, rechamber_pending, rechamber_shots, rechamber,
+    reload_owed,
+});
 
 impl Hand {
     /// A full magazine of `def`'s.

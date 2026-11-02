@@ -133,6 +133,8 @@ pub struct GunKickSpring {
     pub vel: (f32, f32),
 }
 
+crate::statehash::state_hash!(struct GunKickSpring { angle, vel });
+
 /// The spring's step (`0.005` s).
 pub const GUN_KICK_STEP: f32 = 0.005;
 

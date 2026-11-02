@@ -79,7 +79,12 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   the MMS's characters, the target finder's spotting and marks), `guard.rs` (the victim's class
   perks against another General's blasts — Flak Jacket, Tactical Mask — applied where the damage
   reaches the host, as BO2's damage callback does), `shock.rs` (which shellshock a first-person
-  General gets from a blast: the GSC's `shellshock()` sources).
+  General gets from a blast: the GSC's `shellshock()` sources), `lockstep.rs` (the state's
+  fingerprint, `Sim::fingerprint`/`state_hash`: per-seat and world sub-hashes, the multiplayer
+  gate's and Zero Hour's logic CRC's share).
+- `statehash.rs`: the fingerprint's streaming hash (`StateHash`, `state_hash!`): every sim type
+  names each field (destructured without `..`, so a new field does not compile until it is hashed
+  or skipped with a reason), floats by bits, definitions by id, no addresses or map order.
 - `shellshock.rs`: BO2's shellshocks (`ShockDef`, the weapon table's `Shock` blocks converted from
   the install's `shock/*.shock` files) and their effect while one runs — the run-speed scale (the
   sim), the look control (the client's mouse look), and the presentation: the screen layers (the

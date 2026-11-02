@@ -32,6 +32,7 @@ pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRAC
 pub use fire::{gather_targets, throw_velocity, HitBodies};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 pub use spawn::ChosenClass;
+pub use lockstep::Fingerprint;
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};
@@ -79,6 +80,8 @@ pub enum Mode {
     Rts,
 }
 
+crate::statehash::state_hash!(enum Mode { Fps, FieldComputer { t }, Rts });
+
 /// A class name as the log carries it: a fixed inline buffer so [`EventKind`] stays `Copy` (the
 /// events are copied out of the sim's ring, and a shipped class's name and a custom one's both fit
 /// in [`NAME_MAX`](crate::classmenu::NAME_MAX) bytes).
@@ -87,6 +90,8 @@ pub struct ClassName {
     bytes: [u8; crate::classmenu::NAME_MAX],
     len: u8,
 }
+
+crate::statehash::state_hash!(struct ClassName { bytes, len });
 
 impl ClassName {
     /// The name of a shipped class by its registry index, or `???` when the index is out of range.
@@ -300,6 +305,12 @@ pub struct PlayerSim {
     pub spawned: bool,
 }
 
+crate::statehash::state_hash!(struct PlayerSim {
+    general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
+    view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, pressed_accum, health, max_health, regen_wait, hack,
+    rts, hammer, site, building, optics, tracer_count, charge, shock, combat, spawned,
+});
+
 impl PlayerSim {
     /// What the sim adds to the mouse aim: the view kick and the scope's idle sway, radians (yaw
     /// left, pitch up). The camera draws the same offset.
@@ -452,6 +463,8 @@ pub struct NativePose {
     pub sidearm: bool,
 }
 
+// Tests copy a whole sim to change one field of it (`lockstep_tests.rs`).
+#[cfg_attr(test, derive(Clone))]
 pub struct Sim {
     pub players: Vec<Option<PlayerSim>>,
     /// Grenades and rockets in flight, with the player who threw them.

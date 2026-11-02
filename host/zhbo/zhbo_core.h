@@ -579,12 +579,28 @@ void zhbo_native_body_reset(void);
    source's feet and height when `source_known`. Lock-free (safe inside any core callback).
    ABI 27. */
 float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, float from_y, float from_z, float from_height, int32_t source_known, int32_t kind, float amount);
+/* The first-person sim's share of Zero Hour's logic CRC (host patch 0020, GameLogic::getCRC after
+   MARKER:TheAI): Sim::state_hash (the multiplayer gate's fingerprint) and its parts. Returns 1 when
+   the sim holds state (the bridge xfers `hash` into the CRC), 0 when it is idle (no General deployed
+   and no class picked: the CRC stays stock Zero Hour's) or not initialised. `log` non-zero (the
+   logic frame's own CRC) also writes the parts to ConquerOps.log when active. `out` may be null.
+   Pending for the next ABI bump (appended after ABI 29; the integrator bumps). */
+typedef struct ZhboLogicCrc
+{
+	uint64_t hash;      /* Sim::state_hash: the frame, every seat's part and the world's */
+	uint64_t world;     /* projectiles, equipment that is down, smoke screens, deployed shields */
+	uint64_t seats[16]; /* each seat's player record and chosen class; 0 for an empty seat */
+	uint32_t frame;     /* the sim's frame (its last step) */
+	uint32_t active;    /* the return value */
+} ZhboLogicCrc;
+int32_t zhbo_logic_crc(ZhboLogicCrc *out, int32_t log);
 
 #ifdef __cplusplus
 }
 
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
+static_assert(sizeof(ZhboLogicCrc) == 152, "ZhboLogicCrc layout must match ffi.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 4876, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 44, "ZhboClientHit layout must match client.rs");

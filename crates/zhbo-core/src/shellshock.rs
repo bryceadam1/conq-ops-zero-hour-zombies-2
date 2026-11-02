@@ -90,6 +90,20 @@ pub struct ShockDef {
     pub sound_loop: String,
 }
 
+/// A running shock's definition by identity: its name (one `Shock` block of the installed table).
+impl crate::statehash::StateHash for &'static ShockDef {
+    fn hash(&self, h: &mut crate::statehash::Hasher) {
+        h.bytes(self.name.as_bytes());
+    }
+    #[cfg(test)]
+    fn perturb(&mut self, n: &mut usize) -> bool {
+        crate::statehash::take(n) && {
+            *self = Box::leak(Box::new(ShockDef { name: format!("{}~", self.name), ..(*self).clone() }));
+            true
+        }
+    }
+}
+
 impl Default for ShockDef {
     fn default() -> Self {
         ShockDef {
@@ -151,6 +165,8 @@ pub struct Active {
     pub serial: u32,
 }
 
+crate::statehash::state_hash!(struct Active { def, duration, left, serial });
+
 /// The first-person General's shellshock state (in the sim, deterministic in the logic step).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Shellshock {
@@ -160,6 +176,8 @@ pub struct Shellshock {
     /// Counts the shocks played (presentation tells one shock from the next by it).
     pub serial: u32,
 }
+
+crate::statehash::state_hash!(struct Shellshock { active, queued, serial });
 
 /// What the look does this frame ([`Shellshock::look`]).
 #[derive(Clone, Copy, Debug, PartialEq)]

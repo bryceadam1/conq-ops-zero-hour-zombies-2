@@ -12,6 +12,8 @@ pub struct Vec3 {
     pub z: f32,
 }
 
+crate::statehash::state_hash!(struct Vec3 { x, y, z });
+
 impl Vec3 {
     pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
     pub const UP: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 1.0 };

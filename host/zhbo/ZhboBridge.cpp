@@ -24,6 +24,7 @@
 #include "Common/ActionManager.h"
 #include "Common/BuildAssistant.h"
 #include "Common/crc.h"
+#include "Common/CRCDebug.h"
 #include "Common/File.h"
 #include "Common/FileSystem.h"
 #include "Common/AudioHandleSpecialValues.h"
@@ -38,6 +39,7 @@
 #include "Common/Team.h"
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
+#include "Common/Xfer.h"
 #include "GameClient/ControlBar.h"
 #include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
@@ -577,6 +579,35 @@ void Zhbo_LogicStep(UnsignedInt frame)
 Bool Zhbo_IsControlled(ObjectID id)
 {
 	return s_ready && zhbo_logic_is_controlled((uint32_t)id) != 0;
+}
+
+void Zhbo_XferLogicCRC(Xfer *xfer, Bool logicFrame)
+{
+	if (!s_ready || xfer == nullptr)
+		return;
+	ZhboLogicCrc crc;
+	// An idle sim (no General deployed, no class picked) adds nothing: the CRC stays stock
+	// Zero Hour's, so a game without the mod's play checks like one without the mod.
+	if (zhbo_logic_crc(&crc, logicFrame ? 1 : 0) == 0)
+		return;
+	AsciiString marker = "MARKER:ConquerOps";
+	xfer->xferAsciiString(&marker);
+	UnsignedInt lo = (UnsignedInt)crc.hash;
+	UnsignedInt hi = (UnsignedInt)(crc.hash >> 32);
+	xfer->xferUnsignedInt(&lo);
+	xfer->xferUnsignedInt(&hi);
+	if (logicFrame)
+	{
+		// The CRC debug log (DEBUG_CRC builds; dumped on a mismatch): the parts name the seat, or
+		// the shared world, whose state went apart. ConquerOps.log has the same line in every build.
+		CRCGEN_LOG(("ConquerOps sim frame %u: %8.8X%8.8X world %8.8X%8.8X", crc.frame, hi, lo,
+			(UnsignedInt)(crc.world >> 32), (UnsignedInt)crc.world));
+		for (Int i = 0; i < (Int)(sizeof(crc.seats) / sizeof(crc.seats[0])); ++i)
+		{
+			if (crc.seats[i] != 0)
+				CRCGEN_LOG(("ConquerOps seat %d: %8.8X%8.8X", i, (UnsignedInt)(crc.seats[i] >> 32), (UnsignedInt)crc.seats[i]));
+		}
+	}
 }
 
 // Zero Hour's damage types in the core's vocabulary: rounds and blows a shield stops, blasts it

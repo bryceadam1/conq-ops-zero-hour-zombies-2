@@ -62,6 +62,8 @@ pub enum Surface {
     Water = 11,
 }
 
+crate::statehash::state_hash!(enum Surface { Default, Flesh, Metal, Concrete, Dirt, Grass, Asphalt, Sand, Snow, Rock, Wood, Water });
+
 impl Surface {
     /// Every slot, in ABI order (a test pins the discriminants to this order).
     pub const ALL: [Surface; 12] = [

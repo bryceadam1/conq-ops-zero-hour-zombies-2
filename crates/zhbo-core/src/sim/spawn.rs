@@ -33,6 +33,10 @@ pub struct ChosenClass {
     pub secondary_reticle: String,
 }
 
+crate::statehash::state_hash!(struct ChosenClass {
+    id, name, loadout, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle,
+});
+
 impl ChosenClass {
     /// The class a `MSG_ZHBO_CHOOSE_CLASS` names: a shipped class by registry index (empty
     /// `payload`, identical on every client), or a custom class's wire words.

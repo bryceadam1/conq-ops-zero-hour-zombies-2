@@ -16,6 +16,16 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rng(u32);
 
+impl crate::statehash::StateHash for Rng {
+    fn hash(&self, h: &mut crate::statehash::Hasher) {
+        crate::statehash::StateHash::hash(&self.0, h);
+    }
+    #[cfg(test)]
+    fn perturb(&mut self, n: &mut usize) -> bool {
+        crate::statehash::StateHash::perturb(&mut self.0, n)
+    }
+}
+
 impl Rng {
     pub fn new(seed: u32) -> Self {
         Rng(seed.max(1))

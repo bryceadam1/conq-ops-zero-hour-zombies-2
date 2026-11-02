@@ -62,6 +62,8 @@ pub struct Loadout {
     pub tactical_count: Option<u16>,
 }
 
+crate::statehash::state_hash!(struct Loadout { primary, secondary, lethal, tactical, melee, perks, reserve, lethal_count, tactical_count });
+
 impl Loadout {
     /// The converted viewmodels this kit can show: its guns and their alt modes, its offhands, its
     /// held knife and the class melee weapon, each once.

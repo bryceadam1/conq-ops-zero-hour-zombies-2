@@ -94,14 +94,34 @@ replicated messages alone. The rules, and what enforces each:
   "run this logic on all their machines"), so host patch 0019 checks a General against his side's
   build set (`Zhbo_BuildCommandSet`) on every machine instead of his current set.
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
-  player records, chosen classes, projectiles, equipment, smokes, deployed shields, the frame) and
-  leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)
-  runs one match on three machines — two players' machines at different render cadences, each
-  with its own client and viewer, and one that never renders — and requires the same hash, and the
-  same engine calls, on every frame. The hash is not yet folded into Zero Hour's own
-  `GameLogic::getCRC` (that needs an appended ABI function and a host patch; see MODLOG, the
-  multiplayer audit), so today a mod-only divergence shows in the engine's CRC only once it moves
-  or hurts an object.
+  player records, chosen classes, projectiles, equipment that is down, smokes, deployed shields,
+  the frame) and leaves out the presentation above, the step's scratch copies (the frame's shield
+  bearers and guards, the shock hits) and the installed data the content CRC covers (tuning,
+  penetration, hit bodies). It streams the values field by field (`statehash.rs`: every type names
+  every field, floats by their bits, a weapon or shock definition by its id; no addresses, no map
+  order), about 11 µs for sixteen busy seats in a release build. `Sim::fingerprint` also gives
+  each seat's part (its record and chosen class) and the world's. The multiplayer gate
+  (`sim/lockstep_tests.rs`, TESTING.md) runs one match on three machines — two players' machines
+  at different render cadences, each with its own client and viewer, and one that never renders —
+  and requires the same hash, and the same engine calls, on every frame.
+* **The fingerprint in Zero Hour's CRC.** Host patch 0020 calls `Zhbo_XferLogicCRC` in
+  `GameLogic::getCRC` right after `MARKER:TheAI` (the logic frame's own CRC at the end of
+  `GameLogic::update`, after `Zhbo_LogicStep`, so every machine and a replay hash the same
+  post-step state). The bridge asks `zhbo_logic_crc` and, when the sim holds state, xfers
+  `MARKER:ConquerOps` and the 64-bit hash (two `UnsignedInt`s) into the CRC. An idle sim — no seat
+  holds a record or a class since the last `Zhbo_Reset` (no General deployed: the overhead
+  General's RTS report is a seat record too; no class picked) and nothing in the world — adds
+  nothing, so such a game
+  CRCs exactly as stock Zero Hour does. A mod-only divergence (ammo, a class, a shellshock, a
+  cooldown) is therefore Zero Hour's desync on the next CRC frame (`NetCRCInterval`, 100 frames in
+  release builds): in a network game `Network::setSawCRCMismatch` opens `Menus/CRCMismatch.wnd`,
+  starts the end-game timer and marks the replay as desynced; in replay playback the recorder
+  shows "GUI:CRCMismatch" with the frame and pauses (`-headless -replay` prints `CRC Mismatch in
+  Frame N` and exits non-zero). To localize one, each machine's `ConquerOps.log` has a line per CRC
+  frame while the sim is active, `crc frame F: <hash> world <hash> seats <seat>:<hash> …`, and
+  `DEBUG_CRC` builds log the same parts in the engine's CRC log (`CRCGEN_LOG`, dumped on a
+  mismatch): diff the two machines' lines and the first differing seat (or the world) is where the
+  state went apart.
 
 ## The shell menu ABI (the lobby's create-a-class)
 
@@ -835,6 +855,7 @@ The functions the sections above do not cover, by when the bridge calls them (th
 | | `zhbo_world_mesh_count(vm)` | Third-person meshes of viewmodel `vm`'s weapon on the soldier model (-2: the tablet); cached by the bridge on first use. |
 | | `zhbo_native_body_ready(in)` | 1 when the native third-person body frame can be drawn (see "The native third person"). |
 | Building | `zhbo_general_build_rate()` | A General's building speed as a share of a dozer's (`building::GENERAL_BUILD_RATE`). |
+| `GameLogic::getCRC` (patch 0020) | `zhbo_logic_crc(out, log)` | The sim's fingerprint and its per-seat/world parts (`ZhboLogicCrc`, 152 bytes); returns 1 when the sim holds state (the bridge xfers the hash after `MARKER:TheAI`), 0 when idle; `log` writes the parts to `ConquerOps.log` (see "Multiplayer (lockstep)"). |
 
 ### Engine gotchas (promoted from MODLOG)
 
@@ -1087,6 +1108,12 @@ object to select overhead: the local General as he comes back alive from first p
 after `viewmodel_fired_left`: `ZhboClientOut` 4872 → 4876 bytes, asserted on both sides; nothing else
 moves. Archive `hud::VERSION` 83 at the same point (the weapon table's `UiText
 MP_CHANGE_CLASS_NEXT_SPAWN`, the mid-life class change's hint); the native blob formats are unchanged.
+
+**Pending for the next bump** (appended after ABI 29; `ZHBO_ABI_VERSION` is unchanged until the
+integrator bumps): the free function `zhbo_logic_crc(ZhboLogicCrc *out, int32_t log)` and the struct
+`ZhboLogicCrc` (`uint64_t hash, world, seats[16]; uint32_t frame, active`: 152 bytes, asserted on
+both sides) for host patch 0020 (the multiplayer CRC hook). No API-table field and no existing
+struct moves.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

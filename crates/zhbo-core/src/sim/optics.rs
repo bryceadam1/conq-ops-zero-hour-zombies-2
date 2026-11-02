@@ -47,6 +47,8 @@ pub struct Blip {
     pub intensity: f32,
 }
 
+crate::statehash::state_hash!(struct Blip { id, pos, radius, height, intensity });
+
 /// A character the scanner is following: where it was and its recent speed fractions.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Track {
@@ -55,6 +57,8 @@ struct Track {
     /// Speed over the threshold, per logic tick, newest last (at most the window's length).
     fractions: Vec<f32>,
 }
+
+crate::statehash::state_hash!(struct Track { id, last, fractions });
 
 /// A player's optic displays' state.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -73,10 +77,21 @@ pub struct Optics {
     pub alt: f32,
 }
 
+crate::statehash::state_hash!(struct Optics { tracks, blips, spotted_range, spotted_since, alt });
+
 /// BO2's frame for its "units/frame" speeds: the sonar's ring holds `SpeedDelay × 60` samples
 /// (`0x00b128e4`).
 fn bo2_frames_per_tick(t: &crate::tuning::Tuning) -> f32 {
     t.sonar_frames_per_second * LOGIC_DT
+}
+
+#[cfg(test)]
+impl Optics {
+    /// Every field in use (a track, a blip, a spot), for the state hash's coverage test.
+    pub(crate) fn filled_for_test() -> Self {
+        let blip = Blip { id: 7, pos: Vec3::new(1.0, 2.0, 3.0), radius: 4.0, height: 5.0, intensity: 0.5 };
+        Optics { tracks: vec![Track { id: 7, last: Vec3::new(1.0, 2.0, 3.0), fractions: vec![0.25, 0.5] }], blips: vec![blip], spotted_range: Some(40), spotted_since: Some(12), alt: 0.75 }
+    }
 }
 
 impl Optics {

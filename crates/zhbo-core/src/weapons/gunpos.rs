@@ -105,6 +105,8 @@ pub struct GunPos {
     fire: [f32; 2],
 }
 
+crate::statehash::state_hash!(struct GunPos { cur_ofs, cur_rot, spring, sway_angle, sway_ofs, last_view, fire });
+
 fn add(a: &mut [f32; 3], b: [f32; 3], k: f32) {
     for i in 0..3 {
         a[i] += b[i] * k;

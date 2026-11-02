@@ -104,6 +104,8 @@ pub struct Site {
     pub name: [u8; 48],
 }
 
+crate::statehash::state_hash!(struct Site { id, template, kind, percent, name });
+
 impl Default for Site {
     fn default() -> Self {
         Site { id: 0, template: 0, kind: work::BUILD, percent: 0.0, name: [0; 48] }
@@ -134,6 +136,8 @@ pub struct Hammer {
     pub at: Vec3,
     pub angle: f32,
 }
+
+crate::statehash::state_hash!(struct Hammer { choice, picked, raise, turn, at, angle });
 
 /// Where the hammer places a structure: the ground the line of sight meets (from `eye` along unit
 /// `dir`), [`PLACE_MIN`] to [`PLACE_RANGE`] ahead and clear of a footprint of `radius`; looking up

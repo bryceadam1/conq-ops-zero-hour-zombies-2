@@ -38,6 +38,8 @@ pub struct Bearer {
     pub b: ShieldBox,
 }
 
+crate::statehash::state_hash!(struct Bearer { general, object, pos, yaw, held, b });
+
 fn qmul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
         a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
