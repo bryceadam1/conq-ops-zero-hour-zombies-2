@@ -21,8 +21,11 @@ pub mod optics;
 mod plant;
 mod rts;
 mod spawn;
+mod lockstep;
 #[cfg(test)]
 mod hit_tests;
+#[cfg(test)]
+mod lockstep_tests;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
@@ -47,6 +50,8 @@ use crate::weapons::view_kick::{self, ViewKick};
 use crate::weapons::{Arsenal, Class, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
+// `Sim::combat_seen` keeps a bit per seat.
+const _: () = assert!(MAX_PLAYERS <= u32::BITS as usize);
 
 /// How long the field computer takes to come up before control returns to the RTS view: BO2's
 /// scorestreak tablet pullout, then a moment on its screen.
@@ -475,6 +480,12 @@ pub struct Sim {
     pub shields: Vec<crate::shield::Bearer>,
     /// Deployed Assault Shields (`sim/deploy.rs`).
     pub deployed: Vec<deploy::Deployed>,
+    /// The players (bit per seat) whose step emitted a combat event (`spawn::is_combat`, BO2's
+    /// `hasdonecombat`), set by [`Sim::emit`]. The step reads this, never [`Sim::events`]: the
+    /// events are presentation that each client drains at its own render cadence (a headless
+    /// replay never does, and the buffer's cap then evicts the newest step's own events from an
+    /// index window), so a sim decision taken from them diverged between peers.
+    combat_seen: u32,
 }
 
 impl Default for Sim {
@@ -500,6 +511,7 @@ impl Sim {
             tracers: Vec::new(),
             shields: Vec::new(),
             deployed: Vec::new(),
+            combat_seen: 0,
         }
     }
 
@@ -537,6 +549,9 @@ impl Sim {
     }
 
     fn emit(&mut self, player: usize, kind: EventKind) {
+        if player < MAX_PLAYERS && spawn::is_combat(&kind) {
+            self.combat_seen |= 1 << player;
+        }
         if self.events.len() >= MAX_EVENTS {
             self.events.remove(0);
         }
@@ -576,9 +591,9 @@ impl Sim {
             // A pick that ended his wait behind the class screen spawns him now.
             self.spawn_in(host, idx);
             let Some(mut p) = self.players[idx].take() else { continue };
-            let before = self.events.len();
+            self.combat_seen = 0;
             let keep = self.step_player(host, idx, &mut p);
-            if self.events[before..].iter().any(|e| e.player == idx as i32 && spawn::is_combat(&e.kind)) {
+            if self.combat_seen & (1 << idx) != 0 {
                 p.combat = true;
             }
             if keep {

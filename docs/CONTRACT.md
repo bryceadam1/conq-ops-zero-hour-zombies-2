@@ -49,6 +49,33 @@ Both network messages are ordinary lockstep `GameMessage`s, so they are replicat
 recorded in replays. Everything in `sim` is deterministic given identical inputs (no wall-clock time,
 xorshift RNG seeded from the General id and frame, objects sorted by id before use).
 
+## Multiplayer (lockstep)
+
+Every peer of a Zero Hour network game (and a replay's playback) runs the same logic frames over
+the same command lists, so the core's sim must reach the same state on every machine from the
+replicated messages alone. The rules, and what enforces each:
+
+* **Only the messages feed the sim.** `MSG_ZHBO_TAKE_CONTROL`, `MSG_ZHBO_FPS_INPUT` and
+  `MSG_ZHBO_CHOOSE_CLASS` (a custom class as its catalog-token wire words) are the sim's inputs;
+  the logic callbacks read only logic-side engine state. The local client (its camera, look, HUD,
+  sounds, shellshock presentation, viewer) never writes the sim's deterministic state: the look
+  and the shellshock's look scaling are applied before the input is *sent*, so the angles in the
+  message are what every peer uses.
+* **`Sim::events` and `Sim::tracers` are presentation, never sim input.** Each client drains the
+  events at its own render cadence, a headless replay check never does (the buffer then sits at its
+  512 cap and evicts from the front), and the tracers are drawn per viewer. A sim decision taken
+  from either diverges between peers; `hasdonecombat` comes from the emit itself
+  (`Sim::combat_seen`), not from an index window into the events.
+* **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
+  player records, chosen classes, projectiles, equipment, smokes, deployed shields, the frame) and
+  leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)
+  runs one match on three machines — two players' machines at different render cadences, each
+  with its own client and viewer, and one that never renders — and requires the same hash, and the
+  same engine calls, on every frame. The hash is not yet folded into Zero Hour's own
+  `GameLogic::getCRC` (that needs an appended ABI function and a host patch; see MODLOG, the
+  multiplayer audit), so today a mod-only divergence shows in the engine's CRC only once it moves
+  or hurts an object.
+
 ## The shell menu ABI (the lobby's create-a-class)
 
 The lobby's Create a Class button opens the class screens *in the shell* (BO2's lobby create-a-class:

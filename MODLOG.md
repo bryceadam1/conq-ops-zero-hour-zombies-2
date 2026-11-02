@@ -10164,3 +10164,42 @@ player's live General. The dead General cannot be selected, so this is the inten
   * `--w3d-ads` 2/2
   * `--input` 3/3: Escape → back overhead → General reselected → T → 6 → SMG class → W
 * `zhbo-gfx.log` has no errors on the default, `--scope` and `--w3d-ads` legs.
+
+## Multiplayer audit: the lockstep gate, and `hasdonecombat` read from a drained buffer (2026-11-01, branch `v1/mp-audit`)
+
+The mod has never run in a Zero Hour network game. This branch audits what would break there; the
+full findings are in the audit report (`~/.opencode/plan/mp-audit/FINDINGS.md`). This entry
+covers the first fix.
+
+**The gate.** There was a single-process determinism test, `identical_inputs_are_deterministic`:
+two sims fed the same inputs. It never ran a client, so it could not catch local presentation
+leaking into the sim. `sim/lockstep_tests.rs` now runs one match on three machines. Each machine
+has its own `FakeHost`, its own `Sim` and its own `Client` for its own local player, and all three
+are fed one replicated command list with Zero Hour's minimum run-ahead of 4 frames:
+* Player 0's machine renders 1–3 client frames per logic frame.
+* Player 1's machine renders one.
+* The third machine never renders. It stands for a headless replay check (`-simReplay`) or a
+  minimised observer.
+
+Each player's input comes from his own machine's client, made from scripted keys and mouse
+movement, as in the game. The rounds cycle every slot weapon of the catalog through custom
+classes sent as wire words. Every frame the three `Sim::state_hash`es (new, `sim/lockstep.rs`: a
+hash of the deterministic state's `Debug` form, without the presentation buffers) and every engine
+call must agree.
+
+**What it caught.** `Sim::step` decided `hasdonecombat` (`PlayerSim::combat`) like this:
+`self.events[before..].iter().any(is_combat)`. `Sim::events` is presentation. The client clears it
+on every render frame. A machine that renders nothing (the headless replay check, or a minimised
+window) leaves it at its 512 cap. At the cap, `emit` removes from the front, so the step's own
+events land below `before` and are never seen. The never-rendering machine therefore never set
+`combat`, and a mid-life class pick after a fight changed its kit at once. Every other machine
+held that pick for the next spawn (`MP_CHANGE_CLASS_NEXT_SPAWN`).
+
+With the old code the gate fails at frame 1805 (round 4, the first shot after the buffer filled):
+`machine C diverged from A ... the sim state`. The fix: `emit` sets a per-seat bit,
+`Sim::combat_seen`, and the step reads that bit. The rule is now in CONTRACT.md, "Multiplayer
+(lockstep)": `Sim::events` and `Sim::tracers` are never sim input.
+
+**Gotcha.** The state hash runs over `Debug`, so it costs a few hundred µs per frame. That is fine
+for the tests and for a Zero Hour CRC interval, but not for every frame of a real game. f32's
+`Debug` is the shortest round-trip form, so `-0.0` and `0.0` hash differently.
