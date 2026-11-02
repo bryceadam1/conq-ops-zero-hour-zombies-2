@@ -112,7 +112,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
 - `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
   frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness,
   `events.rs`: the sim's events as the local player hears and sees them, and `predict.rs`: the
-  local player's prediction over his inputs in flight, which first person is drawn from). Nothing in it reaches the sim except through the input messages it emits.
+  local player's prediction over his inputs in flight, which first person is drawn from, and
+  `spectate.rs`: the spectating client of an observer, a defeated player or a replay viewer, which
+  follows first-person Generals at the sim's aim, sends nothing and never predicts). Nothing in it
+  reaches the sim except through the input messages it emits.
 - `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
   impact effect), `terrain.rs` (the ground's surface per height-map cell, parsed from the map
   file the bridge hands it: the logic-side answer under the sim's ground query),

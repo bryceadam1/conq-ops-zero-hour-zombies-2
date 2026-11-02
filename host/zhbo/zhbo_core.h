@@ -8,6 +8,7 @@
 */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define ZHBO_ABI_VERSION 29u
@@ -16,7 +17,7 @@
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
 #define ZHBO_LOGIC_API_FIELDS 24u
-#define ZHBO_CLIENT_API_FIELDS 15u
+#define ZHBO_CLIENT_API_FIELDS 16u
 
 #ifdef __cplusplus
 extern "C" {
@@ -187,6 +188,10 @@ typedef struct ZhboClientApi
 	/* a looping 2D event (Control = loop, LoopCount = 0) at gain x its volume, started if it is not
 	   playing; gain <= 0 stops it: a shellshock's ringing (shellshock.rs). Appended. */
 	void (*sound_loop)(const char *event, float gain);
+	/* a player's display name as UTF-8 into out (cap bytes, NUL-terminated); returns its length, 0
+	   for none: the spectator's switch bar names the followed player (deadspectate.lua).
+	   Appended; pending the next ABI bump. */
+	int32_t (*player_name)(int32_t player, char *out, int32_t cap);
 } ZhboClientApi;
 
 /* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit
@@ -224,6 +229,12 @@ typedef struct ZhboClientIn
 	   command, so the bar and the screen never diverge. The bridge cannot queue that pick itself:
 	   zhbo_client_frame writes a fresh ZhboClientOut over its copy every frame. */
 	int32_t class_button;
+	/* This machine only watches: !ThePlayerList->getLocalPlayer()->isPlayerActive() (an observer
+	   seat, a defeated player who stays) or a replay's playback. The core then sends no sim input,
+	   never captures the mouse and follows first-person Generals (client/spectate.rs). It fills
+	   the struct's tail padding (size unchanged, offset asserted). Appended; pending the next ABI
+	   bump. */
+	int32_t spectating;
 } ZhboClientIn;
 
 /* ABI 26 (R8d): one shot impact of the local player's this frame (zhbo_core::client::ClientHit).
@@ -643,6 +654,7 @@ static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs"
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboLogicCrc) == 152, "ZhboLogicCrc layout must match ffi.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
+static_assert(offsetof(ZhboClientIn, spectating) == 132, "ZhboClientIn.spectating must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 4880, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 44, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");

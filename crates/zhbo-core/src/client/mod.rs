@@ -151,6 +151,12 @@ pub struct ClientIn {
     /// the bridge only hands the button over and the pick is emitted here, through the same
     /// one-shot the pick screen writes. See [`Client::pick_class_button`].
     pub class_button: i32,
+    /// This machine only watches (`!ThePlayerList->getLocalPlayer()->isPlayerActive()`: an
+    /// observer seat, a defeated player who stays to watch; or a replay's playback). The client
+    /// then never sends sim input and follows first-person Generals ([`spectate`]);
+    /// `local_player` is the seat the engine observes (or the observer's own). Appended at the end
+    /// of the struct (ABI rule).
+    pub spectating: i32,
 }
 
 impl Default for ClientIn {
@@ -175,6 +181,7 @@ impl Default for ClientIn {
             rts_pivot: Vec3::new(0.0, 0.0, 0.0),
             class_pick_force: 0,
             class_button: 0,
+            spectating: 0,
         }
     }
 }
@@ -339,6 +346,7 @@ pub enum ViewMode {
 pub mod autopilot;
 mod events;
 pub mod predict;
+pub mod spectate;
 pub mod tracers;
 #[cfg(feature = "autopilot")]
 pub use autopilot::{Autopilot, Scripted};
@@ -502,6 +510,14 @@ pub struct Client {
     /// The local player's prediction over his inputs in flight (`predict`): what first person is
     /// drawn from while the engine's logic is available to it ([`Client::frame_with`]).
     pub predict: predict::Predictor,
+    /// Some while this machine only watches ([`ClientIn::spectating`]): who it follows.
+    pub spectator: Option<spectate::Spectator>,
+    /// The seat whose view this frame presented: the local player's own, or the General the
+    /// spectator follows (-1: none). The HUD and the native viewmodel's class art read it.
+    pub viewed: i32,
+    /// The followed General's input angles (yaw, pitch) at the last two logic frames.
+    aim_prev: (f32, f32),
+    aim_curr: (f32, f32),
 }
 
 impl Default for Client {
@@ -554,6 +570,10 @@ impl Client {
             menu_prev: crate::classui::MenuPrev::default(),
             tracers: tracers::ViewTracers::default(),
             predict: predict::Predictor::default(),
+            spectator: None,
+            viewed: -1,
+            aim_prev: (0.0, 0.0),
+            aim_curr: (0.0, 0.0),
         }
     }
 
@@ -741,6 +761,10 @@ impl Client {
     /// first person the force opens it too, and an unclassed General always has it up (he is not
     /// spawned without a class) until a pick lands or Escape declines the spawn.
     fn class_pick_wanted(&self, unclassed: bool) -> bool {
+        // A spectator never picks (it has no General of its own to send a class for).
+        if self.spectator.is_some() {
+            return false;
+        }
         match self.view {
             // Overhead: only the command bar's force opens it (an unclassed player keeps playing).
             ViewMode::Rts => self.class_pick_forced,
@@ -797,7 +821,8 @@ impl Client {
     #[cfg(feature = "autopilot")]
     fn autopilot_input(&mut self, inp: &ClientIn, unclassed: bool) -> Option<ClientIn> {
         let pick_wanted = self.class_pick_wanted(unclassed);
-        let fps = matches!(self.view, ViewMode::Fps);
+        // A spectator's view is the followed General's; the script never plays for him.
+        let fps = matches!(self.view, ViewMode::Fps) && self.spectator.is_none();
         let ap = self.autopilot.as_mut()?;
         if !fps {
             ap.t = 0.0;
@@ -844,15 +869,25 @@ impl Client {
     pub fn frame_with(&mut self, sim: &mut Sim, host: Option<&dyn LogicHost>, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
         self.ui_clock += dt;
+        // The events since the last frame belong to the view that was presented then: the own
+        // player's, or the General the spectator followed. A player who just became a spectator
+        // (defeated as his General fell) still sees his own death.
+        let own_before = self.spectator.is_none();
+        let presented_before = if own_before { inp.local_player } else { self.viewed };
+        self.set_spectating(inp.spectating != 0);
+        // Who this frame presents: the local player, or the spectator's follow choice.
+        let viewed = self.spectate(sim, inp, own_before && inp.spectating != 0);
+        self.viewed = viewed;
         // The sim's record names the General the local player is commanding, in first person or
         // overhead. Adopt it before the class screen runs: a fresh General's first class pick can
         // come from the command bar before he was ever taken into first person, and the client
         // only learned his id on entering before — so that pick named General 0, the sim dropped
         // it, and the General kept the stock kit.
-        let player = sim.player(inp.local_player).cloned();
+        let player = sim.player(viewed).cloned();
         if let Some(p) = &player {
             self.general = p.general;
         }
+        let spectating = self.spectator.is_some();
         let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
         let scripted = self.autopilot_input(inp, unclassed);
         let inp = scripted.as_ref().unwrap_or(inp);
@@ -863,7 +898,8 @@ impl Client {
         // Track logic frames for eye interpolation: the render clock since the frame's logic step,
         // carried across steps (a frame rate that does not divide 30 Hz otherwise draws the eye
         // unevenly: zeroing it on the step's render frame dropped that frame's time), and one
-        // frame's step back when the render missed some (not the eye of frames ago).
+        // frame's step back when the render missed some (not the eye of frames ago). Following, the
+        // followed General's aim is tracked the same way.
         if let Some(p) = &player {
             if inp.logic_frame != self.seen_frame {
                 let ticks = inp.logic_frame.wrapping_sub(self.seen_frame).clamp(1, 8);
@@ -876,6 +912,8 @@ impl Client {
                 // The sim's aim offset: the view kick and the scope's idle sway.
                 let (yaw, pitch) = p.aim_offset();
                 self.kick_curr = (yaw, pitch, p.view_kick.roll());
+                self.aim_prev = self.aim_curr;
+                self.aim_curr = (p.input.yaw, p.input.pitch);
             } else {
                 self.since_logic = (self.since_logic + dt).min(LOGIC_DT);
             }
@@ -884,9 +922,10 @@ impl Client {
         let eye = self.eye_prev.lerp(self.eye_curr, alpha);
 
         // The prediction runs in first person on a classed General (behind the class screen
-        // nothing goes out to predict). The sim's record says which inputs it took in: they leave
+        // nothing goes out to predict), never for a spectator (it sends nothing: the record it shows
+        // is the followed General's). The sim's record says which inputs it took in: they leave
         // the flight, and what their predictions presented is owed against the sim's own events.
-        let predicting = host.is_some() && matches!(self.view, ViewMode::Fps) && player.as_ref().is_some_and(|p| p.is_first_person() && p.class.is_some());
+        let predicting = host.is_some() && self.spectator.is_none() && matches!(self.view, ViewMode::Fps) && player.as_ref().is_some_and(|p| p.is_first_person() && p.class.is_some());
         let owed = match (&player, predicting) {
             (Some(p), true) => Some(self.predict.ack(p)),
             _ => {
@@ -895,7 +934,7 @@ impl Client {
             }
         };
         self.tracers.predicted = predicting;
-        self.consume_events(sim, inp, player.as_ref().map(|p| p.body.pos), owed);
+        self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
         self.tick_hud(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
         // the sim's record.
@@ -904,7 +943,7 @@ impl Client {
 
         // A forced open (the lobby's Create a Class button or the command bar's entry) keeps the
         // screen up even when a class is already chosen, so a kit can be replaced.
-        if inp.class_pick_force != 0 {
+        if inp.class_pick_force != 0 && !spectating {
             self.class_pick_forced = true;
         }
 
@@ -913,7 +952,7 @@ impl Client {
         // button over as a one-shot and the pick is emitted here. (Queueing the pick into
         // `ClientOut` from the bridge instead would be dropped: every `zhbo_client_frame` writes a
         // fresh whole struct over the bridge's copy before it can read the pick.)
-        if inp.class_button > 0 {
+        if inp.class_button > 0 && !spectating {
             self.pick_class_button(&mut out, inp.class_button);
         }
 
@@ -954,6 +993,10 @@ impl Client {
                 if first_person {
                     let p = player.as_ref().unwrap();
                     self.start_entering(inp, p.general, p.yaw, p.body.eye());
+                    if spectating {
+                        // Fly into the followed General's eyes at his own aim.
+                        self.snap_follow(p);
+                    }
                 } else {
                     // In the overhead view only the command-bar's Create a Class entry
                     // (`class_pick_force`) opens the screen; an unclassed General is *not* offered
@@ -964,6 +1007,9 @@ impl Client {
                 }
             }
             ViewMode::Entering { t, from_pos, from_dir, from_hfov } => {
+                if spectating {
+                    self.follow_aim(alpha);
+                }
                 let t = t + dt;
                 let u = (t / ENTER_TIME).min(1.0);
                 let behind = self.yaw + std::f32::consts::PI;
@@ -989,7 +1035,11 @@ impl Client {
                     // The class screen takes the cursor and freezes the view behind it.
                     // A declined spawn holds the view still too, until the sim hands him back.
                     let menu = self.class_pick_wanted(unclassed) || self.declining(unclassed);
-                    if allowed && !in_fc && !menu {
+                    if spectating {
+                        // Following: his aim, as the sim stepped it, smoothed between logic
+                        // frames. The spectator's own mouse never turns the view.
+                        self.follow_aim(alpha);
+                    } else if allowed && !in_fc && !menu {
                         let zoom = hfov / base_fov;
                         // A shellshock's look control (`crate::shellshock`, t6mp `FUN_005109f0`):
                         // the sensitivity scaled and the turn rate capped, both fading back.
@@ -1000,8 +1050,11 @@ impl Client {
                         self.yaw = wrap_angle(self.yaw + cap(-inp.mouse_dx * sens, look.max_yaw_speed));
                         self.pitch = (self.pitch + cap(-inp.mouse_dy * sens * inv, look.max_pitch_speed)).clamp(-MAX_PITCH, MAX_PITCH);
                     }
-                    // This frame's input goes out first: the prediction steps it at once.
-                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed, sim.frame);
+                    // This frame's input goes out first: the prediction steps it at once. A
+                    // spectator sends nothing.
+                    if !spectating {
+                        self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed, sim.frame);
+                    }
                     let predicted = match (predicting, host) {
                         (true, Some(host)) => {
                             let sent = (out.send_input != 0).then_some((out.input_seen_frame, out.input));
@@ -1043,11 +1096,12 @@ impl Client {
                     out.hfov = hfov;
                     out.hide_rts_ui = 1;
                     out.hide_object = self.general;
-                    out.capture_mouse = (allowed && !menu) as i32;
+                    // A spectator never takes the mouse: it plays nothing.
+                    out.capture_mouse = (allowed && !menu && !spectating) as i32;
                     self.view_eye = out.eye;
                     self.view_dir = out.dir;
-                    self.hud.map_open = allowed && !in_fc && !menu && inp.keys.is_down(self.cfg.bindings.map);
-                    self.hud.scoreboard_open = allowed && !menu && inp.keys.is_down(self.cfg.bindings.scoreboard);
+                    self.hud.map_open = allowed && !in_fc && !menu && !spectating && inp.keys.is_down(self.cfg.bindings.map);
+                    self.hud.scoreboard_open = allowed && !menu && !spectating && inp.keys.is_down(self.cfg.bindings.scoreboard);
                     let events = std::mem::take(&mut self.vm_events);
                     // The viewmodel's motion reads the def's gun-position numbers (G4) and the
                     // sim's own stance/speed/aim; the view's `cg_fov` is G4's wide-FOV reference.
@@ -1101,7 +1155,7 @@ impl Client {
                     // Back overhead alive (the field computer, or a declined spawn): he is selected
                     // again, as he was when Take Control was pressed (entering deselects him). A
                     // dead General has no record and is not.
-                    if player.as_ref().is_some_and(|p| p.general == self.general && !p.is_first_person()) {
+                    if !spectating && player.as_ref().is_some_and(|p| p.general == self.general && !p.is_first_person()) {
                         out.select_object = self.general;
                     }
                 } else {
@@ -1128,7 +1182,7 @@ impl Client {
         // The own gun's tracers queued by the logic steps since the last frame are this frame's,
         // drawn from the viewmodel's flash tag (`zhbo_viewmodel_tracer`) while it shows.
         self.tracers.begin_frame(out.camera_override != 0 && out.hide_object != 0 && out.viewmodel >= 0);
-        self.tracers.viewer = tracers::Viewer { player: inp.local_player, general: self.general, first_person: out.hide_object };
+        self.tracers.viewer = tracers::Viewer { player: viewed, general: self.general, first_person: out.hide_object };
         out
     }
 

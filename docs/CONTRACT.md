@@ -163,6 +163,24 @@ replicated messages alone. The rules, and what enforces each:
   logic reads an object's command set in its construction check (`BuildAssistant::isPossibleToMakeUnit`,
   "run this logic on all their machines"), so host patch 0019 checks a General against his side's
   build set (`Zhbo_BuildCommandSet`) on every machine instead of his current set.
+* **A machine that only watches sends nothing.** An observer seat, a defeated player who stays
+  to watch and a replay's playback (`ZhboClientIn.spectating`: `!ThePlayerList->getLocalPlayer()
+  ->isPlayerActive()` or `TheRecorder->isPlaybackMode()`) run a spectating client
+  (`client/spectate.rs`): no `MSG_ZHBO_FPS_INPUT`, no class pick, no `select_object` group
+  message, no mouse capture, no class screen. `ZhboClientIn.local_player` stays the engine's
+  observed-or-local seat; the core chooses whom to follow from it (the engine's observed seat is
+  adopted when it changes) and from the spectator's own buttons (BO2's dead-spectate bar: attack
+  the previous first-person General, aim the next; the middle button or the field-computer key
+  the overhead view and back), so following works without Zero Hour's player-observer option.
+  Following, the camera is the General's eye at the sim's own aim — the input angles every peer
+  stepped on plus the sim's view kick, interpolated across the logic frame like the eye — and
+  the viewmodel, sounds and impacts are his; his death banner, hit markers, score popup, hints and
+  work bars are not shown. The followed General dying or leaving first person cuts to the next
+  one, or flies out overhead when none is left. The HUD is his (`zhbo_client_draw_hud` draws the
+  followed seat), reduced to what BO2's spectator sees, with BO2's dead-spectate panel naming him
+  (`ZhboClientApi.player_name`). `Client::viewed` is the seat a frame presented; the native
+  viewmodel's class art reads it. In a replay the autopilot's test scene is built for the first
+  human seat (the recording's local player in a skirmish) and its take-controls are not re-sent.
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
   player records with each input's seen frame, chosen classes, projectiles, equipment that is
   down, smokes, deployed shields, the antilag history of the last frames' first-person Generals
@@ -174,12 +192,13 @@ replicated messages alone. The rules, and what enforces each:
   every field, floats by their bits, a weapon or shock definition by its id; no addresses, no map
   order), about 11 µs for sixteen busy seats in a release build. `Sim::fingerprint` also gives
   each seat's part (its record and chosen class) and the world's. The multiplayer gate
-  (`sim/lockstep_tests.rs`, TESTING.md) runs one match on three machines — two players' machines
-  at different render cadences, each with its own client and viewer, and one that never renders —
-  and requires the same hash, and the same engine calls, on every frame; the full-roster gate
+  (`sim/lockstep_tests.rs`, TESTING.md) runs one match on four machines — two players' machines
+  at different render cadences, each with its own client and viewer, one that never renders, and
+  a spectating observer that follows the Generals, switches and goes overhead and must send
+  nothing — and requires the same hash, and the same engine calls, on every frame; the full-roster gate
   (zhbo-assets, `the_install_roster_plays_in_lockstep`) runs the same harness (`sim/harness.rs`)
   over the player's own install's every weapon, alt mode, attachment and offhand on three players'
-  machines and an observer's.
+  machines, an observer's that never renders and a spectating observer's.
 * **The fingerprint in Zero Hour's CRC.** Host patch 0020 calls `Zhbo_XferLogicCRC` in
   `GameLogic::getCRC` right after `MARKER:TheAI` (the logic frame's own CRC at the end of
   `GameLogic::update`, after `Zhbo_LogicStep`, so every machine and a replay hash the same
@@ -1220,6 +1239,14 @@ rule): the free functions `zhbo_content_crc`, `zhbo_content_label`, `zhbo_conten
 32 bytes, asserted on both sides). No existing struct or table moves. The weapon table gains the
 top-level `InstalledDlc` line (archive `hud::VERSION`), and the LAN messages gain `zhboContent`
 (host patch 0021; builds without it cannot join builds with it — the INI CRC differs anyway).
+
+**Pending for the next bump** (appended, `ZHBO_ABI_VERSION` and `hud::VERSION` left to the
+integrator): `ZhboClientIn.spectating` (`int32_t`, after `class_button`; it fills the struct's tail
+padding, so `ZhboClientIn` stays 136 bytes and the field's offset 132 is asserted on both sides);
+`ZhboClientApi.player_name(player, out, cap)` after `sound_loop` (`ZHBO_CLIENT_API_FIELDS` /
+`CLIENT_API_FIELDS` 15 → 16). The archive gains two converted HUD materials
+(`hud_shoutcasting_change_tab`, `hud_shoutcasting_viewing_box_dead`) and two `UiText` keys
+(`MPUI_SPECTATING`, `MPUI_FIRST_PERSON_VIEW`), so `hud::VERSION` must move too.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

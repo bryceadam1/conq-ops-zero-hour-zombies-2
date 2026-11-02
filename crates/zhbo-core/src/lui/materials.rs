@@ -23,6 +23,8 @@ pub const MATERIALS: &[(&str, u32)] = &[
     ("hud_mp_vis_ks_dpad_box_back", 128), ("hud_mp_vis_ks_dpad_box_back_lit", 128), ("hud_mp_vis_ks_dpad_box", 128),
     ("hud_mp_vis_ks_dpad_bracket", 128),
     ("overlay_low_health", 512), ("hit_direction", 256), ("damage_feedback", 64), ("hud_horizontal_compass_minimap", 512),
+    // The spectator's dead-spectate panel (`hud/deadspectate.lua`, `hud::spectate`).
+    ("hud_shoutcasting_change_tab", 256), ("hud_shoutcasting_viewing_box_dead", 512),
     // Create a class (classui): `codmenu.lua`'s large popup frame, `cacchooseclass.lua`'s set pips,
     // `hinttext.lua`'s arrow, the grid buttons' gradients (`customclass.lua`, `growinggridbutton.lua`)
     // and the lock/restricted badges.

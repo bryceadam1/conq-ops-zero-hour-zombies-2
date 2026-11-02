@@ -35,6 +35,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/PlayerTemplate.h"
+#include "Common/Recorder.h"
 #include "Common/Radar.h"
 #include "Common/Team.h"
 #include "Common/ThingFactory.h"
@@ -207,6 +208,7 @@ void readConfig()
 	s_config.autopilot_build = s_config.autopilot_enabled && strcmp(autopilot, "build") == 0;
 	s_config.autopilot_classpick = s_config.autopilot_enabled && strcmp(autopilot, "classpick") == 0;
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
+	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
 	if (const char *v = getenv("ZHBO_SHOWCASE_ZOOM"))
 		s_config.showcase_zoom = (Real)atof(v);
@@ -424,6 +426,7 @@ void Zhbo_Init()
 		.ghost = cbGhost,
 		.sound_gain = cbSoundGain,
 		.sound_loop = cbSoundLoop,
+		.player_name = cbPlayerName,
 	};
 	zhbo_init(&logicApi, &clientApi);
 
@@ -716,6 +719,10 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 
 	in.dt = dt;
 	in.local_player = rts::getObservedOrLocalPlayer()->getPlayerIndex();
+	// Only watching: an observer seat, a defeated player who stayed, or a replay's playback (whose
+	// local player is the ReplayObserver). The core then never sends input for the seat it views.
+	const Player *self = ThePlayerList->getLocalPlayer();
+	in.spectating = (!self || !self->isPlayerActive() || (TheRecorder && TheRecorder->isPlaybackMode())) ? 1 : 0;
 	in.logic_frame = TheGameLogic->getFrame();
 	if (focused && !menuUp)
 	{
@@ -958,6 +965,7 @@ void Zhbo_ClientFrame()
 	{
 		if (s_out.camera_override || zhboMouseCaptured() || zhboRtsUiHidden())
 			releaseClientState();
+		autopilotShellFrame();
 		return;
 	}
 

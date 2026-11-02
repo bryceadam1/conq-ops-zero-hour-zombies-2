@@ -27,6 +27,12 @@
 #                                      take-control picks the class by its row key, then the script
 #                                      forces the screen open after re-taking control and Escape-closes it;
 #                                      then the General dies and the next one comes in with the class
+#   scripts/autotest-mac.sh --replay   spectating a replay: records a fresh skirmish (started from the
+#                                      main menu by ZHBO_AUTOTEST_SKIRMISH: a loaded save records no
+#                                      replay) with the scripted first-person run, then plays the replay
+#                                      back: the viewer (the ReplayObserver, a spectator) must follow the
+#                                      General at the recorded aim and send nothing. Zero Hour's Last
+#                                      Replay is kept and put back.
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -38,7 +44,8 @@
 # needs no permissions. The input test posts real key and mouse events and needs Accessibility
 # permission for the app running this script (System Settings > Privacy & Security).
 #
-# Environment: ZHBO_ZH_DIR and ZHBO_BO2_DIR as for the launcher; OUT for the results folder.
+# Environment: ZHBO_ZH_DIR and ZHBO_BO2_DIR as for the launcher; OUT for the results folder; DIST
+# for a build other than the default dist (`cargo xtask build --dist`).
 set -euo pipefail
 
 mode=autopilot
@@ -51,9 +58,10 @@ mode=autopilot
 [[ "${1:-}" == "--classpick" ]] && mode=classpick
 [[ "${1:-}" == "--scope" ]] && mode=scope
 [[ "${1:-}" == "--w3d-ads" ]] && mode=w3d-ads
+[[ "${1:-}" == "--replay" ]] && mode=replay
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-dist="$HOME/Library/Application Support/ConquerOps/dist"
+dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
 userdata="$HOME/Library/Application Support/Command and Conquer Generals Zero Hour Data"
 log="$userdata/ConquerOps.log"
 out="${OUT:-${TMPDIR:-/tmp}/ConquerOps-$mode}"
@@ -386,6 +394,72 @@ if [[ $mode == rts ]]; then
     # General's gun composes through nativebody (ZHBO_NATIVE_BODY=0 opts out, and this fails).
     check "native third-person weapon" "native body: ZW[0-9]+[A-Z] composed"
     echo "screenshots and log: $out"
+    exit $ok
+fi
+if [[ $mode == replay ]]; then
+    replays="$userdata/Replays"
+    last="$replays/00000000.rep"
+    mkdir -p "$replays"
+    # The recording overwrites Zero Hour's Last Replay: keep the player's and put it back.
+    [[ -f "$last" ]] && cp "$last" "$out/LastReplay.kept.rep"
+    put_back() { if [[ -f "$out/LastReplay.kept.rep" ]]; then cp "$out/LastReplay.kept.rep" "$last"; fi; rm -f "$replays/zhbo-spectate.rep"; }
+    # The recorded run is the default scripted one, with its GL custom class (see the autopilot
+    # mode below for the profile's format).
+    profile="$userdata/ConquerOps.profile"
+    rm -f "$profile"
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+GL Test
+primary=an94_mp+gl;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
+    # Both runs need the same content CRC (ZHBO_AUTOPILOT is folded into it), and the playback's
+    # logic step builds the same scene for the recording's human seat.
+    export ZHBO_AUTOPILOT=1
+    secs=${GGC_AUTO_EXIT_SECONDS:-90}
+    rm -f "$last"
+    ZHBO_AUTOTEST_SKIRMISH=1 GGC_AUTO_EXIT_SECONDS=$secs "$dist/conquerops" -win -xres 1280 -yres 720 -quickstart >"$out/stdout-record.txt" 2>&1
+    wait_for_log "entered first-person" 150 || { stop_game; put_back; echo "the recorded General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 120); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    stop_game
+    cp "$log" "$out/ConquerOps-record.log"
+    if [[ ! -f "$last" ]]; then
+        put_back; echo "no replay was recorded" >&2; exit 1
+    fi
+    cp "$last" "$replays/zhbo-spectate.rep"
+    cp "$last" "$out/zhbo-spectate.rep"
+    rm -f "$log"
+    GGC_AUTO_EXIT_SECONDS=$secs "$dist/conquerops" -win -xres 1280 -yres 720 -quickstart -loadreplay zhbo-spectate.rep >"$out/stdout-replay.txt" 2>&1
+    wait_for_log "spectator: following" 150 || true
+    for _ in $(seq 120); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    put_back
+    trap - EXIT
+    ok=0
+    check() { # log, name, pattern
+        if grep -qE "$3" "$1"; then printf '%-34s PASS\n' "$2"; else printf '%-34s FAIL\n' "$2"; ok=1; fi
+    }
+    rec="$out/ConquerOps-record.log"
+    play="$out/ConquerOps.log"
+    check "$rec" "recorded: first person" "entered first-person control"
+    check "$play" "replay: the General came back" "entered first-person control"
+    check "$play" "replay: the viewer follows him" "spectator: following seat [0-9]+'s General"
+    # While following, the view is the recorded aim (interpolated across one logic frame), and the
+    # recorded aim moves (the scripted mouse).
+    if awk '/spectator: still following/ { for (i = 1; i <= NF; ++i) { if ($i == "view" && $(i+1) == "yaw") v = $(i+2); if ($i == "aim" && $(i+1) == "yaw") a = $(i+2) } v += 0; a += 0; d = v - a; while (d > 3.14159) d -= 6.28318; while (d < -3.14159) d += 6.28318; if (d < 0) d = -d; if (d > 0.1) bad = 1; n++; seen[a] = 1 } END { k = 0; for (x in seen) k++; exit !(n >= 3 && k >= 2 && !bad) }' "$play"; then
+        printf '%-34s PASS\n' "replay: view = recorded aim"
+    else
+        printf '%-34s FAIL\n' "replay: view = recorded aim"; ok=1
+    fi
+    if grep -qE "choose class: General|selected General .* back overhead" "$play"; then
+        printf '%-34s FAIL\n' "replay: the viewer sent nothing"; ok=1
+    else
+        printf '%-34s PASS\n' "replay: the viewer sent nothing"
+    fi
+    echo "logs and the replay: $out"
     exit $ok
 fi
 if [[ $mode == autopilot ]]; then

@@ -7,10 +7,13 @@ use super::*;
 
 impl Client {
     /// The sim's events since the last frame: others' shots and throws as heard here, and the
-    /// local player's own. `owed`, while predicting: what the predictions of the inputs the sim
-    /// just took in already presented (`predict::Predictor::reconcile` keeps the rest).
-    pub(super) fn consume_events(&mut self, sim: &mut Sim, inp: &ClientIn, body_pos: Option<Vec3>, owed: Option<Vec<EventKind>>) {
-        let me = inp.local_player;
+    /// presented seat's own. `me` is the seat whose view was presented (its events are the
+    /// first-person ones), `own` whether that was the local player's own view (a spectator's
+    /// followed General gets no death banner, hit marker or score, and its view moves are the
+    /// follow logic's, [`super::spectate`]). `owed`, while predicting: what the predictions of the
+    /// inputs the sim just took in already presented (`predict::Predictor::reconcile` keeps the
+    /// rest).
+    pub(super) fn consume_events(&mut self, sim: &mut Sim, inp: &ClientIn, me: i32, own: bool, body_pos: Option<Vec3>, owed: Option<Vec<EventKind>>) {
         let mut mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
         // Other players' shots: BO2's third-person chain, layer by layer at the listener's distance.
         for e in sim.events.iter().filter(|e| e.player != me) {
@@ -44,7 +47,7 @@ impl Client {
             }
         }
         let auth = sim.player(me).cloned();
-        self.present(inp, auth.as_ref(), auth.as_ref(), body_pos, mine);
+        self.present(inp, own, auth.as_ref(), auth.as_ref(), body_pos, mine);
     }
 
     /// The events this frame's prediction brought (`predict::Advance`): the own gun's tracers for
@@ -57,7 +60,7 @@ impl Client {
                 self.tracers.pending.push(tracers::OwnTracer { fx_weapon, end: t.end, left: t.left });
             }
         }
-        self.present(inp, None, view, None, adv.events);
+        self.present(inp, true, None, view, None, adv.events);
     }
 
     /// A predicted hit marker the sim says killed: the kill's feedback (the marker's kill style,
@@ -81,7 +84,7 @@ impl Client {
     /// Present the local player's events: `auth` is the sim's record (the camera transitions read
     /// it), `holder` the record whose weapon in hand picks the sounds (the sim's, or the
     /// prediction's for its own events).
-    fn present(&mut self, inp: &ClientIn, auth: Option<&PlayerSim>, holder: Option<&PlayerSim>, body_pos: Option<Vec3>, mine: Vec<EventKind>) {
+    fn present(&mut self, inp: &ClientIn, own: bool, auth: Option<&PlayerSim>, holder: Option<&PlayerSim>, body_pos: Option<Vec3>, mine: Vec<EventKind>) {
         // The weapon in hand after the step: its sounds for this frame's shots, swing and throws.
         let held = holder.map(|p| (p.arsenal.current().def, p.arsenal.current().ammo, p.arsenal.current().string, p.arsenal.lethal.def, p.arsenal.tactical.def));
         let fire = held.map_or(sounds::FIRE, |(def, ..)| sounds::fire_for(def));
@@ -106,6 +109,12 @@ impl Client {
             }
         }
         for kind in mine {
+            // Following someone else: his first-person presentation (gun, sounds, impacts,
+            // flinch) plays, but nothing that is the player's own — his view moves (the follow
+            // logic owns the camera), his death banner, hit markers, score and hints.
+            if !own && !spectated_event(&kind) {
+                continue;
+            }
             match kind {
                 EventKind::EnteredFps { general } => {
                     if let Some(p) = auth {
@@ -264,4 +273,27 @@ impl Client {
             }
         }
     }
+}
+
+/// Whether a spectator presents the followed General's event: his gun, sounds, impacts and the
+/// shots' kick and flinch are what BO2 shows a spectator (the followed player's own first-person
+/// view); his camera moves, death banner, hit marker, score popup, hints and work bars are his
+/// alone (BO2's script HUD elements belong to the player, not his spectators).
+fn spectated_event(kind: &EventKind) -> bool {
+    !matches!(
+        kind,
+        EventKind::EnteredFps { .. }
+            | EventKind::ReturnedToRts { .. }
+            | EventKind::GeneralDied { .. }
+            | EventKind::HitMarker { .. }
+            | EventKind::ClassChosen { .. }
+            | EventKind::ClassAtNextSpawn { .. }
+            | EventKind::CantPlant { .. }
+            | EventKind::Hacking { .. }
+            | EventKind::Hacked
+            | EventKind::BuildPlaced { .. }
+            | EventKind::BuildRefused { .. }
+            | EventKind::Working { .. }
+            | EventKind::WorkDone { .. }
+    )
 }

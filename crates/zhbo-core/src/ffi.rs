@@ -131,7 +131,7 @@ pub const ABI_VERSION: u32 = 29;
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
 pub const LOGIC_API_FIELDS: u64 = 24;
-pub const CLIENT_API_FIELDS: u64 = 15;
+pub const CLIENT_API_FIELDS: u64 = 16;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -140,6 +140,8 @@ const _: () = {
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<LogicCrc>() == 152);
     assert!(size_of::<ClientIn>() == 136);
+    // `spectating` took the struct's tail padding: the size is unchanged, the offset is asserted.
+    assert!(std::mem::offset_of!(ClientIn, spectating) == 132);
     assert!(size_of::<ClientOut>() == 4880);
     assert!(size_of::<ClientHit>() == 44);
     assert!(size_of::<crate::sim::RtsWeapons>() == 192);
@@ -1102,23 +1104,28 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         for (event, gain) in s.client.cues.loops.drain(..) {
             s.client_host.sound_loop(event, gain);
         }
+        // The seat this frame presented: the local player's, or the General a spectator follows.
+        let viewed = s.client.viewed;
+        if let Some(line) = s.client.spectator_log(&s.sim, inp.logic_frame) {
+            crate::host::LogicHost::log(&s.logic, &line);
+        }
         // The local player's class camos, for the native viewmodel's next draw: each held weapon
         // wears its own (`_class.gsc`: the primary `primarycamo`, the sidearm `secondarycamo`, the
         // melee weapon `knifecamo`).
-        let choices = s.sim.player(inp.local_player).map_or_else(Vec::new, |p| crate::nativevm::class_camos(&p.held_camos(), &p.arsenal.current().def.id));
+        let choices = s.sim.player(viewed).map_or_else(Vec::new, |p| crate::nativevm::class_camos(&p.held_camos(), &p.arsenal.current().def.id));
         crate::nativevm::set_local_camos(choices);
         // The viewmodel BO2 does not draw this frame: its scope overlay's reticle zoom is up.
-        let hidden = s.client.hud.lui.gun_under_overlay.then(|| s.sim.player(inp.local_player).map(|p| p.arsenal.current_weapon().viewmodel)).flatten();
+        let hidden = s.client.hud.lui.gun_under_overlay.then(|| s.sim.player(viewed).map(|p| p.arsenal.current_weapon().viewmodel)).flatten();
         crate::nativevm::set_gun_under_overlay(hidden);
         // And the class's reticles for the optic lenses: the primary's and the sidearm's
         // (`primaryreticle` / `secondaryreticle`).
-        let reticles = s.sim.player(inp.local_player).map_or_else(Vec::new, |p| crate::nativevm::class_reticles(&p.held_reticles()));
+        let reticles = s.sim.player(viewed).map_or_else(Vec::new, |p| crate::nativevm::class_reticles(&p.held_reticles()));
         crate::nativevm::set_local_reticle(reticles);
         // And what the optic displays show (the MMS's characters, the target finder's colour).
-        let optics = s.sim.player(inp.local_player).map(|p| (p.optics.alt, p.optics.blips.clone()));
+        let optics = s.sim.player(viewed).map(|p| (p.optics.alt, p.optics.blips.clone()));
         crate::nativevm::update_local_optics(inp.dt, optics);
         // And its shellshock's screen layers (blur, grab, white) for the scene.
-        let shock = s.sim.player(inp.local_player).filter(|p| p.is_first_person()).and_then(|p| {
+        let shock = s.sim.player(viewed).filter(|p| p.is_first_person()).and_then(|p| {
             let a = p.shock.active.as_ref()?;
             let sc = p.shock.screen();
             Some(crate::nativevm::LocalShock { serial: a.serial, flashed: a.def.flashed, white: sc.white, shot: sc.shot, blur_alpha: crate::shellshock::blur_alpha(sc.blur, inp.dt) })
@@ -1134,7 +1141,9 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
 pub extern "C" fn zhbo_client_draw_hud(local_player: i32) {
     with_state(|s| {
         let mut prims = Vec::new();
-        crate::hud::draw(&s.client_host, &mut prims, &s.client, &s.sim, local_player);
+        // A spectator's HUD is the followed General's (BO2 shows the spectated player's own).
+        let seat = if s.client.spectator.is_some() { s.client.viewed } else { local_player };
+        crate::hud::draw(&s.client_host, &mut prims, &s.client, &s.sim, seat);
         crate::hud::render(&prims, &s.client_host);
     });
 }

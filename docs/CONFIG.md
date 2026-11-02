@@ -19,6 +19,7 @@ environment mid-game.
 | Variable | Meaning |
 |---|---|
 | `ZHBO_AUTOPILOT` | Same modes as above; parsed once here and once in the core. |
+| `ZHBO_AUTOTEST_SKIRMISH` | Test only: from the main menu, open Skirmish and press Start (the replay test, `autotest-mac.sh --replay`, needs a recorded game; a loaded save records none). Not folded into the content CRC: it changes no sim input. |
 | `ZHBO_FORCE_RADAR` | Give the autopilot's test player radar, to film the full map (M). |
 | `ZHBO_SHOWCASE_OBJECT` | Template name to spawn in front of the camera in showcase mode (default `ZHBO_General_USA`). |
 | `ZHBO_SHOWCASE_ZOOM` | Camera zoom distance for showcase captures (default `0.12`). |

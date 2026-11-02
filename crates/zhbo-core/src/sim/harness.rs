@@ -2,8 +2,10 @@
 //! world (a [`FakeHost`]), its own [`Sim`] and its own [`Client`] for its own local player, fed
 //! the same replicated command stream with Zero Hour's run-ahead. Each player's machine renders at
 //! its own cadence and does its own presentation (its client drains `Sim::events`, plays the
-//! tracers for its own viewer, keeps its own camera, look and HUD), and one more machine never
-//! renders. Every logic frame every sim must agree on [`Sim::state_hash`] and on everything it told
+//! tracers for its own viewer, keeps its own camera, look and HUD), one more machine never
+//! renders, and a spectating observer machine (an observer seat, a replay viewer:
+//! `ClientIn::spectating`) renders, follows the Generals in first person, switches and goes
+//! overhead, and must never send a thing. Every logic frame every sim must agree on [`Sim::state_hash`] and on everything it told
 //! the engine.
 //!
 //! The match: two to four human players, each with a General, against each other and a squad of
@@ -20,7 +22,7 @@ use super::fakehost::{general, soldier, FakeHost};
 use super::*;
 use crate::classes::CustomClass;
 use crate::client::{Bindings, Client, ClientIn};
-use crate::input::{Key, KeySet};
+use crate::input::{mouse_buttons, Key, KeySet};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Zero Hour's minimum run-ahead (`MIN_RUNAHEAD`): a command sent on logic frame `f` executes
@@ -177,6 +179,43 @@ impl Peer {
             self.renders += 1;
         }
     }
+
+    /// A spectating machine's rendered frames (an observer seat, a replay's playback, a defeated
+    /// player who stayed): `observed` is the seat the engine observes, `keys`/`buttons` the
+    /// spectator's own switch and view presses. It follows first-person Generals and must never
+    /// send a thing or predict — every `ClientOut` it makes is checked, and nothing reaches the
+    /// network. The engine's logic is at hand, as for a player's machine, so the predictor's own
+    /// guard is what keeps it off.
+    pub fn spectate(&mut self, frame: u32, frames: u32, observed: i32, keys: KeySet, buttons: u32) -> bool {
+        let mut followed = false;
+        for _ in 0..frames {
+            let inp = ClientIn {
+                dt: LOGIC_DT / frames as f32,
+                local_player: observed,
+                logic_frame: frame,
+                keys,
+                mouse_dx: 25.0,
+                mouse_buttons: buttons,
+                input_allowed: 1,
+                screen_w: 1280.0,
+                screen_h: 720.0,
+                class_button: 1,
+                class_pick_force: 1,
+                spectating: 1,
+                ..Default::default()
+            };
+            let out = self.client.frame_with(&mut self.sim, Some(&self.host), &inp);
+            let at = format!("the spectator at frame {frame}");
+            assert_eq!(out.send_input, 0, "{at} sent input");
+            assert_eq!(out.choose_class, 0, "{at} picked a class");
+            assert_eq!(out.select_object, 0, "{at} selected an object");
+            assert_eq!(out.capture_mouse, 0, "{at} captured the mouse");
+            assert!(!self.client.predict.active(), "{at} predicted");
+            followed |= self.client.is_following();
+            self.renders += 1;
+        }
+        followed
+    }
 }
 
 /// What a player does on frame `t` of a round: the keys held and the mouse moved.
@@ -300,6 +339,9 @@ pub fn play(m: &Match) -> Report {
     // A seat with no General of its own, past the players'.
     let observer = m.players.max(3) as i32;
     peers.push(Peer::new(observer, 0x0C0C_5EED_0000_0003));
+    // A spectating observer seat that renders and follows the Generals in first person.
+    let mut spectator = Peer::new(observer + 1, 0x0F0F_5EED_0000_0006);
+    let mut followed = 0;
     // The run-ahead changes over the match as Zero Hour adapts it, under the players' predicting
     // clients.
     let mut net = Net::scheduled();
@@ -322,7 +364,7 @@ pub fn play(m: &Match) -> Report {
         let ids: Vec<u32> = (0..m.players).map(|p| 100 + m.players as u32 * r + p as u32).collect();
         // The engine's own logic, the same on every machine: a fresh General per player each
         // round, and the round's end kills them all.
-        for peer in &mut peers {
+        for peer in peers.iter_mut().chain(std::iter::once(&mut spectator)) {
             if t == 0 {
                 for (p, &id) in ids.iter().enumerate() {
                     let mut g = general(id, p as i32);
@@ -359,7 +401,7 @@ pub fn play(m: &Match) -> Report {
         // Overhead, the General's Zero Hour weapon fires now and then (the RTS report's shots).
         let rts_shots = if t > FIELD_COMPUTER + 5 && t.is_multiple_of(5) { [1, 0, 0] } else { [0; 3] };
         let cmds = net.take(frame);
-        for peer in &mut peers {
+        for peer in peers.iter_mut().chain(std::iter::once(&mut spectator)) {
             peer.logic(frame, &cmds, rts_shots);
         }
 
@@ -369,7 +411,7 @@ pub fn play(m: &Match) -> Report {
         let h = first.sim.fingerprint();
         // (Inactive only until the first picks, sent on frame 2, execute.)
         assert!(h.active || frame < 2 + runahead_at(2), "frame {frame}: the match holds sim state");
-        for (i, peer) in rest.iter().enumerate() {
+        for (i, peer) in rest.iter().chain(std::iter::once(&spectator)).enumerate() {
             let at = format!("machine {} (seat {}) diverged from seat 0's at frame {frame} (round {r}, t {t})", i + 1, peer.local);
             assert_eq!(peer.sim.fingerprint(), h, "{at}: the sim state");
             assert_eq!(peer.host.objects, first.host.objects, "{at}: the engine objects");
@@ -393,7 +435,22 @@ pub fn play(m: &Match) -> Report {
             };
             peers[p].render(&mut net, frame, frames, keys, look);
         }
+        // The spectator: its own seat, then the engine observes seat 1 for a while; it switches
+        // with the attack and aim buttons and goes overhead and back with the view key.
+        let observed = if (ROUND / 2..ROUND).contains(&t) && r % 2 == 1 { 1 } else { spectator.local };
+        let mut keys = KeySet::default();
+        let mut buttons = 0;
+        match t {
+            150 => keys.set_down(Key::MouseRight, true),
+            170 => keys.set_down(Key::MouseLeft, true),
+            250 => keys.set_down(Bindings::default().field_computer, true),
+            330 => buttons = mouse_buttons::MIDDLE,
+            _ => {}
+        }
+        let frames = 1 + (spectator.cadence() % 2) as u32;
+        followed += spectator.spectate(frame, frames, observed, keys, buttons) as u32;
     }
+    assert!(m.rounds < 2 || followed > ROUND, "the spectator followed the Generals in first person ({followed} frames)");
     let observer = peers.last().expect("the observer");
     assert_eq!(observer.sim.events.len(), MAX_EVENTS, "the machine that never renders sat at the event cap");
     // The players' machines predicted their own players all match long, through every run-ahead
