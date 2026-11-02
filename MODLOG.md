@@ -10332,3 +10332,26 @@ building.
 * `cargo xtask build` (private work dir).
 * `autotest-mac.sh --build`, overhead half: build menu, structure ordered, started, finished at
   2.1× a dozer's time, the same as on main.
+
+## Multiplayer audit: what is still open (2026-11-01, branch `v1/mp-audit`)
+
+**Converter determinism.** Two players with the same install must get a byte-identical archive,
+or the content CRC refuses them. I rebuilt `ConquerOps_BO2.big` from this branch
+(`build-archive`, 2 min 18 s) and compared it member by member with the dist's, which was built
+at 16:19 from main. All 47,108 members are byte-identical, including the 61 MB `weapons.ini`.
+The table carries no paths or timestamps.
+
+**Open.** The audit report (`~/.opencode/plan/mp-audit/FINDINGS.md`) lists these as separate
+items:
+* Zero Hour's `GameLogic::getCRC` does not cover the mod's state. That needs an appended
+  `zhbo_logic_crc` and a host patch: ABI 30.
+* Lockstep input delay. The run-ahead starts at 30 frames, then adapts to at least 4 frames
+  (133 ms). Mouse look is already local. Movement, firing and ADS wait the run-ahead.
+  Proposed: local presentation prediction and lag-compensated hitscan.
+* Observers and replay viewers act as the observed player's client.
+* Different DLC or patch levels can never play together.
+* Received custom classes are not validated.
+* The surface lookup reads `TheTerrainVisual` from the logic, and the grenade bounce depends on
+  it. CONTRACT/`impacts.rs` still call surfaces "presentation only"; that is inaccurate.
+* A real two-instance LAN test needs a debug macOS preset and a loopback alias (sudo). See
+  TESTING.md, "Multiplayer in game".
