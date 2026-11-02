@@ -11,6 +11,22 @@ The first-person HUD follows Black Ops II's multiplayer layout and uses Black Op
 numerals, red-dot reticle, damage overlay, lock-on bracket). It is read from your Black Ops II install
 the first time you launch and saved privately next to the launcher as `ConquerOps_BO2.big`.
 
+## Install
+
+**→ [Installation guide for Windows, macOS and Linux](docs/INSTALL.md)**
+
+In short: own and install both games, install Rust and your platform's build tools, then
+
+```
+git clone --recursive https://github.com/bryceadam1/conq-ops-zero-hour-zombies-2.git
+cd conq-ops-zero-hour-zombies-2
+cargo xtask build          # on Windows: cargo xtask build --wgpu
+```
+
+and start the `ConquerOps` launcher from the `dist` folder the build prints. On macOS and Linux the
+games' Windows files come from SteamCMD; the guide has the exact commands. Windows and macOS are
+tested in game; the Linux build path is not yet built.
+
 ## Requirements
 
 You must own and have installed **both** games. The launcher and the game itself refuse to start
@@ -73,7 +89,8 @@ same SDL3 + wgpu build. See [docs/PLATFORMS.md](docs/PLATFORMS.md).
 
 ## Building
 
-On Windows (on Linux/macOS see [docs/PLATFORMS.md](docs/PLATFORMS.md)), you need:
+Step-by-step instructions for every platform are in [docs/INSTALL.md](docs/INSTALL.md). On Windows
+(on Linux/macOS see [docs/INSTALL.md](docs/INSTALL.md) and [docs/PLATFORMS.md](docs/PLATFORMS.md)), you need:
 
 * Rust (`rustup`, plus `rustup target add i686-pc-windows-msvc x86_64-pc-windows-msvc`)
 * Visual Studio 2022 Build Tools with: C++ x86/x64 tools, CMake, ATL, MFC, Windows 11 SDK
@@ -116,6 +133,7 @@ The two scripts take `-Dist` to test a given build.
 | `host/zhbo` | C++ compiled into the engine: bridge, platform layer (SDL3/Win32), bgfx-on-wgpu adapter |
 | `host/patches` | The engine hooks (~120 lines) and the `wgpu` renderer option for the engine's CMake |
 | `data/` | Mod INI files, packed into `ConquerOps.big` |
+| `docs/INSTALL.md` | Installing and building on Windows, macOS and Linux |
 | `docs/CONTRACT.md` | Engine ↔ Rust ownership, units, timing, lifecycle |
 | `docs/RENDERER.md`, `docs/PLATFORMS.md` | The wgpu renderer; platforms and native builds |
 | `docs/TESTING.md` | Every test layer and how to run it |
@@ -157,7 +175,7 @@ The two scripts take `-Dist` to test a given build.
 * First person sounds like BO2: gunshots, reload foley, hit markers, footsteps and the low-health
   heartbeat are converted from your install. Weapon metal and gear reflect a generated environment
   (weighted by BO2's specular maps), not BO2's own per-map reflection probes.
-* First-person state is not saved in save games. Multiplayer (LAN and online lobbies) is designed to be lockstep-safe and has a headless three-machine determinism gate, but has never been played over a real network. Every player needs the same mod build and Black Ops II patch level (Steam keeps it on the final patch), tuning pack and classes: the lobby refuses a joiner whose sim content differs and says which part. The language and the DLC packs of the install do not have to match (a DLC item is its owner's, as in BO2).
+* First-person state is not saved in save games. Multiplayer (LAN and online lobbies) is lockstep-safe: a headless three-machine determinism gate and a two-instance LAN game on one machine (`scripts/mptest-mac.sh`) pass, but it has not yet been played between two real machines; see [docs/INSTALL.md](docs/INSTALL.md#multiplayer). Every player needs the same mod build and Black Ops II patch level (Steam keeps it on the final patch), tuning pack and classes: the lobby refuses a joiner whose sim content differs and says which part. The language and the DLC packs of the install do not have to match (a DLC item is its owner's, as in BO2).
 * The engine build is not network-compatible with retail Zero Hour.
 
 ## License

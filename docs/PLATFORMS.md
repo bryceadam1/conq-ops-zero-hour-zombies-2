@@ -47,7 +47,8 @@ export ZHBO_ZH_DIR=~/Games/ZeroHour ZHBO_BO2_DIR=~/Games/BlackOps2
 ```
 
 The mod reads only Black Ops II's sound banks and image packs. BO2 is never run, and the mod never
-connects to it. A guided installer script that wraps this is still to do.
+connects to it. The step-by-step player instructions are in [INSTALL.md](INSTALL.md); a guided
+installer script that wraps this is still to do.
 
 ## How the launcher starts the game
 
