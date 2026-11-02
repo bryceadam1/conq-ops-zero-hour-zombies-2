@@ -88,6 +88,11 @@ replicated messages alone. The rules, and what enforces each:
   (`ConquerOps.log`: `multiplayer: content CRC …`). Online staging rooms already refuse a mismatched
   INI CRC; host patch 0018 makes Zero Hour's LAN join check it too (the exe CRC stays unchecked
   there, as in stock Zero Hour), and replays record it in their header.
+* **No logic reads a UI-only override.** The General's Build menu and class set are command-set
+  overrides the bridge puts on the object on the machine whose player opened them. Zero Hour's
+  logic reads an object's command set in its construction check (`BuildAssistant::isPossibleToMakeUnit`,
+  "run this logic on all their machines"), so host patch 0019 checks a General against his side's
+  build set (`Zhbo_BuildCommandSet`) on every machine instead of his current set.
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
   player records, chosen classes, projectiles, equipment, smokes, deployed shields, the frame) and
   leaves out the presentation above. The multiplayer gate (`sim/lockstep_tests.rs`, TESTING.md)

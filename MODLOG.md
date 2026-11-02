@@ -10305,3 +10305,30 @@ That is intended: the autopilot spawns and picks inside the logic step.
 
 **Not verified.** No one has clicked the LAN or online buttons in game yet (the autotests load a
 save game and never visit a lobby).
+
+## Multiplayer audit: the General's Build menu was a desync (2026-11-01, branch `v1/mp-audit`)
+
+The command bar shows the General's Build menu by putting a command-set override on his
+`Object` (`Zhbo_OnZhboCommand`, `setCommandSetStringOverride`). The class set does the same.
+The comment called this "UI only", but it is Object state, and it is set only on the machine
+whose player clicked. Zero Hour's logic reads an object's command set:
+`BuildAssistant::isPossibleToMakeUnit` scans it for the construct button, and its own comment
+says "we want to have all players run this logic on all their machines". `buildObjectNow` and
+`DozerAIUpdate::construct` both call it. An overhead `MSG_DOZER_CONSTRUCT` from a General
+therefore built on the ordering machine, whose override was up, and was refused on every other
+machine, whose General still had his own set. Result: a structure and its cost on one machine
+only. First-person building was safe, because `BuildMenuOn` applies the override inside the
+logic callback on every machine.
+
+Host patch 0019 makes `isPossibleToMakeUnit` check a General against
+`Zhbo_BuildCommandSet(builder)` on every machine. That is his side's worker menu, which depends
+only on his controlling player's template. Every other builder keeps reading its own command
+set. The class set's override has no other logic reader on a General: no upgrades, and scripts
+do not drive human Generals. The ZH CRC does not include the command-set string
+(`Object::crc`), which is why a desync like this would have shown up only later, as a missing
+building.
+
+**Verified.**
+* `cargo xtask build` (private work dir).
+* `autotest-mac.sh --build`, overhead half: build menu, structure ordered, started, finished at
+  2.1× a dozer's time, the same as on main.

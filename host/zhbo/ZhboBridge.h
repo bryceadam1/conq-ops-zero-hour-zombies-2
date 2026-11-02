@@ -119,6 +119,11 @@ void Zhbo_RequestTakeControl(Object *obj);
 void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button);
 /// How fast `builder` builds and repairs, as a share of a dozer's speed (DozerAIUpdate, host patch 0012).
 Real Zhbo_WorkRate(const Object *builder);
+/// The command set a Conquer Ops General builds from (his side's worker menu), or empty for any
+/// other builder. The logic's construction check reads it (BuildAssistant::isPossibleToMakeUnit,
+/// host patch 0019) rather than the General's current command set: the Build menu is a UI-only
+/// override on the machine whose player opened it, so reading that diverged between peers.
+AsciiString Zhbo_BuildCommandSet(const Object *builder);
 
 /// A printf-style line in ConquerOps.log.
 void Zhbo_Log(const char *fmt, ...);
