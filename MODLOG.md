@@ -10917,3 +10917,111 @@ compares only the network game's lines. The bridge also logs Zero Hour's own CRC
   the Command Center had no Deploy General, and the General had no build or class menu. Host
   patch 0021 calls `Zhbo_ControlBarRebuilt`, which injects again. A pointer-change check was not
   enough: the new ControlBar can be allocated at the old address.
+
+## Integration: the multiplayer round (2026-11-01, `v1/integration7`)
+
+Merged onto main bb9f960, in this order: `v1/mp-audit`, `v1/build-leg-fix`, `v1/mp-crc-hook`,
+`v1/mp-hardening`, `v1/mp-content`, `v1/mp-latency`, `v1/mp-spectator`, `v1/mp-two-instance`.
+The branch entries above are kept as written. Where they name a host patch number or a format
+that changed here, the docs carry the current one (see "Renumbered" below).
+
+**Bumps (one each).** `ZHBO_ABI_VERSION` 29 → 30 on both sides. The five "pending for the next
+bump" notes are now one ABI 30 paragraph in CONTRACT "Versioning". `hud::VERSION` 83 → 84 covers
+`InstalledDlc`, `CacSlot` as a sim field, the spectator HUD's materials and `UiText` keys, and the
+audio-type fix below.
+
+**Renumbered host patches.** crc-hook, content and two-instance had each numbered theirs 0020
+(two-instance also used 0021). The series is now: 0020 logic-crc, 0021
+multiplayer-content-check, 0022 multiplayer-two-instance-test, 0023 control-bar-rebuild-hook. The
+content and two-instance patches both touch `LANAPICallbacks.cpp` and `LanGameOptionsMenu.cpp`;
+checked with `git apply` in that order on the pinned engine, and `cargo xtask build` applies them.
+
+**Semantic merges.**
+* *hardening × crc-hook.* The lockstep match moved into `sim/harness.rs`. It now asserts
+  `Sim::fingerprint` every frame, and that the sim is active once the first picks land. crc-hook's
+  hash tests stay in `lockstep_tests.rs`. `populated_sim` now uses legal roster classes and puts
+  seat 1 out of seat 0's fire: the new script killed him, and the leaf walk fell to 458. The
+  fingerprint skips hardening's `Sim::emitted` (log bookkeeping).
+* *content × hardening: `CacSlot` is a sim field.* `repair_received` runs in the logic step and
+  checks slot fit with it (`fits_slot`, `fits_offhand`, `is_tactical_item`: Overkill and
+  Tactician). The content source scan missed this because it listed `classrepair.rs` and all of
+  `classmenu/` as presentation. It now scans `classrepair.rs` and
+  `classmenu/{items,legal,draft,wildcard}.rs`, and an assert keeps them scanned. The other hits
+  are picker or editor reads, now marked: the `CacLocked` check on the picker's pass, the editor's
+  list order, a card's description. `Allowed`, the attachment and card costs, the perk rows and the
+  class caps were already sim fields.
+* *latency × the fingerprint.* `PlayerSim::seen_frame` is hashed: it travels in the input and picks
+  the antilag frame. The antilag `History` is hashed into the world part, because it decides what a
+  later shot hits. It is kept out of the idle test, since every step records a frame.
+  `antilag_frames` is installed tuning, which the content CRC covers. The leaf walk is now 793.
+* *latency × hardening.* The harness carries latency's changing run-ahead, the input's seen frame
+  and predicting clients (`Client::frame_with`). So every harness match (catalog, hostile picks,
+  roster, the full-roster gate) runs predicting clients, a changing run-ahead, the observer, fuzz
+  picks and the roster together. **Gotcha:** latency's schedule (a change every 97 frames) drifted
+  through hardening's 660-frame beats. The full-roster gate then missed the shield's fire and two
+  alt modes, while the hash still agreed. The run-ahead now opens at 30 and changes once a round at
+  frame 90 (`RUNAHEAD_CHANGE`), to 12/4/8/4/6/12. At that frame inputs are streaming and no beat is
+  pressed yet, so the changes still pile inputs onto one frame or leave frames empty.
+* *spectator × latency.* Spectator was ported onto latency's `client/events.rs` split.
+  `consume_events` takes the presented seat and whether it is the player's own view. `predicting`
+  requires `self.spectator.is_none()`, and `set_spectating(true)` calls `predict.reset()`. The
+  spectating fourth machine moved into the harness, with the engine's logic at hand and an assert
+  that it never predicts.
+* *two-instance × crc-hook.* `ZHBO_STATE_HASH_LOG`'s per-frame line now prints `Sim::fingerprint`
+  with its parts. It shares one formatter with crc-hook's `crc frame` line. `mptest-mac.sh`
+  compares the full lines, and on a mismatch prints both machines' parts at the first differing
+  frame. Both lines stay: one compares every logic frame between two logs, the other is what Zero
+  Hour's CRC carries. `DIST` (spectator's) replaces two-instance's `ZHBO_DIST`.
+
+**Fixed here.**
+* *The phantom pull-pin.* `sound ZHBO_BO2_PullPin: error` came from `pullback_for`, which fell back
+  to an event the converter only built from the default lethal's `pullbackSoundPlayer`. BO2 leaves
+  that field empty for the frag and 11 of its 15 offhands; only the Semtex, the Shock Charge and the
+  Sensor Grenade name one. The fallback is gone, and nothing plays without the item's own sound,
+  which is what BO2 does.
+* *Remote gunshots were silent.* Another player's gun's third-person chain, its layers and its
+  silenced variant had the player-relative type `world shrouded allies enemies`. Only the core
+  plays them, through `ClientHost::sound`, which names no owner, so Zero Hour asserted
+  ("expects an owning player") and played nothing. They are `Kind::Remote` now
+  (`world shrouded everyone`). The generic `FireNpc` events stay player-relative, because the engine
+  plays them with an owner. Found by the first two-instance run.
+* *The real-install suite's catalog race.* `install_catalog` runs once per process. cac's
+  pick-payload sweep installed the class-side table, which has no art locks and no combination
+  rows; the roster gate installed the shipped one. Each test silently accepted the other's. When the
+  sweep won, the roster missed the shield, though it passed when run alone.
+  `test_catalog::install_shipped` now installs the shipped table once for both, and any other first
+  install panics.
+* *The autopilot's hand-copied placement numbers.* `zhbo_hammer_place_near(radius)` (ABI 30)
+  exposes `building::place_near`, which the `--build` layout now uses. Patch 0001's
+  `MSG_ZHBO_FPS_INPUT` comment now lists the seventh argument.
+* *Two new mptest checks.* The CRC frames' `crc frame` lines are present and equal on both
+  machines, which shows Zero Hour's CRC carrying `MARKER:ConquerOps`. And a round at the other
+  General lands through the rewind: `antilag: General S's round hit General T where he stood at
+  frame F`, from the drained, unhashed `Sim::antilag_hits`.
+
+**Replays: what is true.** crc-hook's gotcha ("autopilot games are not replayable") was true
+before spectator's change. The scene is now built for the first human seat, which is also the
+recording's local player in playback. The `--replay` leg's autopilot recording passes
+`generalszh -headless -replay`: exit 0, no mismatch, and its 24 `crc frame` lines are identical
+to the live game's. A real-input skirmish recorded from the main menu (`ZHBO_AUTOPILOT=manual`,
+real keys: T, the class pick, walk, turn, reload, crouch, swap, melee, the lethal) passes the
+same way, with 20 identical lines. **Gotcha:** a headless run takes multi-instance slot 2, so its
+lines are in `ConquerOps_Instance02.log`.
+
+**Verified, all on the final tree.**
+* `cargo test --workspace`: 1,087 passed, 0 failed. `cargo clippy --workspace --all-targets` is
+  clean, with and without the `harness` feature.
+* Real-install suite (`-p zhbo-assets -- --ignored --skip conformance`): 68 passed, including the
+  full-roster lockstep gate and the content-variant test.
+* Conformance: byte-identical to integration6 (all 10 CSVs and reports). Weapons: 1,979 cells /
+  11 clusters. CaC: 0 cells and 4 BO2-only rows. 12 gap clusters.
+* `cargo xtask build`: OK, with patches 0001–0023 applied.
+* Autotests, one at a time under the game lock: default 16/16, `--classpick` 12/12, `--rts`
+  16/16, `--scope` 1/1, `--w3d-ads` 2/2, `--input` 3/3, `--build` 18/18, `--replay` 5/5. Default
+  passed again (16/16) after the audio-type fix.
+* `--mp` (two instances): all 23 checks pass, before and after the audio fix. The state hash agreed
+  on all 2,852 common frames, the CRC frames on 22, an antilag hit landed 5 frames back, and there
+  was no CRC mismatch.
+* Headless replay checks: the autopilot recording and the real-input recording both pass (above).
+* Logs: no error, desync or mismatch lines in any leg's `ConquerOps.log`, the MP logs or
+  `zhbo-gfx.log`, once the remote-shot fix was in. There is no PullPin error any more.
