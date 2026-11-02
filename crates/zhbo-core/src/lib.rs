@@ -15,6 +15,7 @@ pub mod classui;
 pub mod classwire;
 pub mod client;
 pub mod config;
+pub mod content;
 pub mod conformance;
 pub mod equipment;
 pub mod ffi;

@@ -36,3 +36,5 @@ pub mod manifest;
 pub mod screenshot;
 pub mod shield;
 pub mod weapons;
+#[cfg(test)]
+mod content_tests;

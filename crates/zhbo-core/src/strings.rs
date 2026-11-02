@@ -130,6 +130,19 @@ const ENGLISH: &[(&str, &str)] = &[
     ("HUD:ZHBO_FieldComputerShort", "FC"),
     ("HUD:ZHBO_GeneralDown", "GENERAL DOWN"),
     ("HUD:ZHBO_GeneralDownHint", "Build a new General at your Command Center"),
+    // The lobbies' multiplayer content check (`content`): the short fingerprint and, for a refused
+    // join, the parts that differ.
+    ("LAN:ZHBO_ContentCRC", "Conquer Ops content %s."),
+    ("LAN:ZHBO_ContentDlc", "DLC packs %s (they need not match: a DLC item is its owner's)."),
+    ("LAN:ZHBO_ContentMismatch", "Conquer Ops content differs between the players: %s. Every player needs the same mod build, BO2 patch level, tuning pack and classes."),
+    ("LAN:ZHBO_ContentEngine", "Zero Hour or mod INI files"),
+    ("LAN:ZHBO_ContentWeapons", "weapon table (BO2 patch level or converter)"),
+    ("LAN:ZHBO_ContentVocabulary", "class item lists"),
+    ("LAN:ZHBO_ContentTuning", "tuning pack"),
+    ("LAN:ZHBO_ContentClasses", "default classes"),
+    ("LAN:ZHBO_ContentSettings", "ZHBO_LOADOUT or ZHBO_AUTOPILOT"),
+    ("LAN:ZHBO_ContentBuild", "mod build"),
+    ("LAN:ZHBO_ContentVersus", "Conquer Ops content: yours %s, the game's %s. Every player needs the same mod build, BO2 patch level, tuning pack and classes."),
 ];
 
 fn table() -> &'static HashMap<String, Vec<u16>> {
@@ -211,7 +224,7 @@ mod tests {
             .filter_map(|l| l.split(';').next()?.split_once('='))
             .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
             .collect();
-        for (k, v) in ENGLISH.iter().filter(|(k, _)| k.starts_with("HUD:")) {
+        for (k, v) in ENGLISH.iter().filter(|(k, _)| k.starts_with("HUD:") || k.starts_with("LAN:")) {
             assert_eq!(shipped.get(&k.to_ascii_lowercase()).map(String::as_str), Some(*v), "{k}");
         }
         assert_eq!(super::text("HUD:ZHBO_NotAKey"), "HUD:ZHBO_NotAKey", "an unknown label shows itself");

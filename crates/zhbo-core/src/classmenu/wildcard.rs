@@ -72,7 +72,7 @@ impl Wildcard {
 
     /// BO2's localized description (column 7), empty when the table lacks the row.
     pub fn description(self) -> &'static str {
-        self.card().map_or("", |c| c.description.as_str())
+        self.card().map_or("", |c| c.description.as_str()) // content: presentation (the editor's text)
     }
 
     /// What the card costs of the ten (column 12). A card the table lacks is charged one point,

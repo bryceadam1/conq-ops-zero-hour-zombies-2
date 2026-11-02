@@ -142,6 +142,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "screenshot" => cmd_screenshot(args),
         "audit-native" => cmd_audit_native(args),
         "build-archive" => cmd_build_archive(args),
+        "content" => cmd_content(args),
         "hud-sheet" => cmd_hud_sheet(args),
         "hammer" => cmd_hammer(args),
         "posew3d" => cmd_posew3d(args),
@@ -728,6 +729,19 @@ fn cmd_audit_native(args: &[String]) -> Result<(), String> {
     }
     println!("{} first-person loads, {} world manifests, {} problems", report.first_person, report.third_person, report.problems.len());
     if report.problems.is_empty() { Ok(()) } else { Err(format!("{} weapons do not draw", report.problems.len())) }
+}
+
+/// `zhbo-assets content <weapons.ini>...`: each converted weapon table's multiplayer fingerprint
+/// parts (`zhbo_core::content`: the sim fields and the class-pick vocabulary), so two players'
+/// tables can be compared without the lobby (the presentation fields are not in them).
+fn cmd_content(args: &[String]) -> Result<(), String> {
+    let files = args.get(1..).filter(|f| !f.is_empty()).ok_or("content <weapons.ini>...")?;
+    for f in files {
+        let text = fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?;
+        let t = zhbo_core::weapons::parse_full_table(&text)?;
+        println!("{f}: weapons {:08X} vocabulary {:08X} ({} weapons, {} bytes)", zhbo_core::content::weapons(&t), zhbo_core::content::vocabulary(&t), t.weapons.len(), text.len());
+    }
+    Ok(())
 }
 
 /// `zhbo-assets build-archive`.

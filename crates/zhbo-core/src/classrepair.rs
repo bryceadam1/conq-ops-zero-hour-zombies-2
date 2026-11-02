@@ -205,7 +205,7 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, rules: Rules, cleared: &mut
 /// and not locked — an item whose art the install lacks (a DLC weapon without its pack,
 /// [`crate::weapons::WeaponDef::cac_locked`]) is listed but never held.
 fn holds(def: &crate::weapons::WeaponDef, fits: bool, rules: Rules) -> bool {
-    def.class.is_slot_weapon() && fits && (rules == Rules::Received || !def.cac_locked)
+    def.class.is_slot_weapon() && fits && (rules == Rules::Received || !def.cac_locked) // content: presentation (the picker's own pass only; `Rules::Received` never reads the lock)
 }
 
 /// An offhand slot holding an item that is not its own is cleared (`ClearSlot`): the lethal slot

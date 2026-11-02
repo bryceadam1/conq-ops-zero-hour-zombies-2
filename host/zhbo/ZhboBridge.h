@@ -12,6 +12,7 @@
 #include "Common/GameType.h"
 
 class AsciiString;
+class UnicodeString;
 class CommandButton;
 class GameMessage;
 class GameMessageTranslator;
@@ -132,6 +133,20 @@ AsciiString Zhbo_BuildCommandSet(const Object *builder);
 
 /// A printf-style line in ConquerOps.log.
 void Zhbo_Log(const char *fmt, ...);
+
+// --- Multiplayer content check (content.rs; host patches 0018, 0021) --------------------------
+/// This machine's content fingerprint parts (ZHBO_CONTENT_PARTS of them; `n` words written, zero
+/// past them or before Zhbo_Init): a LAN join request and a refusal carry them.
+void Zhbo_ContentParts(UnsignedInt *out, Int n);
+/// "Conquer Ops content 1A2B3C4D": the lobby line (empty before Zhbo_Init).
+UnicodeString Zhbo_ContentLabel();
+/// The refused-join message naming the parts that differ from `theirs` (`n` words; logged too).
+UnicodeString Zhbo_ContentMismatch(const UnsignedInt *theirs, Int n);
+/// Keep the host's parts from a LAN refusal for the join-failed box (Zhbo_RefusedContentText).
+void Zhbo_NoteRefusedContent(const UnsignedInt *theirs, Int n);
+UnicodeString Zhbo_RefusedContentText();
+/// Online: the staging room carries only the total; both totals, short form (logged too).
+UnicodeString Zhbo_ContentVersus(UnsignedInt theirTotal);
 
 // --- Data --------------------------------------------------------------------------------------
 /// Text for the mod's string labels; null if the label is not one of ours.

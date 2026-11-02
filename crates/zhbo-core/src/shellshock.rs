@@ -44,7 +44,7 @@
 //! would freeze a first-person player outright.
 
 use crate::units::LOGIC_DT;
-use crate::weapons::table::{Field, FieldKind, Values};
+use crate::weapons::table::{Field, FieldKind, Role, Values};
 
 /// The shock files the MP GSC plays that the mod's sources use, by the script's names.
 pub mod names {
@@ -136,23 +136,23 @@ fn num(v: &Values) -> Result<f32, String> {
 /// Every `Shock` block line, in table order.
 pub const SHOCK_FIELDS: &[Field<ShockDef>] = &[
     Field { key: "Flashed", doc: "1 if `bg_shock_screenType` is `flashed` (a whiteout and a screengrab), 0 for `blurred`.", kind: FieldKind::Num,
-        get: |s| (s.flashed as u8).to_string(), set: |s, v| { s.flashed = num(&v)? != 0.0; Ok(()) } },
+        get: |s| (s.flashed as u8).to_string(), set: |s, v| { s.flashed = num(&v)? != 0.0; Ok(()) }, role: Role::Sim },
     Field { key: "Blur", doc: "`bg_shock_screenBlurBlendTime` and `bg_shock_screenBlurBlendFadeTime` (s).", kind: FieldKind::Nums(2),
-        get: |s| format!("{} {}", s.blur, s.blur_fade), set: |s, v| { v.need(2)?; (s.blur, s.blur_fade) = (v.num(0), v.num(1)); Ok(()) } },
+        get: |s| format!("{} {}", s.blur, s.blur_fade), set: |s, v| { v.need(2)?; (s.blur, s.blur_fade) = (v.num(0), v.num(1)); Ok(()) }, role: Role::Sim },
     Field { key: "Flash", doc: "`bg_shock_screenFlashWhiteFadeTime` and `bg_shock_screenFlashShotFadeTime` (s).", kind: FieldKind::Nums(2),
-        get: |s| format!("{} {}", s.white_fade, s.shot_fade), set: |s, v| { v.need(2)?; (s.white_fade, s.shot_fade) = (v.num(0), v.num(1)); Ok(()) } },
+        get: |s| format!("{} {}", s.white_fade, s.shot_fade), set: |s, v| { v.need(2)?; (s.white_fade, s.shot_fade) = (v.num(0), v.num(1)); Ok(()) }, role: Role::Sim },
     Field { key: "Look", doc: "`bg_shock_lookControl`, its max pitch and yaw speeds (deg/s), sensitivity scale and fade time (s).", kind: FieldKind::Nums(5),
         get: |s| format!("{} {} {} {} {}", s.look_control as u8, s.max_pitch_speed, s.max_yaw_speed, s.sensitivity, s.look_fade),
-        set: |s, v| { v.need(5)?; s.look_control = v.flag(0); (s.max_pitch_speed, s.max_yaw_speed, s.sensitivity, s.look_fade) = (v.num(1), v.num(2), v.num(3), v.num(4)); Ok(()) } },
+        set: |s, v| { v.need(5)?; s.look_control = v.flag(0); (s.max_pitch_speed, s.max_yaw_speed, s.sensitivity, s.look_fade) = (v.num(1), v.num(2), v.num(3), v.num(4)); Ok(()) }, role: Role::Sim },
     Field { key: "Movement", doc: "`bg_shock_movement`: the run speed's scale while shocked.", kind: FieldKind::Num,
-        get: |s| s.movement.to_string(), set: |s, v| { s.movement = num(&v)?; Ok(()) } },
+        get: |s| s.movement.to_string(), set: |s, v| { s.movement = num(&v)?; Ok(()) }, role: Role::Sim },
     Field { key: "Kick", doc: "`bg_shock_viewKickPeriod` (s) and `bg_shock_viewKickRadius`.", kind: FieldKind::Nums(2),
-        get: |s| format!("{} {}", s.kick_period, s.kick_radius), set: |s, v| { v.need(2)?; (s.kick_period, s.kick_radius) = (v.num(0), v.num(1)); Ok(()) } },
+        get: |s| format!("{} {}", s.kick_period, s.kick_radius), set: |s, v| { v.need(2)?; (s.kick_period, s.kick_radius) = (v.num(0), v.num(1)); Ok(()) }, role: Role::Sim },
     Field { key: "Sound", doc: "`bg_shock_soundFadeInTime`, `bg_shock_soundFadeOutTime` and `bg_shock_soundModEndDelay` (s).", kind: FieldKind::Nums(3),
         get: |s| format!("{} {} {}", s.sound_fade_in, s.sound_fade_out, s.sound_mod_end),
-        set: |s, v| { v.need(3)?; (s.sound_fade_in, s.sound_fade_out, s.sound_mod_end) = (v.num(0), v.num(1), v.num(2)); Ok(()) } },
+        set: |s, v| { v.need(3)?; (s.sound_fade_in, s.sound_fade_out, s.sound_mod_end) = (v.num(0), v.num(1), v.num(2)); Ok(()) }, role: Role::Sim },
     Field { key: "SoundLoop", doc: "`bg_shock_soundLoop`: the ringing alias (empty when the MP banks lack it).", kind: FieldKind::Str,
-        get: |s| s.sound_loop.clone(), set: |s, v| { s.sound_loop = v.text.into(); Ok(()) } },
+        get: |s| s.sound_loop.clone(), set: |s, v| { s.sound_loop = v.text.into(); Ok(()) }, role: Role::Presentation }, // content: presentation (the schema line)
 ];
 
 /// A shock running on a player: its def and the seconds left of its duration.
@@ -392,9 +392,9 @@ impl Presented {
             None => self.elapsed += dt.max(0.0),
         }
         // `FUN_005107c0`: the sound modification runs until `soundModEndDelay` past the shock's end.
-        let ringing = self.shock.and_then(|(_, d, duration)| (self.elapsed < duration + d.sound_mod_end && !d.sound_loop.is_empty()).then_some(d));
+        let ringing = self.shock.and_then(|(_, d, duration)| (self.elapsed < duration + d.sound_mod_end && !d.sound_loop.is_empty()).then_some(d)); // content: presentation (the client's ringing voice)
         match (&mut self.voice, ringing) {
-            (Some(v), Some(d)) if v.event == loop_event(&d.sound_loop) => {
+            (Some(v), Some(d)) if v.event == loop_event(&d.sound_loop) => { // content: presentation (the client's ringing voice)
                 if v.rate < 0.0 {
                     v.rate = fade_rate(d.sound_fade_in);
                 }
@@ -403,7 +403,7 @@ impl Presented {
                 if let Some(v) = voice.take() {
                     play(v.event, 0.0);
                 }
-                *voice = Some(Voice { event: loop_event(&d.sound_loop), gain: 0.0, rate: fade_rate(d.sound_fade_in) });
+                *voice = Some(Voice { event: loop_event(&d.sound_loop), gain: 0.0, rate: fade_rate(d.sound_fade_in) }); // content: presentation (the client's ringing voice)
             }
             (Some(v), None) if v.rate >= 0.0 => v.rate = -self.shock.map_or(f32::INFINITY, |(_, d, _)| fade_rate(d.sound_fade_out)),
             _ => {}

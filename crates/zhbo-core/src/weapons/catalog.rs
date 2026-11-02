@@ -31,6 +31,7 @@ pub struct Catalog {
     /// The same strings upper-cased, for the screens BO2 draws through `UIExpression.ToUpper`.
     ui_upper: HashMap<String, &'static str>,
     weapon_groups: Vec<String>,
+    installed_dlc: Vec<String>,
     class_caps: HashMap<String, i32>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
@@ -77,6 +78,7 @@ impl Catalog {
             ui_text,
             ui_upper,
             weapon_groups: t.weapon_groups,
+            installed_dlc: t.installed_dlc,
             class_caps: t.class_caps.into_iter().collect(),
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
@@ -190,6 +192,12 @@ impl Catalog {
         &self.weapon_groups
     }
 
+    /// The DLC packs the converting install had (`InstalledDlc`): the lobby shows them; they are
+    /// not in the multiplayer fingerprint ([`crate::content`]).
+    pub fn installed_dlc(&self) -> &[String] {
+        &self.installed_dlc
+    }
+
     /// A `CoD.CACUtility` class cap by name (`maxPerksInEachCategory`), when the table has it.
     pub fn class_cap(&self, name: &str) -> Option<i32> {
         self.class_caps.get(name).copied()
@@ -287,8 +295,29 @@ pub fn install_catalog(text: &str) -> Result<usize, String> {
             None => table.perks.push(b),
         }
     }
+    let print = (crate::content::weapons(&table), crate::content::vocabulary(&table));
     CATALOG.set(Catalog::from_table(table)).map_err(|_| "weapon catalog already installed".to_string())?;
+    let _ = INSTALLED_PRINT.set(print);
     Ok(n)
+}
+
+/// The installed table's multiplayer fingerprint parts (`content::weapons`, `content::vocabulary`),
+/// taken from the table as installed (the stand-ins merged in).
+static INSTALLED_PRINT: OnceLock<(u32, u32)> = OnceLock::new();
+
+/// The weapon table's fingerprint parts: the installed table's, or the built-in one's
+/// ([`crate::content::fingerprint`]).
+pub fn catalog_fingerprint() -> (u32, u32) {
+    if CATALOG.get().is_some() {
+        if let Some(p) = INSTALLED_PRINT.get() {
+            return *p;
+        }
+    }
+    static BUILT_IN: OnceLock<(u32, u32)> = OnceLock::new();
+    *BUILT_IN.get_or_init(|| {
+        let t = parse_full_table(BUILTIN).expect("built-in weapon table");
+        (crate::content::weapons(&t), crate::content::vocabulary(&t))
+    })
 }
 
 /// The installed catalog, or the built-in one.

@@ -321,6 +321,17 @@ pub fn class_table(
     (table, roster)
 }
 
+/// The DLC packs of the install: each `zone/all/<dlc>_load_mp.ff` (`dlc0`, Revolution's `dlc1`,
+/// ...: the zone `Engine.HasDLCForItem`'s pack check stands for, [`crate::weapons::lock_items_without_art`]),
+/// sorted.
+pub fn installed_dlc(bo2_dir: &Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(bo2_dir.join("zone").join("all"))
+        .map(|d| d.flatten().filter_map(|e| e.file_name().to_str()?.strip_suffix("_load_mp.ff").filter(|n| n.starts_with("dlc")).map(str::to_string)).collect())
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
 /// Convert everything; returns the archive files and a one-line summary.
 pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // BO2's weapon asset pool, highest priority first (`zhbo_formats::weapon::MP_POOL`).
@@ -347,6 +358,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         |w| w.view_model.as_deref().and_then(|m| viewmodels::find_model(&pool, m).ok()).is_none_or(|m| crate::weapons::model_art_converts(&m, |i| paks.resolve(i).is_some())),
         |dlc| zhbo_formats::t6zone::install_path(bo2_dir, &format!("{dlc}_load_mp")).is_file(),
     );
+    // Which DLC packs this install has: the lobby shows them, the multiplayer fingerprint leaves
+    // them out (a DLC item is its owner's; zhbo_core::content).
+    table.installed_dlc = installed_dlc(bo2_dir);
     // The third-person body's animation sets: what BO2's player animation script plays for each
     // weapon's weapClass and playerAnimType. The combinations built next copy their base's set.
     let body_sets = crate::thirdperson::assign_sets(&common, &bo2, &mut table.weapons);

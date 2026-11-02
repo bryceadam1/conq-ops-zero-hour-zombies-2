@@ -265,38 +265,86 @@ void releaseClientState()
 // Multiplayer: every peer's sim must run on the same data, but each player converted the weapon
 // table, and keeps the tuning pack and the classes, on his own machine; the engine's INI CRC
 // (GameEngine::init, computed before Zhbo_Init) covers only the INI files the engine itself loads
-// (the converted archive's Object/Weapon/FXList INIs among them), not these. Fold the exact texts
-// the core was handed, and the sim inputs the environment can set (ZHBO_LOADOUT changes the base
-// kit, ZHBO_AUTOPILOT spawns and picks inside the logic step), into m_iniCRC: the lobbies compare
-// it (online staging rooms refuse a mismatch; LAN does since host patch 0018), and replays record
-// and check it, so different content fails in the lobby instead of desyncing mid-match.
-static void foldModContentIntoIniCrc(const std::string &table, const std::string &tuning, const std::string &classes)
+// (the converted archive's Object/Weapon/FXList INIs among them), not these. The core's content
+// fingerprint (content.rs) hashes what reaches the sim, part by part over the engine's CRC: the
+// weapon table's sim fields (not its localized names, DLC locks or art), the class-pick
+// vocabulary, the tuning pack, the class list, ZHBO_LOADOUT/ZHBO_AUTOPILOT, the mod build. Its
+// total becomes m_iniCRC: the lobbies compare it (online staging rooms refuse a mismatch; LAN does
+// since host patch 0018, and says which part differs since 0021), and replays record and check it.
+static ZhboContentCrc s_content;
+static Bool s_contentReady = FALSE;
+// The other machine's parts from the last refused LAN join (host patch 0021).
+static UnsignedInt s_refusedContent[ZHBO_CONTENT_PARTS];
+
+static void foldModContentIntoIniCrc()
 {
-	CRC crc;
 	const UnsignedInt engine = TheGlobalData->m_iniCRC;
-	crc.computeCRC(&engine, sizeof(engine));
-	const auto add = [&crc](const char *text)
-	{
-		// Length-prefixed, so moving bytes from one part to the next changes the CRC.
-		const UnsignedInt n = text ? (UnsignedInt)strlen(text) : 0u;
-		crc.computeCRC(&n, sizeof(n));
-		if (n > 0)
-			crc.computeCRC(text, (Int)n);
-	};
-	add(table.c_str());
-	add(tuning.c_str());
-	add(classes.c_str());
-	add(getenv("ZHBO_LOADOUT"));
-	add(getenv("ZHBO_AUTOPILOT"));
-	const UnsignedInt mod = crc.get();
+	const UnsignedInt mod = zhbo_content_crc(engine, &s_content);
+	s_contentReady = TRUE;
 	TheWritableGlobalData->m_iniCRC = mod;
-	logf("multiplayer: content CRC %08X (engine INI %08X + weapon table %u, tuning %u, classes %u bytes)",
-		(unsigned)mod, (unsigned)engine, (unsigned)table.size(), (unsigned)tuning.size(), (unsigned)classes.size());
+	const uint32_t *p = s_content.parts;
+	logf("multiplayer: content CRC %08X (engine INI %08X, weapon table %08X, class vocabulary %08X, tuning %08X, classes %08X, settings %08X, build %08X)",
+		(unsigned)mod, (unsigned)p[0], (unsigned)p[1], (unsigned)p[2], (unsigned)p[3], (unsigned)p[4], (unsigned)p[5], (unsigned)p[6]);
+}
+
+static UnicodeString unicodeOf(const char *utf8)
+{
+	// The content messages are the mod's ASCII strings (strings_en.ini).
+	UnicodeString u;
+	u.translate(AsciiString(utf8));
+	return u;
 }
 
 // ------------------------------------------------------------------------------------------------
 // Public entry points
 // ------------------------------------------------------------------------------------------------
+void Zhbo_ContentParts(UnsignedInt *out, Int n)
+{
+	for (Int i = 0; i < n; ++i)
+		out[i] = s_contentReady && i < ZHBO_CONTENT_PARTS ? s_content.parts[i] : 0u;
+}
+
+UnicodeString Zhbo_ContentLabel()
+{
+	char buf[256];
+	if (!s_contentReady || zhbo_content_label(buf, sizeof(buf)) < 0)
+		return UnicodeString::TheEmptyString;
+	return unicodeOf(buf);
+}
+
+UnicodeString Zhbo_ContentMismatch(const UnsignedInt *theirs, Int n)
+{
+	UnsignedInt parts[ZHBO_CONTENT_PARTS] = {};
+	for (Int i = 0; theirs && i < n && i < ZHBO_CONTENT_PARTS; ++i)
+		parts[i] = theirs[i];
+	char buf[512];
+	if (!s_contentReady || zhbo_content_mismatch(parts, buf, sizeof(buf)) < 0)
+		return UnicodeString::TheEmptyString;
+	logf("multiplayer: content mismatch: %s (theirs %08X %08X %08X %08X %08X %08X %08X)", buf,
+		(unsigned)parts[0], (unsigned)parts[1], (unsigned)parts[2], (unsigned)parts[3], (unsigned)parts[4], (unsigned)parts[5], (unsigned)parts[6]);
+	return unicodeOf(buf);
+}
+
+void Zhbo_NoteRefusedContent(const UnsignedInt *theirs, Int n)
+{
+	for (Int i = 0; i < ZHBO_CONTENT_PARTS; ++i)
+		s_refusedContent[i] = theirs && i < n ? theirs[i] : 0u;
+}
+
+UnicodeString Zhbo_RefusedContentText()
+{
+	return Zhbo_ContentMismatch(s_refusedContent, ZHBO_CONTENT_PARTS);
+}
+
+UnicodeString Zhbo_ContentVersus(UnsignedInt theirTotal)
+{
+	char buf[256];
+	if (!s_contentReady || zhbo_content_versus(theirTotal, buf, sizeof(buf)) < 0)
+		return UnicodeString::TheEmptyString;
+	logf("multiplayer: %s", buf);
+	return unicodeOf(buf);
+}
+
 void Zhbo_Init()
 {
 	if (s_ready)
@@ -391,11 +439,9 @@ void Zhbo_Init()
 		logLine("weapons: no converted BO2 weapon table; using the built-in one");
 	}
 	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
-	const std::string tuning = readTextFile(zhbo_names::TUNING_PATH);
-	zhbo_load_tuning(tuning.c_str());
-	const std::string classes = readTextFile(zhbo_names::CLASSES_PATH);
-	zhbo_load_classes(classes.c_str());
-	foldModContentIntoIniCrc(table, tuning, classes);
+	zhbo_load_tuning(readTextFile(zhbo_names::TUNING_PATH).c_str());
+	zhbo_load_classes(readTextFile(zhbo_names::CLASSES_PATH).c_str());
+	foldModContentIntoIniCrc();
 	// BO2's impact table (R8d): the FXLists the converted archive carries for each bucket and
 	// surface. Without it (or without the archive) no impact FX plays; the sound still does.
 	const std::string impacts = readTextFile(zhbo_names::IMPACT_FX_PATH);
