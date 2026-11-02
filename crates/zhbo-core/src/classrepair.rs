@@ -36,6 +36,26 @@
 //!   secondary's, `knife_held`'s. A camo whose weapon slot is empty (or was cleared above) or that
 //!   is not in the list is cleared; a weapon without a converted list (no BO2 data) keeps it.
 //!
+//! * **Spare rounds.** BO2's class has no ammo field: `giveloadout` gives each gun its own
+//!   `maxAmmo` at most (`givemaxammo`). The mod's [`CustomClass::reserve`] override (a hand-edited
+//!   profile's, never an editor field) is clamped to its weapon's [`crate::weapons::WeaponDef::max_reserve`]
+//!   and dropped with its weapon.
+//!
+//! **On receipt, too.** The same pass, less the rules that read the receiving machine's own
+//! install ([`repair_received`]: the DLC locks and the camo lists), runs in the sim on every class
+//! a pick message carries ([`crate::sim::ChosenClass::decode`]), on every machine, before the class
+//! is worn: BO2's server
+//! never trusts the client's class either — `giveloadout` (`_class.gsc`) reads each slot through the
+//! engine's checked loadout getters (`getloadoutitemfromddlstats` zeroes an excluded item, the
+//! `tu6_conflictingAttachmentCheck` / `tu6_verifyUnusedAttachmentSlotsCheck` /
+//! `tu6_perkBonusCardCheck` / `tu7_additionalGrenadeChecks` switches, `FUN_008d5ee0`, and the
+//! attachment sanitizer `FUN_008eb870`) item by item, so an illegal class is repaired slot by slot
+//! and the player still spawns with what was legal, never with the illegal kit. The received pass
+//! reads only the converted content every peer holds identically (the weapon table's items, slots,
+//! attachments and costs, the perk rows, the class caps), never a machine's DLC locks or camo lists
+//! (BO2 checks DLC per owner, `Engine.HasDLCForItem` on the local controller), so peers with
+//! different DLC reach the same class.
+//!
 //! Unknown ids are cleared, not substituted: `catalog::weapon_or_none` drops them loudly (the same
 //! rule the arsenal uses), so a corrupt profile shows up in the log instead of quietly turning into
 //! some default kit.
@@ -53,11 +73,36 @@ pub type Cleared = Vec<&'static str>;
 const PERK_SLOTS: [&str; 3] = ["specialty1", "specialty2", "specialty3"];
 const EXTRA_PERK_SLOTS: [&str; 3] = ["specialty4", "specialty5", "specialty6"];
 
+/// Which rules a pass applies: the picker's own (the profile, the editor) or the received ones
+/// every lockstep peer evaluates identically (the sim).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rules {
+    /// Every rule, the picker's install's locks and camo lists among them.
+    Picker,
+    /// Only rules that read data every peer holds identically: never the receiving machine's DLC
+    /// locks (`CacLocked`: BO2 checks DLC per owner, `Engine.HasDLCForItem` on the local
+    /// controller, and a peer without the pack lists the item locked while the sim is the same)
+    /// nor its camo lists (`CamoList`, built from the art this machine converted). A DLC item or
+    /// camo the sender owns is his to wear; every viewer draws it from its own art.
+    Received,
+}
+
 /// Repair `c` in place, BO2's way (see the module docs). Returns every slot it cleared.
 pub fn repair(c: &mut CustomClass) -> Cleared {
+    repair_with(c, Rules::Picker)
+}
+
+/// Repair a class a pick message carried (the sim, on every machine): the same pass as [`repair`]
+/// without the rules that read this machine's own install (see `Rules::Received`), so peers with
+/// different DLC mend a class identically. A class the sender's [`repair`] left alone is left alone.
+pub fn repair_received(c: &mut CustomClass) -> Cleared {
+    repair_with(c, Rules::Received)
+}
+
+fn repair_with(c: &mut CustomClass, rules: Rules) -> Cleared {
     let mut cleared: Cleared = Vec::new();
-    repair_weapon(c, true, &mut cleared);
-    repair_weapon(c, false, &mut cleared);
+    repair_weapon(c, true, rules, &mut cleared);
+    repair_weapon(c, false, rules, &mut cleared);
     // A tactical in the lethal slot is Tactician's (re-derived from it, `classmenu::wildcards_of`).
     if !crate::classmenu::items::is_tactical_item(&c.lethal) {
         repair_offhand(c, true, &mut cleared);
@@ -70,8 +115,28 @@ pub fn repair(c: &mut CustomClass) -> Cleared {
     }
     repair_perks(c, &mut cleared);
     trim(c, &mut cleared);
-    repair_camos(c, |id| weapons::catalog::weapon_or_none(id).map(|d| d.camo.clone()), &mut cleared);
+    if rules == Rules::Picker {
+        repair_camos(c, |id| weapons::catalog::weapon_or_none(id).map(|d| d.camo.clone()), &mut cleared);
+    }
+    repair_reserves(c, |id| weapons::catalog().get(id).map(|d| d.max_reserve), &mut cleared);
     cleared
+}
+
+/// Each spare-round override against its own weapon's `maxAmmo` (see the module docs): `max` is a
+/// weapon id's `max_reserve`, `None` for an unknown id. Runs after the trim, which can clear a
+/// weapon; an override without its weapon goes with it.
+fn repair_reserves(c: &mut CustomClass, max: impl Fn(&str) -> Option<u16>, cleared: &mut Cleared) {
+    let [primary, secondary] = &mut c.reserve;
+    for (slot, weapon, reserve) in [("primary_reserve", &c.primary, primary), ("secondary_reserve", &c.secondary, secondary)] {
+        if *reserve == 0 {
+            continue;
+        }
+        let cap = if weapon.is_empty() { 0 } else { max(weapon).unwrap_or(0) };
+        if *reserve > cap {
+            *reserve = cap;
+            cleared.push(slot);
+        }
+    }
 }
 
 /// Each weapon's camo against that weapon's own list (see the module docs): `list` is a weapon's
@@ -99,7 +164,7 @@ fn repair_camos(c: &mut CustomClass, list: impl Fn(&str) -> Option<Vec<String>>,
 /// `GetNumAttachments` check), and so are the ones past the slot's cap (`maxAttachments`, plus the
 /// Gunfighter card's extra on the primary) and the ones BO2's compatibility lists forbid together.
 /// An empty slot means "inherit the base kit" and stays empty.
-fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
+fn repair_weapon(c: &mut CustomClass, primary: bool, rules: Rules, cleared: &mut Cleared) {
     let (slot, id) = if primary { ("primary", &mut c.primary) } else { ("secondary", &mut c.secondary) };
     if id.is_empty() {
         return;
@@ -115,7 +180,7 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     };
     // A non-gun (the shield counts as one of the slot's weapons), or a gun BO2 does not offer in this slot (a `secondary` item in the primary, a
     // weapon that is no class item at all), is not a valid item for it (`CheckItems`).
-    if !holds(def, crate::classmenu::items::fits_slot(base, primary)) {
+    if !holds(def, crate::classmenu::items::fits_slot(base, primary), rules) {
         id.clear();
         cleared.push(slot);
         return;
@@ -139,8 +204,8 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
 /// Whether a weapon slot may hold `def` (`fits`: it is an item of that slot): a gun of the slot,
 /// and not locked — an item whose art the install lacks (a DLC weapon without its pack,
 /// [`crate::weapons::WeaponDef::cac_locked`]) is listed but never held.
-fn holds(def: &crate::weapons::WeaponDef, fits: bool) -> bool {
-    def.class.is_slot_weapon() && fits && !def.cac_locked
+fn holds(def: &crate::weapons::WeaponDef, fits: bool, rules: Rules) -> bool {
+    def.class.is_slot_weapon() && fits && (rules == Rules::Received || !def.cac_locked)
 }
 
 /// An offhand slot holding an item that is not its own is cleared (`ClearSlot`): the lethal slot
@@ -343,9 +408,12 @@ mod tests {
     fn a_locked_item_is_not_held() {
         // The Peacekeeper without Revolution: listed locked, so a stored class drops it.
         let mut d = weapons::weapon("mp7_mp").clone();
-        assert!(holds(&d, true));
+        assert!(holds(&d, true, Rules::Picker));
         d.cac_locked = true;
-        assert!(!holds(&d, true));
+        assert!(!holds(&d, true, Rules::Picker));
+        // The lock is the picker's own install's: a received class keeps the item, so a peer
+        // without the pack wears what its owner sent, as every other peer does.
+        assert!(holds(&d, true, Rules::Received));
     }
 
     #[test]
@@ -572,6 +640,39 @@ mod tests {
         let cleared = repair(&mut c);
         assert_eq!(cleared, vec!["secondary", "secondarycamo"]);
         assert!(c.secondary_camo.is_empty());
+    }
+
+    /// BO2's class carries no ammo (`giveloadout` gives a gun its own `maxAmmo` at most): an
+    /// override past the weapon's `max_reserve` comes down to it, one within it stays, and one
+    /// whose weapon is gone goes too.
+    #[test]
+    fn a_spare_round_override_is_capped_at_its_weapons_max_ammo() {
+        let max = |id: &str| match id {
+            "an94_mp" => Some(300),
+            "fnp45_mp" => Some(72),
+            _ => None,
+        };
+        let mut c = class("an94_mp", &[]);
+        c.reserve = [60, 60];
+        let mut cleared = Vec::new();
+        repair_reserves(&mut c, max, &mut cleared);
+        assert!(cleared.is_empty());
+        assert_eq!(c.reserve, [60, 60]);
+        c.reserve = [u16::MAX, 73];
+        repair_reserves(&mut c, max, &mut cleared);
+        assert_eq!(c.reserve, [300, 72]);
+        assert_eq!(cleared, vec!["primary_reserve", "secondary_reserve"]);
+        let mut c = class("nope_mp", &[]);
+        c.secondary.clear();
+        c.reserve = [1, 1];
+        let mut cleared = Vec::new();
+        repair_reserves(&mut c, max, &mut cleared);
+        assert_eq!(c.reserve, [0, 0]);
+        // The full pass reads the catalog's own `max_reserve`.
+        let mut c = class("an94_mp", &[]);
+        c.reserve = [u16::MAX, 0];
+        let _ = repair(&mut c);
+        assert_eq!(c.reserve[0], weapons::weapon("an94_mp").max_reserve);
     }
 
     #[test]

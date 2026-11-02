@@ -10355,3 +10355,49 @@ items:
   it. CONTRACT/`impacts.rs` still call surfaces "presentation only"; that is inaccurate.
 * A real two-instance LAN test needs a debug macOS preset and a loopback alias (sudo). See
   TESTING.md, "Multiplayer in game".
+
+## Multiplayer hardening: a received class is repaired before it is worn (2026-11-01, branch `v1/mp-hardening`)
+
+The pick message carries the sender's class as wire words, and the sim used to wear whatever
+decoded. A modded client (or a hand-edited profile) could field six perks, five attachments, a
+launcher in the primary slot, nine grenades or 65,535 spare rounds. That was no desync, because
+every machine wore the same illegal kit, but it was a cheat.
+
+What BO2 does: its server never takes the client's class either. `giveloadout` (`_class.gsc`) reads
+each slot through the engine's checked loadout getters: `getloadoutitemfromddlstats` zeroes an
+excluded item, and the `tu6_*`/`tu7_*` switches registered in `FUN_008d5ee0` (conflicting
+attachments, unused attachment slots, the bonus-card perks, the grenade counts) and the
+attachment sanitizer `FUN_008eb870` act item by item. So BO2 mends a bad class slot by slot. It
+never refuses the spawn and never hands over the illegal kit.
+
+`ChosenClass::decode` now runs `classrepair::repair_received` on every received custom class
+before it is worn. That is the pass the profile load and the editor already use
+(`classrepair::repair`), minus the two rules that read the receiving machine's own install: the
+DLC locks (`CacLocked`) and the camo lists (`CamoList`, built from the art this machine
+converted). BO2 checks DLC per owner (`Engine.HasDLCForItem` on the local controller), and
+`v1/mp-content` keeps both fields out of the multiplayer fingerprint. A peer without a pack would
+otherwise drop the owner's Peacekeeper and desync. Words that do not decode still drop the pick.
+The pass gained one rule: BO2's class has no ammo field, so the mod's spare-round override is
+capped at its weapon's `max_reserve` and goes when its weapon goes.
+
+**Gotcha for the integrator.** With `v1/mp-content`'s field roles, every field the received pass
+reads is a sim input now: the items' `CacSlot` (slot fit, Overkill, Tactician), `Allowed` and the
+attachment costs, the perk rows and the class caps. `CacSlot` is marked presentation there. It
+must become a sim field, or two peers whose statstables differed would mend a class differently
+without the lobby noticing.
+
+Two related changes:
+* The libm scan (`the_sim_calls_no_platform_libm`) no longer exempts `classmenu/`, because those
+  class rules are reachable from the sim now. They contain no floats.
+* The unknown-weapon-id list (`catalog::note_unresolved`) is capped at 64 entries, so a stream
+  of hostile picks cannot grow it.
+
+**Verified.** The lockstep gate takes the picks as a parameter now. The new test
+`hostile_class_payloads_are_mended_alike_on_every_machine` plays six rounds in which every pick
+is a fuzz payload, on three machines that must agree on every frame. The payloads are random
+words, a tagged body of noise, a class that breaks every rule at once, or a legal class with one
+field corrupted. `a_received_class_is_worn_legal_or_not_at_all` checks 4,000 payloads: the sim
+wears exactly the repaired class, the repair is a fixed point, and the result passes Pick 10,
+the card cap, slot fit, grenade caps and the spare-round cap. Payloads that do not decode are
+dropped. `a_received_class_ignores_the_receivers_dlc` keeps a DLC camo the receiver lacks, and
+`classrepair`'s lock test keeps a locked item on receipt.

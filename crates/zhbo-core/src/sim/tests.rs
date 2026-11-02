@@ -1017,7 +1017,9 @@ fn an_overhead_custom_pick_keeps_its_kit_through_take_control() {
     sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
     let custom = crate::classes::CustomClass {
         name: "Overhead".into(),
-        primary: "fnp45_mp".into(),
+        // Overkill: a second primary item in the secondary slot (a legal class; the sim repairs
+        // what is not).
+        primary: "mk48_mp".into(),
         secondary: "an94_mp".into(),
         lethal: "claymore_mp".into(),
         tactical: "concussion_grenade_mp".into(),
@@ -1032,14 +1034,14 @@ fn an_overhead_custom_pick_keeps_its_kit_through_take_control() {
     let p = sim.player(0).unwrap();
     assert_eq!(p.class.as_deref(), Some("custom:Overhead"));
     let a = &p.arsenal;
-    assert_eq!(a.weapons[0].main.id, "fnp45_mp");
+    assert_eq!(a.weapons[0].main.id, "mk48_mp");
     assert_eq!(a.weapons[1].main.id, "an94_mp");
     assert_eq!(a.lethal.def.id, "claymore_mp");
     assert!(a.has(crate::weapons::Perk::TOUGHNESS));
     assert!(a.raise_left >= TAKE_CONTROL_READY, "the weapon still comes up in first person");
     // A later rts_update does not re-create/reset the record.
     sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
-    assert_eq!(sim.player(0).unwrap().arsenal.weapons[0].main.id, "fnp45_mp");
+    assert_eq!(sim.player(0).unwrap().arsenal.weapons[0].main.id, "mk48_mp");
     // A re-pick in first person (the spawn offer on a later take-control) replaces the kit.
     let second = crate::classes::CustomClass {
         name: "Rifle".into(),

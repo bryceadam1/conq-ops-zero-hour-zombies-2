@@ -74,7 +74,21 @@ replicated messages alone. The rules, and what enforces each:
   the core routes the sim's through `math::det` (musl's libm, ported to Rust). The
   `the_sim_calls_no_platform_libm` test fails on any `f32` transcendental call in a sim-reachable
   file (everything except the client, HUD, class screens, LUI, renderer passes, conformance oracle,
-  sounds and the C ABI module).
+  sounds and the C ABI module; the class rules in `classmenu/` are scanned, since the sim repairs
+  received classes with them).
+* **A received class is never trusted.** The pick's words are whatever the sender's machine put
+  there (a modded client, a hand-edited profile, noise). `ChosenClass::decode` runs the editor's
+  own repair pass on every machine before the class is worn (`classrepair::repair_received`: each
+  slot's items and their statstable slot, attachments and their compatibility, the grenade counts,
+  the perk tiers, Pick 10 and the bonus-card cap, the spare-round cap), as BO2's `giveloadout`
+  reads each slot through the engine's checked loadout getters; words that do not decode drop the
+  pick. It leaves out the two rules that read the receiving machine's own install: the DLC locks
+  (`CacLocked`; BO2 checks DLC per owner, `Engine.HasDLCForItem` on the local controller) and the
+  camo lists (`CamoList`, built from the art this machine converted). Those are the picker's
+  (`classrepair::repair`, the profile and the editor), so peers with different DLC mend a class
+  identically (`hostile_class_payloads_are_mended_alike_on_every_machine`,
+  `a_received_class_ignores_the_receivers_dlc`). The fields the received pass does read (the items'
+  `CacSlot`, `Allowed` attachments and costs, the perk rows, the class caps) are sim inputs.
 * **A seat commands only its own General.** Ownership is checked at take-control and on every
   step: a network game hands a leaving player's assets to a living ally (`onSelfDestruct` with
   `transferAssets`), and the leaver's record then lets go of the General (back to RTS control, AI

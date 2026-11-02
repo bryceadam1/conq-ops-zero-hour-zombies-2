@@ -35,7 +35,9 @@ pub struct ChosenClass {
 
 impl ChosenClass {
     /// The class a `MSG_ZHBO_CHOOSE_CLASS` names: a shipped class by registry index (empty
-    /// `payload`, identical on every client), or a custom class's wire words.
+    /// `payload`, identical on every client), or a custom class's wire words, repaired to a legal
+    /// class ([`crate::classrepair::repair_received`]) on receipt. `None` for an index past the list or
+    /// words that do not decode: the pick is dropped.
     pub fn decode(index: usize, payload: &[u32]) -> Option<Self> {
         if payload.is_empty() {
             let c = crate::classes::at(index)?;
@@ -51,7 +53,12 @@ impl ChosenClass {
                 secondary_reticle: String::new(),
             });
         }
-        let c = crate::classes::CustomClass::from_wire_words(payload)?;
+        let mut c = crate::classes::CustomClass::from_wire_words(payload)?;
+        // Never trust the sender's class (BO2's server reads every slot through its checked
+        // loadout getters): the editor's own repair pass, on every machine, before it is worn,
+        // less the rules that read this machine's own install (DLC locks, camo lists: the
+        // sender's to own). An illegal class is mended slot by slot (`classrepair`).
+        let _ = crate::classrepair::repair_received(&mut c);
         let name = if c.name.is_empty() { "Custom Class".to_string() } else { c.name.clone() };
         Some(ChosenClass {
             id: format!("custom:{}", c.name),

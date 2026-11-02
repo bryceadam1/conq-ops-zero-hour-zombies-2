@@ -207,9 +207,19 @@ fn rounds() -> u32 {
     n.div_ceil(2).max(4)
 }
 
-/// The match on three machines: A (player 0's), B (player 1's) and C, which never renders.
+/// The custom class words a player's UI sends in round `r`: `pick` 0 is the round's opening pick,
+/// 1 the mid-life one.
+type Picks<'a> = &'a dyn Fn(u32, i32, u32) -> Vec<u32>;
+
+/// The catalog cycle's picks: round `r`'s class, then round `r + 1`'s mid-life.
+fn catalog_picks(r: u32, player: i32, pick: u32) -> Vec<u32> {
+    class_for(r + pick, player).to_wire_words()
+}
+
+/// The match on three machines: A (player 0's), B (player 1's) and C, which never renders, over
+/// `rounds` rounds whose custom classes `picks` sends (round 0 opens with the presets by index).
 /// Returns how many frames ran and A's and B's render counts.
-fn play_match() -> (u32, u32, u32) {
+fn play_match(rounds: u32, picks: Picks) -> (u32, u32, u32) {
     let mut a = Peer::new(0, 0x0A11_CE5E_ED00_0001);
     let mut b = Peer::new(1, 0x0B0B_5EED_0000_0002);
     // An observer seat with no General of its own.
@@ -225,7 +235,7 @@ fn play_match() -> (u32, u32, u32) {
         *s ^= *s << 17;
         *s
     };
-    let total = rounds() * ROUND;
+    let total = rounds * ROUND;
     let mut frame = 0;
     while frame < total {
         frame += 1;
@@ -255,11 +265,12 @@ fn play_match() -> (u32, u32, u32) {
             match t {
                 // Round 0 by preset index from the overhead command bar, then customs.
                 1 if r == 0 => net.send(frame, player, Cmd::ChooseClass(g, p, vec![])),
-                1 => net.send(frame, player, Cmd::ChooseClass(g, 0, class_for(r, player).to_wire_words())),
+                // The engine carries at most the ABI payload (the bridge's `payload[64]`).
+                1 => net.send(frame, player, Cmd::ChooseClass(g, 0, capped(picks(r, player, 0)))),
                 3 => net.send(frame, player, Cmd::TakeControl(g)),
                 // Mid-life after the fight: the class waits for the next spawn (or, in the grace
                 // period of round 0, before any combat, it lands at once).
-                365 => net.send(frame, player, Cmd::ChooseClass(g, 0, class_for(r + 1, player).to_wire_words())),
+                365 => net.send(frame, player, Cmd::ChooseClass(g, 0, capped(picks(r, player, 1)))),
                 _ => {}
             }
         }
@@ -294,10 +305,16 @@ fn play_match() -> (u32, u32, u32) {
     (frame, a.renders, b.renders)
 }
 
+/// What the engine's message can carry of a payload: [`crate::classwire::PAYLOAD_WORDS`] words.
+fn capped(mut words: Vec<u32>) -> Vec<u32> {
+    words.truncate(crate::classwire::PAYLOAD_WORDS);
+    words
+}
+
 /// The gate: every weapon, every feature, three machines, one result.
 #[test]
 fn every_machine_agrees_on_every_frame_of_a_long_match() {
-    let (frames, ra, rb) = play_match();
+    let (frames, ra, rb) = play_match(rounds(), &catalog_picks);
     assert!(frames >= 4 * ROUND);
     assert!(ra > rb, "the machines rendered at different cadences ({ra} vs {rb})");
 }
@@ -404,4 +421,133 @@ fn a_general_handed_to_an_ally_leaves_the_leavers_seat() {
     sim.take_control(&host, 1, 1);
     assert_eq!(sim.player(1).map(|p| p.general), Some(1), "the ally takes him into first person");
     assert_eq!(*host.controlled.borrow(), vec![1]);
+}
+
+/// A hostile or broken client's pick payloads (R1): random words, a tagged body of noise, an
+/// illegal class (every rule broken at once), and a legal class with one field corrupted. `k`
+/// seeds the choice, so every machine of a match replays the same stream.
+pub(super) fn fuzz_payload(k: u64) -> Vec<u32> {
+    let mut s = k.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    let cat = crate::weapons::catalog();
+    let ids: Vec<&str> = cat.all().iter().map(|d| d.id.as_str()).collect();
+    let any = |n: u64| ids[(n % ids.len() as u64) as usize].to_string();
+    match next() % 4 {
+        0 => (0..next() % 80).map(|_| next() as u32).collect(),
+        1 => {
+            let len = (next() % 200) as u16;
+            let mut bytes = vec![crate::classwire::TAG];
+            bytes.extend_from_slice(&len.to_le_bytes());
+            bytes.extend((0..len).map(|_| next() as u8));
+            crate::classwire::pack(&bytes)
+        }
+        2 => {
+            // Every rule at once: a secondary item and five attachments (some not offered) in the
+            // primary, an offhand in the secondary, a tactical in the tactical's place and a gun
+            // in the lethal's, nine of each grenade, six perks of one tier and a stranger, foreign
+            // camos and a magazine of spare rounds.
+            let c = CustomClass {
+                name: "Hacked".into(),
+                primary: format!("{}+gl+reflex+grip+acog+silencer", any(next())),
+                secondary: any(next()),
+                lethal: any(next()),
+                tactical: any(next()),
+                lethal_count: (next() % 256) as u8,
+                tactical_count: (next() % 256) as u8,
+                melee: any(next()),
+                perks: ["Lightweight", "Lightweight", "Hardline", "Ghost", "FlakJacket", "Toughness", "NotAPerk"].iter().map(|p| p.to_string()).collect(),
+                reserve: [u16::MAX, (next() % 65_536) as u16],
+                camo: "camo_gold".into(),
+                knife: "camo_nope".into(),
+                secondary_camo: "camo_dragon".into(),
+                ..Default::default()
+            };
+            c.to_wire_words()
+        }
+        _ => {
+            let mut c = class_for(next() as u32 % 16, (next() % 2) as i32);
+            match next() % 6 {
+                0 => c.primary = any(next()),
+                1 => c.secondary = format!("{}+{}", c.secondary, ["gl", "dw", "mk", "ft", "acog"][(next() % 5) as usize]),
+                2 => c.lethal_count = 9,
+                3 => c.perks.extend(["Ghost", "Engineer", "Dexterity", "Scavenger"].iter().map(|p| p.to_string())),
+                4 => c.tactical = c.primary.clone(),
+                _ => c.reserve = [9_999, 9_999],
+            }
+            c.to_wire_words()
+        }
+    }
+}
+
+/// R1 through the lockstep: every pick of a long match is a hostile payload. Every machine mends
+/// (or drops) each the same way, so they still agree on every frame, and what the players wear is
+/// legal.
+#[test]
+fn hostile_class_payloads_are_mended_alike_on_every_machine() {
+    let picks = |r: u32, player: i32, pick: u32| fuzz_payload(((r as u64) << 8) | ((player as u64) << 1) | pick as u64);
+    let (frames, _, _) = play_match(6, &picks);
+    assert_eq!(frames, 6 * ROUND);
+}
+
+/// A DLC item and a DLC camo are the sender's to own (BO2's `Engine.HasDLCForItem` runs on the
+/// owner's controller): the received pass reads neither the receiving machine's locks nor its camo
+/// lists, so a peer without the pack wears the class exactly as one with it does, and the
+/// picker's own pass is the one that refuses a locked item.
+#[test]
+fn a_received_class_ignores_the_receivers_dlc() {
+    let mut c = class_for(0, 0);
+    c.camo = "camo_dlc_pack_only".into();
+    c.secondary_camo = "camo_dlc_pack_only".into();
+    let mut received = c.clone();
+    let cleared = crate::classrepair::repair_received(&mut received);
+    assert!(!cleared.iter().any(|s| s.ends_with("camo")), "{cleared:?}");
+    assert_eq!((received.camo.as_str(), received.secondary_camo.as_str()), ("camo_dlc_pack_only", "camo_dlc_pack_only"));
+    let words = received.to_wire_words();
+    let chosen = ChosenClass::decode(0, &words).unwrap();
+    assert_eq!(chosen.camo, "camo_dlc_pack_only");
+}
+
+/// R1, the rule: whatever words arrive, the class the sim wears is the repaired one — legal under
+/// every check the editor applies (Pick 10, the card cap, each slot's items and attachments, the
+/// grenade counts, the perk tiers, the camos, the spare rounds) — or the pick is dropped.
+#[test]
+fn a_received_class_is_worn_legal_or_not_at_all() {
+    use crate::classmenu::{Draft, PICK_10};
+    let mut worn = 0;
+    for k in 0..4000u64 {
+        let words = capped(fuzz_payload(k));
+        if words.is_empty() {
+            // No words is the preset pick by index, not a custom class.
+            continue;
+        }
+        let Some(chosen) = ChosenClass::decode(0, &words) else {
+            assert!(CustomClass::from_wire_words(&words).is_none(), "only an undecodable payload is dropped");
+            continue;
+        };
+        worn += 1;
+        let mut c = CustomClass::from_wire_words(&words).unwrap();
+        let _ = crate::classrepair::repair_received(&mut c);
+        assert_eq!(chosen.loadout, c.loadout(), "the sim wears the repaired class (payload {k})");
+        assert!(crate::classrepair::repair_received(&mut c.clone()).is_empty(), "the repaired class is legal: {c:?}");
+        let d = Draft::from_custom(&c);
+        assert!(d.spent() <= PICK_10 && d.wildcards.len() <= crate::classes::max_bonus_cards(), "{c:?}");
+        for (id, primary) in [(&c.primary, true), (&c.secondary, false)] {
+            if !id.is_empty() {
+                let (base, _) = crate::classmenu::items::given_parts(id);
+                assert!(crate::classmenu::items::fits_slot(&base, primary) || (!primary && crate::classmenu::items::is_primary_item(&base)), "{id} in the {} slot", if primary { "primary" } else { "secondary" });
+            }
+        }
+        assert!(c.lethal_count as usize <= crate::classes::max_grenades() && c.tactical_count as usize <= crate::classes::max_grenades());
+        for (i, id) in [&c.primary, &c.secondary].into_iter().enumerate() {
+            if c.reserve[i] > 0 {
+                assert!(c.reserve[i] <= crate::weapons::weapon(id).max_reserve, "{c:?}");
+            }
+        }
+    }
+    assert!(worn > 1000, "the fuzz reached the repair ({worn} classes worn)");
 }
