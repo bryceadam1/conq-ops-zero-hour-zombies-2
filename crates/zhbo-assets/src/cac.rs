@@ -140,16 +140,9 @@ mod tests {
         use zhbo_core::classes::CustomClass;
         use zhbo_core::classwire::{max_legal_bytes, PAYLOAD_WORDS};
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
-        let (bo2, atts) = mp.weapons().unwrap();
-        let patch_ui = crate::paks::load_zone(&bo2_dir, "patch_ui_mp").unwrap();
-        let (table, _) = crate::generals::class_table(&bo2_dir, &bo2, &atts, &mp.patch, &patch_ui, &mut Vec::new());
-        match zhbo_core::weapons::install_catalog(&zhbo_core::weapons::format_full_table(&table)) {
-            Ok(_) => {}
-            // Another real-install test in this process installed the same conversion first.
-            Err(e) if e.contains("already installed") => {}
-            Err(e) => panic!("{e}"),
-        }
+        // The table the launcher ships (the class side, the art locks and the combinations), as
+        // the editor offers it in game.
+        crate::test_catalog::install_shipped(&bo2_dir);
         let offer = zhbo_core::classmenu::offer();
         assert!(offer.primary.len() > 20 && offer.secondary.len() > 5, "the install's items are offered");
 

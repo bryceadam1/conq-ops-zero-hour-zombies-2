@@ -38,3 +38,5 @@ pub mod shield;
 pub mod weapons;
 #[cfg(test)]
 mod content_tests;
+#[cfg(test)]
+mod test_catalog;

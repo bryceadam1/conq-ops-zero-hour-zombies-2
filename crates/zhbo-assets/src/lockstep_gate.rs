@@ -19,15 +19,7 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install (ZHBO_BO2_DIR); converts the weapon table and plays the roster (minutes, release)"]
     fn the_install_roster_plays_in_lockstep() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let (files, _) = crate::generals::files(&bo2_dir).unwrap();
-        let table = files.iter().find(|(p, _)| p == crate::weapons::TABLE_PATH).expect("the shipped weapon table");
-        let text = String::from_utf8_lossy(&table.1).into_owned();
-        match zhbo_core::weapons::install_catalog(&text) {
-            Ok(_) => {}
-            // Another real-install test in this process installed the same conversion first.
-            Err(e) if e.contains("already installed") => {}
-            Err(e) => panic!("{e}"),
-        }
+        crate::test_catalog::install_shipped(&bo2_dir);
         let classes = roster_classes();
         let rounds = (classes.len() as u32).div_ceil(3) + 1;
         let picks = |r: u32, p: i32, pick: u32| classes[((r + pick) as usize * 3 + p as usize) % classes.len()].to_wire_words();
