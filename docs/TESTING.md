@@ -383,11 +383,14 @@ Two machines (or the Windows VM and the Mac) need none of the above, only the sa
 `ZHBO_STATE_HASH_LOG=1` on both and compare the `state hash` lines afterwards. Zero Hour's online
 lobby also compares the exe CRC.
 
-* **The replay check already runs the hook today.** Record a skirmish with real input (the
-  autopilot's spawns are local, not messages, so its games do not replay), then
+* **The replay check runs the hook.** Record a skirmish started from the main menu (a loaded
+  save records no replay; `ZHBO_AUTOTEST_SKIRMISH=1` starts one), with real input or the
+  autopilot — the autopilot's scene is spawned from the logic step for the first human seat, which
+  is the recording's local player in playback too, so its games replay (`autotest-mac.sh
+  --replay`'s recording passes) — then, with the same `ZHBO_AUTOPILOT` (it is in the content CRC),
   `generalszh -useCwd -mod <dist>/ -headless -replay <file>` from the Zero Hour folder: exit 0 and
-  no `CRC Mismatch in Frame N`; the replay's `ConquerOps.log` `crc frame` lines must equal the
-  live game's. The CRC carries the sim's state (`MARKER:ConquerOps`, host patch 0020), so this
+  no `CRC Mismatch in Frame N`; the replay's `crc frame` lines must equal the live game's (a
+  headless run takes multi-instance slot 2, so they are in `ConquerOps_Instance02.log`). The CRC carries the sim's state (`MARKER:ConquerOps`, host patch 0020), so this
   checks the mod's determinism too, on one machine.
 
 ## macOS test notes

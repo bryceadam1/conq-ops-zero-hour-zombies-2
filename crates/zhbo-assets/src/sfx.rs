@@ -54,8 +54,15 @@ pub enum Kind {
     Player,
     /// Positional, heard by everyone.
     World,
-    /// Positional, heard by everyone except its owner (the owner hears the `Player` version).
+    /// Positional, heard by everyone except its owner (the owner hears the `Player` version): the
+    /// engine plays it with the owning player (an RTS weapon's `FireSound`), and Zero Hour's
+    /// player-relative type needs that owner.
     Others,
+    /// Positional, heard by everyone, for the sounds the core plays of another player's first-person
+    /// General (his gun's third-person chain and its layers, `cues::third_person_shot`): the core
+    /// already picks who hears it (never the shooter), and `ClientHost::sound` names no owner,
+    /// which a player-relative type asserts on and refuses.
+    Remote,
     /// The player's own 2D loop, played until the core stops it (`ClientHost::sound_loop`: a
     /// shellshock's ringing).
     PlayerLoop,
@@ -65,7 +72,7 @@ impl Kind {
     fn ini(self) -> &'static str {
         match self {
             Kind::Player | Kind::PlayerLoop => "ui player",
-            Kind::World => "world shrouded everyone",
+            Kind::World | Kind::Remote => "world shrouded everyone",
             Kind::Others => "world shrouded allies enemies",
         }
     }
@@ -476,7 +483,7 @@ pub fn files(
         pending.push(Pending { event: event.to_string(), kind, limit, range, variants });
         // A converted gun's third-person shot also ships layer by layer for the client to level by
         // BO2's distance curves (`zhbo_core::soundlayers`), keyed by the gun's FX weapon.
-        if let Some(key) = event.strip_prefix(zhbo_core::names::NPC_FIRE_PREFIX).filter(|_| kind == Kind::Others) {
+        if let Some(key) = event.strip_prefix(zhbo_core::names::NPC_FIRE_PREFIX).filter(|_| kind == Kind::Remote) {
             let fx = zhbo_core::names::fx_weapon(key);
             let reach = zhbo_core::units::inches(mixer.audible_range(&chain).max(1.0));
             for (k, a) in aliases.iter().enumerate() {
@@ -694,7 +701,7 @@ mod tests {
         let tail = mixer.gain(&find("wpn_an94_fire_plr_decay").unwrap().variants[0], 0.0);
         assert!(shot > 2.0 * tail, "{shot} {tail}");
 
-        let extra = [DynSfx { event: zhbo_core::names::npc_fire_event("an94_mp"), layers: vec!["wpn_an94_fire_npc".into()], kind: Kind::Others, limit: 3 }];
+        let extra = [DynSfx { event: zhbo_core::names::npc_fire_event("an94_mp"), layers: vec!["wpn_an94_fire_npc".into()], kind: Kind::Remote, limit: 3 }];
         let (files, summary) = files(&common, &world, &dir, &[], &extra).unwrap();
         // The layers ship keyed by the gun's FX weapon: the close shot, the distant layer and the
         // tail (not the LFE-only low end), each with its own curves; the client's rule on them
@@ -784,6 +791,9 @@ mod tests {
         assert!(l.contains("Control     = loop\n  LoopCount   = 0\n") && l.contains("Type        = ui player\n") && !l.contains("MinRange"), "{l}");
         assert!(!e.contains("loop"), "{e}");
         assert!(o.contains("allies enemies") && !o.contains("player"));
+        // The core plays another player's shot with no owner: a player-relative type would assert.
+        let r = audio_event("ZHBO_BO2_FireNpc_an94_mp_L0", &["x".into()], 40, Kind::Remote, 3, Some((900.0, 900.0)));
+        assert!(r.contains("world shrouded everyone") && !r.contains("allies") && !r.contains("enemies"), "{r}");
     }
 
     #[test]

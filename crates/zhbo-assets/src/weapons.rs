@@ -787,7 +787,7 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             }
             let npc_event = zhbo_core::names::npc_fire_event(&key);
             if let Some(npc) = &c.fire_sound {
-                events.push(DynSfx { event: npc_event.clone(), layers: layers(npc), kind: Kind::Others, limit: 3 });
+                events.push(DynSfx { event: npc_event.clone(), layers: layers(npc), kind: Kind::Remote, limit: 3 });
             }
             let fx = zhbo_core::names::fx_weapon(&key);
             let launcher = d.class == Class::Launcher;
@@ -820,7 +820,7 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             }
             if let Some(Some(npc)) = sil(FIRE_SOUND_BIT, |u| &u.fire_sound) {
                 let event = zhbo_core::names::npc_fire_event(&key_sil);
-                events.push(DynSfx { event: event.clone(), layers: layers(&npc), kind: Kind::Others, limit: 3 });
+                events.push(DynSfx { event: event.clone(), layers: layers(&npc), kind: Kind::Remote, limit: 3 });
                 d.silenced_fire_sound_npc = event;
             }
             let fx_sil = zhbo_core::names::fx_weapon(&key_sil);
