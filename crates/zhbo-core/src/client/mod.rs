@@ -544,10 +544,15 @@ impl Client {
         }
     }
 
+    /// The General this machine looks through in first person (entering, in it, or leaving), whose
+    /// own body the view hides; `None` overhead.
+    pub fn first_person_general(&self) -> Option<u32> {
+        (!matches!(self.view, ViewMode::Rts) && self.general != 0).then_some(self.general)
+    }
+
     pub fn reset(&mut self) {
         #[cfg(feature = "autopilot")]
-        let autopilot =
-            self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, build: a.build, classpick: a.classpick, scope: a.scope, ..Default::default() });
+        let autopilot = self.autopilot.as_ref().map(Autopilot::fresh);
         *self = Client::new(self.cfg);
         #[cfg(feature = "autopilot")]
         {
@@ -778,18 +783,64 @@ fn pick_custom_class(out: &mut ClientOut, general: u32, class: &crate::classes::
     true
 }
 
+/// The multiplayer autopilot's aim: the view angles from the local General's eye to the chest of
+/// the nearest other General in first person (only those have a body the sim moves), or `None`.
+#[cfg(feature = "autopilot")]
+fn autopilot_aim(sim: &Sim, local: i32) -> Option<(f32, f32)> {
+    let eye = sim.player(local)?.body.eye();
+    let chest = |p: &crate::sim::PlayerSim| p.body.pos + Vec3::new(0.0, 0.0, p.body.eye_height * 0.75);
+    let target = sim
+        .players
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i as i32 != local)
+        .filter_map(|(_, p)| p.as_ref())
+        .filter(|p| p.is_first_person())
+        .map(chest)
+        .min_by(|a, b| (*a - eye).length().total_cmp(&(*b - eye).length()))?;
+    let d = target - eye;
+    Some((d.y.atan2(d.x), d.z.atan2(d.length_xy())))
+}
+
 impl Client {
     /// The autopilot's scripted input for this frame (`None`: the player's own). Its time base is
     /// the logic frame while it drives first person, and it re-bases outside it.
     #[cfg(feature = "autopilot")]
-    fn autopilot_input(&mut self, inp: &ClientIn, unclassed: bool) -> Option<ClientIn> {
+    fn autopilot_input(&mut self, sim: &Sim, inp: &ClientIn, unclassed: bool) -> Option<ClientIn> {
         let pick_wanted = self.class_pick_wanted(unclassed);
         let fps = matches!(self.view, ViewMode::Fps);
         let ap = self.autopilot.as_mut()?;
         if !fps {
             ap.t = 0.0;
             ap.base_frame = inp.logic_frame;
+            ap.in_fps = false;
             return None;
+        }
+        if !ap.in_fps {
+            ap.in_fps = true;
+            ap.session += 1;
+            ap.mp_fight = None;
+            if ap.mp {
+                ap.log.push(format!("autopilot mp: first-person session {}", ap.session));
+            }
+        }
+        if ap.mp {
+            ap.mp_aim = autopilot_aim(sim, inp.local_player);
+            // What his General shows in third person on the other machines: the weapon in hand and
+            // the camo it wears (`Sim::third_person_camo`, what their native pass composes).
+            let holds = sim
+                .player(inp.local_player)
+                .filter(|p| p.class.is_some() && p.is_first_person())
+                .map(|p| {
+                    let vm = p.arsenal.current().def.viewmodel;
+                    (p.general, vm, sim.third_person_camo(p.general, vm))
+                });
+            if holds.is_some() && holds != ap.mp_holds {
+                if let Some((general, vm, camo)) = &holds {
+                    ap.log.push(format!("autopilot mp: General {general} weapon {vm} camo {} in hand", camo.as_deref().unwrap_or("none")));
+                }
+                ap.mp_holds = holds;
+            }
         }
         // The scripts' time windows are tuned in logic ticks (the sim's), so read the clock from
         // the logic frame, not the render dt: hitches and frame-rate differences would drift every
@@ -810,12 +861,16 @@ impl Client {
         scripted.wheel = script.wheel;
         scripted.class_pick_force = script.pick_force;
         scripted.input_allowed = 1;
+        if let Some((yaw, pitch)) = script.look {
+            self.yaw = wrap_angle(yaw);
+            self.pitch = pitch.clamp(-MAX_PITCH, MAX_PITCH);
+        }
         Some(scripted)
     }
 
     /// Without the autopilot feature the player's input is always the input.
     #[cfg(not(feature = "autopilot"))]
-    fn autopilot_input(&mut self, _inp: &ClientIn, _unclassed: bool) -> Option<ClientIn> {
+    fn autopilot_input(&mut self, _sim: &Sim, _inp: &ClientIn, _unclassed: bool) -> Option<ClientIn> {
         None
     }
 
@@ -833,7 +888,7 @@ impl Client {
             self.general = p.general;
         }
         let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
-        let scripted = self.autopilot_input(inp, unclassed);
+        let scripted = self.autopilot_input(sim, inp, unclassed);
         let inp = scripted.as_ref().unwrap_or(inp);
         let mut out = ClientOut { hfov: self.last_hfov, viewmodel: viewmodel::NONE, ..Default::default() };
         self.hud.map_open = false;

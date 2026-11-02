@@ -382,6 +382,17 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
             let _ = (equipment, build, classpick, scope);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
+        crate::config::Autopilot::Multiplayer => {
+            let shooter = config.mp_role == crate::config::MpRole::Shooter;
+            #[cfg(feature = "autopilot")]
+            {
+                state.client.autopilot = Some(crate::client::Autopilot { mp: true, mp_shooter: shooter, ..Default::default() });
+            }
+            state.logic.log(&format!("autopilot enabled: the multiplayer run, as the {} (ZHBO_AUTOPILOT=mp)", if shooter { "shooter" } else { "target" }));
+        }
+    }
+    if config.state_hash_log {
+        state.logic.log("logging the sim's state hash every logic frame (ZHBO_STATE_HASH_LOG)");
     }
     crate::config::init(config);
     *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
@@ -469,6 +480,12 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
         publish_shields(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
         log_step(s, before, frame);
+        // Two machines' logs of one network game agree on this line for every frame both ran, or
+        // the sims diverged there (scripts/mptest-mac.sh compares them).
+        if crate::config::get().state_hash_log {
+            use crate::host::LogicHost;
+            s.logic.log(&format!("state hash: frame {frame} {:016x}", s.sim.state_hash()));
+        }
     });
 }
 
@@ -754,7 +771,7 @@ pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::f
     if out.is_null() || cap <= 0 {
         return 0;
     }
-    let poses = with_state(|s| s.sim.native_poses((local_general != 0).then_some((local_general, local_moving != 0)))).unwrap_or_default();
+    let poses = with_state(|s| s.sim.native_poses((local_general != 0).then_some((local_general, local_moving != 0)), s.client.first_person_general())).unwrap_or_default();
     let n = poses.len().min(cap as usize);
     for (i, p) in poses.into_iter().take(n).enumerate() {
         *out.add(i) = crate::nativebody::ffi::ZhboNativePose { general: p.general, weapon: p.weapon, stance: p.stance, state: p.state as i32, time: p.time, rate: p.rate, sidearm: p.sidearm as i32 };
@@ -899,6 +916,13 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
     let inp = *input;
     let result = with_state(|s| {
         let out = s.client.frame(&mut s.sim, &inp);
+        #[cfg(feature = "autopilot")]
+        if let Some(ap) = s.client.autopilot.as_mut() {
+            use crate::host::LogicHost;
+            for line in ap.log.drain(..) {
+                s.logic.log(&line);
+            }
+        }
         for r in std::mem::take(&mut s.client.cues.queue) {
             if r.gain == 1.0 {
                 s.client_host.sound(r.event, r.at);

@@ -39,6 +39,10 @@ void Zhbo_OnFireWeaponCommand(const CommandButton *command);
 void Zhbo_Init();
 /// New game, loaded game, or back to the shell.
 void Zhbo_Reset();
+
+/// InGameUI::recreateControlBar built a new ControlBar from the INI (host patch 0021): re-add the
+/// mod's buttons and command sets.
+void Zhbo_ControlBarRebuilt();
 /// Loading screen, after the map's objects exist: load the mod's models now rather than the first
 /// time each is shown (GameLogic::startNewGame).
 void Zhbo_Preload();

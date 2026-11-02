@@ -8,6 +8,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 |---|---|---|
 | Unit tests | sim, weapons, movement, hitscan, HUD, formats, requirements | `cargo test --workspace` |
 | Multiplayer determinism (the lockstep gate) | one match on three machines fed the same replicated command stream with Zero Hour's run-ahead (4 frames): player 0's machine renders a ragged 1–3 client frames per logic frame, player 1's one, and a third (a headless replay check or a minimised observer) none, so its `Sim::events` sit at their cap; each machine's own `Client` makes its own player's input from scripted keys and mouse and does its own presentation (drains the events, plays the tracers for its own viewer). Rounds cycle every slot weapon of the catalog through custom classes sent as wire words (presets by index in round 0): fire, ADS, reload, sprint, both offhands, melee, stances, the alt mode, the swap, a mid-life pick after combat, the field computer and the overhead RTS report, then a death and a fresh General. Every frame the three `Sim::state_hash`es and every engine call (objects, damage, control, spawns, destroys, disables) must agree; a single-peer run asserts the systems were reached | `cargo test -p zhbo-core lockstep` (`sim/lockstep_tests.rs`) |
+| Multiplayer in game | two instances of the release build host and join a LAN game on one Mac (no root: loopback instance ports), each player's autopilot fights the other's General (custom class with attachments and a camo against a preset; sidearm, lethal, primary, a death and a respawn with the class, the field computer); both logs' per-frame `state hash` lines must agree, Zero Hour's CRC check must stay quiet, and each machine must draw the other's weapon and camo | `scripts/mptest-mac.sh` (= `autotest-mac.sh --mp`; "Multiplayer in game" below) |
 | Shot impacts (R8d) | the surface vocabulary and the converted table (classification, default-cell and blood-variant fallbacks); the sim's per-pellet `Impact` event and its absence on a miss; the client record and its cap; the ABI lookup; every converted gun's bucket and cells resolve to a converted FXList | `cargo test -p zhbo-core impacts`; `cargo test --workspace`; the real-install check: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets converts_from_real_install -- --ignored` (asserts each gun's `ImpactType`, `pellets <= 8`, and that every row names an `FXList` in the effects INI) |
 | Projectile damage | every projectile hurts a BO2 soldier by BO2's data at 150, 600 and 1200 inches, straight at him and into the ground beside him: the strike's `iDamage`, the impact fuse and its arming distance, a bolt's spawned grenade going off on its fuse, a sticky grenade's fuse, the blast's falloff, BO2's kill verdict (`conformance::projectile`, its synthetic crossbow/rocket/launcher-grenade/grenade tests and the built-in table); the sim's bolt striking then its grenade going off in the victim (`sim::tests::a_crossbow_bolt_strikes_then_its_spawned_grenade_goes_off_in_him`); the converter's `SpawnedGrenade` and `stickiness` (`weapons::tests::a_bolt_spawns_its_grenade_and_stickiness_is_bo2s`) | `cargo test -p zhbo-core conformance::projectile sim::tests::a_crossbow`; `cargo test -p zhbo-assets a_bolt_spawns`; the sweep over every converted projectile (the launchers, the under-barrel grenades, every crossbow combination, the ballistic knife, the thrown offhands, `explosive_bolt_mp`) and the defs' spawned grenade and stickiness against the install: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets every_projectile_hurts_by_bo2s_data -- --ignored --nocapture` |
 | Bullet penetration | BO2's walk (`FUN_005d0350`): depth table and perk, chord falloff, the 30 in FX gap and the client's two-effect budget, the ground stopping a round (`penetration::tests`); fake-host shots through a thin wall (half damage behind, the exit impact) and FMJ through a wall that stops the plain round (`sim::tests`); exit rows and exit sound families | `cargo test -p zhbo-core penetration impacts sim::tests::a_round_through`; `cargo test -p zhbo-assets impacts`; the real-install check that the tuning pack's depths are patch_mp's `info/bullet_penetration_mp` and the defs' `penetrateType`: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_penetration_table_is_the_installs -- --ignored` |
@@ -26,7 +27,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Scope-overlay test | the AS50 in hand, hold ADS past the 0.40 s transition; once the reticle zoom is up the native draw logs "the viewmodel is not drawn under the scope overlay" (BO2 skips the whole viewmodel) and the HUD draws the 2D overlay | `scripts/autotest-mac.sh --scope` |
 | W3D ADS-layer test | the W3D fallback (`ZHBO_NATIVE_VIEWMODEL=0`) composes the authored 0x55/0x56 clip over the action clip (`HAnimComboClass` pivot maps) and the slide is skipped; the bridge logs "viewmodel: ADS layer" + "viewmodel: ADS slide skipped" | `scripts/autotest-mac.sh --w3d-ads` (Windows: `scripts/autotest.ps1 -Mode w3d-ads`) |
 | Real input test | OS keyboard/mouse path the autopilot does not cover: on macOS the manual scene (`ZHBO_AUTOPILOT=manual`) selects the General, the script taps T (Take Control's hotkey), Escapes the class screen (which declines the spawn: the classless General goes back overhead, and Escape must not also open Zero Hour's game menu), taps T again once he is selected back overhead (`selected General <n> back overhead`), picks the first default class with 6, holds W and turns the mouse; checks `keys held: [W]`, a moved and a turned pose | `scripts/inputtest.ps1` / `autotest-mac.sh --input` |
-| Overhead General | his class guns swapped in (`armed slot 0 with ZHBO_GeneralWeapon_`), rounds counted, the command bar's orders given the way the buttons give them — the lethal at a rebel (thrown as first person throws), a reload, the pistol, the knife at a rebel spawned close (`meleed`) — then first person keeps the pistol; the secondary in hand raises its own body animation set (`third-person animation set <k> (RIDER<k>)`, BO2's `mp/playeranim.script` stance); the overhead General's weapon is drawn natively by default (`native body: ZW<vm><faction> composed`; `ZHBO_NATIVE_BODY=0` opts out). `--rts-dry` runs it with no spare rifle, then no spare pistol, rounds: the dry gun hands over | `autotest-mac.sh --rts` / `--rts-dry` (`ZHBO_AUTOPILOT=rts`; macOS only, `autotest.ps1` has no RTS mode) |
+| Overhead General | his class guns swapped in (`armed slot 0 with ZHBO_GeneralWeapon_`), rounds counted, the command bar's orders given the way the buttons give them — the lethal at a rebel (thrown as first person throws), a reload, the pistol, the knife at a rebel spawned close (`meleed`) — then first person keeps the pistol; the secondary in hand raises its own body animation set (`third-person animation set <k> (RIDER<k>)`, BO2's `mp/playeranim.script` stance); the overhead General's weapon is drawn natively by default (`native body: General <id> weapon <vm> camo <camo> composed (ZW<vm><faction>)`; `ZHBO_NATIVE_BODY=0` opts out). `--rts-dry` runs it with no spare rifle, then no spare pistol, rounds: the dry gun hands over | `autotest-mac.sh --rts` / `--rts-dry` (`ZHBO_AUTOPILOT=rts`; macOS only, `autotest.ps1` has no RTS mode) |
 | Create-a-class run | the in-match screen is pick-only and shows the profile's ACTIVE class set: the script seeds a v2 profile with one custom (the round-2 playtest's "Custom 2": an MTAR with the Target Finder — an attachment combination, whose viewmodel number has three or more digits — a crossbow with the IR scope and all three camos, whose readable text is two bytes over the 64-word pick payload; deliberately unlike any premade kit) in set 1, picks it from the spawn screen by its row key (the custom leads the match list, `changeclass.lua`) and the sim logs `assumed the Custom 2 class`, with no profile write — after a first session that Escapes the spawn screen without picking, which must hand the General back overhead (`returned General <n> to RTS control` before any `assumed the` or `opened the field computer` line) and never show the knife in a pose line (an unclassed one reads `awaiting a class`); the once-a-second pose line then names the MTAR, proving the *kit* landed; it then leaves first person, takes control again, forces the screen open and Escapes it, and first-person play continues | `ZHBO_AUTOPILOT=classpick` with either autotest script (the macOS script seeds `ConquerOps.profile` first, then checks `assumed the Custom 2 class`, `MTAR <n>\|` in a pose line, `native viewmodel: ZV<3+ digits><U/C/G> composed` with no `native viewmodel:` line naming a `.zb*` file `not in the archive` or a `faction 0x..`, no `create-a-class: saved` line, a third `entered first-person control` with the pose changing after it, and `taking control again`; then the bridge kills the General and stands a new one in his place (`autopilot: respawned General`), whose session must have no `awaiting a class` pose line, an `MTAR <n>\|` one and a changing pose: the chosen class came back with no screen) |
 | Custom-class pick payload | every class the editor can build fits the 64-word choose-class payload and lands: `classmenu::kit_coverage` visits every offered item with every legal attachment set (both slots, Overkill, the Gunfighter caps), every offhand and count, perk, camo, both optics' reticles and the colour, each with the largest value of every other field (the codec's fields are sized independently, so that bounds every legal kit); each round-trips through `classwire`, is sent by the command bar and applied by the fake-host sim; the codec's constructive bound, literals for unknown values, malformed payloads, the old text payload; the playtest's class (an attachment on each gun, three camos) picked from the class screen; a profile past the 4 KiB save payload still written | `cargo test -p zhbo-core classwire every_legal_custom the_playtest_second a_profile_larger_than_the_payload`; over the install (12,524 classes with both reticles, largest 20 words): `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets every_legal_class_fits_the_pick_payload -- --ignored --nocapture` |
 | Shell create-a-class | the lobby's class screen (the menu ABI): browse, edit, save, delete, copy, close — in the shell, no match | manual only: the in-game autotest does not cover the shell (see below) |
@@ -329,25 +330,53 @@ Scripting real keys: `hold <VK> <ms>` needs a hex VK code (`hold 0x57 2500` for 
 `scanmode on` switches `hold`/`press` to scan codes. macOS holds keys by code with
 `osascript key code`, or `cliclick` for the mouse.
 
-## Multiplayer in game (two instances; not yet runnable on one Mac)
+## Multiplayer in game (two instances on one Mac)
 
-The headless gate (`cargo test -p zhbo-core lockstep`, the Layers table) is the multiplayer check
-today. A real two-instance LAN match needs, on this engine build:
+The headless gate (`cargo test -p zhbo-core lockstep`, the Layers table) is the first multiplayer
+check; `the_multiplayer_autopilot_fights_in_lockstep` runs the in-game test's own script on it.
+The in-engine test is `scripts/mptest-mac.sh` (or `scripts/autotest-mac.sh --mp`): two instances
+of the staged release build host and join one LAN game by themselves on Tournament Desert, and
+each player's autopilot plays his own General.
 
-* **A second instance.** A playable run takes the single-instance lock (`rts::ClientInstance`;
-  the second one bails with "Generals is already running"). Multi-instance is on for `-headless`
-  runs, for `RTS_MULTI_INSTANCE` (the debug presets' `config-debug.cmake`) and for
-  `-autoNetworkMode direct` (`NetworkAutoStart`, `RTS_DEBUG` builds only: it hosts or joins a LAN
-  game by itself with `-autoNetworkHost <n>` / `-autoNetworkJoin <ip>`, `-autoNetworkMap`). The
-  macOS presets build release only, so a debug macOS preset is the first step.
-* **An address per instance.** Each extra instance enumerates `127.0.0.<id>`
-  (`IPEnumeration.cpp`). Linux routes all of 127/8; macOS only has 127.0.0.1 until
-  `sudo ifconfig lo0 alias 127.0.0.2 up` (once per boot).
-* **Then:** two instances on one map, each taking control of its General, with the same
-  `ConquerOps.log` `multiplayer: content CRC` line, and Zero Hour's own CRC check (`MSG_LOGIC_CRC`
-  every `CRCInterval` frames) never reporting a mismatch. Two machines (or the Windows VM and the
-  Mac) work today without any of the above, if both run the same build: Zero Hour's online lobby
-  compares the exe CRC.
+How two instances run on one machine (host patch 0020 and the bridge):
+
+* **A second instance, a self-starting LAN game.** A playable run takes the single-instance lock
+  (`rts::ClientInstance`). The engine's network auto-start driver (`NetworkAutoStart`,
+  `-autoNetworkMode direct -autoNetworkHost <n>` / `-autoNetworkJoin <ip>`, `-autoNetworkMap`) is a
+  debug-build feature that also turns on multi-instance; the mod's build compiles it into release
+  (`RTS_NETWORK_AUTOSTART`, `host/zhbo/CMakeLists.txt`) and patch 0020 makes it act only with
+  `GGC_NETWORK_AUTOSTART` set, so a player's run is unchanged. The host is instance 2 (127.0.0.2),
+  the joiner 3 (127.0.0.3).
+* **An address per instance, no root.** macOS only answers 127.0.0.1 unless each extra address is
+  aliased (`sudo ifconfig lo0 alias 127.0.0.2 up`). With `GGC_LOOPBACK_INSTANCE_PORTS` the
+  transport keeps 127.0.0.<id> as the instance's identity and binds 127.0.0.1 at port + 100 × id
+  instead (sends to 127.0.0.<id> and broadcasts are mapped to the offset ports, the senders back
+  to their identities), so the lobby and the game run their normal code. No alias is needed; with
+  aliases in place (or on Linux, which routes all of 127/8) the variable can be left out.
+* **Separate files.** Each instance after the first writes `ConquerOps_InstanceNN.log` and reads
+  `ConquerOps_InstanceNN.profile` (the engine does the same for its `Options_InstanceNN.ini`).
+* **Lockstep-safe scripting.** `ZHBO_AUTOPILOT=mp` spawns nothing: the bridge orders the General
+  from the Command Center (`MSG_QUEUE_UNIT_CREATE`), walks him to a meeting point between the bases
+  (`MSG_DO_MOVETO`) and takes control; the core's `mp_input` aims at the other first-person General
+  and plays the fight; a dead General is ordered again and taken once more. Every step travels as
+  a replicated message. `ZHBO_AUTOPILOT_ROLE` (`shooter` for the host, `target` for the joiner) is
+  the only difference between the machines and only scripts the local input.
+
+What it checks (both logs): the LAN game started with one content CRC; both players took control;
+the host's seeded custom class (AN-94 + launcher + reflex, gold camo) and the joiner's preset
+landed; swaps, a lethal, damage, a death, the joiner's next General coming in with his class
+(`first-person session 2`, no second pick), the field computer; Zero Hour's own CRC check never
+reported a mismatch (the bridge logs `multiplayer: Zero Hour reported a CRC mismatch`); the
+`state hash: frame N HASH` lines (`ZHBO_STATE_HASH_LOG`) agree on every frame both ran (at least
+1,500; only the network game's, after the bridge's `game start: a network game` line — the shell
+map's logic logs its own frames from 0 too); and each machine composed the other player's General's native third-person weapon with
+the weapon and camo that player holds (`native body: General G weapon V camo C composed` against
+the other log's `autopilot mp: General G weapon V camo C in hand`). Results go to `$OUT`
+(default `$TMPDIR/ConquerOps-mp`): `host.log`, `join.log`, both stdouts, `hashes-joined.txt`.
+
+Two machines (or the Windows VM and the Mac) need none of the above, only the same build: set
+`ZHBO_STATE_HASH_LOG=1` on both and compare the `state hash` lines afterwards. Zero Hour's online
+lobby also compares the exe CRC.
 
 ## macOS test notes
 

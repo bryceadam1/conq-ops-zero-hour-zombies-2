@@ -12,13 +12,16 @@ environment mid-game.
 | `ZHBO_LOADOUT` | The General's kit spec (`weapons::Loadout::with_spec`, e.g. `primary=dsr50_mp+acog;perks=Hardline`). Every player in a lockstep game must set it identically — it is a sim input, like the map. Empty or unset: the built-in kit. The converter reads the same variable so the kit's art gets converted. |
 | `ZHBO_NATIVE_VIEWMODEL` | Draw the first-person weapon through the renderer's native BO2 pass (`nativevm`, Track R) instead of the W3D conversion. **On by default** (verified in game 2026-10-21: shading, culling, skin weights, the near plane, hide tags, placement); `0`/`false`/`no`/`off` falls back to the W3D conversion. Presentation only (never a sim input); wgpu builds only (elsewhere it is ignored and W3D draws). A weapon whose native files are missing falls back to W3D, logged once. |
 | `ZHBO_NATIVE_BODY` | The overhead (third-person) General through the native BO2 pass (`nativebody`). **`1`, the weapon, by default**: the native world weapon rides the W3D body's `tag_weapon_right`, the only third person that shows a combination's attachments and the class camo (the W3D weapon is the base mesh, stock). `2`/`full`: the native body too (the W3D body is hidden). `0`/`false`/`no`/`off`: the W3D weapon and body (the fallback). Presentation only; wgpu builds only. A weapon whose native files are missing, still loading, or without the engine's tag falls back to the W3D weapon. |
-| `ZHBO_AUTOPILOT` | The in-game test harness. `manual`: the scene spawns but input stays with the player or a test driver. Any other non-empty value: scripted input drives the General; `equipment` adds the Black Hat / Trophy System scene, `build` scripts first-person construction, `classpick` runs the in-match class screen (Escape declines the first spawn, the next take-control picks the profile's seeded custom by its row key, a third forces the screen open and Escapes it; then the General is killed and the next one taken, who must come in with the class), `showcase` films the General (see the bridge's showcase variables below). |
+| `ZHBO_AUTOPILOT` | The in-game test harness. `manual`: the scene spawns but input stays with the player or a test driver. Any other non-empty value: scripted input drives the General; `equipment` adds the Black Hat / Trophy System scene, `build` scripts first-person construction, `classpick` runs the in-match class screen (Escape declines the first spawn, the next take-control picks the profile's seeded custom by its row key, a third forces the screen open and Escapes it; then the General is killed and the next one taken, who must come in with the class), `showcase` films the General (see the bridge's showcase variables below). `mp` is the two-instance multiplayer run (`scripts/mptest-mac.sh`): nothing is spawned; each machine orders its own General from its Command Center, walks him to a meeting point between the bases, takes control and fights the other player's General through the replicated messages only (`client/autopilot.rs` `mp_input`, the bridge's `mpAutopilotFrame`). Like `ZHBO_LOADOUT` it is folded into the content CRC, so every machine of a game must set it the same. |
+| `ZHBO_AUTOPILOT_ROLE` | The `mp` run's part: `target` fires a short burst and is the one meant to die and come back; anything else (the default) is the shooter, who fires the long aimed burst. It only scripts the local player's own input, so the two machines may (and do) differ. |
+| `ZHBO_STATE_HASH_LOG` | `1`: log `Sim::state_hash` after every logic step (`state hash: frame N HASH`), so the logs of the machines in one network game can be compared frame by frame (the `mp` test does; on two real machines, set it on both and compare the lines). A log only, never a sim input. |
 
 ## The bridge (`host/zhbo/ZhboBridge.cpp`, parsed in `readConfig` at `Zhbo_Init`)
 
 | Variable | Meaning |
 |---|---|
 | `ZHBO_AUTOPILOT` | Same modes as above; parsed once here and once in the core. |
+| (none) | Several game instances on one machine share the user-data directory: every instance after the first (the engine's multi-instance ids, as its own `Options_Instance02.ini`) writes `ConquerOps_InstanceNN.log` and reads/writes `ConquerOps_InstanceNN.profile`. |
 | `ZHBO_FORCE_RADAR` | Give the autopilot's test player radar, to film the full map (M). |
 | `ZHBO_SHOWCASE_OBJECT` | Template name to spawn in front of the camera in showcase mode (default `ZHBO_General_USA`). |
 | `ZHBO_SHOWCASE_ZOOM` | Camera zoom distance for showcase captures (default `0.12`). |
@@ -44,6 +47,13 @@ environment mid-game.
 | `ZHBO_GLUE_DIR` | Set by `cargo xtask build` for the engine build: where the bridge glue sources are copied. |
 | `ZHBO_CONVERT_ALL_WEAPONS` | Set by the converter's user: convert every BO2 player weapon, not just the loadout's kit. |
 | `ZHBO_CONVERT_ALL_COMBOS` | Set to `0` to skip the legal Create-a-Class combination sweep and build only the base set; on by default, so a locally built archive covers every legal combination (the archive stamp records the flag). |
+## The engine's test switches (host patch 0020; release builds, off unless set)
+
+| Variable | Meaning |
+|---|---|
+| `GGC_NETWORK_AUTOSTART` | Lets a release build obey the engine's network auto-start driver (`-autoNetworkMode direct` with `-autoNetworkHost <players>` / `-autoNetworkJoin <ip>`, `-autoNetworkMap`, `-autoNetworkName`, `-autoNetworkTimeout`; a debug-build feature the mod's build compiles in with `RTS_NETWORK_AUTOSTART`). Without it those arguments are ignored. The driver also turns on multi-instance (no single-instance lock; instance ids from 2). |
+| `GGC_LOOPBACK_INSTANCE_PORTS` | Multi-instance runs only: keep each instance's 127.0.0.<id> as its identity but bind 127.0.0.1 at ports offset by 100 × id (`Transport.cpp`), so several instances talk on one Mac without `sudo ifconfig lo0 alias`. |
+
 ## Test and diagnostic knobs (test runs only; never read by the game)
 
 | Variable | Meaning |

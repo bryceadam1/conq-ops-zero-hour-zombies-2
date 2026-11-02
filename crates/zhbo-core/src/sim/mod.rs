@@ -952,15 +952,18 @@ impl Sim {
     /// (`WeaponDef::viewmodel`, -1 for none), the stance and the body clip the sim's movement
     /// state picks, the clip's clock and the pistol stance. `moving` is the engine's answer for
     /// the General the bridge asks about while he is under RTS control (the sim does not step his
-    /// body then), ignored while first person.
-    pub fn native_poses(&self, moving: Option<(u32, bool)>) -> Vec<NativePose> {
+    /// body then), ignored while first person. `viewer` is the General this machine is looking
+    /// through in first person: his body is hidden and the viewmodel draws his arms, so he gets no
+    /// third person. Every other General does, in first person or not — in a network game the
+    /// other players' Generals are in first person on their own machines, and here they must show
+    /// their class weapon (attachments, camo) in their hands.
+    pub fn native_poses(&self, moving: Option<(u32, bool)>, viewer: Option<u32>) -> Vec<NativePose> {
         let run_speed = self.tuning.run_speed(false);
         let time = self.frame as f32 * LOGIC_DT;
         self.players
             .iter()
             .flatten()
-            // First person draws the viewmodel's arms; only the overhead view needs the body.
-            .filter(|p| !p.is_first_person())
+            .filter(|p| !(p.is_first_person() && Some(p.general) == viewer))
             .map(|p| {
                 let a = &p.arsenal;
                 let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();

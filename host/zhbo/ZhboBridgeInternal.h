@@ -34,6 +34,7 @@
 #include "Common/TerrainTypes.h"
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
+#include "GameClient/ClientInstance.h"
 #include "GameClient/ControlBar.h"
 #include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
@@ -63,6 +64,7 @@
 #include "GameLogic/PartitionManager.h"
 #include "GameLogic/TerrainLogic.h"
 #include "GameLogic/Weapon.h"
+#include "GameNetwork/NetworkInterface.h"
 
 #include <algorithm>
 #include <map>
@@ -82,6 +84,7 @@ struct ZhboConfig
 	Bool autopilot_rts = FALSE;
 	Bool autopilot_build = FALSE;
 	Bool autopilot_classpick = FALSE; // =classpick: the create-a-class editor run (scene like the default scripted run)
+	Bool autopilot_mp = FALSE;		  // =mp: the two-instance multiplayer run (no scene; each machine plays its own player)
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
@@ -261,8 +264,16 @@ struct Autopilot
 	UnsignedInt buildStep; // buildAutopilotFrame
 	UnsignedInt rtsDone;	 // rtsAutopilotFrame
 	Bool manualSelected;	 // the manual scene's one selection of the General
-	UnsignedInt controlledFrame; // classpick: when the third session took control
+	UnsignedInt controlledFrame; // classpick: when the third session took control; mp: the last controlled frame
 	Bool respawned;							 // classpick: the General was killed and a new one spawned
+	// ZHBO_AUTOPILOT=mp (mpAutopilotFrame): its phase, the meeting point, the walk's stall check,
+	// and whether the General on order is the one after a death.
+	Int mpPhase;
+	Coord3D mpMeet;
+	Coord3D mpLastPos;
+	UnsignedInt mpStillSince;
+	UnsignedInt mpNextTry;
+	Bool mpRespawning;
 };
 extern Autopilot s_autopilot;
 void autopilotFrame();

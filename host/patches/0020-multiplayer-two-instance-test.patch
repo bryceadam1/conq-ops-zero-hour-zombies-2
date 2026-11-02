@@ -1,0 +1,419 @@
+diff --git a/Core/GameEngine/Include/GameNetwork/NetworkAutoStart.h b/Core/GameEngine/Include/GameNetwork/NetworkAutoStart.h
+index 28bfd9f43..97543a390 100644
+--- a/Core/GameEngine/Include/GameNetwork/NetworkAutoStart.h
++++ b/Core/GameEngine/Include/GameNetwork/NetworkAutoStart.h
+@@ -18,7 +18,17 @@
+ 
+ #pragma once
+ 
+-#if defined(RTS_DEBUG)
++// ZHBO: the driver is compiled into debug builds, and into release builds that define
++// RTS_NETWORK_AUTOSTART (the Conquer Ops build does, for its two-instance multiplayer test). In a
++// release build it acts only when the environment opts in (GGC_NETWORK_AUTOSTART), so a player
++// build that never sets it behaves exactly as before.
++#if defined(RTS_DEBUG) || defined(RTS_NETWORK_AUTOSTART)
++#define NETWORK_AUTOSTART_ENABLED 1
++#else
++#define NETWORK_AUTOSTART_ENABLED 0
++#endif
++
++#if NETWORK_AUTOSTART_ENABLED
+ 
+ #include "Common/AsciiString.h"
+ #include "Common/UnicodeString.h"
+diff --git a/Core/GameEngine/Include/GameNetwork/Transport.h b/Core/GameEngine/Include/GameNetwork/Transport.h
+index e9f9d5079..741f5d8dd 100644
+--- a/Core/GameEngine/Include/GameNetwork/Transport.h
++++ b/Core/GameEngine/Include/GameNetwork/Transport.h
+@@ -97,4 +97,9 @@ private:
+ 	UnsignedInt m_lastSecond;
+ 
+ 	Bool isGeneralsPacket( TransportMessage *msg );
++
++	// ZHBO: loopback instance ports (GGC_LOOPBACK_INSTANCE_PORTS, see Transport.cpp): the port this
++	// transport was asked for, while it really binds 127.0.0.1 at an instance offset; 0 when off.
++	UnsignedShort m_loopbackBasePort;
++	Int sendDatagram( const unsigned char *buf, Int len, UnsignedInt addr, UnsignedShort port );
+ };
+diff --git a/Core/GameEngine/Source/Common/CommandLine.cpp b/Core/GameEngine/Source/Common/CommandLine.cpp
+index 543afe290..050b1dfe0 100644
+--- a/Core/GameEngine/Source/Common/CommandLine.cpp
++++ b/Core/GameEngine/Source/Common/CommandLine.cpp
+@@ -724,7 +724,7 @@ Int parseMaxCameraHeight(char *args[], int num)
+ 	return 1;
+ }
+ 
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ static Bool parsePositiveInt(const char *text, Int &result)
+ {
+ 	if (text == nullptr || *text < '0' || *text > '9')
+@@ -819,6 +819,9 @@ Int parseAutoNetworkTimeout(char *args[], int num)
+ 	exit(1);
+ 	return 1;
+ }
++#endif // NETWORK_AUTOSTART_ENABLED
++
++#if defined(RTS_DEBUG)
+ 
+ //=============================================================================
+ //=============================================================================
+@@ -1727,7 +1730,7 @@ static CommandLineParam paramsForStartup[] =
+ 	{ "-setCwd", parseSetCwd },
+ 	{ "-useCwd", parseUseCwd },
+ 
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	{ "-autoNetworkMode", parseAutoNetworkMode },
+ #endif
+ };
+@@ -1735,7 +1738,7 @@ static CommandLineParam paramsForStartup[] =
+ // These Params are parsed during Engine Init before INI data is loaded
+ static CommandLineParam paramsForEngineInit[] =
+ {
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	{ "-autoNetworkHost", parseAutoNetworkHost },
+ 	{ "-autoNetworkJoin", parseAutoNetworkJoin },
+ 	{ "-autoNetworkLocalAddress", parseAutoNetworkLocalAddress },
+diff --git a/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp b/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp
+index 58ad819aa..3f4e5bb95 100644
+--- a/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp
++++ b/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp
+@@ -244,7 +244,7 @@ void LANAPI::OnGameStart()
+ 		if (!filesOk || TheMapCache->findMap(m_currentGame->getMap()) == nullptr)
+ 		{
+ 			DEBUG_LOG(("After transfer, we didn't really have the map.  Bailing..."));
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 			NetworkAutoStart::onGameStartFailure();
+ #endif
+ 			OnPlayerLeave(m_name);
+@@ -276,7 +276,7 @@ void LANAPI::OnGameStart()
+ 		InitRandom( m_currentGame->getSeed() );
+ 		DEBUG_LOG(("InitRandom( %d )", m_currentGame->getSeed()));
+ 
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 		NetworkAutoStart::onGameStart();
+ #endif
+ 	}
+@@ -523,7 +523,7 @@ void LANAPI::OnPlayerJoin( Int slot, UnicodeString playerName )
+ 
+ void LANAPI::OnGameJoin( ReturnType ret, LANGameInfo *theGame )
+ {
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	if (NetworkAutoStart::isEnabled())
+ 	{
+ 		NetworkAutoStart::onGameJoin(ret);
+@@ -622,7 +622,7 @@ void LANAPI::OnGameList( LANGameInfo *gameList )
+ 
+ void LANAPI::OnGameCreate( ReturnType ret )
+ {
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	if (NetworkAutoStart::isEnabled())
+ 	{
+ 		NetworkAutoStart::onGameCreate(ret);
+diff --git a/Core/GameEngine/Source/GameNetwork/NetworkAutoStart.cpp b/Core/GameEngine/Source/GameNetwork/NetworkAutoStart.cpp
+index 36fd4610e..a9a9aab33 100644
+--- a/Core/GameEngine/Source/GameNetwork/NetworkAutoStart.cpp
++++ b/Core/GameEngine/Source/GameNetwork/NetworkAutoStart.cpp
+@@ -18,7 +18,10 @@
+ 
+ #include "PreRTS.h"
+ 
+-#if defined(RTS_DEBUG)
++// ZHBO: the header decides whether the driver is compiled (NETWORK_AUTOSTART_ENABLED).
++#include "GameNetwork/NetworkAutoStart.h"
++
++#if NETWORK_AUTOSTART_ENABLED
+ 
+ #include <limits.h>
+ 
+@@ -112,10 +115,30 @@ Bool CanAcceptMap(LANGameInfo *game, LANGameSlot *slot)
+ 
+ 	return WouldMapTransfer(game->getMap());
+ }
++// ZHBO: a release build carries the driver only for automated multiplayer tests; there every
++// -autoNetwork* argument is ignored unless GGC_NETWORK_AUTOSTART is set, so a player who passes one
++// by accident (or a stale shortcut) gets the normal game, not a self-hosting one.
++Bool OptedIn()
++{
++#if defined(RTS_DEBUG)
++	return true;
++#else
++	static const Bool optedIn = getenv("GGC_NETWORK_AUTOSTART") != nullptr;
++	static Bool told = false;
++	if (!optedIn && !told)
++	{
++		told = true;
++		printf("NetworkAutoStart: -autoNetwork* ignored; set GGC_NETWORK_AUTOSTART=1 to use it in a release build\n");
++	}
++	return optedIn;
++#endif
++}
+ } // namespace
+ 
+ Bool NetworkAutoStart::setMode(AsciiString mode)
+ {
++	if (!OptedIn())
++		return true;
+ 	s_hasArguments = true;
+ 	if (mode.compareNoCase("direct") == 0)
+ 	{
+@@ -130,6 +153,8 @@ Bool NetworkAutoStart::setMode(AsciiString mode)
+ 
+ Bool NetworkAutoStart::setHost(Int expectedPlayers)
+ {
++	if (!OptedIn())
++		return true;
+ 	s_hasArguments = true;
+ 	if (s_role == ROLE_JOIN || expectedPlayers < MIN_EXPECTED_PLAYERS || expectedPlayers > MAX_SLOTS)
+ 	{
+@@ -143,6 +168,8 @@ Bool NetworkAutoStart::setHost(Int expectedPlayers)
+ 
+ Bool NetworkAutoStart::setJoin(AsciiString hostAddress)
+ {
++	if (!OptedIn())
++		return true;
+ 	s_hasArguments = true;
+ 	hostAddress.trim();
+ 	if (s_role == ROLE_HOST || hostAddress.isEmpty())
+@@ -163,6 +190,8 @@ Bool NetworkAutoStart::setJoin(AsciiString hostAddress)
+ 
+ Bool NetworkAutoStart::setLocalAddress(AsciiString localAddress)
+ {
++	if (!OptedIn())
++		return true;
+ 	s_hasArguments = true;
+ 	localAddress.trim();
+ 	if (localAddress.isEmpty())
+@@ -175,6 +204,8 @@ Bool NetworkAutoStart::setLocalAddress(AsciiString localAddress)
+ 
+ Bool NetworkAutoStart::setPlayerName(AsciiString playerName)
+ {
++	if (!OptedIn())
++		return true;
+ 	s_hasArguments = true;
+ 	playerName.trim();
+ 	if (playerName.isEmpty())
+@@ -188,6 +219,8 @@ Bool NetworkAutoStart::setPlayerName(AsciiString playerName)
+ 
+ Bool NetworkAutoStart::setMapName(AsciiString mapName)
+ {
++	if (!OptedIn())
++		return true;
+ 	s_hasArguments = true;
+ 	mapName.trim();
+ 	if (mapName.isEmpty())
+@@ -201,6 +234,8 @@ Bool NetworkAutoStart::setMapName(AsciiString mapName)
+ 
+ Bool NetworkAutoStart::setTimeoutSeconds(Int seconds)
+ {
++	if (!OptedIn())
++		return true;
+ 	s_hasArguments = true;
+ 	if (seconds < 1 || (UnsignedInt)seconds > UINT_MAX / MillisecondsPerSecond)
+ 	{
+diff --git a/Core/GameEngine/Source/GameNetwork/Transport.cpp b/Core/GameEngine/Source/GameNetwork/Transport.cpp
+index 1c105ea7c..ecb6e012f 100644
+--- a/Core/GameEngine/Source/GameNetwork/Transport.cpp
++++ b/Core/GameEngine/Source/GameNetwork/Transport.cpp
+@@ -28,6 +28,42 @@
+ #include "Common/crc.h"
+ #include "GameNetwork/Transport.h"
+ #include "GameNetwork/NetworkInterface.h"
++#include "GameClient/ClientInstance.h"
++
++// ZHBO: loopback instance ports, for several game instances on one machine (a multiplayer test).
++// Each multi-client instance takes 127.0.0.<instance id> as its address (IPEnumeration). Linux and
++// Windows answer all of 127/8, but macOS only answers 127.0.0.1 until each extra address is added
++// as an alias (`sudo ifconfig lo0 alias 127.0.0.2 up`). With GGC_LOOPBACK_INSTANCE_PORTS set, a
++// multi-client instance keeps 127.0.0.<id> as its identity in the protocol but really lives on
++// 127.0.0.1, on ports offset by its id: <port> + <id> * LOOPBACK_PORT_STRIDE. A send to
++// 127.0.0.<id>:<port> goes to that instance's offset port, a broadcast goes to every other
++// instance's, and a datagram from 127.0.0.1:<port> + <id> * stride reads as coming from
++// 127.0.0.<id>:<port>. Nothing above the socket sees a difference, so the LAN lobby and the game
++// run their normal code, and no root-only setup is needed.
++namespace
++{
++enum { LOOPBACK_PORT_STRIDE = 100, LOOPBACK_MAX_INSTANCES = 16 };
++const UnsignedInt LOOPBACK_HOST = 0x7F000001u;
++
++Bool LoopbackInstancePorts()
++{
++	return rts::ClientInstance::isMultiInstance() && getenv("GGC_LOOPBACK_INSTANCE_PORTS") != nullptr;
++}
++
++// The instance behind a 127.0.0.<id> identity, or 0 for any other address.
++UnsignedInt LoopbackInstanceOf(UnsignedInt ip)
++{
++	if ((ip & 0xFFFFFF00u) != 0x7F000000u)
++		return 0;
++	const UnsignedInt id = ip & 0xFFu;
++	return (id >= 1 && id <= LOOPBACK_MAX_INSTANCES) ? id : 0;
++}
++
++Bool IsBroadcast(UnsignedInt ip)
++{
++	return ip == 0xFFFFFFFFu || ip == 0x7FFFFFFFu;
++}
++} // namespace
+ 
+ 
+ //--------------------------------------------------------------------------
+@@ -71,6 +107,7 @@ Transport::Transport()
+ {
+ 	m_winsockInit = false;
+ 	m_udpsock = nullptr;
++	m_loopbackBasePort = 0;
+ }
+ 
+ Transport::~Transport()
+@@ -116,10 +153,23 @@ Bool Transport::init( UnsignedInt ip, UnsignedShort port )
+ 	if (!m_udpsock)
+ 		return false;
+ 
++	// ZHBO: loopback instance ports: bind 127.0.0.1 at this instance's offset (see the top).
++	UnsignedInt bindIP = ip;
++	UnsignedShort bindPort = port;
++	m_loopbackBasePort = 0;
++	if (LoopbackInstancePorts() && port != 0)
++	{
++		m_loopbackBasePort = port;
++		bindIP = LOOPBACK_HOST;
++		bindPort = (UnsignedShort)(port + rts::ClientInstance::getInstanceId() * LOOPBACK_PORT_STRIDE);
++		printf("Transport: instance %u binds 127.0.0.1:%u for port %u (loopback instance ports)\n",
++			rts::ClientInstance::getInstanceId(), (unsigned)bindPort, (unsigned)port);
++	}
++
+ 	int retval = -1;
+ 	time_t now = timeGetTime();
+ 	while ((retval != 0) && ((timeGetTime() - now) < 1000)) {
+-		retval = m_udpsock->Bind(ip, port);
++		retval = m_udpsock->Bind(bindIP, bindPort);
+ 	}
+ 
+ 	if (retval != 0) {
+@@ -228,7 +278,7 @@ Bool Transport::doSend() {
+ 			// Therefore, transmitted data needs to add the extra bytes of the network header to the payloads length
+ 			int bytesToSend = m_outBuffer[i].length + sizeof(TransportMessageHeader);
+ 			// Send this message
+-			if ((bytesSent = m_udpsock->Write((unsigned char *)(&m_outBuffer[i]), bytesToSend, m_outBuffer[i].addr, m_outBuffer[i].port)) > 0)
++			if ((bytesSent = sendDatagram((unsigned char *)(&m_outBuffer[i]), bytesToSend, m_outBuffer[i].addr, m_outBuffer[i].port)) > 0)
+ 			{
+ 				//DEBUG_LOG(("Sending %d bytes to %d.%d.%d.%d:%d", bytesToSend, PRINTF_IP_AS_4_INTS(m_outBuffer[i].addr), m_outBuffer[i].port));
+ 				m_outgoingPackets[m_statisticsSlot]++;
+@@ -304,6 +354,18 @@ Bool Transport::doRecv()
+ //	DEBUG_LOG(("Transport::doRecv - checking"));
+ 	while ( (len=m_udpsock->Read(buf, MAX_NETWORK_MESSAGE_LEN, &from)) > 0 )
+ 	{
++		// ZHBO: loopback instance ports: a datagram from another instance's offset port reads as
++		// coming from its 127.0.0.<id> identity on the plain port.
++		if (m_loopbackBasePort != 0 && ntohl(from.sin_addr.s_addr) == LOOPBACK_HOST)
++		{
++			const Int offset = (Int)ntohs(from.sin_port) - (Int)m_loopbackBasePort;
++			if (offset > 0 && offset % LOOPBACK_PORT_STRIDE == 0 && offset / LOOPBACK_PORT_STRIDE <= LOOPBACK_MAX_INSTANCES)
++			{
++				from.sin_addr.s_addr = htonl(0x7F000000u | (UnsignedInt)(offset / LOOPBACK_PORT_STRIDE));
++				from.sin_port = htons(m_loopbackBasePort);
++			}
++		}
++
+ #if defined(RTS_DEBUG)
+ 		// Packet loss simulation
+ 		if (m_usePacketLoss)
+@@ -390,6 +452,25 @@ Bool Transport::doRecv()
+ 	return retval;
+ }
+ 
++// ZHBO: one datagram out, through the loopback instance ports when they are on (see the top).
++Int Transport::sendDatagram( const unsigned char *buf, Int len, UnsignedInt addr, UnsignedShort port )
++{
++	if (m_loopbackBasePort == 0)
++		return m_udpsock->Write(buf, len, addr, port);
++	if (IsBroadcast(addr))
++	{
++		// Every other instance's offset port; one that is not running is not an error.
++		const UnsignedInt self = rts::ClientInstance::getInstanceId();
++		for (UnsignedInt id = 1; id <= LOOPBACK_MAX_INSTANCES; ++id)
++			if (id != self)
++				m_udpsock->Write(buf, len, LOOPBACK_HOST, (UnsignedShort)(port + id * LOOPBACK_PORT_STRIDE));
++		return len;
++	}
++	if (const UnsignedInt id = LoopbackInstanceOf(addr))
++		return m_udpsock->Write(buf, len, LOOPBACK_HOST, (UnsignedShort)(port + id * LOOPBACK_PORT_STRIDE));
++	return m_udpsock->Write(buf, len, addr, port);
++}
++
+ Bool Transport::queueSend(UnsignedInt addr, UnsignedShort port, const UnsignedByte *buf, Int len /*,
+ 						  NetMessageFlags flags, Int id */)
+ {
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
+index 1fb6d4820..58ac6528d 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
+@@ -873,7 +873,7 @@ void LanGameOptionsMenuInit( WindowLayout *layout, void *userData )
+ 		slot->setPlayerTemplate( pref.getPreferredFaction() );
+ 		slot->setNATBehavior(FirewallHelperClass::FIREWALL_TYPE_SIMPLE);
+ 		AsciiString mapName = pref.getPreferredMap();
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 		if (NetworkAutoStart::isEnabled() && NetworkAutoStart::getMapName().isNotEmpty())
+ 			mapName = NetworkAutoStart::getMapName();
+ #endif
+@@ -1106,7 +1106,7 @@ void LanGameOptionsMenuShutdown( WindowLayout *layout, void *userData )
+ //-------------------------------------------------------------------------------------------------
+ void LanGameOptionsMenuUpdate( WindowLayout * layout, void *userData)
+ {
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	if (NetworkAutoStart::isEnabled() && TheLAN != nullptr)
+ 	{
+ 		TheLAN->update();
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/MainMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/MainMenu.cpp
+index 9c10e1de1..4f098e9ce 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/MainMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/MainMenu.cpp
+@@ -814,7 +814,7 @@ void ResolutionDialogUpdate()
+ void DownloadMenuUpdate( WindowLayout *layout, void *userData );
+ void MainMenuUpdate( WindowLayout *layout, void *userData )
+ {
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	if (NetworkAutoStart::shouldOpenDirectConnect())
+ 	{
+ 		NetworkAutoStart::markDirectConnectOpened();
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/NetworkDirectConnect.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/NetworkDirectConnect.cpp
+index 2618ec385..c998fadcf 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/NetworkDirectConnect.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/NetworkDirectConnect.cpp
+@@ -260,7 +260,7 @@ void NetworkDirectConnectInit( WindowLayout *layout, void *userData )
+ 
+ 	Bool automatedStartup = FALSE;
+ 	UnsignedInt autoLocalIP = 0;
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	if (NetworkAutoStart::isEnabled())
+ 	{
+ 		automatedStartup = TRUE;
+@@ -356,7 +356,7 @@ void NetworkDirectConnectInit( WindowLayout *layout, void *userData )
+ //		}
+ 		if (automatedStartup)
+ 		{
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 			NetworkAutoStart::onLocalAddressSet(TheLAN->SetLocalIP(IP));
+ #endif
+ 		}
+@@ -423,7 +423,7 @@ void NetworkDirectConnectShutdown( WindowLayout *layout, void *userData )
+ //-------------------------------------------------------------------------------------------------
+ void NetworkDirectConnectUpdate( WindowLayout * layout, void *userData)
+ {
+-#if defined(RTS_DEBUG)
++#if NETWORK_AUTOSTART_ENABLED
+ 	if (NetworkAutoStart::isEnabled() && TheLAN != nullptr)
+ 	{
+ 		TheLAN->update();

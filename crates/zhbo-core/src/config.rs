@@ -17,6 +17,23 @@ pub enum Autopilot {
     /// Scripted first-person input drives the General (any other value); the flags pick the test's
     /// focus (`ZHBO_AUTOPILOT=1`, `equipment`, `build`, `classpick`, `showcase`, `scope`).
     Scripted { equipment: bool, build: bool, classpick: bool, scope: bool },
+    /// The two-instance multiplayer test (`ZHBO_AUTOPILOT=mp`, `scripts/mptest-mac.sh`): no scene
+    /// is spawned (every machine would have to spawn it identically); each machine builds its own
+    /// General from its Command Center, walks him to a meeting point, takes control and fights the
+    /// other player's General through the replicated messages only. [`Config::mp_role`] picks
+    /// which of the two fires the long burst.
+    Multiplayer,
+}
+
+/// The multiplayer autopilot's part (`ZHBO_AUTOPILOT_ROLE`): presentation of the script only, never
+/// a sim input (each machine scripts only its own player's input, which travels in the messages).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MpRole {
+    /// Fires the long aimed burst that should kill the other General (the default).
+    #[default]
+    Shooter,
+    /// Fires a short burst back, and is the one meant to die and come back (`target`).
+    Target,
 }
 
 /// The core's configuration, read once at init.
@@ -36,17 +53,36 @@ pub struct Config {
     /// third person that shows a combination's attachments and the class camo), 2 the body too.
     /// Presentation only.
     pub native_body: u8,
+    /// `ZHBO_AUTOPILOT_ROLE` for the multiplayer autopilot (`target`, or the shooter otherwise).
+    pub mp_role: MpRole,
+    /// `ZHBO_STATE_HASH_LOG`: log [`crate::sim::Sim::state_hash`] after every logic step
+    /// (`state hash: frame N HASH` in `ConquerOps.log`), so two machines' logs of one network game
+    /// can be compared frame by frame. A log only; never a sim input.
+    pub state_hash_log: bool,
 }
 
 impl Config {
     /// Parse the two variables (the C++ side parses them once into `ZhboConfig` the same way).
     pub fn parse(loadout: Option<&str>, autopilot: Option<&str>) -> Config {
-        Config { loadout: loadout.filter(|s| !s.is_empty()).map(str::to_string), autopilot: autopilot_mode(autopilot), native_viewmodel: false, native_body: 0 }
+        Config {
+            loadout: loadout.filter(|s| !s.is_empty()).map(str::to_string),
+            autopilot: autopilot_mode(autopilot),
+            native_viewmodel: false,
+            native_body: 0,
+            mp_role: MpRole::Shooter,
+            state_hash_log: false,
+        }
     }
 
     /// Read the environment once at init.
     pub fn from_env() -> Config {
-        Config { native_viewmodel: on_by_default(env("ZHBO_NATIVE_VIEWMODEL")), native_body: body_mode(env("ZHBO_NATIVE_BODY")), ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT")) }
+        Config {
+            native_viewmodel: on_by_default(env("ZHBO_NATIVE_VIEWMODEL")),
+            native_body: body_mode(env("ZHBO_NATIVE_BODY")),
+            mp_role: mp_role(env("ZHBO_AUTOPILOT_ROLE")),
+            state_hash_log: flag(env("ZHBO_STATE_HASH_LOG")),
+            ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT"))
+        }
     }
 }
 
@@ -74,13 +110,22 @@ pub fn flag(value: Option<&str>) -> bool {
     value.is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
 }
 
-/// ZHBO_AUTOPILOT's mode: `manual` for the scene-only setup, off/unset (or empty), or a scripted
-/// mode (`equipment`/`build`/`classpick` pick the test's focus; anything else scripts the standard
-/// input).
+/// `ZHBO_AUTOPILOT_ROLE`: `target` (any case) for the side meant to die; anything else shoots.
+pub fn mp_role(value: Option<&str>) -> MpRole {
+    match value.map(|v| v.trim().to_ascii_lowercase()) {
+        Some(v) if v == "target" => MpRole::Target,
+        _ => MpRole::Shooter,
+    }
+}
+
+/// ZHBO_AUTOPILOT's mode: `manual` for the scene-only setup, off/unset (or empty), `mp` for the
+/// two-instance multiplayer test, or a scripted mode (`equipment`/`build`/`classpick` pick the
+/// test's focus; anything else scripts the standard input).
 pub fn autopilot_mode(value: Option<&str>) -> Autopilot {
     match value {
         None | Some("") => Autopilot::Off,
         Some("manual") => Autopilot::Manual,
+        Some("mp") => Autopilot::Multiplayer,
         Some(m) => Autopilot::Scripted {
             equipment: m == "equipment",
             build: m == "build",
@@ -106,7 +151,8 @@ pub fn init(config: Config) {
 /// must not fill the cell: the bridge's loaders run before `zhbo_init`, and a `get_or_init` here
 /// once locked the defaults in, so `init` silently dropped every variable it parsed.
 pub fn get() -> &'static Config {
-    static DEFAULT: Config = Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0 };
+    static DEFAULT: Config =
+        Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0, mp_role: MpRole::Shooter, state_hash_log: false };
     CONFIG.get().unwrap_or(&DEFAULT)
 }
 
@@ -155,12 +201,21 @@ mod tests {
             autopilot_mode(Some("scope")),
             Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: true }
         );
+        assert_eq!(autopilot_mode(Some("mp")), Autopilot::Multiplayer);
         // Any other value scripts the standard input, like before (the bridge matched modes the
         // same way; unknown values fall through to scripted input).
         assert_eq!(
             autopilot_mode(Some("showcase")),
             Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: false }
         );
+    }
+
+    #[test]
+    fn the_multiplayer_role_defaults_to_the_shooter() {
+        assert_eq!(mp_role(None), MpRole::Shooter);
+        assert_eq!(mp_role(Some("shooter")), MpRole::Shooter);
+        assert_eq!(mp_role(Some(" Target ")), MpRole::Target);
+        assert_eq!(mp_role(Some("anything")), MpRole::Shooter);
     }
 
     #[test]

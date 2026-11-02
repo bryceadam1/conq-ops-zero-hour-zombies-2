@@ -101,7 +101,14 @@ replicated messages alone. The rules, and what enforces each:
   same engine calls, on every frame. The hash is not yet folded into Zero Hour's own
   `GameLogic::getCRC` (that needs an appended ABI function and a host patch; see MODLOG, the
   multiplayer audit), so today a mod-only divergence shows in the engine's CRC only once it moves
-  or hurts an object.
+  or hurts an object. In game, `ZHBO_STATE_HASH_LOG=1` logs it after every step (`state hash:
+  frame N HASH`): the two-instance test (`scripts/mptest-mac.sh`) and a two-machine session compare
+  the machines' lines, and the bridge logs Zero Hour's own mismatch (`TheNetwork->sawCRCMismatch`,
+  otherwise only on screen in a release build).
+* **Third person is per viewer.** Each machine draws every General's native third-person weapon
+  (`zhbo_client_native_poses`) except the one its own client looks through in first person (his
+  body is hidden; the viewmodel draws his arms). The other players' Generals are in first person
+  on their own machines, and here they show their class weapon, attachments and camo.
 
 ## The shell menu ABI (the lobby's create-a-class)
 

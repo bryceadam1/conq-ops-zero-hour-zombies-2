@@ -26,6 +26,9 @@
 #                                      take-control picks the class by its row key, then the script
 #                                      forces the screen open after re-taking control and Escape-closes it;
 #                                      then the General dies and the next one comes in with the class
+#   scripts/autotest-mac.sh --mp       two instances in one LAN game, each player's autopilot fighting
+#                                      the other's General; the logs' per-frame state hashes must agree
+#                                      (runs scripts/mptest-mac.sh; see there)
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -37,8 +40,12 @@
 # needs no permissions. The input test posts real key and mouse events and needs Accessibility
 # permission for the app running this script (System Settings > Privacy & Security).
 #
-# Environment: ZHBO_ZH_DIR and ZHBO_BO2_DIR as for the launcher; OUT for the results folder.
+# Environment: ZHBO_ZH_DIR and ZHBO_BO2_DIR as for the launcher; ZHBO_DIST for a staged build other
+# than the default dist; OUT for the results folder.
 set -euo pipefail
+
+# The multiplayer leg is its own script (two instances, no save).
+[[ "${1:-}" == "--mp" ]] && exec "$(dirname "$0")/mptest-mac.sh"
 
 mode=autopilot
 [[ "${1:-}" == "--input" ]] && mode=input
@@ -52,7 +59,7 @@ mode=autopilot
 [[ "${1:-}" == "--w3d-ads" ]] && mode=w3d-ads
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-dist="$HOME/Library/Application Support/ConquerOps/dist"
+dist="${ZHBO_DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
 userdata="$HOME/Library/Application Support/Command and Conquer Generals Zero Hour Data"
 log="$userdata/ConquerOps.log"
 out="${OUT:-${TMPDIR:-/tmp}/ConquerOps-$mode}"
@@ -374,7 +381,7 @@ if [[ $mode == rts ]]; then
     check "  ...holding the SMAW" "SMAW [0-9]+\|"
     # The native third-person weapon is the default (ZHBO_NATIVE_BODY unset = 1): the overhead
     # General's gun composes through nativebody (ZHBO_NATIVE_BODY=0 opts out, and this fails).
-    check "native third-person weapon" "native body: ZW[0-9]+[A-Z] composed"
+    check "native third-person weapon" "native body: General [0-9]+ weapon [0-9]+ camo [^ ]+ composed \\(ZW[0-9]+[A-Z]\\)"
     echo "screenshots and log: $out"
     exit $ok
 fi
