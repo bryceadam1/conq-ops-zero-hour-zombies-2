@@ -76,7 +76,7 @@ impl Loadout {
             }
             let Some(d) = weapon_or_none(id) else { continue };
             let alt = (!d.alt.is_empty()).then(|| weapon(&d.alt));
-            for vm in std::iter::once(d.viewmodel).chain(alt.map(|a| a.viewmodel)) {
+            for vm in std::iter::once(d.viewmodel).chain(alt.map(|a| a.viewmodel)) { // content: presentation (viewmodels(): the client's preload)
                 if vm >= 0 && !out.contains(&vm) {
                     out.push(vm);
                 }

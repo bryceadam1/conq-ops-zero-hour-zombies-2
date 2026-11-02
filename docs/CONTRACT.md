@@ -79,15 +79,36 @@ replicated messages alone. The rules, and what enforces each:
   step: a network game hands a leaving player's assets to a living ally (`onSelfDestruct` with
   `transferAssets`), and the leaver's record then lets go of the General (back to RTS control, AI
   on) instead of driving him with the last input it received.
-* **The same content on every machine, checked in the lobby.** Each player converts the weapon
-  table (and keeps the tuning pack and the classes) on his own machine, and a different install (a
-  DLC, a patch level, another converter version, `ZHBO_LOADOUT`) makes a different sim. The
-  engine's INI CRC covers only what the engine loads (the converted archive's INIs among them), so
-  `Zhbo_Init` folds the texts the core was handed — the weapon table, the tuning pack, the classes —
-  and the sim inputs the environment sets (`ZHBO_LOADOUT`, `ZHBO_AUTOPILOT`) into `m_iniCRC`
-  (`ConquerOps.log`: `multiplayer: content CRC …`). Online staging rooms already refuse a mismatched
-  INI CRC; host patch 0018 makes Zero Hour's LAN join check it too (the exe CRC stays unchecked
-  there, as in stock Zero Hour), and replays record it in their header.
+* **The same sim content on every machine, checked in the lobby.** Each player converts the
+  weapon table (and keeps the tuning pack and the classes) on his own machine. What reaches the sim
+  must match; what does not (the install's language, its DLC packs, the art a pack adds) must not
+  keep players apart. The core's content fingerprint (`content.rs`, `zhbo_content_crc`) hashes the
+  parsed data in parts: Zero Hour's own INI CRC (the engine's INIs and the converted archive's
+  Object/Weapon/FXList files), the weapon table's **sim fields** (`Role::Sim` in the table schema,
+  `weapons/table.rs`; the presentation fields — localized names and descriptions, sound and FX
+  aliases, viewmodel indices and anims, the Create-a-Class lock, a weapon's camo list, the stat
+  bars — are `Role::Presentation` and left out), the class-pick vocabulary (the weapon ids in
+  catalog order and the camo/reticle/colour/perk ids `classwire` indexes), the tuning pack's values,
+  the class list, `ZHBO_LOADOUT`/`ZHBO_AUTOPILOT`, and the mod build (ABI version and field counts,
+  core version, the table schema). `Zhbo_Init` makes the total `m_iniCRC` (`ConquerOps.log`:
+  `multiplayer: content CRC … (engine INI …, weapon table …, …)`). Online staging rooms refuse a
+  mismatched INI CRC and the join-failed box shows both totals; host patch 0018 makes Zero Hour's
+  LAN join check it (the exe CRC stays unchecked there, as in stock Zero Hour), and host patch 0020
+  carries the parts in the LAN join request and its refusal (`GameToJoin`/`GameNotJoined`
+  `zhboContent`, inside the union's existing size), so the refused player's box and the host's
+  chat name the parts that differ (`zhbo_content_mismatch`). Each game setup menu (LAN, online)
+  prints the short fingerprint and the install's DLC packs in its chat (`zhbo_content_label`).
+  Replays record the total in their header. `the_sim_reads_no_presentation_field` scans the
+  sim-reachable sources for the members a presentation field sets; a line in a mixed file that
+  reads one for presentation says so (`// content: presentation (<why>)`).
+* **DLC is the owner's, as in BO2.** BO2 asks the local controller whether it owns an item's DLC
+  (`Engine.HasDLCForItem`, `changeclass.lua:214`, `cacweaponbutton.lua:540`) and gates only map
+  packs by the whole party (`partylobby.lua:870-934`). The Peacekeeper's definition ships in
+  `common_patch_mp` (every final-patch install has it), so the mod's sim content is the same with or
+  without Revolution: the picker's own install decides the lock (`CacLocked`, presentation), and a
+  peer without the pack runs the identical sim for it. Measured: archives converted with and
+  without the `dlc0` zones, with a Revolution `dlc1_load_mp.ff` present, and without the english
+  zones all fingerprint the same (MODLOG 2026-11-01).
 * **No logic reads a UI-only override.** The General's Build menu and class set are command-set
   overrides the bridge puts on the object on the machine whose player opened them. Zero Hour's
   logic reads an object's command set in its construction check (`BuildAssistant::isPossibleToMakeUnit`,
@@ -1087,6 +1108,13 @@ object to select overhead: the local General as he comes back alive from first p
 after `viewmodel_fired_left`: `ZhboClientOut` 4872 → 4876 bytes, asserted on both sides; nothing else
 moves. Archive `hud::VERSION` 83 at the same point (the weapon table's `UiText
 MP_CHANGE_CLASS_NEXT_SPAWN`, the mid-life class change's hint); the native blob formats are unchanged.
+
+**Pending for the next bump** (appended after ABI 29 without a version change, per the round's
+rule): the free functions `zhbo_content_crc`, `zhbo_content_label`, `zhbo_content_mismatch` and
+`zhbo_content_versus`, and the struct `ZhboContentCrc` (`ZHBO_CONTENT_PARTS` 7 parts + the total,
+32 bytes, asserted on both sides). No existing struct or table moves. The weapon table gains the
+top-level `InstalledDlc` line (archive `hud::VERSION`), and the LAN messages gain `zhboContent`
+(host patch 0020; builds without it cannot join builds with it — the INI CRC differs anyway).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

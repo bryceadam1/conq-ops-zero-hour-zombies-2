@@ -10355,3 +10355,79 @@ items:
   it. CONTRACT/`impacts.rs` still call surfaces "presentation only"; that is inaccurate.
 * A real two-instance LAN test needs a debug macOS preset and a loopback alias (sudo). See
   TESTING.md, "Multiplayer in game".
+
+## Multiplayer content sets: only the sim is fingerprinted, and a refusal names the part (2026-11-01, branch `v1/mp-content`)
+
+The audit's W4 folded the exact weapon table text, tuning and classes into `m_iniCRC`. That
+refused every pair of players whose installs differed in anything: a Revolution owner and a
+non-owner (the Peacekeeper's `CacLocked` line), two languages (every name and description), and
+the box said only "CRC mismatch".
+
+**What reaches the sim.** The weapon table schema now gives each field a `Role`
+(`weapons/table.rs`): `Sim` by default, `Presentation` for 72 of the schema's fields (localized names and
+descriptions, sound and FX aliases the client plays, viewmodel/anim/clip-base/world-mesh indices,
+the gun position and sway, the Create-a-Class slot/group/order/lock/hint, the camo list and
+material, the stat bars, the D-pad icon, the enemy tracer, the camo/reticle option rows' text,
+`UiText`, the shock's ringing alias). `content::tests::the_sim_reads_no_presentation_field` scans
+every sim-reachable source (the same file split as the det-math scan, plus the gun position,
+sounds, viewmodel, profile, schema and catalog) for the struct members those keys set. It found
+real reads that had to be judged one by one: the third-person queries `Sim::native_poses` and
+`stowed_weapons` read `viewmodel`, `Loadout::viewmodels` (the client's preload), `Perk::description`
+(the perk grid), and the shellshock's ringing voice. Each is presentation and is marked on its line
+(`// content: presentation (<why>)`). A key whose member the sim does read stays `Sim`: the FX
+weapon, shell and tracer names (`host.fire_fx` runs in the logic step, though the bridge skips it
+per machine), `ExplodeSound`/`DudSound` (event payloads), `BodyAnims` (it picks the hit-box pose),
+`Reticle`/`ReticleArt` and the overlay fields (ADS and hold breath read them). Those all come from
+the multiplayer pool, so they are the same on every final-patch install.
+
+**The fingerprint** (`content.rs`, `zhbo_content_crc`): seven FNV-1a parts over the parsed data,
+so a comment or a float's spelling changes nothing. They are the engine's INI CRC, the weapon
+table's sim fields, the class-pick vocabulary (weapon ids in catalog order, the camo, reticle,
+colour and perk ids `classwire` indexes: independent of DLC, since the table keeps every camo row
+and lists a DLC weapon locked), tuning, classes, `ZHBO_LOADOUT`/`ZHBO_AUTOPILOT`, and the build (ABI,
+field counts, core version, schema keys and roles). The total replaces `m_iniCRC`.
+
+**BO2's DLC rule, verified.** `Engine.HasDLCForItem(controller, item)` is asked of the local
+controller (`patch_mp/ui_mp/t6/hud/changeclass.lua:214`, `patch_ui_mp/ui_mp/t6/cacweaponbutton.lua:540`,
+`codbase.lua:3744`); only map packs are gated by the party (`patch_ui_mp/ui/t6/partylobby.lua:870-934`,
+`MPUI_DLC_WARNING_OTHER_PLAYERS`). The Peacekeeper's definition is in `common_patch_mp`. So the mod
+keeps the lock as the picker's own (presentation), and the sim is the same whoever owns what. There
+are no BO2 maps in the mod, so the party-wide map rule has no counterpart.
+
+**Measured on this install** (`build-archive` four times, member-by-member diff; plan dir
+`variants/`):
+* without the `dlc0` zones: all 47,108 members byte-identical to the full install's;
+* with a Revolution `dlc1_load_mp.ff` present: only `weapons.ini` differs, in five `CacLocked`
+  lines (the Peacekeeper and its variants unlock; its art converts either way, from `patch_mp`);
+* without the english zones (a localized install): `weapons.ini`, the SoundEffects INI, the
+  fonts and the english breath sounds differ;
+* `zhbo-assets content` on the four tables: weapons `053B1ED9`, vocabulary `770642EE` for all four;
+* the INIs Zero Hour CRCs itself (Object, Weapon, FXList) are identical in all four, so the
+  engine part matches too.
+The old text CRC would have refused all three variants against the full install.
+
+**Lobby feedback.** Host patch 0020 appends `zhboContent[7]` to the LAN `GameToJoin` and
+`GameNotJoined` messages, inside the union's existing size, so the packet does not grow. The
+joiner sends its parts; on a CRC refusal the host sends its own back. The host's chat then says
+"<player>: Conquer Ops content differs between the players: weapon table (BO2 patch level or
+converter), tuning pack. ...", and the joiner's join-failed box carries the same line under
+`LAN:ErrorCRCMismatch`. The LAN and online game setup menus print `Conquer Ops content 1A2B3C4D.`
+(plus the install's DLC packs, "they need not match") in their chat. Online staging rooms carry
+only the total, so the online join-failed box shows both totals. The log line now lists every
+part.
+
+**Patch level and storefronts.** This install: Steam app 202970 build 24784288, MP 202990
+build 24784266, zones dated 2026-10-14 (the download). The BO2 reference install shows the final
+MP build watermark `43.1736.11`. BO2 on PC is sold only through Steam, which keeps every install on
+the final patch (no beta branches), so a patch-level mismatch means an install that has not
+finished updating. The converter reads only `zone/english` (`t6zone::LANGUAGE`). A localized
+install converts the same sim content but loses the english names, fonts and breath sounds; the
+fingerprint no longer refuses it.
+
+**Gotcha.** The scan is file-based. A file the sim uses and that also holds presentation code
+needs the line marker, and the marker is a claim a reviewer must check. A new schema field is
+`Sim` until it is shown otherwise, so a forgotten role can only refuse a join, never desync one.
+
+**Not done.** Received classes are still not validated against the picker's lock (R1). A
+non-owner can therefore field the Peacekeeper with a hand-edited profile, as BO2's server would
+not allow.

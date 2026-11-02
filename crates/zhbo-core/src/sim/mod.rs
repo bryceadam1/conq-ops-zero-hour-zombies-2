@@ -966,7 +966,7 @@ impl Sim {
                 let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();
                 NativePose {
                     general: p.general,
-                    weapon: a.current().def.viewmodel,
+                    weapon: a.current().def.viewmodel, // content: presentation (native_poses: the third-person draw)
                     stance: p.stance_index(),
                     state: p.body_state(engine_moving, run_speed),
                     time,
@@ -984,7 +984,7 @@ impl Sim {
             .iter()
             .flatten()
             .filter(|p| !p.arsenal.current().def.is_shield())
-            .filter_map(|p| p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield() && d.viewmodel >= 0).map(|d| (p.general, d.viewmodel)))
+            .filter_map(|p| p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield() && d.viewmodel >= 0).map(|d| (p.general, d.viewmodel))) // content: presentation (stowed_weapons: the third-person draw)
             .collect()
     }
 

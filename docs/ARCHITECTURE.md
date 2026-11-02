@@ -100,7 +100,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   Nothing in it reaches the sim except through the input messages it emits.
 - `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
   impact effect), `soundlayers.rs` (third-person shots' per-layer distance curves).
-- `math.rs` (the world-space vector math, and `math::det`: the sim's transcendental functions through the pure-Rust `libm` crate, the one external dependency of the sim, so every lockstep peer computes the same bits — `the_sim_calls_no_platform_libm` keeps sim-reachable code off the platform libm), `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
+- `math.rs` (the world-space vector math, and `math::det`: the sim's transcendental functions through the pure-Rust `libm` crate, the one external dependency of the sim, so every lockstep peer computes the same bits — `the_sim_calls_no_platform_libm` keeps sim-reachable code off the platform libm), `config.rs` (env vars parsed once at init), `content.rs` (the multiplayer content fingerprint:
+  the weapon table's `Role::Sim` fields, the class-pick vocabulary, tuning, classes, settings and
+  build, in parts the lobbies compare and name on a mismatch), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack, BO2 units), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block),
   `shield.rs` (the Assault Shield on its bearer: the posed collmap box turned with the General,

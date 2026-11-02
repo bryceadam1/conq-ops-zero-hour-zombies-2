@@ -149,6 +149,9 @@ const _: () = {
     assert!(size_of::<crate::menu::MenuOut>() == 4108);
     assert!(size_of::<ClassButton>() == 756);
     assert!(size_of::<WorldPose>() == 16);
+    // ZHBO_CONTENT_PARTS and ZhboContentCrc (appended after ABI 29).
+    assert!(crate::content::PART_COUNT == 7);
+    assert!(size_of::<crate::content::ContentCrc>() == 32);
     // host/zhbo/zhbo_core.h's ZHBO_CLASS_BUTTONS (the bridge's fixed array).
     assert!(crate::classicons::BUTTONS == 15);
     assert!(size_of::<LogicApi>() == (LOGIC_API_FIELDS as usize) * size_of::<usize>());
@@ -805,6 +808,79 @@ unsafe fn write_c_str(dst: *mut c_char, cap: i32, text: &str) {
     let n = text.len().min(cap as usize - 1);
     std::ptr::copy_nonoverlapping(text.as_ptr(), dst.cast::<u8>(), n);
     *dst.add(n) = 0;
+}
+
+/// The fingerprint [`zhbo_content_crc`] last computed: what a remote's parts are compared with.
+static CONTENT: std::sync::Mutex<Option<crate::content::ContentCrc>> = std::sync::Mutex::new(None);
+
+/// The multiplayer content fingerprint ([`crate::content::fingerprint`]) over Zero Hour's own INI
+/// CRC `engine_ini`, after the weapon table, the tuning pack and the classes are loaded. Fills
+/// `out` (when not null) with each part and the total, and returns the total: the bridge makes it
+/// `m_iniCRC`, the number the lobbies and replays compare.
+///
+/// # Safety
+/// `out` must be null or point to a writable `ContentCrc`.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_content_crc(engine_ini: u32, out: *mut crate::content::ContentCrc) -> u32 {
+    let c = crate::content::fingerprint(engine_ini);
+    *CONTENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(c);
+    if !out.is_null() {
+        *out = c;
+    }
+    c.total
+}
+
+/// The lobby line for this machine's fingerprint (`LAN:ZHBO_ContentCRC`: "Conquer Ops content
+/// 1A2B3C4D") into `out` (UTF-8, NUL-terminated); returns its length, or -1 before
+/// [`zhbo_content_crc`] ran.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_content_label(out: *mut c_char, cap: i32) -> i32 {
+    let Some(c) = *CONTENT.lock().unwrap_or_else(|e| e.into_inner()) else { return -1 };
+    let mut text = crate::strings::text("LAN:ZHBO_ContentCRC").replace("%s", &crate::content::short(c.total));
+    let dlc = crate::weapons::catalog().installed_dlc();
+    if !dlc.is_empty() {
+        text.push(' ');
+        text.push_str(&crate::strings::text("LAN:ZHBO_ContentDlc").replace("%s", &dlc.join(" ")));
+    }
+    write_c_str(out, cap, &text);
+    text.len() as i32
+}
+
+/// The message for a join the content check refused (`LAN:ZHBO_ContentMismatch`, naming the parts
+/// that differ) from the other machine's `PART_COUNT` parts (`theirs`; null or all zero for a
+/// build that sends none). Writes UTF-8 into `out`; returns its length, or -1 before
+/// [`zhbo_content_crc`] ran.
+///
+/// # Safety
+/// `theirs` must be null or point to `PART_COUNT` readable words; `out` to `cap` writable bytes,
+/// or be null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_content_mismatch(theirs: *const u32, out: *mut c_char, cap: i32) -> i32 {
+    let Some(c) = *CONTENT.lock().unwrap_or_else(|e| e.into_inner()) else { return -1 };
+    let mut remote = [0u32; crate::content::PART_COUNT];
+    if !theirs.is_null() {
+        remote.copy_from_slice(std::slice::from_raw_parts(theirs, crate::content::PART_COUNT));
+    }
+    let text = crate::content::describe_mismatch(&c.parts, &remote);
+    write_c_str(out, cap, &text);
+    text.len() as i32
+}
+
+/// Online, where a staging room carries only the total: both totals in short form
+/// (`LAN:ZHBO_ContentVersus`) into `out` (UTF-8); returns its length, or -1 before
+/// [`zhbo_content_crc`] ran.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_content_versus(theirs: u32, out: *mut c_char, cap: i32) -> i32 {
+    let Some(c) = *CONTENT.lock().unwrap_or_else(|e| e.into_inner()) else { return -1 };
+    let text = crate::strings::text("LAN:ZHBO_ContentVersus").replacen("%s", &crate::content::short(c.total), 1).replacen("%s", &crate::content::short(theirs), 1);
+    write_c_str(out, cap, &text);
+    text.len() as i32
 }
 
 /// The first-person FXList names for the weapon on viewmodel `vm`: its muzzle flash (`viewFlashEffect`)

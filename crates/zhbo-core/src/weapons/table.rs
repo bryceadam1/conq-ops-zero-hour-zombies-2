@@ -45,6 +45,10 @@ pub struct Table {
     pub hit_boxes: Vec<crate::hitloc::HitBox>,
     /// BO2's shellshocks the mod plays (`Shock <name>` blocks, [`crate::shellshock::ShockDef`]).
     pub shocks: Vec<crate::shellshock::ShockDef>,
+    /// The DLC packs the converting install has (`InstalledDlc = dlc0 dlc1`, each pack's
+    /// `zone/all/<dlc>_load_mp.ff`): shown in the lobby, never in the multiplayer fingerprint
+    /// ([`crate::content`]: a DLC item is the owner's, the sim is the same without it).
+    pub installed_dlc: Vec<String>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -109,6 +113,9 @@ pub fn format_full_table(t: &Table) -> String {
     }
     if !t.weapon_groups.is_empty() {
         s.push_str(&format!("WeaponGroups = {}\n", t.weapon_groups.join(" ")));
+    }
+    if !t.installed_dlc.is_empty() {
+        s.push_str(&format!("InstalledDlc = {}\n", t.installed_dlc.join(" ")));
     }
     for (name, value) in &t.class_caps {
         s.push_str(&format!("ClassCap.{name} = {value}\n"));
@@ -229,6 +236,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             None => match key {
                 "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
                 "WeaponGroups" => table.weapon_groups = value.split_whitespace().map(str::to_string).collect(),
+                "InstalledDlc" => table.installed_dlc = value.split_whitespace().map(str::to_string).collect(),
                 k if k.starts_with("ClassCap.") => {
                     let n = values.text_num().map_err(|e| err(&e))? as i32;
                     table.class_caps.push((k["ClassCap.".len()..].to_string(), n));
@@ -304,6 +312,20 @@ impl Values<'_> {
     }
 }
 
+/// Whether a field reaches the deterministic sim (the logic step) or only one machine's
+/// presentation. Only [`Role::Sim`] fields are in the multiplayer content fingerprint
+/// ([`crate::content`]): two players whose tables differ in a presentation field (a localized
+/// name, a sound alias, the art a DLC pack adds) still play together.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// Read by code a logic step reaches; every peer must hold the same value. The default: a new
+    /// field is in the fingerprint until it is shown not to reach the sim.
+    Sim,
+    /// Read only by the local client, the HUD, the class screens, the renderer or the converter
+    /// (`content::tests` scans the sim's sources for the members these set).
+    Presentation,
+}
+
 /// One `key = value` line of a block.
 pub struct Field<T> {
     /// The line's key, as the converter writes it.
@@ -314,11 +336,16 @@ pub struct Field<T> {
     pub get: fn(&T) -> String,
     /// Parse the value; the error is a short reason (the caller adds the line context).
     pub set: fn(&mut T, Values) -> Result<(), String>,
+    /// Sim or presentation ([`Role`]).
+    pub role: Role,
 }
 
 macro_rules! field {
+    (present $key:literal, $doc:literal, $kind:expr, $get:expr, $set:expr) => {
+        Field { key: $key, doc: $doc, kind: $kind, get: $get, set: $set, role: Role::Presentation }
+    };
     ($key:literal, $doc:literal, $kind:expr, $get:expr, $set:expr) => {
-        Field { key: $key, doc: $doc, kind: $kind, get: $get, set: $set }
+        Field { key: $key, doc: $doc, kind: $kind, get: $get, set: $set, role: Role::Sim }
     };
 }
 
@@ -327,7 +354,7 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
     field!("Short", "The attachment's two-letter short (`gl`, `reflex`).", FieldKind::Str,
         |a: &AttachmentDef| a.short.clone(),
         |a: &mut AttachmentDef, v: Values| { a.short = v.text.into(); Ok(()) }),
-    field!("DisplayName", "As BO2's create-a-class shows it.", FieldKind::Str,
+    field!(present "DisplayName", "As BO2's create-a-class shows it.", FieldKind::Str,
         |a: &AttachmentDef| a.display_name.clone(),
         |a: &mut AttachmentDef, v: Values| { a.display_name = v.text.into(); Ok(()) }),
     field!("Point", "The viewmodel attachment point (BO2's attachment point id).", FieldKind::Num,
@@ -389,13 +416,13 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
     field!("Specialties", "The specialties it grants (`WeaponAttachment.perks`), by name.", FieldKind::Words,
         |a: &AttachmentDef| a.specialties.format(),
         |a: &mut AttachmentDef, v: Values| { a.specialties = Specialties::parse(v.text)?; Ok(()) }),
-    field!("FullName", "The full name BO2's attachment menu's lower title shows.", FieldKind::Str,
+    field!(present "FullName", "The full name BO2's attachment menu's lower title shows.", FieldKind::Str,
         |a: &AttachmentDef| a.full_name.clone(),
         |a: &mut AttachmentDef, v: Values| { a.full_name = v.text.into(); Ok(()) }),
-    field!("Description", "The attachment's description line.", FieldKind::Str,
+    field!(present "Description", "The attachment's description line.", FieldKind::Str,
         |a: &AttachmentDef| a.description.clone(),
         |a: &mut AttachmentDef, v: Values| { a.description = v.text.into(); Ok(()) }),
-    field!("Image", "Its create-a-class icon material (`mp/attachmenttable.csv` column 6).", FieldKind::Str,
+    field!(present "Image", "Its create-a-class icon material (`mp/attachmenttable.csv` column 6).", FieldKind::Str,
         |a: &AttachmentDef| a.image.clone(),
         |a: &mut AttachmentDef, v: Values| { a.image = v.text.into(); Ok(()) }),
     field!("Kind", "BO2's `eAttachment`: the order a combination's attachments are walked in.", FieldKind::Num,
@@ -442,13 +469,13 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
     field!("AdsKickCenterScale", "Scales the aimed view-kick recentre speed (`fAdsViewKickCenterSpeedScale`).", FieldKind::Num,
         |a: &AttachmentDef| a.ads_kick_center_scale.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.ads_kick_center_scale = v.text_num()?; Ok(()) }),
-    field!("SwayOverride", "Hip sway override: max angle, lerp speed, pitch, yaw, horizontal, vertical scales (`-`: none).", FieldKind::Words,
+    field!(present "SwayOverride", "Hip sway override: max angle, lerp speed, pitch, yaw, horizontal, vertical scales (`-`: none).", FieldKind::Words,
         |a: &AttachmentDef| opt_sway(a.sway),
         |a: &mut AttachmentDef, v: Values| { a.sway = parse_opt_sway(v)?; Ok(()) }),
-    field!("AdsSwayOverride", "Aimed sway override, as SwayOverride (`-`: none).", FieldKind::Words,
+    field!(present "AdsSwayOverride", "Aimed sway override, as SwayOverride (`-`: none).", FieldKind::Words,
         |a: &AttachmentDef| opt_sway(a.ads_sway),
         |a: &mut AttachmentDef, v: Values| { a.ads_sway = parse_opt_sway(v)?; Ok(()) }),
-    field!("ViewPosOverride", "Stand move forward, stand rotation pitch and roll, strafe rotation roll (`-`: unchanged).", FieldKind::Words,
+    field!(present "ViewPosOverride", "Stand move forward, stand rotation pitch and roll, strafe rotation roll (`-`: unchanged).", FieldKind::Words,
         |a: &AttachmentDef| [a.stand_move_f, a.stand_rot_pitch, a.stand_rot_roll, a.strafe_rot_roll].map(opt_num).join(" "),
         |a: &mut AttachmentDef, v: Values| {
             let o = parse_opt_nums(v.text, 4)?;
@@ -475,7 +502,7 @@ fn parse_opt_sway(v: Values) -> Result<Option<Sway>, String> {
 
 /// Every `Weapon` block line, in table order.
 pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
-    field!("DisplayName", "As BO2's HUD shows it.", FieldKind::Str,
+    field!(present "DisplayName", "As BO2's HUD shows it.", FieldKind::Str,
         |d: &WeaponDef| d.display_name.clone(),
         |d: &mut WeaponDef, v: Values| { d.display_name = v.text.into(); Ok(()) }),
     field!("Class", "The weapon class (smg, ar, sniper, launcher, pistol, melee, offhand).", FieldKind::Enum,
@@ -705,80 +732,80 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ImpactType", "BO2's `impactType` (+40): the impact-table bucket (0: none).", FieldKind::Num,
         |d: &WeaponDef| d.impact_type.to_string(),
         |d: &mut WeaponDef, v: Values| { d.impact_type = v.text_num()? as i32; Ok(()) }),
-    field!("ViewFlashFx", "Zero Hour FXList for the first-person muzzle flash (`viewFlashEffect`).", FieldKind::Str,
+    field!(present "ViewFlashFx", "Zero Hour FXList for the first-person muzzle flash (`viewFlashEffect`).", FieldKind::Str,
         |d: &WeaponDef| d.view_flash_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.view_flash_fx = v.text.into(); Ok(()) }),
-    field!("ViewShellFx", "Zero Hour FXList for the first-person shell eject (`viewShellEjectEffect`).", FieldKind::Str,
+    field!(present "ViewShellFx", "Zero Hour FXList for the first-person shell eject (`viewShellEjectEffect`).", FieldKind::Str,
         |d: &WeaponDef| d.view_shell_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.view_shell_fx = v.text.into(); Ok(()) }),
-    field!("ViewLastShotShellFx", "Zero Hour FXList for the first-person shell eject on the last round.", FieldKind::Str,
+    field!(present "ViewLastShotShellFx", "Zero Hour FXList for the first-person shell eject on the last round.", FieldKind::Str,
         |d: &WeaponDef| d.view_last_shot_shell_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.view_last_shot_shell_fx = v.text.into(); Ok(()) }),
     field!("ProjectileObject", "The thrown/projectiled Zero Hour object.", FieldKind::Str,
         |d: &WeaponDef| d.projectile_object.clone(),
         |d: &mut WeaponDef, v: Values| { d.projectile_object = v.text.into(); Ok(()) }),
-    field!("FireSound", "The shot's BO2 sound event.", FieldKind::Str,
+    field!(present "FireSound", "The shot's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.fire_sound = v.text.into(); Ok(()) }),
-    field!("EmptyFireSound", "The empty magazine's BO2 sound event.", FieldKind::Str,
+    field!(present "EmptyFireSound", "The empty magazine's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.empty_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.empty_fire_sound = v.text.into(); Ok(()) }),
-    field!("SilencedFireSound", "The suppressed shot's player BO2 sound event.", FieldKind::Str,
+    field!(present "SilencedFireSound", "The suppressed shot's player BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.silenced_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_fire_sound = v.text.into(); Ok(()) }),
-    field!("SilencedFireSoundNpc", "The suppressed shot's third-person BO2 sound event.", FieldKind::Str,
+    field!(present "SilencedFireSoundNpc", "The suppressed shot's third-person BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.silenced_fire_sound_npc.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_fire_sound_npc = v.text.into(); Ok(()) }),
     field!("SilencedFxWeapon", "The FX weapon whose INI block carries the suppressed shot.", FieldKind::Str,
         |d: &WeaponDef| d.silenced_fx_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_fx_weapon = v.text.into(); Ok(()) }),
-    field!("SilencedViewFlashFx", "The shared suppressed first-person FXList.", FieldKind::Str,
+    field!(present "SilencedViewFlashFx", "The shared suppressed first-person FXList.", FieldKind::Str,
         |d: &WeaponDef| d.silenced_view_flash_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_view_flash_fx = v.text.into(); Ok(()) }),
     // 5b: the def-level sound events (one per BO2 alias, `ZHBO_BO2_Snd_<alias>`).
-    field!("RaiseSound", "The raise's BO2 sound event (`raiseSoundPlayer`), played as a raise begins.", FieldKind::Str,
+    field!(present "RaiseSound", "The raise's BO2 sound event (`raiseSoundPlayer`), played as a raise begins.", FieldKind::Str,
         |d: &WeaponDef| d.raise_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.raise_sound = v.text.into(); Ok(()) }),
-    field!("FirstRaiseSound", "The first raise's event (`firstRaiseSoundPlayer`).", FieldKind::Str,
+    field!(present "FirstRaiseSound", "The first raise's event (`firstRaiseSoundPlayer`).", FieldKind::Str,
         |d: &WeaponDef| d.first_raise_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.first_raise_sound = v.text.into(); Ok(()) }),
-    field!("AltSwitchSound", "The alt toggle's event (`altSwitchSoundPlayer`), played by the mode coming up (EV_WEAPON_ALT).", FieldKind::Str,
+    field!(present "AltSwitchSound", "The alt toggle's event (`altSwitchSoundPlayer`), played by the mode coming up (EV_WEAPON_ALT).", FieldKind::Str,
         |d: &WeaponDef| d.alt_switch_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.alt_switch_sound = v.text.into(); Ok(()) }),
-    field!("PutawaySound", "The putaway's event (`putawaySoundPlayer`), played as the drop begins.", FieldKind::Str,
+    field!(present "PutawaySound", "The putaway's event (`putawaySoundPlayer`), played as the drop begins.", FieldKind::Str,
         |d: &WeaponDef| d.putaway_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.putaway_sound = v.text.into(); Ok(()) }),
-    field!("AdsZoomSound", "The zoom-in event as aiming starts (`adsZoomSound`; scoped weapons).", FieldKind::Str,
+    field!(present "AdsZoomSound", "The zoom-in event as aiming starts (`adsZoomSound`; scoped weapons).", FieldKind::Str,
         |d: &WeaponDef| d.ads_zoom_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.ads_zoom_sound = v.text.into(); Ok(()) }),
-    field!("MeleeSwipeSound", "The melee swing with this weapon in hand (`meleeSwipeSoundPlayer`).", FieldKind::Str,
+    field!(present "MeleeSwipeSound", "The melee swing with this weapon in hand (`meleeSwipeSoundPlayer`).", FieldKind::Str,
         |d: &WeaponDef| d.melee_swipe_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.melee_swipe_sound = v.text.into(); Ok(()) }),
-    field!("MeleeHitSound", "The melee landing on someone (`meleeHitSound`).", FieldKind::Str,
+    field!(present "MeleeHitSound", "The melee landing on someone (`meleeHitSound`).", FieldKind::Str,
         |d: &WeaponDef| d.melee_hit_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.melee_hit_sound = v.text.into(); Ok(()) }),
-    field!("FireStartSound", "The fire string's opening (`fireStartSoundPlayer`: a burst's recording).", FieldKind::Str,
+    field!(present "FireStartSound", "The fire string's opening (`fireStartSoundPlayer`: a burst's recording).", FieldKind::Str,
         |d: &WeaponDef| d.fire_start_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.fire_start_sound = v.text.into(); Ok(()) }),
-    field!("FireLastSound", "The last round's shot in place of the shot (`fireLastSoundPlayer`).", FieldKind::Str,
+    field!(present "FireLastSound", "The last round's shot in place of the shot (`fireLastSoundPlayer`).", FieldKind::Str,
         |d: &WeaponDef| d.fire_last_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.fire_last_sound = v.text.into(); Ok(()) }),
-    field!("PullbackSound", "The offhand's pull-back (`pullbackSoundPlayer`).", FieldKind::Str,
+    field!(present "PullbackSound", "The offhand's pull-back (`pullbackSoundPlayer`).", FieldKind::Str,
         |d: &WeaponDef| d.pullback_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.pullback_sound = v.text.into(); Ok(()) }),
-    field!("SilencedFireStartSound", "The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).", FieldKind::Str,
+    field!(present "SilencedFireStartSound", "The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).", FieldKind::Str,
         |d: &WeaponDef| d.silenced_fire_start_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_fire_start_sound = v.text.into(); Ok(()) }),
-    field!("AttachmentFireSounds", "Base weapons: the shot another attachment's unique overrides (`short=event`, `FUN_008ebe80`).", FieldKind::Pairs,
+    field!(present "AttachmentFireSounds", "Base weapons: the shot another attachment's unique overrides (`short=event`, `FUN_008ebe80`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.attachment_fire_sounds),
         |d: &mut WeaponDef, v: Values| { d.attachment_fire_sounds = parse_pairs(v.text); Ok(()) }),
-    field!("AttachmentFireStartSounds", "Base weapons: the fire string's opening another attachment overrides (`short=event`).", FieldKind::Pairs,
+    field!(present "AttachmentFireStartSounds", "Base weapons: the fire string's opening another attachment overrides (`short=event`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.attachment_fire_start_sounds),
         |d: &mut WeaponDef, v: Values| { d.attachment_fire_start_sounds = parse_pairs(v.text); Ok(()) }),
     field!("ExplodeSound", "The blast's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.explode_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.explode_sound = v.text.into(); Ok(()) }),
-    field!("BounceSounds", "A bounce's sound per surface (`surface=event`; BO2's `bounceSound[surface]`).", FieldKind::Pairs,
+    field!(present "BounceSounds", "A bounce's sound per surface (`surface=event`; BO2's `bounceSound[surface]`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.bounce_sounds),
         |d: &mut WeaponDef, v: Values| { d.bounce_sounds = parse_pairs(v.text); Ok(()) }),
     field!("Bounce", "The speed kept bouncing off each surface, along/into (`surface=along/into`; BO2's `parallelBounce`/`perpendicularBounce`).", FieldKind::Pairs,
@@ -802,16 +829,16 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("DudSound", "A dud's own BO2 sound event (`projDudSound`).", FieldKind::Str,
         |d: &WeaponDef| d.dud_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.dud_sound = v.text.into(); Ok(()) }),
-    field!("Viewmodel", "Viewmodel index in the converted art, or -1.", FieldKind::Num,
+    field!(present "Viewmodel", "Viewmodel index in the converted art, or -1.", FieldKind::Num,
         |d: &WeaponDef| d.viewmodel.to_string(),
         |d: &mut WeaponDef, v: Values| { d.viewmodel = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("Anims", "Which BO2 viewmodel animation slots the weapon has, as hex bits.", FieldKind::Hex,
+    field!(present "Anims", "Which BO2 viewmodel animation slots the weapon has, as hex bits.", FieldKind::Hex,
         |d: &WeaponDef| format!("{:x}", d.anims),
         |d: &mut WeaponDef, v: Values| { d.anims = u128::from_str_radix(v.text, 16).map_err(|_| "hex")?; Ok(()) }),
-    field!("ClipBase", "Viewmodel clip base (an alt mode's clips sit after its weapon's).", FieldKind::Num,
+    field!(present "ClipBase", "Viewmodel clip base (an alt mode's clips sit after its weapon's).", FieldKind::Num,
         |d: &WeaponDef| d.clip_base.to_string(),
         |d: &mut WeaponDef, v: Values| { d.clip_base = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("WorldMeshes", "Third-person meshes on the soldier model (`W{vm}{k}`).", FieldKind::Num,
+    field!(present "WorldMeshes", "Third-person meshes on the soldier model (`W{vm}{k}`).", FieldKind::Num,
         |d: &WeaponDef| d.world_meshes.to_string(),
         |d: &mut WeaponDef, v: Values| { d.world_meshes = v.text.parse().map_err(|_| "number")?; Ok(()) }),
     field!("Attachments", "The attachment shorts on this variant, sorted.", FieldKind::Words,
@@ -820,10 +847,10 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Allowed", "Base weapons: each attachment BO2 offers (`short=attachment`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.allowed),
         |d: &mut WeaponDef, v: Values| { d.allowed = parse_pairs(v.text); Ok(()) }),
-    field!("Attributes", "BO2's stat bars (mp/attributestable.csv, 0..100): fire rate, damage, range, accuracy.", FieldKind::Nums(4),
+    field!(present "Attributes", "BO2's stat bars (mp/attributestable.csv, 0..100): fire rate, damage, range, accuracy.", FieldKind::Nums(4),
         |d: &WeaponDef| nums(&d.attributes),
         |d: &mut WeaponDef, v: Values| { v.need(4)?; for i in 0..4 { d.attributes[i] = v.num(i); } Ok(()) }),
-    field!("AttachmentAttributes", "Base weapons: each attachment's stat-bar deltas on this weapon (`short=fire,damage,range,accuracy`).", FieldKind::Pairs,
+    field!(present "AttachmentAttributes", "Base weapons: each attachment's stat-bar deltas on this weapon (`short=fire,damage,range,accuracy`).", FieldKind::Pairs,
         |d: &WeaponDef| d.attachment_attributes.iter().map(|(s, a)| format!("{s}={}", a.map(|x| x.to_string()).join(","))).collect::<Vec<_>>().join(" "),
         |d: &mut WeaponDef, v: Values| {
             d.attachment_attributes = parse_pairs(v.text)
@@ -844,31 +871,31 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Alt", "The weapon this toggles to (its alt mode, or back from it).", FieldKind::Str,
         |d: &WeaponDef| d.alt.clone(),
         |d: &mut WeaponDef, v: Values| { d.alt = v.text.into(); Ok(()) }),
-    field!("CacSlot", "The Create-a-Class slot BO2 offers it in (statstable column 13); empty: not a CaC item.", FieldKind::Str,
+    field!(present "CacSlot", "The Create-a-Class slot BO2 offers it in (statstable column 13); empty: not a CaC item.", FieldKind::Str,
         |d: &WeaponDef| d.cac_slot.clone(),
         |d: &mut WeaponDef, v: Values| { d.cac_slot = v.text.into(); Ok(()) }),
-    field!("CacGroup", "The Create-a-Class group BO2 lists it under (statstable column 2).", FieldKind::Str,
+    field!(present "CacGroup", "The Create-a-Class group BO2 lists it under (statstable column 2).", FieldKind::Str,
         |d: &WeaponDef| d.cac_group.clone(),
         |d: &mut WeaponDef, v: Values| { d.cac_group = v.text.into(); Ok(()) }),
-    field!("CacName", "The Create-a-Class item's localized name (statstable column 3).", FieldKind::Str,
+    field!(present "CacName", "The Create-a-Class item's localized name (statstable column 3).", FieldKind::Str,
         |d: &WeaponDef| d.cac_name.clone(),
         |d: &mut WeaponDef, v: Values| { d.cac_name = v.text.into(); Ok(()) }),
-    field!("CacLocked", "1 if Create-a-Class lists the item locked (its art did not convert: a DLC item without the pack).", FieldKind::Num,
+    field!(present "CacLocked", "1 if Create-a-Class lists the item locked (its art did not convert: a DLC item without the pack).", FieldKind::Num,
         |d: &WeaponDef| (d.cac_locked as u8).to_string(),
         |d: &mut WeaponDef, v: Values| { d.cac_locked = v.text_num()? != 0.0; Ok(()) }),
-    field!("CacLockHint", "The locked item's hint (`MENU_<statstable column 15>_REQUIRED_HINT`).", FieldKind::Str,
+    field!(present "CacLockHint", "The locked item's hint (`MENU_<statstable column 15>_REQUIRED_HINT`).", FieldKind::Str,
         |d: &WeaponDef| d.cac_lock_hint.clone(),
         |d: &mut WeaponDef, v: Values| { d.cac_lock_hint = v.text.into(); Ok(()) }),
-    field!("Description", "The Create-a-Class item's localized description (statstable column 7).", FieldKind::Str,
+    field!(present "Description", "The Create-a-Class item's localized description (statstable column 7).", FieldKind::Str,
         |d: &WeaponDef| d.description.clone(),
         |d: &mut WeaponDef, v: Values| { d.description = v.text.into(); Ok(()) }),
-    field!("CacOrder", "The Create-a-Class list order: statstable sort key (column 9), item index (column 0).", FieldKind::Nums(2),
+    field!(present "CacOrder", "The Create-a-Class list order: statstable sort key (column 9), item index (column 0).", FieldKind::Nums(2),
         |d: &WeaponDef| format!("{} {}", d.cac_sort, d.cac_index),
         |d: &mut WeaponDef, v: Values| { v.need(2)?; d.cac_sort = v.nums[0] as i32; d.cac_index = v.nums[1] as i32; Ok(()) }),
-    field!("DualWieldWeapon", "A dual-wield weapon's left gun (BO2's `szDualWieldWeaponName`).", FieldKind::Str,
+    field!(present "DualWieldWeapon", "A dual-wield weapon's left gun (BO2's `szDualWieldWeaponName`).", FieldKind::Str,
         |d: &WeaponDef| d.dual_wield_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.dual_wield_weapon = v.text.into(); Ok(()) }),
-    field!("LeftFireSound", "A dual-wield weapon's left gun's shot BO2 sound event.", FieldKind::Str,
+    field!(present "LeftFireSound", "A dual-wield weapon's left gun's shot BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.left_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.left_fire_sound = v.text.into(); Ok(()) }),
     field!("Flags", "alt keeps its own ammo, silenced, laser, target finder.", FieldKind::Nums(4),
@@ -918,25 +945,25 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("RecoilReturn", "How fast the grip's recoil reduction wears off (`fAdsRecoilReturnRate`).", FieldKind::Num,
         |d: &WeaponDef| d.recoil_return_rate.to_string(),
         |d: &mut WeaponDef, v: Values| { d.recoil_return_rate = v.text_num()?; Ok(()) }),
-    field!("HipSway", "Hip sway: max angle, lerp speed, pitch, yaw, horizontal and vertical scales.", FieldKind::Nums(6),
+    field!(present "HipSway", "Hip sway: max angle, lerp speed, pitch, yaw, horizontal and vertical scales.", FieldKind::Nums(6),
         |d: &WeaponDef| d.hip_sway.format(),
         |d: &mut WeaponDef, v: Values| { v.need(6)?; d.hip_sway = Sway::from_nums(v.nums); Ok(()) }),
-    field!("AdsSway", "Aimed sway, as HipSway (BO2 has no aimed horizontal/vertical scales).", FieldKind::Nums(6),
+    field!(present "AdsSway", "Aimed sway, as HipSway (BO2 has no aimed horizontal/vertical scales).", FieldKind::Nums(6),
         |d: &WeaponDef| d.ads_sway.format(),
         |d: &mut WeaponDef, v: Values| { v.need(6)?; d.ads_sway = Sway::from_nums(v.nums); Ok(()) }),
-    field!("ViewStand", "Viewmodel move offset and rotation standing (`vStandMove`, `vStandRot`).", FieldKind::Nums(6),
+    field!(present "ViewStand", "Viewmodel move offset and rotation standing (`vStandMove`, `vStandRot`).", FieldKind::Nums(6),
         |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.stand_move, p.stand_rot].concat()) },
         |d: &mut WeaponDef, v: Values| { v.need(6)?; let p = &mut d.view_pos; (p.stand_move, p.stand_rot) = (v3(v.nums), v3(&v.nums[3..])); Ok(()) }),
-    field!("ViewDucked", "Crouched offset, move and rotation (`vDuckedOfs`, `vDuckedMove`, `vDuckedRot`).", FieldKind::Nums(9),
+    field!(present "ViewDucked", "Crouched offset, move and rotation (`vDuckedOfs`, `vDuckedMove`, `vDuckedRot`).", FieldKind::Nums(9),
         |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.ducked_ofs, p.ducked_move, p.ducked_rot].concat()) },
         |d: &mut WeaponDef, v: Values| { v.need(9)?; let p = &mut d.view_pos; (p.ducked_ofs, p.ducked_move, p.ducked_rot) = (v3(v.nums), v3(&v.nums[3..]), v3(&v.nums[6..])); Ok(()) }),
-    field!("ViewProne", "Prone offset, move and rotation (`vProneOfs`, `vProneMove`, `vProneRot`).", FieldKind::Nums(9),
+    field!(present "ViewProne", "Prone offset, move and rotation (`vProneOfs`, `vProneMove`, `vProneRot`).", FieldKind::Nums(9),
         |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.prone_ofs, p.prone_move, p.prone_rot].concat()) },
         |d: &mut WeaponDef, v: Values| { v.need(9)?; let p = &mut d.view_pos; (p.prone_ofs, p.prone_move, p.prone_rot) = (v3(v.nums), v3(&v.nums[3..]), v3(&v.nums[6..])); Ok(()) }),
-    field!("ViewStrafe", "Strafe move and rotation (`vStrafeMove`, `vStrafeRot`).", FieldKind::Nums(6),
+    field!(present "ViewStrafe", "Strafe move and rotation (`vStrafeMove`, `vStrafeRot`).", FieldKind::Nums(6),
         |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.strafe_move, p.strafe_rot].concat()) },
         |d: &mut WeaponDef, v: Values| { v.need(6)?; let p = &mut d.view_pos; (p.strafe_move, p.strafe_rot) = (v3(v.nums), v3(&v.nums[3..])); Ok(()) }),
-    field!("ViewSprint", "Sprint offset, rotation and bob (`vSprintOfs`, `vSprintRot`, `vSprintBob`).", FieldKind::Nums(8),
+    field!(present "ViewSprint", "Sprint offset, rotation and bob (`vSprintOfs`, `vSprintRot`, `vSprintBob`).", FieldKind::Nums(8),
         |d: &WeaponDef| { let p = &d.view_pos; nums(&[&p.sprint_ofs[..], &p.sprint_rot[..], &p.sprint_bob[..]].concat()) },
         |d: &mut WeaponDef, v: Values| {
             v.need(8)?;
@@ -944,7 +971,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (p.sprint_ofs, p.sprint_rot, p.sprint_bob) = (v3(v.nums), v3(&v.nums[3..]), [v.num(6), v.num(7)]);
             Ok(())
         }),
-    field!("ViewRates", "Position and rotation blend rates (standing, prone) and the stand/crouch/prone move min speeds.", FieldKind::Nums(7),
+    field!(present "ViewRates", "Position and rotation blend rates (standing, prone) and the stand/crouch/prone move min speeds.", FieldKind::Nums(7),
         |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.move_rate, p.prone_move_rate, p.rot_rate, p.prone_rot_rate, p.stand_min_speed, p.ducked_min_speed, p.prone_min_speed]) },
         |d: &mut WeaponDef, v: Values| {
             v.need(7)?;
@@ -953,7 +980,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (p.stand_min_speed, p.ducked_min_speed, p.prone_min_speed) = (v.num(4), v.num(5), v.num(6));
             Ok(())
         }),
-    field!("ViewAds", "Aimed pitch offset and bob factor (`fAdsAimPitch`, `fAdsBobFactor`).", FieldKind::Nums(2),
+    field!(present "ViewAds", "Aimed pitch offset and bob factor (`fAdsAimPitch`, `fAdsBobFactor`).", FieldKind::Nums(2),
         |d: &WeaponDef| nums(&[d.view_pos.ads_aim_pitch, d.view_pos.ads_bob_factor]),
         |d: &mut WeaponDef, v: Values| { v.need(2)?; (d.view_pos.ads_aim_pitch, d.view_pos.ads_bob_factor) = (v.num(0), v.num(1)); Ok(()) }),
     field!("Reticle", "Crosshair: centre and side size, min offset, side position, ADS in/out fade fractions, keep when aimed, colour change.", FieldKind::Nums(8),
@@ -962,17 +989,17 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ReticleArt", "The crosshair's centre and side materials (`-` for none).", FieldKind::Words,
         |d: &WeaponDef| d.reticle.format_art(),
         |d: &mut WeaponDef, v: Values| { d.reticle.set_art(v.text); Ok(()) }),
-    field!("CamoList", "The camouflage option ids this weapon offers, `camo_none` first.", FieldKind::Words,
+    field!(present "CamoList", "The camouflage option ids this weapon offers, `camo_none` first.", FieldKind::Words,
         |d: &WeaponDef| d.camo.join(" "),
         |d: &mut WeaponDef, v: Values| { d.camo = v.text.split_whitespace().map(str::to_string).collect(); Ok(()) }),
-    field!("CamoMaterial", "The weapon's own camo asset (BO2's `WeaponDef.weaponCamo`: `camo_an94`, the INSAS's `camo_msmc`), empty when none; attachment parts wear their own (the viewmodel manifest's per-part camo).", FieldKind::Str,
+    field!(present "CamoMaterial", "The weapon's own camo asset (BO2's `WeaponDef.weaponCamo`: `camo_an94`, the INSAS's `camo_msmc`), empty when none; attachment parts wear their own (the viewmodel manifest's per-part camo).", FieldKind::Str,
         |d: &WeaponDef| d.camo_material.clone(),
         |d: &mut WeaponDef, v: Values| { d.camo_material = v.text.into(); Ok(()) }),
     field!("OverlayMaterial", "The 2D screen-space ADS overlay material (`scope_overlay_<weapon>`).",
         FieldKind::Str,
         |d: &WeaponDef| d.overlay_material.clone(),
         |d: &mut WeaponDef, v: Values| { d.overlay_material = v.text.into(); Ok(()) }),
-    field!("OverlayMaterialLowRes", "The low-resolution ADS overlay material.", FieldKind::Str,
+    field!(present "OverlayMaterialLowRes", "The low-resolution ADS overlay material.", FieldKind::Str,
         |d: &WeaponDef| d.overlay_material_low_res.clone(),
         |d: &mut WeaponDef, v: Values| { d.overlay_material_low_res = v.text.into(); Ok(()) }),
     field!("OverlaySize", "The overlay's width and height in BO2's 640x480 virtual screen (`overlayWidth`, `overlayHeight`), drawn centred at one scale for both axes.", FieldKind::Nums(2),
@@ -1076,7 +1103,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("GuidedMissileType", "The missile guidance enum (`guidedMissileType_t`; 6 is TV-guided).", FieldKind::Num,
         |d: &WeaponDef| d.guided_missile_type.to_string(),
         |d: &mut WeaponDef, v: Values| { d.guided_missile_type = v.text_num()? as u32; Ok(()) }),
-    field!("DpadIcon", "BO2's `dpadIcon`: the action-slot material the alt-fire slot draws (`hud_gl_select`), empty when none.", FieldKind::Str,
+    field!(present "DpadIcon", "BO2's `dpadIcon`: the action-slot material the alt-fire slot draws (`hud_gl_select`), empty when none.", FieldKind::Str,
         |d: &WeaponDef| d.dpad_icon.clone(),
         |d: &mut WeaponDef, v: Values| { d.dpad_icon = v.text.into(); Ok(()) }),
     // 5b family C: what others see of a shot (the third-person brass and the tracer).
@@ -1089,7 +1116,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("TracerFxWeapon", "The FX weapon drawing the bullet tracer (`tracerType`, `FUN_008eb420`).", FieldKind::Str,
         |d: &WeaponDef| d.tracer_fx_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.tracer_fx_weapon = v.text.into(); Ok(()) }),
-    field!("EnemyTracerFxWeapon", "The tracer a viewer the shooter is not friendly to sees (`enemyTracerType`, `FUN_004bbf10`).", FieldKind::Str,
+    field!(present "EnemyTracerFxWeapon", "The tracer a viewer the shooter is not friendly to sees (`enemyTracerType`, `FUN_004bbf10`).", FieldKind::Str,
         |d: &WeaponDef| d.enemy_tracer_fx_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.enemy_tracer_fx_weapon = v.text.into(); Ok(()) }),
     field!("TracerInterval", "A tracer every this many bullets (`TracerDef.drawInterval`; 0: none).", FieldKind::Num,
@@ -1106,36 +1133,36 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             };
             Ok(())
         }),
-    field!("FireSoundNpc", "An offhand's third-person throw/plant BO2 sound event (`fireSound`): what other players hear; empty for a gun.", FieldKind::Str,
+    field!(present "FireSoundNpc", "An offhand's third-person throw/plant BO2 sound event (`fireSound`): what other players hear; empty for a gun.", FieldKind::Str,
         |d: &WeaponDef| d.npc_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.npc_fire_sound = v.text.into(); Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
 pub const CAMO_FIELDS: &[Field<CamoOption>] = &[
-    field!("Name", "The localized name the grid shows (`MPUI_*`).", FieldKind::Str,
+    field!(present "Name", "The localized name the grid shows (`MPUI_*`).", FieldKind::Str,
         |c: &CamoOption| c.name.clone(),
         |c: &mut CamoOption, v: Values| { c.name = v.text.into(); Ok(()) }),
-    field!("Image", "The camo thumbnail image/material the grid cell draws.", FieldKind::Str,
+    field!(present "Image", "The camo thumbnail image/material the grid cell draws.", FieldKind::Str,
         |c: &CamoOption| c.image.clone(),
         |c: &mut CamoOption, v: Values| { c.image = v.text.into(); Ok(()) }),
-    field!("Sort", "BO2's sort key (column 5 of the `camo` row).", FieldKind::Num,
+    field!(present "Sort", "BO2's sort key (column 5 of the `camo` row).", FieldKind::Num,
         |c: &CamoOption| c.sort.to_string(),
         |c: &mut CamoOption, v: Values| { c.sort = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("Tab", "The personalize tab it sits on: base, dlc or dlc2 (`AddCamos`'s rule).", FieldKind::Enum,
+    field!(present "Tab", "The personalize tab it sits on: base, dlc or dlc2 (`AddCamos`'s rule).", FieldKind::Enum,
         |c: &CamoOption| c.tab.name().into(),
         |c: &mut CamoOption, v: Values| { c.tab = OptionTab::parse(v.text).ok_or("unknown tab")?; Ok(()) }),
-    field!("Mtx", "1 for a store option (column 16 names an `mtx_weapon*` item).", FieldKind::Num,
+    field!(present "Mtx", "1 for a store option (column 16 names an `mtx_weapon*` item).", FieldKind::Num,
         |c: &CamoOption| (c.mtx as u8).to_string(),
         |c: &mut CamoOption, v: Values| { c.mtx = v.text.trim() == "1"; Ok(()) }),
 ];
 
 /// Every `Perk` block line: one `specialty` row of `mp/statstable.csv` ([`PerkRow`]).
 pub const PERK_FIELDS: &[Field<PerkRow>] = &[
-    field!("Name", "The localized name (column 3, `PERKS_*`).", FieldKind::Str,
+    field!(present "Name", "The localized name (column 3, `PERKS_*`).", FieldKind::Str,
         |p: &PerkRow| p.name.clone(),
         |p: &mut PerkRow, v: Values| { p.name = v.text.into(); Ok(()) }),
-    field!("Description", "The localized description (column 7, `PERKS_*_DESC`).", FieldKind::Str,
+    field!(present "Description", "The localized description (column 7, `PERKS_*_DESC`).", FieldKind::Str,
         |p: &PerkRow| p.description.clone(),
         |p: &mut PerkRow, v: Values| { p.description = v.text.into(); Ok(()) }),
     field!("Specialties", "The specialties it grants (column 4), by name.", FieldKind::Words,
@@ -1145,13 +1172,13 @@ pub const PERK_FIELDS: &[Field<PerkRow>] = &[
 
 /// Every `BonusCard` block line: one `bonuscard` row of `mp/statstable.csv` ([`BonusCard`]).
 pub const BONUS_CARD_FIELDS: &[Field<BonusCard>] = &[
-    field!("Name", "The localized name (column 3, `BONUSCARD_*`).", FieldKind::Str,
+    field!(present "Name", "The localized name (column 3, `BONUSCARD_*`).", FieldKind::Str,
         |b: &BonusCard| b.name.clone(),
         |b: &mut BonusCard, v: Values| { b.name = v.text.into(); Ok(()) }),
-    field!("Description", "The localized description (column 7, `MENU_BONUSCARD_*_DESC`).", FieldKind::Str,
+    field!(present "Description", "The localized description (column 7, `MENU_BONUSCARD_*_DESC`).", FieldKind::Str,
         |b: &BonusCard| b.description.clone(),
         |b: &mut BonusCard, v: Values| { b.description = v.text.into(); Ok(()) }),
-    field!("Image", "The card image (column 6, `menu_mp_bonuscard_*`).", FieldKind::Str,
+    field!(present "Image", "The card image (column 6, `menu_mp_bonuscard_*`).", FieldKind::Str,
         |b: &BonusCard| b.image.clone(),
         |b: &mut BonusCard, v: Values| { b.image = v.text.into(); Ok(()) }),
     field!("Slot", "The loadout slot (column 13, `bonuscard1..7`; `Engine.GetLoadoutSlotForItem`).", FieldKind::Str,
@@ -1173,7 +1200,7 @@ pub const BONUS_CARD_FIELDS: &[Field<BonusCard>] = &[
 
 /// Every `UiText` block line: one localized UI string ([`UiText`]).
 pub const UI_TEXT_FIELDS: &[Field<UiText>] = &[
-    field!("Text", "The english text of the block's localize key.", FieldKind::Str,
+    field!(present "Text", "The english text of the block's localize key.", FieldKind::Str,
         |u: &UiText| u.text.clone(),
         |u: &mut UiText, v: Values| { u.text = v.text.into(); Ok(()) }),
 ];

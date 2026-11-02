@@ -491,6 +491,7 @@ pub fn table_with_metadata(
         class_caps: Vec::new(),
         hit_boxes: Vec::new(),
         shocks: Vec::new(),
+        installed_dlc: Vec::new(),
     }
 }
 

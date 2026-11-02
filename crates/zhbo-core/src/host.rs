@@ -434,7 +434,7 @@ impl ClientHost for CClientHost {
     }
 
     fn sound_loop(&self, event: &str, gain: f32) {
-        if let Some(f) = self.0.sound_loop {
+        if let Some(f) = self.0.sound_loop { // content: presentation (the host API's sound_loop callback, not ShockDef::sound_loop)
             f(cstring(event).as_ptr(), gain);
         }
     }

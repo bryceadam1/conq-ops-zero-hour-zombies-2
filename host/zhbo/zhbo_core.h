@@ -579,6 +579,27 @@ void zhbo_native_body_reset(void);
    source's feet and height when `source_known`. Lock-free (safe inside any core callback).
    ABI 27. */
 float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, float from_y, float from_z, float from_height, int32_t source_known, int32_t kind, float amount);
+/* The multiplayer content fingerprint (content.rs; appended after ABI 29, pending the next bump):
+   each part's hash and the total the lobbies compare. Parts, in order: Zero Hour's own INI CRC,
+   the weapon table's sim fields, the class-pick vocabulary, the tuning pack, the class list, the
+   ZHBO_LOADOUT/ZHBO_AUTOPILOT settings, the mod build. Presentation (localized text, DLC art and
+   locks, sounds) is not in it. */
+#define ZHBO_CONTENT_PARTS 7
+typedef struct ZhboContentCrc {
+	uint32_t parts[ZHBO_CONTENT_PARTS];
+	uint32_t total;
+} ZhboContentCrc;
+/* After the table, tuning and classes are loaded: the fingerprint over `engine_ini` (fills `out`
+   when not null); returns the total (the bridge's m_iniCRC). */
+uint32_t zhbo_content_crc(uint32_t engine_ini, ZhboContentCrc *out);
+/* "Conquer Ops content 1A2B3C4D" (LAN:ZHBO_ContentCRC), UTF-8; length, or -1 before zhbo_content_crc. */
+int32_t zhbo_content_label(char *out, int32_t cap);
+/* A refused join's message naming the parts that differ from `theirs` (ZHBO_CONTENT_PARTS words;
+   null or zeros: an older build), UTF-8; length, or -1 before zhbo_content_crc. */
+int32_t zhbo_content_mismatch(const uint32_t *theirs, char *out, int32_t cap);
+/* Online (a staging room carries only the total): "Conquer Ops content <ours>, the game's <theirs>"
+   (LAN:ZHBO_ContentVersus), UTF-8; length, or -1 before zhbo_content_crc. */
+int32_t zhbo_content_versus(uint32_t theirs, char *out, int32_t cap);
 
 #ifdef __cplusplus
 }
@@ -602,4 +623,5 @@ static_assert(sizeof(ZhboNativeLight) == 24, "ZhboNativeLight layout must match 
 static_assert(sizeof(ZhboNativeIn) == 168, "ZhboNativeIn layout must match nativevm/ffi.rs");
 static_assert(sizeof(ZhboNativePose) == 28, "ZhboNativePose layout must match nativebody/ffi.rs");
 static_assert(sizeof(ZhboNativeBodyIn) == 204, "ZhboNativeBodyIn layout must match nativebody/ffi.rs");
+static_assert(sizeof(ZhboContentCrc) == 32, "ZhboContentCrc layout must match content.rs");
 #endif

@@ -157,7 +157,7 @@ The two scripts take `-Dist` to test a given build.
 * First person sounds like BO2: gunshots, reload foley, hit markers, footsteps and the low-health
   heartbeat are converted from your install. Weapon metal and gear reflect a generated environment
   (weighted by BO2's specular maps), not BO2's own per-map reflection probes.
-* First-person state is not saved in save games. Multiplayer (LAN and online lobbies) is designed to be lockstep-safe and has a headless three-machine determinism gate, but has never been played over a real network. Every player must convert from the same Black Ops II content: the lobby refuses a joiner whose converted data differs.
+* First-person state is not saved in save games. Multiplayer (LAN and online lobbies) is designed to be lockstep-safe and has a headless three-machine determinism gate, but has never been played over a real network. Every player needs the same mod build and Black Ops II patch level (Steam keeps it on the final patch), tuning pack and classes: the lobby refuses a joiner whose sim content differs and says which part. The language and the DLC packs of the install do not have to match (a DLC item is its owner's, as in BO2).
 * The engine build is not network-compatible with retail Zero Hour.
 
 ## License

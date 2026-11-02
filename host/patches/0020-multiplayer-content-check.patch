@@ -1,0 +1,168 @@
+diff --git a/Core/GameEngine/Include/GameNetwork/LANAPI.h b/Core/GameEngine/Include/GameNetwork/LANAPI.h
+index 9c397b26a..57109a218 100644
+--- a/Core/GameEngine/Include/GameNetwork/LANAPI.h
++++ b/Core/GameEngine/Include/GameNetwork/LANAPI.h
+@@ -143,6 +143,12 @@ public:
+  * LAN message class
+  */
+ #pragma pack(push, 1)
++// ZHBO: the Conquer Ops content fingerprint's parts a join request and its refusal carry, so the
++// refused player is told which part differs (ZHBO_CONTENT_PARTS in host/zhbo/zhbo_core.h; the
++// bridge reads and writes them through Zhbo_ContentParts, by count). Appended at the end of their
++// union members, inside the union's existing size: the packet does not grow.
++enum { ZHBO_LAN_CONTENT_PARTS = 7 };
++
+ struct LANMessage
+ {
+ 	enum Type				          ///< What kind of message are we?
+@@ -216,6 +222,7 @@ struct LANMessage
+ 			UnsignedInt exeCRC;
+ 			UnsignedInt iniCRC;
+ 			char serial[g_maxSerialLength];
++			UnsignedInt zhboContent[ZHBO_LAN_CONTENT_PARTS]; ///< ZHBO: the joiner's content fingerprint parts
+ 		} GameToJoin;
+ 
+ 		// GameJoined is sent with JOIN_ACCEPT
+@@ -234,6 +241,7 @@ struct LANMessage
+ 			UnsignedInt gameIP;
+ 			UnsignedInt playerIP;
+ 			LANAPIInterface::ReturnType reason;
++			UnsignedInt zhboContent[ZHBO_LAN_CONTENT_PARTS]; ///< ZHBO: the host's parts, for a CRC refusal
+ 		} GameNotJoined;
+ 
+ 		// Accept is sent with SET_ACCEPT
+diff --git a/Core/GameEngine/Source/GameNetwork/LANAPI.cpp b/Core/GameEngine/Source/GameNetwork/LANAPI.cpp
+index 4e8759391..541938cf1 100644
+--- a/Core/GameEngine/Source/GameNetwork/LANAPI.cpp
++++ b/Core/GameEngine/Source/GameNetwork/LANAPI.cpp
+@@ -38,6 +38,7 @@
+ #include "GameClient/MapUtil.h"
+ #include "Common/UserPreferences.h"
+ #include "GameLogic/GameLogic.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ 
+ static const UnsignedShort lobbyPort = 8086; ///< This is the UDP port used by all LANAPI communication
+@@ -657,6 +658,7 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
+ 	msg.GameToJoin.gameIP = game->getSlot(0)->getIP();
+ 	msg.GameToJoin.exeCRC = TheGlobalData->m_exeCRC;
+ 	msg.GameToJoin.iniCRC = TheGlobalData->m_iniCRC;
++	Zhbo_ContentParts(msg.GameToJoin.zhboContent, ZHBO_LAN_CONTENT_PARTS); // ZHBO
+ 
+ 	AsciiString s;
+ 	GetStringFromRegistry("\\ergc", "", s);
+diff --git a/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp b/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp
+index 58ad819aa..0347c1ea8 100644
+--- a/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp
++++ b/Core/GameEngine/Source/GameNetwork/LANAPICallbacks.cpp
+@@ -47,6 +47,7 @@
+ #include "GameNetwork/LANAPICallbacks.h"
+ #include "GameNetwork/NetworkAutoStart.h"
+ #include "GameNetwork/networkutil.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ LANAPI *TheLAN = nullptr;
+ extern Bool LANbuttonPushed;
+@@ -557,6 +558,11 @@ void LANAPI::OnGameJoin( ReturnType ret, LANGameInfo *theGame )
+ 		UnicodeString title, body;
+ 		title = TheGameText->fetch("LAN:JoinFailed");
+ 		body = getErrorStringFromReturnType(ret);
++		if (ret == RET_CRC_MISMATCH) // ZHBO: which part of the Conquer Ops content differs
++		{
++			body.concat(L"\n\n");
++			body.concat(Zhbo_RefusedContentText());
++		}
+ 		MessageBoxOk(title, body, nullptr);
+ 	}
+ }
+diff --git a/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp b/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp
+index c976ec01b..c545fb56e 100644
+--- a/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp
++++ b/Core/GameEngine/Source/GameNetwork/LANAPIhandlers.cpp
+@@ -39,6 +39,7 @@
+ #include "GameNetwork/LANAPI.h"
+ #include "GameNetwork/LANAPICallbacks.h"
+ #include "GameClient/MapUtil.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
+ {
+@@ -311,6 +312,13 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
+ 				reply.GameNotJoined.reason = LANAPIInterface::RET_CRC_MISMATCH;
+ 				reply.GameNotJoined.gameIP = m_localIP;
+ 				reply.GameNotJoined.playerIP = senderIP;
++				// ZHBO: send our parts back, and tell the host who was refused and why.
++				Zhbo_ContentParts(reply.GameNotJoined.zhboContent, ZHBO_LAN_CONTENT_PARTS);
++				{
++					UnicodeString why;
++					why.format(L"%ls: %ls", lanWideStrToUnicode(msg->name).str(), Zhbo_ContentMismatch(msg->GameToJoin.zhboContent, ZHBO_LAN_CONTENT_PARTS).str());
++					OnChat(L"SYSTEM", m_localIP, why, LANCHAT_SYSTEM);
++				}
+ 				canJoin = false;
+ 			}
+ #if defined(RTS_DEBUG)
+@@ -501,6 +509,9 @@ void LANAPI::handleJoinDeny( LANMessage *msg, UnsignedInt senderIP )
+ 	{
+ 		if (m_pendingAction == ACT_JOIN) // Are we trying to join?
+ 		{
++			// ZHBO: the host's content parts, for the join-failed box to say which part differs.
++			if (msg->GameNotJoined.reason == LANAPIInterface::RET_CRC_MISMATCH)
++				Zhbo_NoteRefusedContent(msg->GameNotJoined.zhboContent, ZHBO_LAN_CONTENT_PARTS);
+ 			OnGameJoin(msg->GameNotJoined.reason, LookupGame(lanWideStrToUnicode(msg->GameNotJoined.gameName)));
+ 			m_pendingAction = ACT_NONE;
+ 			m_expiration = 0;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
+index 1fb6d4820..0a9c9e08b 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/LanGameOptionsMenu.cpp
+@@ -859,6 +859,9 @@ void LanGameOptionsMenuInit( WindowLayout *layout, void *userData )
+ 
+ 	// Make sure the text fields are clear
+ 	GadgetListBoxReset( listboxChatWindowLanGame );
++	// ZHBO: this machine's Conquer Ops content fingerprint, to compare with the other players'.
++	if ( !Zhbo_ContentLabel().isEmpty() )
++		GadgetListBoxAddEntryText( listboxChatWindowLanGame, Zhbo_ContentLabel(), chatSystemColor, -1, 0 );
+ 	GadgetTextEntrySetText(textEntryChat, UnicodeString::TheEmptyString);
+ 
+ 	//The dialog needs to react differently depending on whether it's the host or not.
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp
+index 120f0fca3..4deebd41c 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLGameSetupMenu.cpp
+@@ -1378,6 +1378,9 @@ void WOLGameSetupMenuInit( WindowLayout *layout, void *userData )
+ 	// classes are the player's own (his profile); the pick goes over the wire in the match.
+ 	Zhbo_EnsureCreateClassButton( parentWOLGameSetup, "GameSpyGameOptionsMenu.wnd", "FadeParent", "LINE", buttonStart );
+ 	TheGameSpyInfo->registerTextWindow(listboxGameSetupChat);
++	// ZHBO: this machine's Conquer Ops content fingerprint, to compare with the other players'.
++	if (!Zhbo_ContentLabel().isEmpty())
++		TheGameSpyInfo->addText(Zhbo_ContentLabel(), GameSpyColor[GSCOLOR_DEFAULT], listboxGameSetupChat);
+ 
+ 	//The dialog needs to react differently depending on whether it's the host or not.
+ 	TheMapCache->updateCache();
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLLobbyMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLLobbyMenu.cpp
+index d653e2a6f..5c48f056f 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLLobbyMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/WOLLobbyMenu.cpp
+@@ -69,6 +69,7 @@
+ #include "GameNetwork/GameSpy/PersistentStorageThread.h"
+ #include "GameNetwork/GameSpy/LobbyUtils.h"
+ #include "GameNetwork/RankPointValue.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ void refreshGameList( Bool forceRefresh = FALSE );
+ void refreshPlayerList( Bool forceRefresh = FALSE );
+@@ -1585,7 +1586,13 @@ WindowMsgHandledType WOLLobbyMenuSystem( GameWindow *window, UnsignedInt msg,
+ 										TheWritableGlobalData->m_iniCRC = roomToJoin->getIniCRC();
+ 									}
+ #else
+-									GSMessageBoxOk(TheGameText->fetch("GUI:JoinFailedDefault"), TheGameText->fetch("GUI:JoinFailedCRCMismatch"));
++									{
++										// ZHBO: the staging room carries only the total: show both.
++										UnicodeString body = TheGameText->fetch("GUI:JoinFailedCRCMismatch");
++										body.concat(L"\n\n");
++										body.concat(Zhbo_ContentVersus(roomToJoin ? roomToJoin->getIniCRC() : 0));
++										GSMessageBoxOk(TheGameText->fetch("GUI:JoinFailedDefault"), body);
++									}
+ 									break;
+ #endif
+ 								}

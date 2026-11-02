@@ -143,7 +143,7 @@ impl Perk {
     /// BO2's localized description (`UIExpression.GetItemDesc`, statstable column 7): what the
     /// perk grid's lower panel shows under the name (`cacperksp.lua`'s `perkDescription`).
     pub fn description(self) -> &'static str {
-        self.row().map_or("", |r| r.description.as_str())
+        self.row().map_or("", |r| r.description.as_str()) // content: presentation (the perk grid's text)
     }
 
     /// The perk whose spec id matches, if any.
