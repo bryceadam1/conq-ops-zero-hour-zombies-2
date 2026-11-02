@@ -10441,3 +10441,12 @@ between its last two frames.
 * `zhbo_logic_fps_input(player, general, input, seen_frame)` is appended.
 * `MSG_ZHBO_FPS_INPUT` gets a seventh argument. The bridge reads it when present, so older replays
   still go through `zhbo_logic_input`.
+
+**In game** (this branch's `cargo xtask build` into a private work dir and dist; a skirmish, run-ahead
+1, so the prediction is live with one input in flight): `autotest-mac.sh` default leg 16/16,
+`--classpick` 12/12, `--rts` 16/16. Not yet run: a real two-machine LAN game.
+
+**The game lock's wait.** `pgrep -f Generals` matches the shell of any agent whose waiting command
+line contains the word: the user-data path "Command and Conquer Generals Zero Hour Data", or the
+`pgrep -f Generals` check itself. A waiter written that way deadlocks on itself. Wait on
+`pgrep -x generalszh` plus the lock directory instead.
