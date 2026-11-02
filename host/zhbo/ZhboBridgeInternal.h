@@ -133,6 +133,12 @@ void cbLog(const char *msg);
 float cbGroundHeight(float x, float y);
 /* The ground's surface at a point (a ZHBO_SURF_*): Zero Hour's terrain class there (R8d). */
 int32_t cbSurfaceAt(float x, float y);
+/// Hand the core the current map's ground surfaces (zhbo_terrain_load) unless it already holds
+/// them: at the loading screen (Zhbo_Preload) and, for a map loaded without it, on the first ground
+/// query. Reads the map file and TheTerrainTypes only (logic data, the same on every peer).
+void EnsureSurfaceGrid();
+/// Forget which map's grid the core holds (Zhbo_Reset), so the next game's map loads its own.
+void ResetSurfaceGrid();
 /* A point-FX frame: columns X along `normal`, Y to the left, Z up, origin at `at`. One builder for
    the viewmodel's eye frame and R8d's impact orientation (defined in ZhboViewmodel.cpp). */
 Matrix3D zhboFrameAt(const Coord3D &at, const Vector3 &normal);

@@ -27,7 +27,8 @@ Wine/CrossOver/Proton prefixes. Depends on nothing. Used by the launcher and by 
 
 ### `crates/zhbo-formats`
 Parsers for game data: Zero Hour `.big` (from a file or, `big::members`, from memory), Black Ops II
-`.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X, the BO2 fastfile decryption,
+`.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X, RefPack (`refpack`: Zero Hour's
+`EAR\0` files, its maps among them), the BO2 fastfile decryption,
 and the compiled UI Lua (`havok_lua`: Havok Script chunks and their constant stores). `t6zone::load_file`/`install_path`/`language_path` and `localize::install_strings` are the one way to open a zone of the player's install. Depends on nothing. All
 readers are hardened against corrupt input (refactor plan Phase 0.3) and used by the
 converter (`zhbo-assets`), the conformance oracle (`zhbo-conformance`) and `xtask`. The runtime
@@ -81,7 +82,12 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   reaches the host, as BO2's damage callback does), `shock.rs` (which shellshock a first-person
   General gets from a blast: the GSC's `shellshock()` sources), `lockstep.rs` (the state's
   fingerprint, `Sim::fingerprint`/`state_hash`: per-seat and world sub-hashes, the multiplayer
-  gate's and Zero Hour's logic CRC's share).
+  gate's and Zero Hour's logic CRC's share), and test code: `fakehost.rs` (`FakeHost`, the flat
+  fake engine world) and `harness.rs` (the lockstep match: peers, the replicated command stream
+  with the run-ahead, each machine's render cadence; `roster_classes`, every item the editor offers
+  as legal classes), compiled for the crate's own tests and, behind zhbo-core's `harness` feature,
+  for zhbo-assets' real-install gate (a dev-dependency only; the shipped static library never has
+  it).
 - `statehash.rs`: the fingerprint's streaming hash (`StateHash`, `state_hash!`): every sim type
   names each field (destructured without `..`, so a new field does not compile until it is hashed
   or skipped with a reason), floats by bits, definitions by id, no addresses or map order.
@@ -104,7 +110,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness).
   Nothing in it reaches the sim except through the input messages it emits.
 - `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
-  impact effect), `soundlayers.rs` (third-person shots' per-layer distance curves).
+  impact effect), `terrain.rs` (the ground's surface per height-map cell, parsed from the map
+  file the bridge hands it: the logic-side answer under the sim's ground query),
+  `soundlayers.rs` (third-person shots' per-layer distance curves).
 - `math.rs` (the world-space vector math, and `math::det`: the sim's transcendental functions through the pure-Rust `libm` crate, the one external dependency of the sim, so every lockstep peer computes the same bits — `the_sim_calls_no_platform_libm` keeps sim-reachable code off the platform libm), `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack, BO2 units), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block),

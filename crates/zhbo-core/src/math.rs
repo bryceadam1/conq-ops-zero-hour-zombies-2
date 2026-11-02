@@ -192,9 +192,10 @@ mod tests {
     /// The presentation side of the core: per machine by design (the local client, the HUD, the
     /// class screens, the renderer passes, the conformance oracle, the C ABI's logging), so free
     /// to call the platform's libm. Everything else is reachable from a logic step and must go
-    /// through [`det`].
+    /// through [`det`] — the class rules (`classmenu/`) among them: the sim repairs every received
+    /// class with them (`classrepair`).
     const PRESENTATION: &[&str] = &[
-        "client/", "hud/", "classui/", "classmenu/", "lui/", "nativevm/", "nativebody/", "conformance/",
+        "client/", "hud/", "classui/", "lui/", "nativevm/", "nativebody/", "conformance/",
         "menu.rs", "ffi.rs", "sounds.rs", "soundlayers.rs",
     ];
 

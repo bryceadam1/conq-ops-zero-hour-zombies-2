@@ -74,7 +74,21 @@ replicated messages alone. The rules, and what enforces each:
   the core routes the sim's through `math::det` (musl's libm, ported to Rust). The
   `the_sim_calls_no_platform_libm` test fails on any `f32` transcendental call in a sim-reachable
   file (everything except the client, HUD, class screens, LUI, renderer passes, conformance oracle,
-  sounds and the C ABI module).
+  sounds and the C ABI module; the class rules in `classmenu/` are scanned, since the sim repairs
+  received classes with them).
+* **A received class is never trusted.** The pick's words are whatever the sender's machine put
+  there (a modded client, a hand-edited profile, noise). `ChosenClass::decode` runs the editor's
+  own repair pass on every machine before the class is worn (`classrepair::repair_received`: each
+  slot's items and their statstable slot, attachments and their compatibility, the grenade counts,
+  the perk tiers, Pick 10 and the bonus-card cap, the spare-round cap), as BO2's `giveloadout`
+  reads each slot through the engine's checked loadout getters; words that do not decode drop the
+  pick. It leaves out the two rules that read the receiving machine's own install: the DLC locks
+  (`CacLocked`; BO2 checks DLC per owner, `Engine.HasDLCForItem` on the local controller) and the
+  camo lists (`CamoList`, built from the art this machine converted). Those are the picker's
+  (`classrepair::repair`, the profile and the editor), so peers with different DLC mend a class
+  identically (`hostile_class_payloads_are_mended_alike_on_every_machine`,
+  `a_received_class_ignores_the_receivers_dlc`). The fields the received pass does read (the items'
+  `CacSlot`, `Allowed` attachments and costs, the perk rows, the class caps) are sim inputs.
 * **A seat commands only its own General.** Ownership is checked at take-control and on every
   step: a network game hands a leaving player's assets to a living ally (`onSelfDestruct` with
   `transferAssets`), and the leaver's record then lets go of the General (back to RTS control, AI
@@ -103,7 +117,10 @@ replicated messages alone. The rules, and what enforces each:
   each seat's part (its record and chosen class) and the world's. The multiplayer gate
   (`sim/lockstep_tests.rs`, TESTING.md) runs one match on three machines — two players' machines
   at different render cadences, each with its own client and viewer, and one that never renders —
-  and requires the same hash, and the same engine calls, on every frame.
+  and requires the same hash, and the same engine calls, on every frame; the full-roster gate
+  (zhbo-assets, `the_install_roster_plays_in_lockstep`) runs the same harness (`sim/harness.rs`)
+  over the player's own install's every weapon, alt mode, attachment and offhand on three players'
+  machines and an observer's.
 * **The fingerprint in Zero Hour's CRC.** Host patch 0020 calls `Zhbo_XferLogicCRC` in
   `GameLogic::getCRC` right after `MARKER:TheAI` (the logic frame's own CRC at the end of
   `GameLogic::update`, after `Zhbo_LogicStep`, so every machine and a replay hash the same
@@ -660,13 +677,22 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   `fatal`, `impact_type`, `exit`); a shot that hits nothing emits none. A penetrating round
   (below) adds its exit impacts (`exit` set) and its onward entries. `Shot` stays once per shot (the
   gunshot and the viewmodel) and no longer names an impact.
-* **The surface is presentation data.** Objects are classified from the `objflags` the bridge
-  already reports (`INFANTRY → FLESH`, `VEHICLE|AIRCRAFT → METAL`, `STRUCTURE → CONCRETE`); the
-  ground from the new `LogicApi.surface_at(x, y)`, which answers Zero Hour's terrain class
-  (`TheTerrainVisual->getTerrainTile`, the same query the logic's build placement uses) and a water
-  table. The ground's surface is read in the logic step but **never feeds damage, movement or any other
-  sim state**: a peer whose terrain visual disagreed could only differ in its own screen. An
-  *object's* surface (its kind flags, sim state) does feed damage: bullet penetration's depth.
+* **The surface is sim state, read from logic data only.** Objects are classified from the
+  `objflags` the bridge already reports (`INFANTRY → FLESH`, `VEHICLE|AIRCRAFT → METAL`,
+  `STRUCTURE → CONCRETE`). The ground is water where the logic's water table covers it
+  (`LogicApi.surface_at(x, y)`, `TerrainLogic::isUnderwater`), else the map's tile class there,
+  from the core's grid (`zhbo_core::terrain`): at the loading screen (and on the first ground
+  query of a map it has not loaded) the bridge reads the map file as the logic does
+  (`CachedFileInputStream`, decompressed) and hands it, with Zero Hour's terrain types and each
+  one's class classified, to `zhbo_terrain_load`; the grid answers `WorldHeightMap::getTerrainNameAt`'s
+  cell (the cell under the point plus the border, its tile over four, the first texture class
+  holding it, that name's terrain type). It never reads `TheTerrainVisual`, the client's copy of
+  the height map: the surface feeds the sim — a grenade's bounce scales by it, the plant check
+  refuses deep water by it, an object's surface sets bullet penetration's depth, and the impact and
+  blast cells ride the events — so a peer with other graphics settings, or a `-headless` one,
+  must get the same answer. At load the bridge cross-checks the grid against the terrain visual's
+  lookup on every fourth cell where one exists (`ConquerOps.log`: `terrain: the grid agrees with
+  the terrain visual on N of M sampled cells`); the check decides nothing.
 * **Bullet penetration** (t6mp `FUN_005d0350`; `zhbo_core::penetration`). After its first hit a
   round goes on through up to `penetrationCount` (5) solids while its damage multiplier (1 at the
   muzzle) stays positive: each solid costs its chord (≥ 1 in; the targets' convex shapes, exact)
@@ -1114,6 +1140,13 @@ integrator bumps): the free function `zhbo_logic_crc(ZhboLogicCrc *out, int32_t 
 `ZhboLogicCrc` (`uint64_t hash, world, seats[16]; uint32_t frame, active`: 152 bytes, asserted on
 both sides) for host patch 0020 (the multiplayer CRC hook). No API-table field and no existing
 struct moves.
+
+**Pending for the next bump** (appended on `v1/mp-hardening`, no version moved): the free functions
+`zhbo_terrain_load(bytes, len, names, surfaces, count)` and `zhbo_terrain_surface_at(x, y)` (the
+map's ground surfaces, `zhbo_core::terrain`); `ZhboLogicApi.surface_at` keeps its slot and type but
+now answers the water table only (`ZHBO_SURF_WATER`, else `ZHBO_SURF_DEFAULT`), the core reading the
+ground from the grid (a non-default answer is still taken as it is, so an older bridge works). No
+struct size or field count changes.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

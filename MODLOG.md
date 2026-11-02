@@ -10478,3 +10478,129 @@ tests with real input.
 **Gotcha.** `perturb` walks the same field list as `hash`, so it proves every *listed* field
 reaches the hash, not that a `skip` entry is right. A skip needs its reason in a comment at the
 call.
+
+## Multiplayer hardening: a received class is repaired before it is worn (2026-11-01, branch `v1/mp-hardening`)
+
+The pick message carries the sender's class as wire words, and the sim used to wear whatever
+decoded. A modded client (or a hand-edited profile) could field six perks, five attachments, a
+launcher in the primary slot, nine grenades or 65,535 spare rounds. That was no desync, because
+every machine wore the same illegal kit, but it was a cheat.
+
+What BO2 does: its server never takes the client's class either. `giveloadout` (`_class.gsc`) reads
+each slot through the engine's checked loadout getters: `getloadoutitemfromddlstats` zeroes an
+excluded item, and the `tu6_*`/`tu7_*` switches registered in `FUN_008d5ee0` (conflicting
+attachments, unused attachment slots, the bonus-card perks, the grenade counts) and the
+attachment sanitizer `FUN_008eb870` act item by item. So BO2 mends a bad class slot by slot. It
+never refuses the spawn and never hands over the illegal kit.
+
+`ChosenClass::decode` now runs `classrepair::repair_received` on every received custom class
+before it is worn. That is the pass the profile load and the editor already use
+(`classrepair::repair`), minus the two rules that read the receiving machine's own install: the
+DLC locks (`CacLocked`) and the camo lists (`CamoList`, built from the art this machine
+converted). BO2 checks DLC per owner (`Engine.HasDLCForItem` on the local controller), and
+`v1/mp-content` keeps both fields out of the multiplayer fingerprint. A peer without a pack would
+otherwise drop the owner's Peacekeeper and desync. Words that do not decode still drop the pick.
+The pass gained one rule: BO2's class has no ammo field, so the mod's spare-round override is
+capped at its weapon's `max_reserve` and goes when its weapon goes.
+
+**Gotcha for the integrator.** With `v1/mp-content`'s field roles, every field the received pass
+reads is a sim input now: the items' `CacSlot` (slot fit, Overkill, Tactician), `Allowed` and the
+attachment costs, the perk rows and the class caps. `CacSlot` is marked presentation there. It
+must become a sim field, or two peers whose statstables differed would mend a class differently
+without the lobby noticing.
+
+Two related changes:
+* The libm scan (`the_sim_calls_no_platform_libm`) no longer exempts `classmenu/`, because those
+  class rules are reachable from the sim now. They contain no floats.
+* The unknown-weapon-id list (`catalog::note_unresolved`) is capped at 64 entries, so a stream
+  of hostile picks cannot grow it.
+
+**Verified.** The lockstep gate takes the picks as a parameter now. The new test
+`hostile_class_payloads_are_mended_alike_on_every_machine` plays six rounds in which every pick
+is a fuzz payload, on three machines that must agree on every frame. The payloads are random
+words, a tagged body of noise, a class that breaks every rule at once, or a legal class with one
+field corrupted. `a_received_class_is_worn_legal_or_not_at_all` checks 4,000 payloads: the sim
+wears exactly the repaired class, the repair is a fixed point, and the result passes Pick 10,
+the card cap, slot fit, grenade caps and the spare-round cap. Payloads that do not decode are
+dropped. `a_received_class_ignores_the_receivers_dlc` keeps a DLC camo the receiver lacks, and
+`classrepair`'s lock test keeps a locked item on receipt.
+
+## Multiplayer hardening: the ground's surface comes from the map file, not the terrain visual (2026-11-01, branch `v1/mp-hardening`)
+
+`cbSurfaceAt` answered the ground's surface through `TheTerrainVisual->getTerrainTile`, and
+CONTRACT and `impacts.rs` called surfaces "presentation only". Both were wrong.
+* The surface feeds the sim. A grenade's bounce scales its velocity by the surface
+  (`Projectile::bounce_scales`), and the plant check refuses deep water by it.
+* `TerrainVisual` is a client subsystem. Its lookup reads the visual's own copy of the height
+  map (`W3DTerrainVisual::m_logicHeightMap`, despite the name). That copy happens to load on
+  `-headless` today, because `W3DTerrainVisual::init` still makes the render object. But nothing
+  in the engine promises that, and a client-side copy is the wrong place for a logic query to
+  look.
+
+The fix reads the same data the way the logic does. At the loading screen (`Zhbo_Preload`), and
+again on the first ground query of any map loaded without that, the bridge does two things. It
+reads the map file through `CachedFileInputStream`, as `W3DTerrainLogic::loadMap` does, which
+decompresses RefPack'd maps. It also enumerates `TheTerrainTypes`, classified by the same switch
+as before. Both go to the new `zhbo_terrain_load`. `zhbo_core::terrain` parses the `CkMp` chunk
+file (`HeightMapData`, then `BlendTileData` with its version-dependent layers) into a per-cell
+surface grid, using `WorldHeightMap::getTerrainNameAt`'s cell rule. `cbSurfaceAt` now answers
+only the logic's water table, and the core reads the ground from the grid. A file that does not
+parse clears the grid, so every machine then reads the default surface, which is still the same
+answer everywhere.
+
+**Gotcha: every shipped map is RefPack-compressed (`EAR\0`).** A Rust-side reader needs a RefPack
+decoder, so `zhbo_formats::refpack` is a bounds-checked port of the engine's `REF_decode`.
+
+**Verified.** Parser unit tests cover synthetic maps at chunk versions 3/4 and 5–8, clamping,
+NaN input and 500 corrupt files. The FFI round trip
+(`every_machine_reads_the_same_ground_from_the_map_file`) checks the load and query entry points
+with the water table on top. A real-install test (`every_shipped_map_reads_its_ground_surfaces`,
+`ZHBO_ZH_DIR`) decompresses and parses every `.map` in the install's archives. In every one, every
+cell's texture class names a `Terrain.ini` terrain type. In game, the bridge cross-checks the grid
+against the terrain visual's lookup on every fourth cell at load and logs the agreement. On Alpine
+Assault, the autotest's map, it reported 3,900 of 3,900 sampled cells agreeing (152,000 cells,
+248 terrain types), with the default autotest leg at 16/16 and `--classpick` passing.
+
+## Multiplayer hardening: the lockstep gate over the install's whole roster (2026-11-01, branch `v1/mp-hardening`)
+
+The lockstep gate cycled only the built-in catalog's 13 slot weapons. The harness (peers, the
+replicated command stream with the run-ahead, render cadences, the script) moved out of
+`lockstep_tests.rs` into `sim/harness.rs`, and `FakeHost` moved into `sim/fakehost.rs`. Both are
+compiled for zhbo-core's own tests and, behind the new `harness` feature, for zhbo-assets as a
+dev-dependency only. The shipped static library never has them. `harness::play` takes 2–4
+players (each with a machine, plus an observer's machine that never renders) and returns
+coverage labels. `harness::roster_classes` turns every item the editor offers into legal Pick-10
+classes:
+* each primary with its attachments packed into compatible pairs, never two alt-mode attachments
+  together, since a combination has one alt;
+* each secondary with each attachment alone;
+* every lethal, tactical and perk tier in turn.
+
+The new real-install test `the_install_roster_plays_in_lockstep` (zhbo-assets) plays all 230 of
+them over the launcher's own converted table. That is 78 rounds and ~51,000 frames, on seats 0–2
+with ragged, steady and skipping render cadences plus the observer, with the hash and every
+engine call equal on every frame. It asserts everything was reached: every item fired (a shot, a
+launch, a deployed shield, or its projectile in flight), every attachment worn, every alt mode
+fired, every offhand used (the Black Hat, which needs a target, carried), the crossbow's
+explosive bolt, and the concussion and flashbang shellshocks. It runs in ~5 min release, about
+1.5 min of play and the rest conversion.
+
+**Gotchas the real data showed (the built-in catalog hid them all).**
+* A real frag is ready ~1.6 s after the press and thrown ~0.7 s later, which swallowed the
+  tactical's press 0.2 s behind it. Not one tactical was thrown.
+* Facing Generals killed each other in the firefight, so nothing after it ran. Harness Generals
+  now have 10⁶ health; the damage still lands and is hashed.
+* A sprint and a lethal cancel a reload. The alt mode shares the magazine, so most alt bursts
+  were dry.
+* A melee still swinging, or a prone stance, refuses the alt key.
+* The Hybrid optic's `dualoptic` alt toggles only on hold-breath while fully aimed, never on the
+  alt key.
+* A launcher's or shield's first raise is 1.5 s. A held trigger is not a fresh press for a
+  semi-automatic.
+
+The round is 660 frames now, with the beats spaced for these. The built-in gate uses the same
+script.
+
+R5 (logging): at the 512-event cap, `log_step` skipped "the events past the old length", so a
+machine that rendered nothing logged nothing. `Sim::emitted` counts every emit (not hashed), and
+`first_event_since` finds a step's events from it (`a_full_event_buffer_still_tells_the_log_this_steps_events`).

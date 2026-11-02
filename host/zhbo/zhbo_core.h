@@ -42,7 +42,8 @@ enum ZhboObjFlags
 };
 
 /* What a shot hit (zhbo_core::impacts::Surface). The sim classifies an object hit from its kind
-   flags; the bridge classifies the ground from Zero Hour's terrain class (cbSurfaceAt). The values
+   flags and the ground from the map's tile classes (zhbo_terrain_load; the bridge classifies Zero
+   Hour's terrain types) under the water table (cbSurfaceAt). The values
    are the ABI's: they go into ZhboClientHit.surface and back into zhbo_impact_fx. */
 enum ZhboSurfaces
 {
@@ -148,9 +149,10 @@ typedef struct ZhboLogicApi
 	/* The pick menu's choice: the General assumes the class at the shared list's index
 	   (crates/zhbo-core/src/classes.rs; the list ships in the mod's BIG file). */
 	void (*choose_class)(int32_t player, uint32_t general, int32_t index);
-	/* ABI 26: the ground's surface at a world point (a ZHBO_SURF_*), from Zero Hour's terrain
-	   class (crates/zhbo-core/src/impacts.rs; CONTRACT.md "Shot impacts (R8d)"). Presentation
-	   only: it feeds the impact FX, never damage or sim state. */
+	/* ABI 26: the water table at a world point: ZHBO_SURF_WATER, else ZHBO_SURF_DEFAULT (the core
+	   then reads the ground from the map grid zhbo_terrain_load installed). Sim state (a grenade's
+	   bounce scales by the surface), so logic data only: never TheTerrainVisual (CONTRACT.md
+	   "Multiplayer"). */
 	int32_t (*surface_at)(float x, float y);
 } ZhboLogicApi;
 
@@ -594,6 +596,15 @@ typedef struct ZhboLogicCrc
 	uint32_t active;    /* the return value */
 } ZhboLogicCrc;
 int32_t zhbo_logic_crc(ZhboLogicCrc *out, int32_t log);
+
+/* The map's ground surfaces (terrain.rs): `bytes` is the map file as CachedFileInputStream reads it
+   (decompressed), `names`/`surfaces` Zero Hour's terrain types in collection order with each one's
+   ZHBO_SURF_*. Replaces the previous map's grid; returns its cell count, or -1 when the file does
+   not parse (the grid is cleared). Pending for the next ZHBO_ABI_VERSION bump. */
+int32_t zhbo_terrain_load(const uint8_t *bytes, int32_t len, const char *const *names, const int32_t *surfaces, int32_t count);
+/* The loaded grid's ZHBO_SURF_* at a world point (ZHBO_SURF_DEFAULT with no map): the ground the
+   sim reads under the water table. Pending for the next ZHBO_ABI_VERSION bump. */
+int32_t zhbo_terrain_surface_at(float x, float y);
 
 #ifdef __cplusplus
 }

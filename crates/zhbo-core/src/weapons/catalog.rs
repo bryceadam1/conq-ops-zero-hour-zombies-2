@@ -304,9 +304,14 @@ pub fn catalog() -> &'static Catalog {
 /// stdout/stderr), so a kit that quietly became the catalog's first entry shows up.
 static UNRESOLVED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// The most distinct unresolved ids remembered (and printed) between two [`clear_unresolved`]s.
+const MAX_UNRESOLVED: usize = 64;
+
 fn note_unresolved(id: &str) {
     let mut seen = UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner());
-    if seen.iter().any(|s| s == id) {
+    // Bounded: a received class can name any id (the sim repairs it away), and a stream of
+    // hostile picks must not grow the list without end.
+    if seen.len() >= MAX_UNRESOLVED || seen.iter().any(|s| s == id) {
         return;
     }
     seen.push(id.to_string());

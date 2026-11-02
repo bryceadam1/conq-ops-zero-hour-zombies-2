@@ -12,7 +12,9 @@
 //! **not** hashed, each named in its `skip` list:
 //! * presentation that legitimately differs per machine: [`Sim::events`] (each client drains it
 //!   at its own render cadence, and a headless replay never does) and [`Sim::tracers`] (drained
-//!   right after each step and drawn per viewer);
+//!   right after each step and drawn per viewer), and `emitted`, the count of every event ever
+//!   emitted (the log's bookkeeping across the event cap: it only grows with `events`, which a
+//!   client drains, and nothing in the step reads it);
 //! * per-step scratch rebuilt from the hashed state before it is read: [`Sim::shields`] and the
 //!   equipment's copies of it and of the guards, the equipment's shock hits, `combat_seen`;
 //! * the installed data, which never changes during a game and which the content CRC (the
@@ -69,6 +71,7 @@ impl Sim {
             tracers: _,
             shields: _,
             combat_seen: _,
+            emitted: _,
         } = self;
         let mut seats = [None; MAX_PLAYERS];
         for (i, seat) in seats.iter_mut().enumerate() {

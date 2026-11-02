@@ -16,6 +16,9 @@ renderer = ["dep:zhbo-gfx"]
 # driver. On by default so unit tests and the Windows autotest run; release builds can strip it.
 default = ["autopilot"]
 autopilot = []
+# The sim's fake engine world and lockstep match harness (`sim::fakehost`, `sim::harness`), for
+# the full-roster lockstep gate in zhbo-assets' real-install tests. Test code only.
+harness = []
 
 [dependencies]
 zhbo-requirements = { path = "../zhbo-requirements" }

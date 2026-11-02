@@ -12,6 +12,7 @@ pub mod ipak;
 pub mod iwi;
 pub mod localize;
 pub mod lzo;
+pub mod refpack;
 pub mod sab;
 pub mod sndalias;
 pub mod sndglobals;
