@@ -16,7 +16,8 @@
 #                                      the empty gun hands over to the other and he keeps firing
 #   scripts/autotest-mac.sh --build    the General builds: his Build menu, a structure ordered from it,
 #                                      Back; it must take about 1 / GENERAL_BUILD_RATE of a dozer's time.
-#                                      Then in first person: the hammer places one (turned with the
+#                                      Then in first person (facing the open ground the script
+#                                      checked, to the degree): the hammer places one (turned with the
 #                                      wheel), holding F builds it, and repairs it once damaged. Back
 #                                      overhead he is an idle worker, and repairs it again when ordered.
 #   scripts/autotest-mac.sh --classpick
@@ -171,6 +172,15 @@ if [[ $mode == build ]]; then
     check "General started building" "started building"
     check "General finished it" "finished building"
     check "back to his commands" "closed the build menu"
+    # First person starts facing the open ground the script checked: nothing turned him while the
+    # Take Control order was on its way (else the hammer aims at ground nobody checked).
+    if awk '/autopilot: facing open ground at/ { for (i = 1; i <= NF; ++i) if ($i == "at") want = $(i + 1); armed = 1 }
+            armed && /player [0-9]+ pos .* yaw / { for (i = 1; i <= NF; ++i) if ($i == "yaw") got = $(i + 1) * 180 / 3.14159265; armed = 0; seen = 1 }
+            END { d = got - want; while (d > 180) d -= 360; while (d < -180) d += 360; exit !(seen && d < 1 && d > -1) }' "$out/ConquerOps.log"; then
+        printf '%-28s PASS\n' "first person: faces it"
+    else
+        printf '%-28s FAIL\n' "first person: faces it"; ok=1
+    fi
     check "first person: hammer placed" "placed .* in first person"
     check "  ...turned with the wheel" "placed .* turned [1-9][0-9]* degrees"
     check "  ...held F to build it" "finished building .* in first person"

@@ -168,15 +168,29 @@ int32_t cbCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float
 	if (code != LBC_OK)
 		logf("General %u can't place %s at (%.0f, %.0f): legal-build code %d", generalId,
 			what ? what->getName().str() : "?", pos->x, pos->y, (int)code);
-	if (code == LBC_OBJECTS_IN_THE_WAY && what)
+	if (code == LBC_OBJECTS_IN_THE_WAY && what && general)
 	{
+		// What Zero Hour weighed (BuildAssistant::isLocationClearOfObjects): whatever the footprint
+		// touches, then every structure near enough for the two buildings' borders and exits to meet.
+		// (A plain radius search misses a big structure whose centre is far off, the case that matters.)
 		Coord3D at;
 		at.set(pos->x, pos->y, pos->z);
-		SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange(&at, what->getTemplateGeometryInfo().getBoundingCircleRadius() * 1.5f, FROM_CENTER_2D);
-		MemoryPoolObjectHolder hold(iter);
-		for (Object *o = iter->first(); o; o = iter->next())
-			logf("  near: %s %u busy %d disabled %d", o->getTemplate()->getName().str(), (unsigned)o->getID(),
-				o->getAI() ? (int)o->getAI()->isBusy() : -1, (int)o->isDisabled());
+		const GeometryInfo &geom = what->getTemplateGeometryInfo();
+		logf("  site angle %.2f; General %u at (%.0f, %.0f)", angle, generalId, general->getPosition()->x, general->getPosition()->y);
+		SimpleObjectIterator *touching = ThePartitionManager->iteratePotentialCollisions(&at, geom, angle, true);
+		MemoryPoolObjectHolder holdTouching(touching);
+		for (Object *o = touching->first(); o; o = touching->next())
+			logf("  touches: %s %u at (%.0f, %.0f) relationship %d busy %d immobile %d disabled %d", o->getTemplate()->getName().str(),
+				(unsigned)o->getID(), o->getPosition()->x, o->getPosition()->y, (int)general->getRelationship(o),
+				o->getAI() ? (int)o->getAI()->isBusy() : -1, (int)o->isKindOf(KINDOF_IMMOBILE), (int)o->isDisabled());
+		PartitionFilterAcceptByKindOf structures(MAKE_KINDOF_MASK(KINDOF_STRUCTURE), KINDOFMASK_NONE);
+		PartitionFilter *filters[] = { &structures, nullptr };
+		SimpleObjectIterator *nearby = ThePartitionManager->iterateObjectsInRange(&at, 2 * (geom.getMajorRadius() + geom.getMinorRadius()),
+			FROM_BOUNDINGSPHERE_2D, filters);
+		MemoryPoolObjectHolder holdNear(nearby);
+		for (Object *o = nearby->first(); o; o = nearby->next())
+			logf("  structure near: %s %u at (%.0f, %.0f) facing %.2f, exit width %.0f", o->getTemplate()->getName().str(), (unsigned)o->getID(),
+				o->getPosition()->x, o->getPosition()->y, o->getOrientation(), o->getTemplate()->getFactoryExitWidth());
 	}
 	return code == LBC_OK;
 }
