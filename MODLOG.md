@@ -11881,3 +11881,13 @@ teammate); the rule is the unit tests'.
   The client starts the gun's shot torso when a slot's rounds drop.
 * **Gotcha: the script's `DEATH` block sits among the `EVENTS`.** `dtp_takeoff`, `dtp_land`,
   `flared` and `prime_grenade` come after it; the parser returns to the events after the block.
+* **A corpse keeps the rig he died with.** The first showcase run recomposed the dead General's rig
+  6 frames after his death (his record, and with it the published stowed weapon, offhands and
+  camo, was gone), showing the W3D body while it loaded; the body pass now keeps the rig while the
+  DEATH action plays. The rerun composed once.
+* **Verified.** `cargo test --workspace`, clippy clean; real-install torso sweep (deaths: BO2's
+  own picks, every context has one; 283 clips) and the offhand sweep (15/15); in game
+  `--showcase` (the General falls by `pb_stand_death_*` and lies until Zero Hour removes the body:
+  `render/showcase_death_sheet.png`), `--rts` 16/16, `mptest-mac.sh` short 25/25 (state hash on
+  2,778 frames). Headless renders: `render/torso_an94_mp.png`, `torso_fnp45_mp.png` (the frag in the
+  hand during the throw, the corpse).
