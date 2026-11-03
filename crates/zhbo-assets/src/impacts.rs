@@ -280,8 +280,7 @@ mod tests {
                 assert!((table.depth(pen, s, false) / units - want).abs() < 1e-3, "{key}: {} vs {want}", table.depth(pen, s, false) / units);
             }
         }
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
         let pen = |n: &str| Penetrate::from_bo2(all.iter().find(|w| w.name == n).unwrap().penetrate_type);
         assert_eq!([pen("fnp45_mp"), pen("an94_mp"), pen("dsr50_mp"), pen("870mcs_mp")], [Penetrate::Small, Penetrate::Medium, Penetrate::Large, Penetrate::None]);
     }

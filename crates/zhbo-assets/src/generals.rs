@@ -780,6 +780,7 @@ mod tests {
             assert!(shell(n), "{n} defines its own shell effect");
         }
         // Without the later zone the stub stays unbound: the pool, not the parse, decides.
+        // zone-local: `common_mp` alone, to show the stub the pool binds.
         let common_only = zhbo_formats::weapon::all(&common).unwrap();
         assert!(common_only.iter().find(|w| w.name == "an94_mp").unwrap().view_shell_eject_effect.is_none());
         for w in &bo2 {
@@ -843,7 +844,9 @@ mod tests {
         let (pooled, atts) = mp.weapons().unwrap();
         let crate::paks::MpPool { patch, common_patch, common } = mp;
         let names = crate::weapons::names(&bo2_dir);
+        // zone-local: the launch definitions and the patch zone's own, compared with the pool.
         let launch = zhbo_formats::weapon::all(&common).unwrap();
+        // zone-local: the patch zone's own definitions.
         let patched = zhbo_formats::weapon::all_in(&common_patch, &[&patch, &common]).unwrap();
         assert!(patched.len() > 70, "{} patched weapons", patched.len());
         let mut clip_changes = 0;
@@ -861,6 +864,7 @@ mod tests {
             }
         }
         assert!(clip_changes > 0, "the patch changes a magazine");
+        // zone-local: the patch zone's own attachments, compared with the pool.
         for a in zhbo_formats::weapon::attachments(&common_patch).unwrap().iter().filter(|a| !a.name.starts_with(',')) {
             assert_eq!(atts.iter().find(|x| x.name == a.name), Some(a), "{}: the patch's attachment", a.name);
         }

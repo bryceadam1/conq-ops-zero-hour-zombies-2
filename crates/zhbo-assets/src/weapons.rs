@@ -174,6 +174,7 @@ pub fn attachment_metadata(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<S
 /// a zeroed `,defaultattachment` reference stub, whose 0.0s are not the engine's values. This is
 /// the one loader of it; the table builders take its result.
 pub fn default_attachment(patch: &zhbo_formats::t6zone::Zone) -> Option<bo2::Attachment> {
+    // zone-local: one named asset from the pool's top zone.
     bo2::attachments(patch).ok()?.into_iter().find(|a| a.name == DEFAULT_ATTACHMENT)
 }
 
@@ -2352,10 +2353,11 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn conformance_the_enumerator_matches_the_expected_rows() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        // The converter's own source: BO2's weapon pool (`MpPool`), whose `common_patch_mp` alone
+        // defines the Peacekeeper and the patch's attachments.
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (all, atts) = mp.weapons().unwrap();
+        let patch = mp.patch;
         let strip = |id: &str| -> String {
             let (base, rest) = id.split_once('+').map(|(b, r)| (b, Some(r))).unwrap_or((id, None));
             let base = base.strip_suffix("_mp").unwrap_or(base);
@@ -2403,9 +2405,9 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_converted_compatibility_matches_bo2s_rule() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (_, atts) = mp.weapons().unwrap();
+        let patch = mp.patch;
         let meta = attachment_metadata(&patch, &HashMap::new());
         let default = default_attachment(&patch).unwrap_or_default();
         let defs: Vec<AttachmentDef> = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, &default, &HashMap::new(), &meta)).collect();
@@ -2439,8 +2441,7 @@ mod tests {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
         let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
         let patch_ui = crate::generals::load_zone(&dir, "patch_ui_mp").unwrap();
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
         let (bars, att_bars) = attributes(&patch_ui);
         // The AN-94's row and the reflex's row keyed by it (`mp/attributestable.csv`).
         assert_eq!(bars["an94_mp"], [60.0, 60.0, 55.0, 50.0]);
@@ -2460,9 +2461,9 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_legal_combo_set_covers_every_base_weapon() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (all, _) = mp.weapons().unwrap();
+        let patch = mp.patch;
         let base = converted_base(&all, &Roster::read(&patch));
         let full = all_legal_combos(&patch, &all);
         // The base set's statstable-backed ids: the enumerator's `items` are the only CaC bases.
@@ -2665,8 +2666,7 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn only_the_xpr_carries_the_anti_quickscope_and_snipers_hold_breath() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
         let aqs: Vec<&str> = all.iter().filter(|w| w.anti_quickscope).map(|w| w.name.as_str()).collect();
         assert_eq!(aqs, ["as50_mp"], "bAntiQuickScope");
         let xpr = all.iter().find(|w| w.name == "as50_mp").unwrap();
@@ -2693,8 +2693,7 @@ mod tests {
         let sets: HashSet<String> = bo2::camo_all(&common_patch).unwrap().into_iter().map(|c| c.name).collect();
         assert_eq!(sets.len(), 48, "common_patch_mp's camo_<weapon> assets");
         // Every camo asset a def or a unique names is one of those sets (G16's per-part camo).
-        let common = crate::generals::load_zone(&bo2_dir, "common_mp").unwrap();
-        let bo2w = bo2::all(&common).unwrap();
+        let (bo2w, _) = crate::paks::MpPool::load(&bo2_dir).unwrap().weapons().unwrap();
         let camo_of = |id: &str| bo2w.iter().find(|w| w.name == id).and_then(|w| w.weapon_camo.clone());
         assert_eq!(camo_of("an94_mp").as_deref(), Some("camo_an94"));
         assert_eq!(camo_of("saiga12_mp").as_deref(), Some("camo_saiga"));
@@ -2859,8 +2858,7 @@ mod tests {
         }
         // In this install only FMJ grants specialties through the data (`armorpiercing`,
         // `bulletpenetration`); fast mag and quickdraw work through their reload/ADS time scales.
-        let common = crate::generals::load_zone(&bo2, "common_mp").unwrap();
-        let atts = bo2::attachments(&common).unwrap();
+        let (_, atts) = crate::paks::MpPool::load(&bo2).unwrap().weapons().unwrap();
         let granting: Vec<(String, Specialties)> =
             atts.iter().map(|a| (a.name.clone(), Specialties::from_words(a.perks.0, a.perks.1))).filter(|(_, s)| !s.is_empty()).collect();
         assert!(granting.iter().any(|(n, s)| n == "fmj" && s.has(Specialty::BulletPenetration) && s.has(Specialty::ArmorPiercing)), "{granting:?}");
@@ -2929,8 +2927,7 @@ mod target_finder_tests {
     #[ignore]
     fn the_installs_target_finder_is_kind_0x13() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR"));
-        let common = crate::paks::load_zone(&dir, "common_mp").unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let (_, atts) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
         let finders: Vec<&str> = atts.iter().filter(|a| a.kind == zhbo_core::attachments::TARGET_FINDER_KIND as u32).map(|a| a.name.as_str()).collect();
         assert!(!finders.is_empty() && finders.iter().all(|n| n.starts_with("rangefinder")), "{finders:?}");
     }
