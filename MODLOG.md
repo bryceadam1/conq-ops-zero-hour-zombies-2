@@ -11862,3 +11862,22 @@ machines, the host on alone to frame 13,814). The logs played another player's k
 Images: `~/.opencode/plan/remote-presentation/render/` (`torso_*.png`: idle, reload, knife, shot,
 raise, throw with the gun hidden; `overhead_native_body.png`). No assist in the runs (a 1v1 has no
 teammate); the rule is the unit tests'.
+
+## Follow-up 2: the grenade in the hand, the native body's death, an overhead General's shots (2026-11-03, branch `v1/remote-presentation`)
+
+* **The grenade in the hand.** Every class offhand is already converted with a world manifest (the
+  real-install sweep `every_offhand_has_a_world_model_for_the_hand`: all 15 resolve). The body rig
+  composes the General's lethal and tactical on `tag_inhand` and shows the one primed or thrown,
+  the gun hidden, as BO2's `FUN_0052a470` attaches a grenade there as the entity's one weapon.
+* **Death.** BO2 MP: `callback_playerkilled` clones the player (`cloneplayer( deathanimduration )`,
+  `_globallogic_player.gsc:2008`), the clone plays a death clip from `mp/playeranim.script`'s
+  `DEATH` section (stance, gait, `dmgType`, `dmgDirection`, alternatives) and `delaystartragdoll`
+  hands it to the ragdoll 0.2 s plus 35 % of the clip (or its `start_ragdoll` notetrack) in. Zero
+  Hour has no ragdoll, so the native body plays the clip through and holds its last frame until the
+  body is removed. The sim emits `KilledBy { how, from }` (presentation) at the killing hit;
+  `client::remote` picks the clip and keeps the corpse; the body pass draws it without the gun.
+  Not told apart: `normal_shotgun` and `meleebash` (they key on the weapon; the hit names none).
+* **Overhead shots.** Zero Hour fires an overhead General's guns; the sim only spends the rounds.
+  The client starts the gun's shot torso when a slot's rounds drop.
+* **Gotcha: the script's `DEATH` block sits among the `EVENTS`.** `dtp_takeoff`, `dtp_land`,
+  `flared` and `prime_grenade` come after it; the parser returns to the events after the block.

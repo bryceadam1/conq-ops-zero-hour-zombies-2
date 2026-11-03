@@ -527,6 +527,16 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   every rig), samples it over the bones it tracks (a `pt_*` clip tracks the lower spine and up) and
   fades it in and out over `nativebody::TORSO_BLEND`. The weapon-only mode stays rigid; the W3D
   body keeps its per-set fire and reload.
+* **The offhand in the hand and the corpse (body mode).** The class's lethal and tactical world
+  manifests (`ZW<vm>.zbw`, every offhand is converted) are composed on the body's `tag_inhand`
+  (`nativebody::OFFHAND_TAG`, published per General like the stowed weapon:
+  `nativebody::ffi::publish_offhands`) and drawn only while that one is primed or thrown, the gun
+  then hidden (t6mp `FUN_0052a470`). A General who dies stays drawn: `client::remote` keeps a
+  corpse (`Corpse`, for `CORPSE_TIME`) whose pose `zhbo_client_native_poses` appends, playing the
+  script's `DEATH` clip for how he was killed (`EventKind::KilledBy`, `torso::death_context`)
+  whole-body, faded in and held at its end, without the gun (BO2's corpse goes ragdoll part-way;
+  Zero Hour has no ragdoll, so the clip's last pose lies until the body is removed). Overhead, the
+  rounds Zero Hour spends (`Arsenal::rts_shot`) start the gun's shot torso, client-side.
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
   trigger, each with its own magazine), so its left gun plays its own `_LEFT` slot while the hands
   fire, reload or idle apart. The client hands that clip and time to the native pass with
