@@ -375,7 +375,13 @@ fn the_shield_rides_the_left_hand_and_the_back() {
         assert!(s.loaded().is_some_and(|l| l.key.1 == 3), "{:?}", s.logged().collect::<Vec<_>>());
         assert!(close(at(s, "j_gun"), [10.0, -8.0, 40.0]), "the rifle in the right hand");
         assert!(close(at(s, "j_stow"), [-6.0, 0.0, 50.0]), "stowed on the back: {:?}", at(s, "j_stow"));
+        // He dies: his record (and the stowed shield it published) is gone, but his corpse keeps the
+        // rig he died with rather than recomposing (the W3D body would show while it loaded).
         ffi::publish_stowed(&[]);
+        ffi::publish_torso(std::iter::once(ffi::TorsoAction { general: 1, action: zhbo_native::thirdperson::torso::DEATH, clip: 0x1000, t: 0.5, lethal: false }));
+        assert_eq!(s.frame(&body_input(3), 2, None), s.frame(&body_input(3), 2, None));
+        assert!(s.loaded().is_some_and(|l| l.key.3 == 9), "the corpse's rig is the one he died with");
+        ffi::publish_torso(std::iter::empty());
     });
 }
 
