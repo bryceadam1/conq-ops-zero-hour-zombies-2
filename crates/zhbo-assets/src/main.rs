@@ -553,12 +553,24 @@ fn cmd_fx(args: &[String]) -> Result<(), String> {
         for el in &e.elems {
             let r = |r: fx::Range| format!("{}+{}", r.base, r.amplitude);
             println!(
-                "{indent}  kind {:>2} loop {} count {} delay {} life {} radius {} grav {} vel {:?}/{:?} wvel {:?}/{:?} atlas {:?} mats {:?} models {:?}",
-                el.kind, el.looping, r(el.count), r(el.delay_msec), r(el.life_msec), r(el.offset_radius), r(el.gravity), el.velocity.0, el.velocity.1, el.world_velocity.0, el.world_velocity.1, el.atlas,
+                "{indent}  kind {:>2} flags {:#x} loop {} every {} count {} delay {} life {} radius {} grav {} vel {:?}/{:?} wvel {:?}/{:?} atlas {:?} mats {:?} models {:?}",
+                el.kind, el.flags, el.looping, el.interval_msec, r(el.count), r(el.delay_msec), r(el.life_msec), r(el.offset_radius), r(el.gravity), el.velocity.0, el.velocity.1, el.world_velocity.0, el.world_velocity.1, el.atlas,
                 el.materials.iter().map(|m| m.color_map().map(|i| i.name.clone()).unwrap_or_else(|| m.name.clone())).collect::<Vec<_>>(), el.models
             );
             if let (Some(a), Some(b)) = (el.vis.first(), el.vis.last()) {
                 println!("{indent}      vis {} samples: {:?} size {:?} -> {:?} size {:?}", el.vis.len(), a.color, a.size, b.color, b.size);
+                if std::env::var_os("ZHBO_FX_VIS").is_some() {
+                    println!("{indent}      alpha {:?} size {:?}", el.vis.iter().map(|v| v.color[3]).collect::<Vec<_>>(), el.vis.iter().map(|v| v.size[0].round()).collect::<Vec<_>>());
+                }
+            }
+            // ZHBO_FX_IMAGES=<dir>: each element's colour map as a PNG (a flipbook whole).
+            if let Some(dir) = std::env::var_os("ZHBO_FX_IMAGES") {
+                let paks = image_paks().unwrap_or_default();
+                for img in el.materials.iter().filter_map(|m| m.color_map()) {
+                    if let Some(Ok(rgba)) = paks.iter().find_map(|(_, pak)| pak.entry(img.key()).map(|e| images::load(pak, e))) {
+                        let _ = images::write_png(&std::path::Path::new(&dir).join(format!("{}.png", img.name)), &rgba);
+                    }
+                }
             }
             for c in &el.children {
                 dump(c, &format!("{indent}    "));

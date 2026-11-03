@@ -649,6 +649,16 @@ int32_t zhbo_content_versus(uint32_t theirs, char *out, int32_t cap);
 /* The nearest the first-person hammer places a structure whose footprint has bounding radius
    `radius` (building::place_near: PLACE_MIN, or PLACE_CLEAR clear of the footprint). ABI 30. */
 float zhbo_hammer_place_near(float radius);
+/* The smoke screens (smoke.rs; host patch 0024), from a lock-free mirror of the sim's screens
+   written after each logic step, so every peer's engine gets the same answers. Lock-free (safe
+   inside any core callback and from the UI). Pending for the next ABI bump.
+   Whether a standing screen blocks the line of sight between two world points (BO2's sight test:
+   never closer than 80 inches; else the segment's closest point within a screen's radius). */
+int32_t zhbo_logic_smoke_blocks(float ax, float ay, float az, float bx, float by, float bz);
+/* Whether the ground point is under a standing screen (the pathfinder's extra cost there). */
+int32_t zhbo_logic_smoke_covers(float x, float y);
+/* Whether the ground segment passes under a screen that went off after logic frame `since`. */
+int32_t zhbo_logic_smoke_crosses(float ax, float ay, float bx, float by, uint32_t since);
 
 #ifdef __cplusplus
 }

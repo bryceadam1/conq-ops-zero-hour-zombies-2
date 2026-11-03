@@ -9,13 +9,16 @@
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridgeInternal.h"
 #include "Common/MapReaderWriterInfo.h"
+#include "GameLogic/AIPathfind.h"
 namespace
 {
 // One engine Weapon per FX template: fireWeaponTemplate needs a firing Weapon instance.
 std::map<std::string, Weapon *> s_fxWeapons;
 
-// Smoke log throttle (cbSmoke): at most one line a second.
+// Smoke log throttles (cbSmoke, Zhbo_SmokeHides, Zhbo_SmokeCrossesPath): at most one line a second each.
 UnsignedInt s_smokeLastLog = 0;
+UnsignedInt s_smokeHideLastLog = 0;
+UnsignedInt s_smokeRepathLastLog = 0;
 
 // The map whose ground surfaces the core holds (EnsureSurfaceGrid); empty after a reset.
 AsciiString s_surfaceMap;
@@ -390,42 +393,81 @@ void cbFx(const char *name, const ZhboVec3 *pos)
 	p.set(pos->x, pos->y, pos->z);
 	FXList::doFXPos(fx, &p);
 }
-// A smoke screen (BO2's smoke grenade) this frame: no one shoots into or out of it. Anything
-// attacking with its attacker or its victim in the cloud goes back to idle (and picks another
-// target it can see).
+// A smoke screen (BO2's smoke grenade) this frame, at its sight blocker's radius now. What it does
+// to Zero Hour's units is the engine's own (host patch 0024 asks the core's mirror: no unit
+// acquires or keeps a target the screen hides, and paths go around it); this only logs it, the
+// test's oracle (at most once a second).
 void cbSmoke(const ZhboVec3 *at, float radius)
 {
-	Coord3D center;
-	center.set(at->x, at->y, at->z);
-	SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange(&center, radius + 400.0f, FROM_CENTER_2D);
-	MemoryPoolObjectHolder hold(iter);
-	const Real r2 = radius * radius;
-	Int blinded = 0;
-	auto inside = [&](const Object *o)
-	{
-		const Coord3D *p = o->getPosition();
-		const Real dx = p->x - center.x, dy = p->y - center.y;
-		return dx * dx + dy * dy <= r2;
-	};
-	for (Object *obj = iter->first(); obj; obj = iter->next())
-	{
-		AIUpdateInterface *ai = obj->getAI();
-		if (!ai || obj->isEffectivelyDead() || zhbo_logic_is_controlled((uint32_t)obj->getID()))
-			continue;
-		const Object *victim = ai->getCurrentVictim();
-		if (victim && (inside(obj) || inside(victim)))
-		{
-			ai->aiIdle(CMD_FROM_AI);
-			++blinded;
-		}
-	}
-	// The log is the test's oracle (at most once a second).
 	const UnsignedInt frame = TheGameLogic->getFrame();
-	if (blinded > 0 && frame >= s_smokeLastLog + 30)
+	if (frame >= s_smokeLastLog + LOGICFRAMES_PER_SECOND)
 	{
 		s_smokeLastLog = frame;
-		logf("smoke: %d attackers can't see through it", blinded);
+		logf("smoke: screen at (%.0f, %.0f) blocks sight %.1f around it", at->x, at->y, radius);
 	}
+	if (s_config.autopilot_smoke)
+	{
+		Coord3D c;
+		c.set(at->x, at->y, at->z);
+		autopilotSmokeSeen(c, radius);
+	}
+}
+
+// The point a unit sees from and is seen at: its centre (feet plus half its height).
+static Coord3D sightPoint(const Object *obj)
+{
+	Coord3D p = *obj->getPosition();
+	p.z += obj->getGeometryInfo().getMaxHeightAbovePosition() * 0.5f;
+	return p;
+}
+
+Bool Zhbo_SmokeHides(const Object *source, const Object *victim)
+{
+	if (!source || !victim)
+		return FALSE;
+	const Coord3D a = sightPoint(source), b = sightPoint(victim);
+	if (!zhbo_logic_smoke_blocks(a.x, a.y, a.z, b.x, b.y, b.z))
+		return FALSE;
+	const UnsignedInt frame = TheGameLogic ? TheGameLogic->getFrame() : 0;
+	if (frame >= s_smokeHideLastLog + LOGICFRAMES_PER_SECOND)
+	{
+		s_smokeHideLastLog = frame;
+		logf("smoke: %s %u can't see %s %u through it", source->getTemplate()->getName().str(), (unsigned)source->getID(),
+			victim->getTemplate()->getName().str(), (unsigned)victim->getID());
+	}
+	return TRUE;
+}
+
+// Pathfinder::examineNeighboringCells' own penalty for a cell a path may still cross (tunneling
+// out through an invalid cell is 10 x COST_ORTHOGONAL; COST_ORTHOGONAL is 10): enough that a path
+// goes round a screen (a few cells further) rather than through it, never a wall.
+static const Int SMOKE_CELL_COST = 10 * 10;
+
+Int Zhbo_SmokePathCost(Int cellX, Int cellY)
+{
+	const Real x = (cellX + 0.5f) * PATHFIND_CELL_SIZE_F, y = (cellY + 0.5f) * PATHFIND_CELL_SIZE_F;
+	return zhbo_logic_smoke_covers(x, y) ? SMOKE_CELL_COST : 0;
+}
+
+Bool Zhbo_SmokeCrossesPath(Path *path, UnsignedInt pathFrame)
+{
+	if (!path)
+		return FALSE;
+	for (const PathNode *n = path->getFirstNode(); n && n->getNext(); n = n->getNext())
+	{
+		const Coord3D *a = n->getPosition(), *b = n->getNext()->getPosition();
+		if (zhbo_logic_smoke_crosses(a->x, a->y, b->x, b->y, pathFrame))
+		{
+			const UnsignedInt frame = TheGameLogic->getFrame();
+			if (frame >= s_smokeRepathLastLog + LOGICFRAMES_PER_SECOND)
+			{
+				s_smokeRepathLastLog = frame;
+				logf("smoke: a move's path crosses a new screen; repathing around it");
+			}
+			return TRUE;
+		}
+	}
+	return FALSE;
 }
 
 // The Black Hat: equipment changes team; a unit (a drone) defects.
@@ -459,4 +501,6 @@ void ResetFxWeapons()
 		deleteInstance(it->second);
 	s_fxWeapons.clear();
 	s_smokeLastLog = 0;
+	s_smokeHideLastLog = 0;
+	s_smokeRepathLastLog = 0;
 }

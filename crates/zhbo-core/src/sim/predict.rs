@@ -123,6 +123,7 @@ impl Sim {
             projectiles: Vec::new(),
             equipment: self.equipment.clone(),
             smokes: self.smokes.clone(),
+            smoke: self.smoke,
             tuning: self.tuning,
             bullet_range: self.bullet_range,
             penetration: self.penetration.clone(),

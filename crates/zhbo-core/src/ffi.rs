@@ -119,6 +119,68 @@ pub extern "C" fn zhbo_logic_shield_damage(victim: u32, source: u32, from_x: f32
     crate::shield::engine_scale(&bearers, victim, from, kind, &t)
 }
 
+/// Lock-free mirror of the standing smoke screens ([`Sim::smoke_blockers`], [`crate::smoke`]) for
+/// the engine's sight and path hooks (host patch 0024), which run inside Zero Hour's object and
+/// pathfinder updates (and its UI's attack checks), never under the state lock. Written after each
+/// logic step from sim state only, so every peer's engine gets the same answers: centre, radius
+/// (bits), the frame it went off on.
+const SMOKE_SLOTS: usize = 32;
+static SMOKES: [[AtomicU32; 5]; SMOKE_SLOTS] = [const { [const { AtomicU32::new(0) }; 5] }; SMOKE_SLOTS];
+static SMOKE_COUNT: AtomicU32 = AtomicU32::new(0);
+/// The tuning pack's always-seen distance (Zero Hour units, bits).
+static SMOKE_MIN_DISTANCE: AtomicU32 = AtomicU32::new(0);
+
+fn publish_smokes(sim: &Sim) {
+    let blockers = sim.smoke_blockers();
+    for (slot, b) in SMOKES.iter().zip(&blockers) {
+        for (w, v) in slot.iter().zip([b.at.x.to_bits(), b.at.y.to_bits(), b.at.z.to_bits(), b.radius.to_bits(), b.born]) {
+            w.store(v, Ordering::Relaxed);
+        }
+    }
+    SMOKE_MIN_DISTANCE.store(sim.smoke.min_distance.to_bits(), Ordering::Relaxed);
+    SMOKE_COUNT.store(blockers.len().min(SMOKE_SLOTS) as u32, Ordering::Relaxed);
+}
+
+/// Whether any mirrored screen passes `test` (no allocation: the pathfinder asks per cell).
+fn any_smoke(test: impl Fn(&crate::smoke::Blocker) -> bool) -> bool {
+    let n = (SMOKE_COUNT.load(Ordering::Relaxed) as usize).min(SMOKE_SLOTS);
+    SMOKES[..n].iter().any(|slot| {
+        let w = |k: usize| slot[k].load(Ordering::Relaxed);
+        let f = |k: usize| f32::from_bits(w(k));
+        test(&crate::smoke::Blocker { at: crate::math::Vec3::new(f(0), f(1), f(2)), radius: f(3), born: w(4) })
+    })
+}
+
+/// Whether a standing smoke screen blocks the line of sight from `a` to `b` (world points, Zero
+/// Hour units): BO2's sight test ([`crate::smoke::blocks_sight`]). The engine's units neither
+/// acquire nor keep a target it hides (`WeaponSet::getAbleToAttackSpecificObject`). Lock-free.
+#[no_mangle]
+pub extern "C" fn zhbo_logic_smoke_blocks(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> i32 {
+    if SMOKE_COUNT.load(Ordering::Relaxed) == 0 {
+        return 0;
+    }
+    let (a, b) = (crate::math::Vec3::new(ax, ay, az), crate::math::Vec3::new(bx, by, bz));
+    let min = f32::from_bits(SMOKE_MIN_DISTANCE.load(Ordering::Relaxed));
+    if (b - a).dot(b - a) < min * min {
+        return 0;
+    }
+    any_smoke(|s| crate::smoke::segment_distance_sq(a, b, s.at) < s.radius * s.radius) as i32
+}
+
+/// Whether the ground point `(x, y)` is under a standing smoke screen (the pathfinder's extra
+/// cost there). Lock-free.
+#[no_mangle]
+pub extern "C" fn zhbo_logic_smoke_covers(x: f32, y: f32) -> i32 {
+    any_smoke(|s| crate::smoke::covers(std::slice::from_ref(s), x, y)) as i32
+}
+
+/// Whether the ground segment `(ax, ay)`–`(bx, by)` passes under a smoke screen that went off after
+/// logic frame `since` (a path computed before it stood; the move repaths once). Lock-free.
+#[no_mangle]
+pub extern "C" fn zhbo_logic_smoke_crosses(ax: f32, ay: f32, bx: f32, by: f32, since: u32) -> i32 {
+    any_smoke(|s| crate::smoke::crosses_since(std::slice::from_ref(s), ax, ay, bx, by, since)) as i32
+}
+
 fn publish_controlled(sim: &Sim) {
     let mut ids = sim.controlled_ids();
     for slot in CONTROLLED.iter() {
@@ -428,12 +490,12 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         crate::config::Autopilot::Manual => {
             state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
         }
-        crate::config::Autopilot::Scripted { equipment, build, classpick, scope } => {
+        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke } => {
             #[cfg(feature = "autopilot")]
             {
-                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, ..Default::default() });
+                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, ..Default::default() });
             }
-            let _ = (equipment, build, classpick, scope);
+            let _ = (equipment, build, classpick, scope, smoke);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
         crate::config::Autopilot::Multiplayer => {
@@ -463,6 +525,7 @@ pub extern "C" fn zhbo_reset() {
         s.menu = None;
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
+        publish_smokes(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
     });
 }
@@ -473,6 +536,7 @@ pub extern "C" fn zhbo_logic_take_control(player: i32, general: u32) {
         s.sim.take_control(&s.logic, player, general);
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
+        publish_smokes(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
     });
 }
@@ -548,6 +612,7 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
         s.client.tracers.play(&s.logic, &mut s.sim.tracers);
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
+        publish_smokes(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
         log_step(s, s.sim.first_event_since(before), frame);
         for (shooter, target, seen) in std::mem::take(&mut s.sim.antilag_hits) {
@@ -1506,6 +1571,31 @@ mod tests {
         assert_eq!(zhbo_logic_shield_damage(5, 3, -60.0, 0.0, 0.0, 12.0, 1, crate::host::damage_kind::SMALL_ARMS, 30.0), 1.0);
         SHIELD_HIT_COUNT.store(0, Ordering::Relaxed);
         SHIELD_COUNT.store(0, Ordering::Relaxed);
+    }
+
+    /// The smoke hooks over the ABI (host patch 0024): the mirror of the sim's screens answers the
+    /// engine's sight, ground and path questions, and empties when the screens clear.
+    #[test]
+    fn the_smoke_hooks_answer_from_the_sims_screens() {
+        let _g = state_lock();
+        let mut sim = Sim::new();
+        sim.frame = 100;
+        sim.smokes.push(crate::smoke::Smoke { at: crate::math::Vec3::new(500.0, 500.0, 0.0), born: 30 });
+        publish_smokes(&sim);
+        let r = sim.smoke_blockers()[0].radius;
+        assert!((r - crate::units::inches(150.0)).abs() < 1e-3, "grown to its cap: {r}");
+        // Sight: through it, beside it, and two units close together inside it.
+        assert_eq!(zhbo_logic_smoke_blocks(300.0, 500.0, 5.0, 700.0, 500.0, 5.0), 1);
+        assert_eq!(zhbo_logic_smoke_blocks(300.0, 600.0, 5.0, 700.0, 600.0, 5.0), 0);
+        assert_eq!(zhbo_logic_smoke_blocks(495.0, 500.0, 5.0, 505.0, 500.0, 5.0), 0, "closer than 80 inches");
+        // The ground under it, and a path computed before or after it went off.
+        assert_eq!((zhbo_logic_smoke_covers(510.0, 490.0), zhbo_logic_smoke_covers(560.0, 500.0)), (1, 0));
+        assert_eq!(zhbo_logic_smoke_crosses(300.0, 500.0, 700.0, 500.0, 29), 1);
+        assert_eq!(zhbo_logic_smoke_crosses(300.0, 500.0, 700.0, 500.0, 30), 0);
+        // Cleared: no screen, no answers.
+        sim.frame = 30 + sim.smoke.frames;
+        publish_smokes(&sim);
+        assert_eq!((zhbo_logic_smoke_blocks(300.0, 500.0, 5.0, 700.0, 500.0, 5.0), zhbo_logic_smoke_covers(500.0, 500.0)), (0, 0));
     }
 
     /// The CRC hook over the ABI: an idle sim adds nothing (the CRC stays stock Zero Hour's), a class

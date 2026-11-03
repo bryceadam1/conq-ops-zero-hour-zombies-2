@@ -136,6 +136,8 @@ pub struct Converted<'a> {
     lists: BTreeMap<String, (Vec<Placed>, bool)>,
     /// The nugget text of every FXList written, by name.
     bodies: BTreeMap<String, String>,
+    /// The role each converted FXList was made for ([`Role`]).
+    roles: BTreeMap<String, Role>,
     /// Images an element named that the packs did not have (its element is not drawn).
     pub missing: std::collections::BTreeSet<String>,
 }
@@ -147,49 +149,66 @@ impl<'a> Converted<'a> {
         Converted { pool, ..Default::default() }
     }
 
-    /// Convert `effect` (with the effects its runners start) into an FXList; returns its name.
-    /// Looping parts run for the effect's own looping life (at most 20 s).
+    /// Convert `effect` (with the effects its runners start) into an FXList played upright with no
+    /// frame, in the role `role` ([`Role`]: its priority); returns its name. Looping parts run for
+    /// the effect's own looping life (at most 20 s).
+    pub fn add_as(&mut self, effect: &Effect, role: Role, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        let looping_secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
+        self.convert(effect, &fxlist_name(&effect.name), Play { looping_secs, role, orient: false }, paks, None)
+    }
+
+    /// [`Converted::add_as`] a blast ([`Role::Blast`]): an explosion, a flash grenade's burst, an
+    /// equipment's death.
     pub fn add(&mut self, effect: &Effect, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
-        let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
-        self.add_timed(effect, secs, paks)
+        self.add_as(effect, Role::Blast, paks)
     }
 
-    /// [`Converted::add`], with the looping parts running `looping_secs` (a smoke screen's time).
-    pub fn add_timed(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
-        self.add_timed_with(effect, looping_secs, paks, None, false)
+    /// An area effect standing `secs` (BO2's timed effect entity, `spawntimedfx`: its looping parts
+    /// emit until the entity is freed, the rest play out their own life), as [`Role::Area`]: the
+    /// smoke screen.
+    pub fn add_area(&mut self, effect: &Effect, secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        self.convert(effect, &fxlist_name(&effect.name), Play { looping_secs: secs, role: Role::Area, orient: false }, paks, None)
     }
 
-    /// [`Converted::add`] for an effect played on a frame whose X is BO2's effect X: a bullet's
+    /// [`Converted::add_as`] for an effect played on a frame whose X is BO2's effect X: a bullet's
     /// impact (the bridge passes the surface frame, X along the normal), a muzzle flash at its
     /// flash bone (X down the barrel). Its systems take the spawner's matrix (`OrientToObject`) and
     /// keep BO2's axes, offsets and velocities included. Named apart from the world copy
     /// ([`framed_fxlist_name`]): the same BO2 effect can be a blast's (played upright, no frame)
     /// and a bullet's.
-    pub fn add_framed(&mut self, effect: &Effect, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
-        let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
-        self.convert(effect, &framed_fxlist_name(&effect.name), secs, paks, None, true)
+    pub fn add_framed(&mut self, effect: &Effect, role: Role, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        let looping_secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
+        self.convert(effect, &framed_fxlist_name(&effect.name), Play { looping_secs, role, orient: true }, paks, None)
     }
 
-    /// [`Converted::add`] for an effect whose model elements (a shell casing) should be drawn as
-    /// sprites from the model's own colour map. A shell is spawned at the posed `tag_brass`, whose
-    /// X is BO2's eject direction, so its systems take the bone's matrix and keep BO2's axes. The
-    /// `zones` are tried in order: a patch zone's copy of a shell model or its material can be a
-    /// reference stub while the base zone (or the patch zone's material asset) carries the real
-    /// one.
+    /// [`Converted::add_as`] for an effect whose model elements (a shell casing) should be drawn as
+    /// sprites from the model's own colour map ([`Role::Shell`]). A shell is spawned at the posed
+    /// `tag_brass`, whose X is BO2's eject direction, so its systems take the bone's matrix and keep
+    /// BO2's axes. The `zones` are tried in order: a patch zone's copy of a shell model or its
+    /// material can be a reference stub while the base zone (or the patch zone's material asset)
+    /// carries the real one.
     pub fn add_shell(&mut self, effect: &Effect, zones: &[&Zone], paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
-        let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
-        self.add_timed_with(effect, secs, paks, Some(zones), true)
+        let looping_secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
+        self.convert(effect, &fxlist_name(&effect.name), Play { looping_secs, role: Role::Shell, orient: true }, paks, Some(zones))
     }
 
-    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool) -> String {
-        self.convert(effect, &fxlist_name(&effect.name), looping_secs, paks, zones, orient)
-    }
-
-    fn convert(&mut self, effect: &Effect, name: &str, looping_secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool) -> String {
+    fn convert(&mut self, effect: &Effect, name: &str, play: Play, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>) -> String {
         let name = name.to_string();
         if !self.done.insert(name.clone()) {
+            // One BO2 effect played in two roles (`fx_missing_impact` is a rocket's blast cell and a
+            // bounce's): it takes the higher priority, whichever came first.
+            let had = self.roles.get(&name).copied();
+            if let Some(had) = had.filter(|h| h.rank() < play.role.rank()) {
+                for sys in self.lists.get(&name).map(|(s, _)| s.clone()).unwrap_or_default() {
+                    let old = format!("ParticleSystem {}\n  Priority = {}\n", sys.system, had.priority());
+                    let new = format!("ParticleSystem {}\n  Priority = {}\n", sys.system, play.role.priority());
+                    self.particles = self.particles.replace(&old, &new);
+                }
+                self.roles.insert(name.clone(), play.role);
+            }
             return name;
         }
+        self.roles.insert(name.clone(), play.role);
         let mut bound;
         let effect = if self.pool.is_empty() {
             effect
@@ -201,10 +220,10 @@ impl<'a> Converted<'a> {
         let mut systems = Vec::new();
         let mut lights = String::new();
         let at = Spawn { delay_ms: 0.0, origin: [0.0; 3] };
-        self.add_elems(effect, at, looping_secs, &name, paks, zones, orient, &mut systems, &mut lights);
+        self.add_elems(effect, at, play, &name, paks, zones, &mut systems, &mut lights);
         let mut body = lights;
-        body.push_str(&fxlist_particles(&systems, orient));
-        self.lists.insert(name.clone(), (systems, orient));
+        body.push_str(&fxlist_particles(&systems, play.orient));
+        self.lists.insert(name.clone(), (systems, play.orient));
         self.write(&name, body);
         name
     }
@@ -269,7 +288,8 @@ impl<'a> Converted<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_elems(&mut self, effect: &Effect, at: Spawn, looping_secs: f32, prefix: &str, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool, systems: &mut Vec<Placed>, lights: &mut String) {
+    fn add_elems(&mut self, effect: &Effect, at: Spawn, play: Play, prefix: &str, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, systems: &mut Vec<Placed>, lights: &mut String) {
+        let orient = play.orient;
         for el in &effect.elems {
             // Emission elements are spawned by their effect's movement (`emitDist`), never on its
             // start; a one-shot element BO2 spawns none of (`count` 0 + 0) is not drawn.
@@ -280,7 +300,7 @@ impl<'a> Converted<'a> {
                 // The runner's effect starts where and when the runner spawns.
                 let child_at = Spawn { delay_ms: at.delay_ms + el.delay_msec.base + el.delay_msec.amplitude * 0.5, origin: add3(at.origin, origin_centre(el)) };
                 for child in &el.children {
-                    self.add_elems(child, child_at, looping_secs, prefix, paks, zones, orient, systems, lights);
+                    self.add_elems(child, child_at, play, prefix, paks, zones, systems, lights);
                 }
                 continue;
             }
@@ -305,7 +325,7 @@ impl<'a> Converted<'a> {
                     let Some(img) = colour else { continue };
                     let Some(tex) = self.texture(&img.name, img.key(), (1, 1), paks) else { continue };
                     let sys = format!("{prefix}_shell{}", systems.len());
-                    if let Some(ini) = model_particle_system(&sys, el, &tex.0, at.delay_ms, orient) {
+                    if let Some(ini) = model_particle_system(&sys, el, &tex.0, at.delay_ms, play) {
                         self.particles.push_str(&ini);
                         systems.push(Placed { system: sys, offset: frame_vec(orient, add3(at.origin, origin_centre(el))) });
                     }
@@ -329,7 +349,7 @@ impl<'a> Converted<'a> {
                 Blend::Opaque | Blend::AlphaTest => tex.1,
             };
             let sys = format!("{prefix}_{}", systems.len());
-            if let Some(ini) = particle_system(&sys, el, &tex.0, additive, at.delay_ms, looping_secs, orient) {
+            if let Some(ini) = particle_system(&sys, el, &tex.0, additive, at.delay_ms, play) {
                 self.particles.push_str(&ini);
                 systems.push(Placed { system: sys, offset: frame_vec(orient, add3(at.origin, origin_centre(el))) });
             }
@@ -534,12 +554,60 @@ fn fxlist_particles(systems: &[Placed], orient: bool) -> String {
         .collect()
 }
 
-/// Zero Hour's priority for every converted BO2 system: `CRITICAL`. Zero Hour's lowest priority
-/// (`WEAPON_EXPLOSION`, which these used) is the first the dynamic LOD stops drawing (below 25 fps,
-/// `GameLOD.ini`) and can evict nothing at the particle cap (`removeOldestParticles` only frees
-/// lower priorities), so a blast could lose its particles to the map's ambience; BO2 never drops a
-/// player's explosion for frame rate. `CRITICAL` is the dynamic LOD's never-skip priority.
-pub const PRIORITY: &str = "CRITICAL";
+/// What a converted effect is for, which sets its Zero Hour particle priority
+/// (`ParticlePriorityType`) the way Zero Hour sets its own effects of that kind (`ParticleSystem.ini`
+/// in `INIZH.big`, the systems its FXLists start: impacts mostly `CRITICAL`; detonations and muzzle
+/// flashes keep their cores at `CRITICAL` over `WEAPON_EXPLOSION` dressing; casings and dust kicks
+/// `WEAPON_EXPLOSION`; gameplay clouds and fields `AREA_EFFECT`). The priority decides survival under
+/// load: `createParticle` makes nothing below the dynamic LOD's `MinParticlePriority`
+/// (`UNIT_DAMAGE_FX` under 25 fps), skips below `CRITICAL` by the skip mask under 20 fps, and at the
+/// particle cap (`MaxParticleCount`, 500 at the `Low` static LOD) a new particle may only evict
+/// strictly lower ones (`removeOldestParticles`). In first person a blast, a hit and the gun's own
+/// flash are the feedback the player acts on, so they are the cores: `CRITICAL`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// An explosion (the impact table's blast cells, a def's own effect, equipment, flash grenades).
+    Blast,
+    /// A bullet's or a dud's hit.
+    Impact,
+    /// A muzzle flash, first or third person.
+    Flash,
+    /// An ejected casing.
+    Shell,
+    /// A grenade's bounce kick.
+    Dust,
+    /// A cloud that carries gameplay over its time (the smoke screen, which blocks sight).
+    Area,
+}
+
+impl Role {
+    /// Zero Hour's order of the priorities (`ParticlePriorityType`).
+    fn rank(self) -> u8 {
+        match self.priority() {
+            "WEAPON_EXPLOSION" => 0,
+            "AREA_EFFECT" => 1,
+            _ => 2,
+        }
+    }
+
+    /// The `Priority` the role's systems take.
+    pub fn priority(self) -> &'static str {
+        match self {
+            Role::Blast | Role::Impact | Role::Flash => "CRITICAL",
+            Role::Shell | Role::Dust => "WEAPON_EXPLOSION",
+            Role::Area => "AREA_EFFECT",
+        }
+    }
+}
+
+/// How a converted effect's systems play: how long its looping parts run, its role (priority),
+/// and whether they take the spawner's matrix (`OrientToObject`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Play {
+    looping_secs: f32,
+    role: Role,
+    orient: bool,
+}
 
 /// One BO2 effect element as a Zero Hour particle system (`None`: nothing to draw). Every number
 /// comes from the element:
@@ -555,7 +623,8 @@ pub const PRIORITY: &str = "CRITICAL";
 /// * look: the size graph's start, its starting slope damped to reach its end, the roll, and up
 ///   to eight evenly spaced colour/alpha keys (strictly increasing frames: a later key on frame 0
 ///   would end Zero Hour's sequence).
-fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, looping_secs: f32, orient: bool) -> Option<String> {
+fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, play: Play) -> Option<String> {
+    let Play { looping_secs, role, orient } = play;
     let frames = |ms: f32| (ms / MS_PER_FRAME).max(1.0);
     // Zero Hour counts a particle's life down in the update that creates it, before it is ever
     // drawn: `Lifetime` n shows n - 1 frames, and 1 never shows. So one frame more than BO2's life
@@ -664,7 +733,9 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
     // interval is shorter than one).
     let (count, burst_delay, system_life) = if el.looping {
         let every = el.interval_msec.max(1) as f32 / MS_PER_FRAME;
-        let forever = el.count.base <= 0.0 || el.count.base >= i32::MAX as f32;
+        // An area effect stands its time (BO2's timed effect entity keeps its looping effect
+        // playing until it is freed: the smoke screen's 12 s), whatever its loops' count.
+        let forever = el.count.base <= 0.0 || el.count.base >= i32::MAX as f32 || role == Role::Area;
         let span = if forever { looping_secs * 30.0 } else { (el.count.base * every).max(1.0) };
         if every >= 1.0 {
             ((1.0, 1.0), (every.round() - 1.0).max(0.0), span.round().max(1.0))
@@ -690,13 +761,14 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
     let roll = (el.initial_rotation.min(), el.initial_rotation.max());
     let turn = last.rotation_total * MS_PER_FRAME;
     Some(format!(
-        "ParticleSystem {name}\n  Priority = {PRIORITY}\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
+        "ParticleSystem {name}\n  Priority = {}\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
          AngleZ = {:.2} {:.2}\n  AngularRateZ = {turn:.4} {turn:.4}\n  AngularDamping = 1.00 1.00\n  VelocityDamping = {damping:.4} {damping:.4}\n  \
          Gravity = {gravity:.4}\n  Lifetime = {:.0} {:.0}\n  SystemLifetime = {system_life:.0}\n  Size = {:.2} {:.2}\n  StartSizeRate = 0.00 0.00\n  \
          SizeRate = {size_rate:.3} {size_rate:.3}\n  SizeRateDamping = {size_damping:.4} {size_damping:.4}\n{keys}  ColorScale = 0.00 0.00\n  BurstDelay = {burst_delay:.0} {burst_delay:.0}\n  \
          BurstCount = {:.3} {:.3}\n  InitialDelay = {:.0} {:.0}\n  DriftVelocity = X:0.00 Y:0.00 Z:0.00\n  VelocityType = ORTHO\n  \
          VelOrthoX = {:.3} {:.3}\n  VelOrthoY = {:.3} {:.3}\n  VelOrthoZ = {:.3} {:.3}\n  VolumeType = {volume}  IsHollow = No\n  IsGroundAligned = No\n  \
          IsEmitAboveGroundOnly = No\n  IsParticleUpTowardsEmitter = No\n  WindMotion = Unused\nEnd\n\n",
+        role.priority(),
         roll.0,
         roll.1,
         life.0,
@@ -719,7 +791,7 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
 
 /// A model element (an ejected shell) as a small sprite. The model's own colour map is the
 /// particle texture; BO2's model element gives no size, so a shell-sized default is used.
-fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32, orient: bool) -> Option<String> {
+fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32, play: Play) -> Option<String> {
     let mut e = el.clone();
     // A model's visual states carry its scale, not a sprite size (0): the shell-sized sprite,
     // scaled by the model's own scale.
@@ -738,7 +810,7 @@ fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32, or
     if e.life_msec.base <= 0.0 {
         e.life_msec = Range { base: 700.0, amplitude: 200.0 };
     }
-    particle_system(name, &e, texture, false, delay_ms, 1.0, orient)
+    particle_system(name, &e, texture, false, delay_ms, Play { looping_secs: 1.0, ..play })
 }
 
 #[cfg(test)]
@@ -766,7 +838,7 @@ mod effect_tests {
 
     #[test]
     fn an_element_keeps_its_timing_size_and_fade() {
-        let ini = particle_system("ZHBO_test_0", &sprite(), "zhbo_fx_smoke.tga", false, 0.0, 15.0, false).unwrap();
+        let ini = particle_system("ZHBO_test_0", &sprite(), "zhbo_fx_smoke.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
         // 1 to 1.5 s, plus the frame Zero Hour counts down before the first draw.
         assert!(ini.contains("Lifetime = 31 46"), "{ini}");
         // A whole random count of 5..=7 (Zero Hour truncates the burst count).
@@ -774,26 +846,50 @@ mod effect_tests {
         assert!(ini.contains("InitialDelay = 2 2"));
         assert!(ini.contains("Alpha1 = 1.00 1.00 0") && ini.contains("Alpha2 = 0.00 0.00 39"), "{ini}");
         assert!(ini.contains("Shader = ALPHA") && ini.contains("VolumeType = SPHERE"));
-        assert!(ini.contains(&format!("Priority = {PRIORITY}")));
+        assert!(ini.contains("Priority = CRITICAL"), "{ini}");
         // Out along the normal (up), falling.
         assert!(ini.contains("VelOrthoZ = 1.667 2.222"), "{ini}");
         assert!(ini.contains("Gravity = -0.1481"), "{ini}");
     }
 
     #[test]
+    fn each_role_takes_zero_hours_priority_for_its_kind() {
+        let ini = |role| particle_system("ZHBO_test_r", &sprite(), "t.tga", false, 0.0, Play { looping_secs: 12.0, role, orient: false }).unwrap();
+        for (role, p) in [(Role::Blast, "CRITICAL"), (Role::Impact, "CRITICAL"), (Role::Flash, "CRITICAL"), (Role::Shell, "WEAPON_EXPLOSION"), (Role::Dust, "WEAPON_EXPLOSION"), (Role::Area, "AREA_EFFECT")] {
+            assert!(ini(role).contains(&format!("Priority = {p}\n")), "{role:?}");
+        }
+        // The lowest priority is only for what may vanish under load.
+        let model = Elem { kind: kind::MODEL, count: Range { base: 1.0, amplitude: 0.0 }, ..Default::default() };
+        assert!(model_particle_system("ZHBO_test_s", &model, "s.tga", 0.0, Play { looping_secs: 1.0, role: Role::Shell, orient: true }).unwrap().contains("Priority = WEAPON_EXPLOSION"));
+    }
+
+    #[test]
+    fn an_effect_in_two_roles_takes_the_higher_priority() {
+        let light = Elem { kind: kind::OMNI_LIGHT, ..Default::default() };
+        let e = Effect { name: "test/both".into(), elems: vec![light], ..Default::default() };
+        let mut c = Converted::default();
+        let name = c.add_as(&e, Role::Dust, &|_| None);
+        assert_eq!(c.add_as(&e, Role::Blast, &|_| None), name);
+        assert_eq!(c.roles.get(&name), Some(&Role::Blast));
+        // and never lowered
+        c.add_as(&e, Role::Shell, &|_| None);
+        assert_eq!(c.roles.get(&name), Some(&Role::Blast));
+    }
+
+    #[test]
     fn looping_elements_spawn_one_per_interval_count_times() {
         // Every 3 s, five times: one particle each 90 frames for 450 frames.
         let slow = Elem { looping: true, interval_msec: 3000, ..sprite() };
-        let ini = particle_system("ZHBO_test_1", &slow, "t.tga", false, 0.0, 15.0, false).unwrap();
+        let ini = particle_system("ZHBO_test_1", &slow, "t.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
         assert!(ini.contains("SystemLifetime = 450") && ini.contains("BurstDelay = 89 89") && ini.contains("BurstCount = 1.000 1.000"), "{ini}");
         // Every 3 msec, twenty times (the grenade's sparks, BO2's 57 msec looping life): eleven
         // or twelve a frame for two frames, not twenty a frame for a second.
         let fast = Elem { looping: true, interval_msec: 3, count: Range { base: 20.0, amplitude: 0.0 }, ..sprite() };
-        let ini = particle_system("ZHBO_test_2", &fast, "t.tga", false, 0.0, 15.0, false).unwrap();
+        let ini = particle_system("ZHBO_test_2", &fast, "t.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
         assert!(ini.contains("SystemLifetime = 2") && ini.contains("BurstDelay = 0 0") && ini.contains("BurstCount = 11.000 12.999"), "{ini}");
         // Count 0: for as long as the effect loops.
         let forever = Elem { looping: true, interval_msec: 1000, count: Range::default(), ..sprite() };
-        let ini = particle_system("ZHBO_test_3", &forever, "t.tga", false, 0.0, 15.0, false).unwrap();
+        let ini = particle_system("ZHBO_test_3", &forever, "t.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
         assert!(ini.contains("SystemLifetime = 450"), "{ini}");
     }
 
@@ -803,7 +899,7 @@ mod effect_tests {
         // distance of the starting speed held for its life.
         let s = |v: f32, d: f32| VelSample { local_velocity: ([v, 0.0, 0.0], [0.0; 3]), local_delta: ([d, 0.0, 0.0], [0.0; 3]), ..Default::default() };
         let el = Elem { vel: vec![s(0.44, 0.0), s(0.0, 0.22)], ..sprite() };
-        let ini = particle_system("ZHBO_test_4", &el, "t.tga", false, 0.0, 1.0, false).unwrap();
+        let ini = particle_system("ZHBO_test_4", &el, "t.tga", false, 0.0, Play { looping_secs: 1.0, role: Role::Blast, orient: false }).unwrap();
         let damping: f32 = ini.lines().find_map(|l| l.trim().strip_prefix("VelocityDamping = ")).unwrap().split_whitespace().next().unwrap().parse().unwrap();
         // Zero Hour's travel over the mean life (37.5 frames) matches BO2's.
         let frames = 37.5f32;
@@ -821,7 +917,7 @@ mod effect_tests {
         // a repeat where it lands on the same frame), 2 — never a second key on frame 0.
         let v = |a: u8| VisSample { color: [255, 255, 255, a], color_amplitude: [255, 255, 255, a], size: [4.0, 4.0], ..Default::default() };
         let el = Elem { life_msec: Range { base: 66.0, amplitude: 0.0 }, vis: vec![v(255), v(200), v(150), v(100), v(0)], ..sprite() };
-        let ini = particle_system("ZHBO_test_5", &el, "t.tga", false, 0.0, 1.0, false).unwrap();
+        let ini = particle_system("ZHBO_test_5", &el, "t.tga", false, 0.0, Play { looping_secs: 1.0, role: Role::Blast, orient: false }).unwrap();
         let frames: Vec<u32> = ini.lines().filter(|l| l.trim().starts_with("Alpha")).map(|l| l.split_whitespace().last().unwrap().parse().unwrap()).collect();
         assert!(frames.windows(2).all(|w| w[1] > w[0]), "{frames:?}\n{ini}");
         assert_eq!(frames[0], 0);
@@ -870,14 +966,14 @@ mod effect_tests {
         let text = fxlist_particles(&[Placed { system: "S".into(), offset: world }], false);
         assert!(text.contains("Offset = X:0.00 Y:0.00 Z:16.67"), "{text}");
         // The box's half extent spawns around it.
-        let ini = particle_system("ZHBO_test_6", &Elem { flags: 0, ..el }, "t.tga", false, 0.0, 1.0, false).unwrap();
+        let ini = particle_system("ZHBO_test_6", &Elem { flags: 0, ..el }, "t.tga", false, 0.0, Play { looping_secs: 1.0, role: Role::Blast, orient: false }).unwrap();
         assert!(ini.contains("VolumeType = BOX") && ini.contains("VolBoxHalfSize = X:1.00 Y:0.00 Z:13.33"), "{ini}");
     }
 
     #[test]
     fn a_model_element_becomes_a_shell_sprite() {
         let el = Elem { kind: kind::MODEL, count: Range { base: 1.0, amplitude: 0.0 }, models: vec!["fx_rifle_shell".into()], ..Default::default() };
-        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0, false).unwrap();
+        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0, Play { looping_secs: 1.0, role: Role::Shell, orient: false }).unwrap();
         assert!(ini.contains("ParticleSystem ZHBO_test_shell"), "{ini}");
         assert!(ini.contains("ParticleName = zhbo_fx_shell.tga"));
         // BO2's model element has no size: a shell-sized default life and sprite.
@@ -888,7 +984,7 @@ mod effect_tests {
     #[test]
     fn a_shell_fxlist_orients_to_the_tag_with_bo2_axes() {
         let el = Elem { kind: kind::MODEL, count: Range { base: 1.0, amplitude: 0.0 }, velocity: ([0.3, 0.0, 0.0], [0.1, 0.0, 0.0]), ..Default::default() };
-        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0, true).unwrap();
+        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0, Play { looping_secs: 1.0, role: Role::Shell, orient: true }).unwrap();
         // The tag's X is the eject direction: identity axes, nothing on Z (the world effects' map
         // puts it there, and the existing test still pins that).
         assert!(ini.contains("VelOrthoX = 1.667 2.222"), "{ini}");

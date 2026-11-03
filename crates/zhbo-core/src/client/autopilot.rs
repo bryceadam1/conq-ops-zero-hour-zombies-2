@@ -61,6 +61,9 @@ pub struct Autopilot {
     pub classpick: bool,
     /// The scope-overlay run: the AS50 in hand, hold ADS past the hand-off and report the log line.
     pub scope: bool,
+    /// The smoke-screen run: throw the seeded class's smoke grenade ahead and stand watching while
+    /// the bridge's scene tests what Zero Hour's units do about it (`ZHBO_AUTOPILOT=smoke`).
+    pub smoke: bool,
     /// The classpick script's next action and whether the previous key still needs a release frame
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
@@ -112,7 +115,7 @@ pub struct Scripted {
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, mp: self.mp, mp_shooter: self.mp_shooter, ..Default::default() }
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, mp: self.mp, mp_shooter: self.mp_shooter, ..Default::default() }
     }
 
     /// What it does at time `t`.
@@ -122,6 +125,9 @@ impl Autopilot {
         }
         if self.scope {
             return self.scope_input(b);
+        }
+        if self.smoke {
+            return self.smoke_input(b);
         }
         if self.equipment {
             let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
@@ -391,6 +397,18 @@ impl Autopilot {
         let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
         if (0.5..3.0).contains(&self.t) {
             keys.set_down(b.ads, true);
+        }
+        Scripted { keys, class_pick: pick, ..Default::default() }
+    }
+
+    /// The smoke-screen run: pick the seeded class (its tactical the smoke grenade), throw it ahead,
+    /// and stand looking at the cloud for the screen's whole life and after (the bridge spawns the
+    /// units around it, `ZhboAutopilot.cpp`'s smoke scene; the captures show the cloud).
+    pub fn smoke_input(&self, b: &Bindings) -> Scripted {
+        let mut keys = KeySet::default();
+        let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
+        if (1.5..1.6).contains(&self.t) {
+            keys.set_down(b.tactical, true);
         }
         Scripted { keys, class_pick: pick, ..Default::default() }
     }

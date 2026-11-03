@@ -2023,20 +2023,79 @@ fn a_crossbow_bolt_strikes_then_its_spawned_grenade_goes_off_in_him() {
     assert!(events(&sim).iter().any(|k| matches!(k, EventKind::Exploded { .. })));
 }
 
+/// A smoke grenade that goes off at once (fuse 0.5 s, already on the ground) beside General 1.
+fn throw_smoke(sim: &mut Sim, host: &FakeHost) {
+    let smoke: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+        id: "willy_pete_mp".into(),
+        effect: crate::weapons::Effect::Smoke,
+        fuse_time: 0.5,
+        explosion_fx: "SMOKE_SCREEN".into(),
+        ..Default::default()
+    }));
+    let p = Projectile::launch(smoke, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0), 0.5, host, 0.0);
+    sim.projectiles.push((0, p));
+}
+
+/// BO2's screen (`_smokegrenade.gsc`): it stands the script's 12 seconds from the blast, its sight
+/// blocker growing from 64 inches by half every 0.75 s to 150, and the engine is told every frame
+/// it stands; then it clears.
 #[test]
 fn a_smoke_grenade_screens_for_its_time_then_clears() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    let smoke: &'static crate::weapons::WeaponDef =
-        Box::leak(Box::new(crate::weapons::WeaponDef { id: "willy_pete_mp".into(), effect: crate::weapons::Effect::Smoke, fuse_time: 0.5, ..Default::default() }));
-    let p = Projectile::launch(smoke, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0), 0.5, &host, 0.0);
-    sim.projectiles.push((0, p));
+    throw_smoke(&mut sim, &host);
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(1.0));
     assert_eq!(sim.smokes.len(), 1);
-    assert!(!host.smoked.borrow().is_empty());
-    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::projectiles::SMOKE_TIME));
-    assert!(sim.smokes.is_empty(), "cleared after {} s", crate::projectiles::SMOKE_TIME);
+    let born = sim.smokes[0].born;
+    assert!(host.played_fx.borrow().iter().any(|f| f == "SMOKE_SCREEN"), "the cloud plays");
+    // Every frame since the blast told the engine, at the radius blocksight had then.
+    let told: Vec<f32> = host.smoked.borrow().iter().map(|s| s.1 / crate::units::inches(1.0)).collect();
+    assert_eq!(told.len() as u32, sim.frame - born + 1);
+    assert!((told[0] - 64.0).abs() < 1e-3, "{told:?}");
+    assert!(told.windows(2).all(|w| w[1] >= w[0]), "it only grows");
+    let lifetime = sim.smoke.frames;
+    assert_eq!(lifetime, 360, "the tuning pack's 12 s");
+    let left = born + lifetime - 1 - sim.frame;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), left);
+    assert_eq!(sim.smokes.len(), 1, "still up on its last frame");
+    assert!((host.smoked.borrow().last().unwrap().1 / crate::units::inches(1.0) - 150.0).abs() < 1e-3, "grown to its cap");
+    assert_eq!(sim.smoke_blockers().len(), 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert!(sim.smokes.is_empty(), "cleared {lifetime} frames after the blast");
+    assert!(sim.smoke_blockers().is_empty());
+}
+
+/// The screen blocks sight between the engine's questions' two points, through it or into it, and
+/// not beside it; that is what the engine asks for its units (`zhbo_logic_smoke_blocks`).
+#[test]
+fn the_screen_blocks_sight_through_it() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    throw_smoke(&mut sim, &host);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
+    let s = sim.smoke_blockers();
+    let at = s[0].at;
+    let far = crate::units::inches(500.0);
+    let blocked = |a: Vec3, b: Vec3| crate::smoke::blocks_sight(&s, sim.smoke.min_distance, a, b);
+    assert!(blocked(at - Vec3::new(far, 0.0, 0.0), at + Vec3::new(far, 0.0, 0.0)), "through it");
+    assert!(blocked(at - Vec3::new(far, 0.0, 0.0), at), "into it");
+    assert!(!blocked(at + Vec3::new(-far, far, 0.0), at + Vec3::new(far, far, 0.0)), "beside it");
+}
+
+/// In water BO2's script raises no screen (`_smokegrenade.gsc:25-29`): no blocker and no cloud.
+#[test]
+fn a_smoke_grenade_in_water_raises_no_screen() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.ground.set(Some(Surface::Water));
+    let mut sim = Sim::new();
+    throw_smoke(&mut sim, &host);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(1.0));
+    assert!(sim.projectiles.is_empty(), "it went off");
+    assert!(sim.smokes.is_empty() && host.smoked.borrow().is_empty());
+    assert!(!host.played_fx.borrow().iter().any(|f| f == "SMOKE_SCREEN"), "{:?}", host.played_fx.borrow());
 }
 
 #[test]

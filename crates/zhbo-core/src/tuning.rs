@@ -221,6 +221,14 @@ tuning! {
     proximity_exit_duration: "proximity_exit_duration" = 0.6, "Shock Charge: seconds of the exit shock (`_proximity_grenade.gsc:206`).";
     shock_view_kick_fade: "shock_view_kick_fade" = 3.0, "Seconds over which a shellshock's view kick fades out at its end: t6mp's loader stores a constant 3000 ms for it (`FUN_008bca80`, `param_1[5] = 3000`), never the file's `viewKickFadeTime`.";
     emp_grenade_duration: "empgrenade_duration" = 12.0, "EMP Grenade: seconds a vehicle stays disabled (`_empgrenade.gsc:102`, `empduration = 12`).";
+    // ---- The smoke screen (`_smokegrenade.gsc`; t6mp's visibility blockers) ----------------------
+    smoke_duration: "smokeduration" = 12.0, "Smoke grenade: seconds the screen stands: `spawntimedfx( level.fx_smokegrenade_single, position, ( 0, 0, 1 ), 12 )` (`_smokegrenade.gsc:33`); t6mp's `spawntimedfx` (`FUN_00623ed0`) frees the effect entity at `time + seconds * 1000`, and its visibility blocker with it.";
+    smoke_sight_radius_start: "smoke_blocksight_radius" = 64.0, "Smoke grenade: the sight blocker's first radius, inches (`blocksight`, `_smokegrenade.gsc:52-55`: `radius = 64; fxblocksight( self, radius )`).";
+    smoke_sight_radius_growth: "smoke_blocksight_growth" = 1.5, "Smoke grenade: the blocker's radius grows by this factor each step (`_smokegrenade.gsc:62`, `radius * 1.5`).";
+    smoke_sight_radius_interval: "smoke_blocksight_interval" = 0.75, "Smoke grenade: seconds between the blocker's growth steps (`_smokegrenade.gsc:61`, `wait 0.75`).";
+    smoke_sight_radius_min: "smoke_blocksight_min" = 10.0, "Smoke grenade: the blocker's radius floor, inches (`_smokegrenade.gsc:62`, `clamp( radius * 1.5, 10, 150 )`).";
+    smoke_sight_radius_max: "smoke_blocksight_max" = 150.0, "Smoke grenade: the blocker's radius cap, inches (`_smokegrenade.gsc:62`).";
+    smoke_sight_min_distance: "smoke_blocksight_mindist" = 80.0, "Smoke: two points closer than this, inches, always see each other through a blocker (t6mp `FUN_006e2f90`, the constant at `0x00b7d924`); farther, the line between them is blocked when it passes within a blocker's radius of its centre (`FUN_006e2e10`, the segment's closest point).";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";
     shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";
@@ -331,5 +339,7 @@ mod tests {
         assert_eq!((t.trophy_system_range, t.trophy_system_ammo, t.perk_delay_explosive_time), (512.0, 2.0, 0.9));
         assert_eq!((t.hacker_tool_max_equipment_distance, t.concussion_time_min, t.concussion_time_scale, t.emp_grenade_duration), (2000.0, 2.0, 4.0, 12.0));
         assert_eq!((t.equipment_hacker_tool_time_ms, t.vehicle_hacker_tool_time_ms, t.hacker_tool_lock_start), (50.0, 4000.0, 0.1));
+        assert_eq!((t.smoke_duration, t.smoke_sight_radius_start, t.smoke_sight_radius_growth, t.smoke_sight_radius_interval), (12.0, 64.0, 1.5, 0.75));
+        assert_eq!((t.smoke_sight_radius_min, t.smoke_sight_radius_max, t.smoke_sight_min_distance), (10.0, 150.0, 80.0));
     }
 }

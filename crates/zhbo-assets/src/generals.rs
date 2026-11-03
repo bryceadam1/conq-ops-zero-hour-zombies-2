@@ -251,8 +251,10 @@ pub fn tablet_mesh(k: usize) -> String {
 pub(crate) const TABLET_WORLD: &str = "t6_wpn_tablet_world";
 /// How high up an optic its window's centre is (share of the optic's height).
 pub(crate) const OPTIC_WINDOW: f32 = 0.72;
-/// BO2's smoke grenade cloud (its script plays it; the weapon names no effect).
-const SMOKE_EFFECT: &str = "weapon/grenade/fx_smoke_willy_pete";
+/// BO2's smoke grenade raises its screen from script, as the timed effect of this weapon
+/// (`level.fx_smokegrenade_single`, `_smokegrenade.gsc:16`; `spawntimedfx` plays the weapon's
+/// `projExplosionEffect`, `weapon/grenade/fx_smoke_willy_pete`): the grenade names no effect.
+const SMOKE_SCREEN_WEAPON: &str = "smoke_center_mp";
 /// The overhead General's bullet impacts (see `ZhboBridge.cpp`, `loadRtsFx`).
 pub use zhbo_core::names::RTS_FX_PATH;
 /// The FX weapons INI: each converted gun's third-person flash (`FireFX`; its shot is the
@@ -593,7 +595,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         let Some(d) = table.weapons.iter_mut().find(|d| &d.id == id) else { continue };
         if let Some(f) = &w.world_flash_effect {
             // Played at the muzzle bone with its matrix (X down the barrel), like BO2's.
-            flashes.insert(id.clone(), effects.add_framed(f, &|h| paks.image(h)));
+            flashes.insert(id.clone(), effects.add_framed(f, crate::fx::Role::Flash, &|h| paks.image(h)));
         }
         if let Some(f) = &w.view_flash_effect {
             // Only claim it when the converter can draw it (sprites or runner children). An effect
@@ -603,7 +605,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
                 zhbo_formats::fx::kind::is_sprite(e.kind) || e.kind == zhbo_formats::fx::kind::RUNNER
             });
             if drawable {
-                d.view_flash_fx = effects.add_framed(f, &|h| paks.image(h));
+                d.view_flash_fx = effects.add_framed(f, crate::fx::Role::Flash, &|h| paks.image(h));
             }
         }
         // The shared suppressor flash pair (BO2's `fx_muz_silencer_md` + `_3p`). BO2's
@@ -611,11 +613,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         // value when the weapon offers a silenced attachment.
         if w.attachment_variants.iter().any(|(kind, _)| atts.iter().any(|a| a.kind == *kind && a.silenced)) {
             if let Some(e) = zhbo_formats::fx::find(&common, crate::fx::SILENCER_VIEW_FLASH) {
-                d.silenced_view_flash_fx = effects.add_framed(&e, &|h| paks.image(h));
+                d.silenced_view_flash_fx = effects.add_framed(&e, crate::fx::Role::Flash, &|h| paks.image(h));
             }
             if !d.silenced_fx_weapon.is_empty() {
                 if let Some(e) = zhbo_formats::fx::find(&common, crate::fx::SILENCER_WORLD_FLASH) {
-                    let world_fx = effects.add_framed(&e, &|h| paks.image(h));
+                    let world_fx = effects.add_framed(&e, crate::fx::Role::Flash, &|h| paks.image(h));
                     fx_ini = ini_set(&fx_ini, "Weapon", &d.silenced_fx_weapon, "FireFX", &world_fx)?;
                 }
             }
@@ -632,13 +634,21 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         // A dud's own effect (`projDudEffect`, event 0x51), over the table's `projectile_dud` cell.
         if let Some(e) = &w.projectile_dud_effect {
             if d.activate_dist > 0.0 {
-                d.dud_fx = effects.add(e, &|h| paks.image(h));
+                d.dud_fx = effects.add_as(e, crate::fx::Role::Impact, &|h| paks.image(h));
             }
         }
-        // BO2's smoke grenade plays its cloud from script: use it by name, for the screen's time.
+        // BO2's smoke grenade plays its cloud from script (the timed effect of
+        // `SMOKE_SCREEN_WEAPON`), standing the tuning pack's screen time, as an area effect.
         if d.effect == zhbo_core::weapons::Effect::Smoke {
-            if let Some(e) = w.explosion_effect.clone().or_else(|| zhbo_formats::fx::find(&common, SMOKE_EFFECT)) {
-                d.explosion_fx = effects.add_timed(&e, zhbo_core::projectiles::SMOKE_TIME, &|h| paks.image(h));
+            // The pooled weapon can come from a zone whose copy of the effect's materials are
+            // reference stubs: the effect is read again by its name from `common_mp`, which holds
+            // the real one.
+            let screen = || {
+                let e = bo2.iter().find(|s| s.name == SMOKE_SCREEN_WEAPON).and_then(|s| s.explosion_effect.clone())?;
+                zhbo_formats::fx::find(&common, &e.name).or(Some(e))
+            };
+            if let Some(e) = w.explosion_effect.clone().or_else(screen) {
+                d.explosion_fx = effects.add_area(&e, zhbo_core::tuning::get().smoke_duration, &|h| paks.image(h));
             }
             continue;
         }
@@ -682,7 +692,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     for (slot, id) in [(0, &loadout.primary), (1, &loadout.secondary)] {
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(entry) = zhbo_formats::fx::bullet_entry(w.impact_type) else { continue };
-        let mut add = |e: Option<zhbo_formats::fx::Effect>| e.map_or("NONE".to_string(), |e| effects.add(&e, &|h| paks.image(h)));
+        let mut add = |e: Option<zhbo_formats::fx::Effect>| e.map_or("NONE".to_string(), |e| effects.add_as(&e, crate::fx::Role::Impact, &|h| paks.image(h)));
         let flesh = add(zhbo_formats::fx::impact_flesh(&common, entry));
         let metal = add(zhbo_formats::fx::impact(&common, entry, zhbo_formats::fx::surface::METAL));
         let hard = add(zhbo_formats::fx::impact(&common, entry, zhbo_formats::fx::surface::CONCRETE));
@@ -1320,6 +1330,97 @@ mod tests {
         let names: Vec<String> = pistol.lines().filter_map(|l| l.trim().strip_prefix("Name = ")).map(str::to_string).collect();
         assert!(!names.is_empty(), "the pistol shell FXList names no system: {pistol}");
         let particles = text("Data\\INI\\ParticleSystem\\ZHBO_BO2_Effects.ini");
+        // Every blast, stun, EMP and smoke effect a weapon names draws something: an FXList left
+        // empty (an effect read from a zone whose materials are reference stubs, as the smoke
+        // screen's pooled `smoke_center_mp` copy is) is a silent nothing in game.
+        let fx_body = |name: &str| fxs.find(&format!("FXList {name}\n")).map(|at| fxs[at..][..fxs[at..].find("\nEnd\n").unwrap_or(0)].to_string());
+        let mut empty = std::collections::BTreeSet::new();
+        for d in &table.weapons {
+            if let Some(body) = d.explosion_fx.starts_with("ZHBO_BO2FX_").then(|| fx_body(&d.explosion_fx)).flatten() {
+                if !body.contains("\n  ") {
+                    empty.insert(format!("{} ({})", d.explosion_fx, d.id));
+                }
+            }
+        }
+        assert!(empty.is_empty(), "converted blast effects that draw nothing: {empty:?}");
+        // The smoke grenade's screen: BO2's `smoke_center_mp` effect, as an area effect (drawn at
+        // every dynamic LOD and never evicted by a fight's particles) whose looping parts stand the
+        // tuning pack's screen time.
+        let smoke = by_id("willy_pete_mp");
+        let body = fx_body(&smoke.explosion_fx).unwrap_or_else(|| panic!("no FXList {}", smoke.explosion_fx));
+        let systems: Vec<&str> = body.lines().filter_map(|l| l.trim().strip_prefix("Name = ")).collect();
+        assert!(systems.len() >= 10, "the cloud's systems: {body}");
+        let frames = (zhbo_core::tuning::get().smoke_duration * 30.0).round();
+        let mut looping = 0;
+        for name in &systems {
+            let at = particles.find(&format!("ParticleSystem {name}\n")).unwrap_or_else(|| panic!("no ParticleSystem {name}"));
+            let def = &particles[at..][..particles[at..].find("\nEnd\n").unwrap()];
+            assert!(def.contains("Priority = AREA_EFFECT"), "{def}");
+            if !def.contains("BurstDelay = 0 0") {
+                looping += 1;
+                assert!(def.contains(&format!("SystemLifetime = {frames:.0}\n")), "{def}");
+            }
+        }
+        assert!(looping >= 8, "the cloud's looping parts: {looping}");
+        // Every converted effect takes its role's priority (`fx::Role`), across the whole catalog:
+        // what the table and the impact table name, by what plays it. Nothing a blast, a hit or a
+        // flash draws is Zero Hour's lowest priority (culled below 25 fps, unable to make room at
+        // the particle cap); casings are.
+        let priorities = |list: &str| -> Vec<String> {
+            let Some(body) = fx_body(list) else { return Vec::new() };
+            body.lines()
+                .filter_map(|l| l.trim().strip_prefix("Name = "))
+                .map(|name| {
+                    let at = particles.find(&format!("ParticleSystem {name}\n")).unwrap_or_else(|| panic!("no ParticleSystem {name}"));
+                    let def = &particles[at..][..particles[at..].find("\nEnd\n").unwrap()];
+                    def.lines().find_map(|l| l.trim().strip_prefix("Priority = ")).unwrap_or("").to_string()
+                })
+                .collect()
+        };
+        // A list played in two roles takes the higher priority (`fx_footstep_dust` is a bounce's
+        // kick and a dud's flesh cell), so gather every use first.
+        let rank = |p: &str| ["WEAPON_EXPLOSION", "AREA_EFFECT", "CRITICAL"].iter().position(|x| *x == p).unwrap_or(0);
+        let mut wanted: BTreeMap<String, (&str, String)> = BTreeMap::new();
+        let mut check = |list: &str, want: &'static str, what: &str| {
+            if list.is_empty() || list == "NONE" {
+                return;
+            }
+            let e = wanted.entry(list.to_string()).or_insert((want, what.to_string()));
+            if rank(want) > rank(e.0) {
+                *e = (want, what.to_string());
+            }
+        };
+        for d in &table.weapons {
+            if d.effect != zhbo_core::weapons::Effect::Smoke {
+                check(&d.explosion_fx, "CRITICAL", "blast");
+            }
+            check(&d.dud_fx, "CRITICAL", "dud");
+            check(&d.view_flash_fx, "CRITICAL", "flash");
+            check(&d.silenced_view_flash_fx, "CRITICAL", "flash");
+            check(&d.view_shell_fx, "WEAPON_EXPLOSION", "shell");
+        }
+        let impacts = text(zhbo_core::names::IMPACT_FX_PATH);
+        for l in impacts.lines().filter(|l| !l.starts_with(';')) {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let (kind, t, list) = match f.as_slice() {
+                ["exit", k, t, _, list] => (*k, *t, *list),
+                [k, t, _, list] if *k != "sound" => (*k, *t, *list),
+                _ => continue,
+            };
+            let t: i32 = t.parse().unwrap_or(-1);
+            let want = if t == zhbo_core::impacts::GRENADE_BOUNCE { "WEAPON_EXPLOSION" } else { "CRITICAL" };
+            check(list, want, kind);
+        }
+        let mut wrong = Vec::new();
+        for (list, (want, what)) in &wanted {
+            for p in priorities(list) {
+                if p != *want {
+                    wrong.push(format!("{what} {list}: {p}, not {want}"));
+                }
+            }
+        }
+        assert!(wanted.len() > 100, "{} converted lists checked", wanted.len());
+        assert!(wrong.is_empty(), "{} systems off their role's priority: {:?}", wrong.len(), &wrong[..wrong.len().min(20)]);
         let defs: Vec<&str> = names
             .iter()
             .map(|name| {

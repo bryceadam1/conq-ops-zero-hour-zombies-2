@@ -58,7 +58,9 @@ pub fn table_text(zone: &Zone, impact_types: &[u32], effects: &mut Converted, pa
         if EXACT_TYPES.contains(&(t as i32)) {
             for s in Surface::ALL {
                 if let Some(e) = fx::impact_cell(zone, entry, bo2_surface(s)) {
-                    let name = effects.add(&e, paks);
+                    // A bounce kicks dust; a dud strikes like a round.
+                    let role = if t as i32 == zhbo_core::impacts::GRENADE_BOUNCE { crate::fx::Role::Dust } else { crate::fx::Role::Impact };
+                    let name = effects.add_as(&e, role, paks);
                     text.push_str(&format!("impact {t} {} {name}\n", s.name()));
                 }
             }
@@ -81,7 +83,7 @@ fn row_cells(zone: &Zone, t: u32, entry: u32, prefix: &str, text: &mut String, e
     // A bullet's hit is played on the surface frame (`ZhboBridge.cpp`: X along the normal, as BO2
     // plays it); everything else that reads the table (a blast, a bounce, a dud) is played upright
     // with no frame.
-    let mut add = |e: &fx::Effect| if fx::is_bullet(t) { effects.add_framed(e, paks) } else { effects.add(e, paks) };
+    let mut add = |e: &fx::Effect| if fx::is_bullet(t) { effects.add_framed(e, crate::fx::Role::Impact, paks) } else { effects.add(e, paks) };
     for s in Surface::ALL.into_iter().filter(|s| !matches!(s, Surface::Flesh | Surface::Default)) {
         if let Some(e) = fx::impact(zone, entry, bo2_surface(s)) {
             let name = add(&e);

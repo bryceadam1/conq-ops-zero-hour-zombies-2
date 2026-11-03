@@ -410,7 +410,7 @@ fn populated_sim() -> Sim {
     let mut placed = crate::equipment::Placed::new(def("claymore_mp"), 0, 100, 901, Vec3::new(5.0, 5.0, 0.0), 0.5, Some(503));
     placed.triggered = Some(0.25);
     sim.equipment.placed.push(placed);
-    sim.smokes.push((Vec3::new(9.0, 9.0, 0.0), 30.0, 12.0));
+    sim.smokes.push(crate::smoke::Smoke { at: Vec3::new(9.0, 9.0, 0.0), born: 7 });
     let shield = def("riotshield_mp");
     let bearer = crate::shield::Bearer::of(0, Vec3::new(3.0, 3.0, 0.0), 0.5, shield, true).expect("the shield's box");
     sim.deployed.push(deploy::Deployed { owner: 1, general: 101, def: shield, object: 902, bearer, damage_taken: 10.0, destroyed: Some(1.0), weapon: (1, crate::weapons::WeaponState::new(shield), true) });
@@ -493,7 +493,7 @@ fn only_a_sim_that_holds_state_joins_the_crc() {
     assert!(!sim.fingerprint().active);
     sim.frame = 300;
     assert!(!sim.fingerprint().active, "the frame alone is no state");
-    sim.smokes.push((Vec3::ZERO, 1.0, 1.0));
+    sim.smokes.push(crate::smoke::Smoke { at: Vec3::ZERO, born: 0 });
     assert!(sim.fingerprint().active, "a smoke screen");
     let mut sim = populated_sim();
     assert!(sim.fingerprint().active);
