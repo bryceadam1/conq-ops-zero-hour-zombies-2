@@ -125,7 +125,8 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   build, in parts the lobbies compare and name on a mismatch), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack, BO2 units), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block),
-  `shield.rs` (the Assault Shield on its bearer: the posed collmap box turned with the General,
+  `shield.rs` (the Assault Shield on its bearer: the posed collision-surface box turned with the
+  General, at his drawn scale (`units::DRAWN_ZH_PER_INCH`),
   the ray block and the blast protection; `sim/deploy.rs` plants, wears down and returns it),
   `smoke.rs` (BO2's smoke screen: its 12 s, the sight blocker's growth and BO2's sight test, which
   Zero Hour's targeting and pathfinder ask through host patch 0024),
@@ -146,7 +147,9 @@ The BO2 → mod converter: reads your BO2 install (through `zhbo-formats`), conv
 sound, weapon viewmodels and the weapon table, and writes `ConquerOps_BO2.big`. Also a CLI
 to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts. Depends on `zhbo-formats`, `zhbo-requirements`, and
 `zhbo-core`. After Phase 2.5 the module is split into `textures.rs` (the texture pipeline),
-`ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `generals.rs`
+`ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `props.rs` (thrown,
+launched and placed weapons as `ZHBO_Proj_<id>` objects at the General's drawn scale, the planted
+shield in its deploy pose), `shield.rs` (the shield's collision-surface boxes), `generals.rs`
 (the Zero Hour names, factions and the `files()` orchestrator), `camo.rs` (the camo art and the
 `.zcm` recipes for every `WeaponCamo` a def or attachment unique points at) and `paks.rs` (pack-file access, the shrinker
 and `load_zone`, over the shared `zhbo_formats::t6zone::load_file`). `thirdperson.rs` groups the weapons held in hand into animation sets by what BO2's

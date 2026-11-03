@@ -30,6 +30,18 @@ pub const BO2_TO_ZH_DAMAGE: f32 = 1.5;
 /// eye is raised to match, so the camera stays on the converted body's eye line.
 pub const GENERAL_SCALE: f32 = 1.15;
 
+/// Zero Hour units per inch of a BO2 model drawn at the General's size: his body, what he carries,
+/// and what he throws, plants or deploys (`ZHBO_BO2_Projectiles.ini` draws those objects at
+/// [`GENERAL_SCALE`] too). BO2 sizes all of them against one 72-inch player, so one factor keeps
+/// them in proportion: a planted shield stands as tall beside him as the one on his arm. Gameplay
+/// distances (speeds, ranges, radii) are [`inches`]; only what is drawn on or beside the body is this.
+pub const DRAWN_ZH_PER_INCH: f32 = ZH_PER_INCH * GENERAL_SCALE;
+
+/// A length on a drawn BO2 model (inches) in Zero Hour units: [`DRAWN_ZH_PER_INCH`].
+pub const fn drawn_inches(v: f32) -> f32 {
+    v * DRAWN_ZH_PER_INCH
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

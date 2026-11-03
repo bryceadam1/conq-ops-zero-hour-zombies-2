@@ -5,7 +5,7 @@
 //! 32-bit PC layout from OpenAssetTools' `T6_Assets.h` (GPL-3.0).
 
 use crate::fastfile::ASSET_XMODEL;
-use crate::t6zone::layouts::{DObjAnimMat, GfxPackedVertex, XBoneInfo as XBI, XModel as XM, XModelLodInfo as XLI, XSurface as XS, XSurfaceVertexInfo as XV};
+use crate::t6zone::layouts::{DObjAnimMat, GfxPackedVertex, XBoneInfo as XBI, XModel as XM, XModelCollSurf_s as XCS, XModelLodInfo as XLI, XSurface as XS, XSurfaceVertexInfo as XV};
 use crate::t6zone::Zone;
 use crate::FormatError;
 
@@ -220,6 +220,18 @@ pub struct Model {
     /// Per bone (same index), the bone's hit box: `XModel.boneInfo` and the hit location
     /// `partClassification` names. Empty when the model has neither.
     pub hit_boxes: Vec<BoneHit>,
+    /// The model's collision surfaces (`XModel.collSurfs`): what a bullet trace against the model
+    /// meets. Empty when the model has none.
+    pub coll_surfs: Vec<CollSurf>,
+}
+
+/// One collision surface (`XModelCollSurf_s`): its bounds in the model's bind pose and the bone it
+/// moves with. A trace against an animated model (a planted shield) meets it where the bone is.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CollSurf {
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+    pub bone: usize,
 }
 
 /// A bone's hit box (`XBoneInfo`) and its hit location (`partClassification`, a `hitLocation_t`).
@@ -341,7 +353,18 @@ pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
     } else {
         Vec::new()
     };
-    Ok(Model { name, bones, surfaces, lods, radius: z.try_f32(h + XM::radius)?, mins: vec3(z, h + XM::mins), maxs: vec3(z, h + XM::maxs), materials, hit_boxes })
+    let (colls, num_colls) = (z.try_u32(h + XM::collSurfs)?, z.try_u32(h + XM::numCollSurfs)?);
+    let coll_surfs = if colls == 0 {
+        Vec::new()
+    } else {
+        (0..num_colls.min(256))
+            .map(|i| {
+                let c = colls + XCS::SIZE * i;
+                Ok(CollSurf { mins: vec3(z, c + XCS::mins), maxs: vec3(z, c + XCS::maxs), bone: z.try_u32(c + XCS::boneIdx)? as usize })
+            })
+            .collect::<Result<Vec<_>, FormatError>>()?
+    };
+    Ok(Model { name, bones, surfaces, lods, radius: z.try_f32(h + XM::radius)?, mins: vec3(z, h + XM::mins), maxs: vec3(z, h + XM::maxs), materials, hit_boxes, coll_surfs })
 }
 
 fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {

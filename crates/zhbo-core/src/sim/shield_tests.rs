@@ -94,7 +94,10 @@ fn a_blast_in_front_of_a_held_shield_is_cut_by_its_protection() {
     let blast_at = |yaw: f32| {
         let (host, mut sim) = duel(true, yaw);
         step(&mut sim, &host, FpsInput::default(), yaw, 1);
-        let at = Vec3::new(56.0, 0.0, 6.0);
+        // A unit in front of the held shield's tag (where the General's drawn arm holds it) when
+        // he faces the shooter: squarely in its 30-degree arc.
+        let held = crate::weapons::catalog().get("riotshield_mp").unwrap().shield.unwrap().held;
+        let at = Vec3::new(60.0 - crate::units::drawn_inches(held.pos[0]) - 1.0, 0.0, crate::units::drawn_inches(held.pos[2]));
         crate::projectiles::blast(&host, def, 1, at, None, 1.0, 1.0, &sim.shields);
         let sum = host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| d.2).sum::<f32>();
         sum
@@ -144,6 +147,29 @@ fn a_deployed_shield_stops_rounds_and_wears_down_at_the_bullet_scale() {
     assert_eq!(shoot(&mut sim, &host, 0.0), 0.0, "every round stops in the deployed shield");
     let taken = sim.deployed[0].damage_taken;
     assert!(taken > 0.0 && taken < crate::tuning::Tuning::default().riotshield_deployed_health, "{taken}");
+}
+
+/// The planted shield blocks exactly where its model is drawn: the deployed box (the planted
+/// model's collision surfaces) on its `riotshield_placement_zoffset` origin, at the General's drawn
+/// scale — the scale the converter draws the shield's object at and the body's hit boxes use. A
+/// round skimming just under its top edge or just inside its side stops; just over or outside, it
+/// passes.
+#[test]
+fn a_planted_shield_blocks_where_its_model_is_drawn() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    deploy(&mut sim, &host);
+    let d = &sim.deployed[0];
+    let (g, zoffset) = (d.def.shield.unwrap().deployed, crate::tuning::Tuning::default().riotshield_placement_zoffset);
+    let k = crate::units::DRAWN_ZH_PER_INCH;
+    assert_eq!(k, crate::units::inches(1.0) * crate::units::GENERAL_SCALE, "the body's drawn scale");
+    let foot = d.bearer.pos;
+    let (top, bottom) = (foot.z + (zoffset + g.maxs[2]) * k, foot.z + (zoffset + g.mins[2]) * k);
+    let half_width = g.maxs[1] * k;
+    let shot = |z: f32, y: f32| d.bearer.ray(Vec3::new(foot.x - 30.0, foot.y + y, z), Vec3::new(1.0, 0.0, 0.0), 60.0);
+    let eps = 0.05;
+    assert!(shot(top - eps, 0.0).is_some() && shot(top + eps, 0.0).is_none(), "top edge at {top}");
+    assert!(shot(bottom + eps, 0.0).is_some() && shot(bottom - eps, 0.0).is_none(), "bottom edge at {bottom}");
+    assert!(shot(top - 1.0, half_width - eps).is_some() && shot(top - 1.0, half_width + eps).is_none(), "side edge at {half_width}");
 }
 
 #[test]

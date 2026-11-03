@@ -31,6 +31,14 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   so a converted body's eye and the sim's first-person eye are the same world point (third person, R7).
   Stock ZH infantry mesh heads are taller than their collision cylinder (14.3–16 units vs
   `GeometryHeight` 12–13); the sim's 12-unit, 72-inch body is the reference.
+* The General is drawn `GENERAL_SCALE` (1.15) over that (his INI `Scale`, as tall as Zero Hour's
+  infantry), and so is everything BO2 sizes against its player: the weapon on him, and every prop
+  the converter writes (`ZHBO_BO2_Projectiles.ini`'s objects carry `Scale = GENERAL_SCALE`: grenades
+  and rounds in flight, placed equipment, the stuck bolt, the planted shield). In the sim, a length
+  on a drawn model — the body's hit boxes, the shield's held, stowed and deployed boxes and where
+  they stand — is `units::drawn_inches` (`DRAWN_ZH_PER_INCH` = `ZH_PER_INCH × GENERAL_SCALE`), so
+  what blocks is where it is drawn (the eye is the drawn body's too); gameplay distances (speeds,
+  ranges, radii) stay `inches`.
 * Damage: BO2 damage (100 HP scale) × `BO2_TO_ZH_DAMAGE` (1.5; a Ranger has 180 HP).
 * Angles: radians. Yaw 0 = +X, counter-clockwise (same as `Object::getOrientation`). Pitch + is up,
   clamped to ±85°.
@@ -933,7 +941,8 @@ from xyz, from height, source known, kind, amount)` for the share to apply (it s
 * **A held/stowed shield** (`shield::engine_scale`): a round or blow from a source whose line to the
   body's middle crosses the box before the body's axis is stopped (0); a blast keeps
   `1 − protection` with the source standing in for the blast; no source, or another kind, passes.
-* **A deployed shield's object** (attackable: `ActiveBody`, a box of the model's bounds) takes no
+* **A deployed shield's object** (attackable: `ActiveBody`, a box of the planted model's collision
+  surfaces at the General's drawn scale, the sim's deployed box) takes no
   engine damage (0): the hook queues `(object, source, kind, amount)` in a fixed lock-free ring
   (64), drained into `Sim::engine_damage_to_deployed` before the next step — the script's
   wear-down scales on Zero Hour damage ÷ `BO2_TO_ZH_DAMAGE`.

@@ -8,7 +8,8 @@
 
 //! The Assault Shield planted as cover (`_riotshield.gsc` `watchriotshielddeploy` and the engine's
 //! `canplaceriotshield`): the trigger sets it down where it was held, standing on the ground with
-//! BO2's deployed model (`t6_wpn_shield_carry_world`, the converter's `ZHBO_Proj_riotshield_mp`);
+//! BO2's deployed model (`t6_wpn_shield_carry_world` in `o_riot_stand_deploy`'s last frame, the
+//! converter's `ZHBO_Proj_riotshield_mp`, drawn at the General's scale);
 //! it blocks every shot, melee and projectile that meets it, takes damage scaled by how it came
 //! (`watchdeployedriotshielddamage`: bullets x0.025, melee x1, explosives x1) until
 //! `riotshield_deployed_health` is used up. The engine's `deployriotshield` (`FUN_009672e0`)
@@ -18,7 +19,7 @@
 
 use super::*;
 use crate::shield::Bearer;
-use crate::units::inches;
+use crate::units::{drawn_inches, inches};
 use crate::weapons::{ShieldBox, WeaponDef, WeaponState};
 
 /// How damage reached a deployed shield (the script's means-of-death buckets).
@@ -63,14 +64,17 @@ impl Sim {
         self.deployed.iter().filter(|d| d.standing()).map(|d| d.bearer)
     }
 
-    /// The trigger: plant `def` where it is held (its held box's tag over the ground), if the
-    /// ground there passes BO2's checks; else the round comes back and the hint shows.
+    /// The trigger: plant `def` where it is held (its held box's tag, where the General's drawn arm
+    /// holds it, over the ground), if the ground there passes BO2's checks; else the round comes
+    /// back and the hint shows.
     pub(super) fn deploy_shield(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, def: &'static WeaponDef) {
         let t = crate::tuning::get();
         match self.shield_placement(host, p, def, &t) {
             Some(bearer) => {
                 let Some(weapon) = p.arsenal.take_shield() else { return };
-                let origin = bearer.pos + Vec3::new(0.0, 0.0, inches(t.riotshield_placement_zoffset));
+                // The model's origin stands `riotshield_placement_zoffset` over the ground on the
+                // drawn model (its feet reach the ground at the General's drawn scale).
+                let origin = bearer.pos + Vec3::new(0.0, 0.0, drawn_inches(t.riotshield_placement_zoffset));
                 let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, origin, p.yaw) };
                 let bearer = Bearer { object, ..bearer };
                 self.deployed.push(Deployed { owner: idx, general: p.general, def, object, bearer, damage_taken: 0.0, destroyed: None, weapon });
@@ -91,14 +95,15 @@ impl Sim {
     fn shield_placement(&self, host: &dyn LogicHost, p: &PlayerSim, def: &WeaponDef, t: &crate::tuning::Tuning) -> Option<Bearer> {
         let g = def.shield?;
         let (fwd, right) = basis_xy(p.yaw);
-        let at = p.body.pos + fwd * inches(g.held.pos[0]) - right * inches(g.held.pos[1]);
+        let at = p.body.pos + fwd * drawn_inches(g.held.pos[0]) - right * drawn_inches(g.held.pos[1]);
         let ground = host.ground_height(at.x, at.y);
         if !host.is_walkable(at.x, at.y) || (ground - p.body.pos.z).abs() > inches(t.riotshield_deploy_zdiff_max) {
             return None;
         }
-        // The ground's slope across the shield's footprint: pitch along the facing, roll across.
-        let depth = inches((g.held.maxs[0] - g.held.mins[0]) * 0.5).max(1e-3);
-        let width = inches((g.held.maxs[1] - g.held.mins[1]) * 0.5).max(1e-3);
+        // The ground's slope across the planted shield's footprint: pitch along the facing, roll
+        // across.
+        let depth = drawn_inches((g.deployed.maxs[0] - g.deployed.mins[0]) * 0.5).max(1e-3);
+        let width = drawn_inches((g.deployed.maxs[1] - g.deployed.mins[1]) * 0.5).max(1e-3);
         let h = |v: Vec3| host.ground_height(v.x, v.y);
         let pitch = crate::math::det::atan((h(at + fwd * depth) - h(at - fwd * depth)) / (2.0 * depth)).to_degrees().abs();
         let roll = crate::math::det::atan((h(at + right * width) - h(at - right * width)) / (2.0 * width)).to_degrees().abs();
@@ -110,7 +115,8 @@ impl Sim {
         if self.deployed.iter().any(|d| d.standing() && (d.bearer.pos - pos).length() < limit) {
             return None;
         }
-        let b = ShieldBox { rot: [0.0, 0.0, 0.0, 1.0], pos: [0.0, 0.0, t.riotshield_placement_zoffset], mins: g.held.mins, maxs: g.held.maxs };
+        // The planted model's collision box, its origin `riotshield_placement_zoffset` up.
+        let b = ShieldBox { pos: [0.0, 0.0, t.riotshield_placement_zoffset], ..g.deployed };
         Some(Bearer { general: 0, object: 0, pos, yaw: p.yaw, held: true, b })
     }
 

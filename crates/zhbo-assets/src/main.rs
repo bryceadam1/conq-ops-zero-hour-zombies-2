@@ -18,6 +18,9 @@
 //! zhbo-assets dump <ff> <text> [before] [after]        hex dump around a string in a zone
 //! zhbo-assets pose <out.png> <frame> <ff>:<anim> <ff>:<model>[@<tag>] ...
 //!                                                     render models posed by an animation frame
+//! zhbo-assets props <out-dir> [--weapon <id>]... [--prop-scale S] [--bo2]
+//!                                                     each thrown/placed prop beside the General as
+//!                                                     Zero Hour draws them (--bo2: BO2's own sizes)
 //! zhbo-assets hammer <out.png> <clip> <frame>         render the converted hammer viewmodel
 //!                                                     (clip: ZHBO_VMH_PUL/IDL/SWG/PUT)
 //! zhbo-assets screenshot [out-dir] [--archive <big>]  render the create-a-class screens to PNG
@@ -147,6 +150,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "hud-sheet" => cmd_hud_sheet(args),
         "hammer" => cmd_hammer(args),
         "posew3d" => cmd_posew3d(args),
+        "props" => cmd_props(args),
         "dump" => cmd_dump(args),
         "find" => cmd_find(args),
         "list" => cmd_list(args),
@@ -853,6 +857,50 @@ fn cmd_hammer(args: &[String]) -> Result<(), String> {
 }
 
 /// `zhbo-assets posew3d`.
+/// `zhbo-assets props`: [`zhbo_assets::props::line_up`] rendered front and side, one PNG per prop.
+fn cmd_props(args: &[String]) -> Result<(), String> {
+    let usage = "props <out-dir> [--weapon <id>]... [--prop-scale S] [--bo2]";
+    let out = PathBuf::from(args.get(1).ok_or(usage)?);
+    let mut ids = Vec::new();
+    let (mut scale, mut bo2) = (None, false);
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--weapon" => ids.push(args.get(i + 1).ok_or(usage)?.clone()),
+            "--prop-scale" => scale = Some(args.get(i + 1).and_then(|v| v.parse().ok()).ok_or(usage)?),
+            "--bo2" => {
+                bo2 = true;
+                i += 1;
+                continue;
+            }
+            _ => return Err(usage.into()),
+        }
+        i += 2;
+    }
+    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    // The preview indexes with u16: one unindexed mesh per run of triangles.
+    let meshes = |s: &zhbo_assets::props::Soup| -> Vec<preview::Mesh> {
+        s.triangles
+            .chunks(20_000)
+            .map(|run| preview::Mesh {
+                positions: run.iter().flat_map(|t| t.map(|i| s.positions[i as usize])).collect(),
+                uvs: Vec::new(),
+                triangles: (0..run.len() as u16).map(|t| [3 * t, 3 * t + 1, 3 * t + 2]).collect(),
+                texture: None,
+            })
+            .collect()
+    };
+    for (id, body, prop) in zhbo_assets::props::line_up(&bo2_dir()?, &ids, scale, bo2)? {
+        let mut all = meshes(&body);
+        all.extend(meshes(&prop));
+        let file = out.join(format!("{id}.png"));
+        preview::render_meshes(&all, &file).map_err(|e| e.to_string())?;
+        let top = |s: &zhbo_assets::props::Soup| s.positions.iter().map(|p| p[2]).fold(f32::MIN, f32::max);
+        println!("{id}: body top {:.2}, prop top {:.2} -> {}", top(&body), top(&prop), file.display());
+    }
+    Ok(())
+}
+
 fn cmd_posew3d(args: &[String]) -> Result<(), String> {
     // posew3d <out.png> <frame> <ff>:<anim> <ff>:<base>[ <ff>:<model>@<tag> ...]: render through
     // the W3D conversion (rig, skin, animation) as the engine would draw it.
