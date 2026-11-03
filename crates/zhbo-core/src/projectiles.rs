@@ -38,9 +38,6 @@ impl Flight {
 }
 /// How close a flying projectile must pass an object to hit it.
 const HIT_RADIUS: f32 = 2.5;
-/// A smoke grenade's screen: how long it stays up and how wide it is (BO2's Willy Pete).
-pub const SMOKE_TIME: f32 = 15.0;
-pub const SMOKE_RADIUS: f32 = inches(220.0);
 /// Zero Hour FX for a blast when neither the impact table nor the weapon names one (an archive
 /// without the converted table, or a mod-only def).
 const DEFAULT_EXPLOSION_FX: &str = "FX_BoobyTrapExplosion";
@@ -404,6 +401,10 @@ pub fn blast_fx(def: &WeaponDef, surface: Surface) -> (Option<String>, Option<&s
     let own = (!def.explosion_fx.is_empty()).then_some(def.explosion_fx.as_str());
     if table.is_none() && own.is_none() {
         return (None, Some(DEFAULT_EXPLOSION_FX));
+    }
+    // A smoke grenade's own effect is its script's screen, which water never raises.
+    if def.effect == Effect::Smoke && !crate::smoke::raised_on(surface) {
+        return (table, None);
     }
     (table, own)
 }

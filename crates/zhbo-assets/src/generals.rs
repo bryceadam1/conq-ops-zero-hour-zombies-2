@@ -251,8 +251,10 @@ pub fn tablet_mesh(k: usize) -> String {
 pub(crate) const TABLET_WORLD: &str = "t6_wpn_tablet_world";
 /// How high up an optic its window's centre is (share of the optic's height).
 pub(crate) const OPTIC_WINDOW: f32 = 0.72;
-/// BO2's smoke grenade cloud (its script plays it; the weapon names no effect).
-const SMOKE_EFFECT: &str = "weapon/grenade/fx_smoke_willy_pete";
+/// BO2's smoke grenade raises its screen from script, as the timed effect of this weapon
+/// (`level.fx_smokegrenade_single`, `_smokegrenade.gsc:16`; `spawntimedfx` plays the weapon's
+/// `projExplosionEffect`, `weapon/grenade/fx_smoke_willy_pete`): the grenade names no effect.
+const SMOKE_SCREEN_WEAPON: &str = "smoke_center_mp";
 /// The overhead General's bullet impacts (see `ZhboBridge.cpp`, `loadRtsFx`).
 pub use zhbo_core::names::RTS_FX_PATH;
 /// The FX weapons INI: each converted gun's third-person flash (`FireFX`; its shot is the
@@ -633,10 +635,18 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
                 d.dud_fx = effects.add(e, &|h| paks.image(h));
             }
         }
-        // BO2's smoke grenade plays its cloud from script: use it by name, for the screen's time.
+        // BO2's smoke grenade plays its cloud from script (the timed effect of
+        // `SMOKE_SCREEN_WEAPON`), standing the tuning pack's screen time, as an area effect.
         if d.effect == zhbo_core::weapons::Effect::Smoke {
-            if let Some(e) = w.explosion_effect.clone().or_else(|| zhbo_formats::fx::find(&common, SMOKE_EFFECT)) {
-                d.explosion_fx = effects.add_timed(&e, zhbo_core::projectiles::SMOKE_TIME, &|h| paks.image(h));
+            // The pooled weapon can come from a zone whose copy of the effect's materials are
+            // reference stubs: the effect is read again by its name from `common_mp`, which holds
+            // the real one.
+            let screen = || {
+                let e = bo2.iter().find(|s| s.name == SMOKE_SCREEN_WEAPON).and_then(|s| s.explosion_effect.clone())?;
+                zhbo_formats::fx::find(&common, &e.name).or(Some(e))
+            };
+            if let Some(e) = w.explosion_effect.clone().or_else(screen) {
+                d.explosion_fx = effects.add_area(&e, zhbo_core::tuning::get().smoke_duration, &|h| paks.image(h));
             }
             continue;
         }
@@ -1318,6 +1328,38 @@ mod tests {
         let names: Vec<String> = pistol.lines().filter_map(|l| l.trim().strip_prefix("Name = ")).map(str::to_string).collect();
         assert!(!names.is_empty(), "the pistol shell FXList names no system: {pistol}");
         let particles = text("Data\\INI\\ParticleSystem\\ZHBO_BO2_Effects.ini");
+        // Every blast, stun, EMP and smoke effect a weapon names draws something: an FXList left
+        // empty (an effect read from a zone whose materials are reference stubs, as the smoke
+        // screen's pooled `smoke_center_mp` copy is) is a silent nothing in game.
+        let fx_body = |name: &str| fxs.find(&format!("FXList {name}\n")).map(|at| fxs[at..][..fxs[at..].find("\nEnd\n").unwrap_or(0)].to_string());
+        let mut empty = std::collections::BTreeSet::new();
+        for d in &table.weapons {
+            if let Some(body) = d.explosion_fx.starts_with("ZHBO_BO2FX_").then(|| fx_body(&d.explosion_fx)).flatten() {
+                if !body.contains("\n  ") {
+                    empty.insert(format!("{} ({})", d.explosion_fx, d.id));
+                }
+            }
+        }
+        assert!(empty.is_empty(), "converted blast effects that draw nothing: {empty:?}");
+        // The smoke grenade's screen: BO2's `smoke_center_mp` effect, as an area effect (drawn at
+        // every dynamic LOD and never evicted by a fight's particles) whose looping parts stand the
+        // tuning pack's screen time.
+        let smoke = by_id("willy_pete_mp");
+        let body = fx_body(&smoke.explosion_fx).unwrap_or_else(|| panic!("no FXList {}", smoke.explosion_fx));
+        let systems: Vec<&str> = body.lines().filter_map(|l| l.trim().strip_prefix("Name = ")).collect();
+        assert!(systems.len() >= 10, "the cloud's systems: {body}");
+        let frames = (zhbo_core::tuning::get().smoke_duration * 30.0).round();
+        let mut looping = 0;
+        for name in &systems {
+            let at = particles.find(&format!("ParticleSystem {name}\n")).unwrap_or_else(|| panic!("no ParticleSystem {name}"));
+            let def = &particles[at..][..particles[at..].find("\nEnd\n").unwrap()];
+            assert!(def.contains("Priority = AREA_EFFECT"), "{def}");
+            if !def.contains("BurstDelay = 0 0") {
+                looping += 1;
+                assert!(def.contains(&format!("SystemLifetime = {frames:.0}\n")), "{def}");
+            }
+        }
+        assert!(looping >= 8, "the cloud's looping parts: {looping}");
         let defs: Vec<&str> = names
             .iter()
             .map(|name| {

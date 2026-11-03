@@ -101,6 +101,39 @@ const G_PER_FRAME2: f32 = 800.0 / 900.0 * zhbo_core::units::ZH_PER_INCH;
 /// Largest side of an effect texture.
 const FX_TEXTURE_MAX: u32 = 256;
 
+/// Zero Hour's particle priority (`ParticlePriorityType`) for a converted effect's systems. The
+/// engine creates none below the dynamic LOD's `MinParticlePriority` (`UNIT_DAMAGE_FX` under 25
+/// fps in `GameLOD.ini`), and at the particle cap (`MaxParticleCount`, 500 at the `Low` static
+/// LOD) a new particle may only evict ones of a strictly lower priority, while any higher one
+/// evicts it (`ParticleSystem::createParticle`, `removeOldestParticles`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Priority {
+    /// A weapon's passing effect (flash, shell, impact, blast): Zero Hour's lowest.
+    Weapon,
+    /// An effect that carries gameplay over an area for its time (the smoke screen, which blocks
+    /// sight): Zero Hour's own fields and clouds (poison, radiation, beacon smoke) are
+    /// `AREA_EFFECT`, drawn at every dynamic LOD and evicted by nothing a fight spawns.
+    Area,
+}
+
+impl Priority {
+    fn ini(self) -> &'static str {
+        match self {
+            Priority::Weapon => "WEAPON_EXPLOSION",
+            Priority::Area => "AREA_EFFECT",
+        }
+    }
+}
+
+/// How a converted effect's systems play: how long its looping parts run, at what priority, and
+/// whether they take the spawner's matrix (`OrientToObject`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Play {
+    looping_secs: f32,
+    priority: Priority,
+    orient: bool,
+}
+
 /// Inches to Zero Hour units (`zhbo_core::units::inches`).
 fn units(inches: f32) -> f32 {
     zhbo_core::units::inches(inches)
@@ -139,9 +172,16 @@ impl Converted {
         self.add_timed(effect, secs, paks)
     }
 
-    /// [`Converted::add`], with the looping parts running `looping_secs` (a smoke screen's time).
+    /// [`Converted::add`], with the looping parts running `looping_secs`.
     pub fn add_timed(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
-        self.add_timed_with(effect, looping_secs, paks, None, false)
+        self.add_timed_with(effect, Play { looping_secs, priority: Priority::Weapon, orient: false }, paks, None)
+    }
+
+    /// An area effect standing `secs` (BO2's timed effect entity, `spawntimedfx`: its looping parts
+    /// emit until the entity is freed, the rest play out their own life), at [`Priority::Area`]:
+    /// the smoke screen.
+    pub fn add_area(&mut self, effect: &Effect, secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        self.add_timed_with(effect, Play { looping_secs: secs, priority: Priority::Area, orient: false }, paks, None)
     }
 
     /// [`Converted::add`] for an effect whose model elements (a shell casing) should be drawn as
@@ -152,23 +192,23 @@ impl Converted {
     /// one.
     pub fn add_shell(&mut self, effect: &Effect, zones: &[&Zone], paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
         let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
-        self.add_timed_with(effect, secs, paks, Some(zones), true)
+        self.add_timed_with(effect, Play { looping_secs: secs, priority: Priority::Weapon, orient: true }, paks, Some(zones))
     }
 
-    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool) -> String {
+    fn add_timed_with(&mut self, effect: &Effect, play: Play, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>) -> String {
         let name = fxlist_name(&effect.name);
         if !self.done.insert(name.clone()) {
             return name;
         }
         let mut systems = Vec::new();
         let mut bright = false;
-        self.add_elems(effect, 0.0, looping_secs, &name, paks, zones, orient, &mut systems, &mut bright);
+        self.add_elems(effect, 0.0, play, &name, paks, zones, &mut systems, &mut bright);
         let mut body = String::new();
         if bright {
             body.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
         }
-        body.push_str(&fxlist_particles(&systems, orient));
-        self.lists.insert(name.clone(), (systems, orient));
+        body.push_str(&fxlist_particles(&systems, play.orient));
+        self.lists.insert(name.clone(), (systems, play.orient));
         self.write(&name, body);
         name
     }
@@ -230,11 +270,11 @@ impl Converted {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool, systems: &mut Vec<String>, bright: &mut bool) {
+    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, play: Play, prefix: &str, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, systems: &mut Vec<String>, bright: &mut bool) {
         for el in &effect.elems {
             if el.kind == kind::RUNNER {
                 for child in &el.children {
-                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, zones, orient, systems, bright);
+                    self.add_elems(child, delay_ms + el.delay_msec.base, play, prefix, paks, zones, systems, bright);
                 }
                 continue;
             }
@@ -255,7 +295,7 @@ impl Converted {
                     let Some(img) = colour else { continue };
                     let Some(tex) = self.texture(&img.name, img.key(), (1, 1), paks) else { continue };
                     let sys = format!("{prefix}_shell{}", systems.len());
-                    self.particles.push_str(&model_particle_system(&sys, el, &tex.0, delay_ms, orient));
+                    self.particles.push_str(&model_particle_system(&sys, el, &tex.0, delay_ms, play.orient));
                     systems.push(sys);
                 }
                 continue;
@@ -278,7 +318,7 @@ impl Converted {
             };
             *bright |= additive;
             let sys = format!("{prefix}_{}", systems.len());
-            self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms, looping_secs, orient));
+            self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms, play));
             systems.push(sys);
         }
     }
@@ -343,7 +383,8 @@ fn fxlist_particles(systems: &[String], orient: bool) -> String {
 }
 
 /// One BO2 effect element as a Zero Hour particle system.
-fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, looping_secs: f32, orient: bool) -> String {
+fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, play: Play) -> String {
+    let Play { looping_secs, priority, orient } = play;
     let frames = |ms: f32| (ms / MS_PER_FRAME).max(1.0);
     let life = (frames(el.life_msec.min()), frames(el.life_msec.max()));
     let first = el.vis.first().copied().unwrap_or_default();
@@ -381,7 +422,7 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
     // Looping parts emit every interval for `looping_secs` (never forever: SystemLifetime 0 is).
     let (burst_delay, system_life) = if el.looping && el.interval_msec > 0 { (frames(el.interval_msec as f32), frames(looping_secs * 1000.0)) } else { (0.0, 1.0) };
     format!(
-        "ParticleSystem {name}\n  Priority = WEAPON_EXPLOSION\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
+        "ParticleSystem {name}\n  Priority = {priority}\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
          AngleZ = -3.14 3.14\n  AngularRateZ = -0.02 0.02\n  AngularDamping = 1.00 1.00\n  VelocityDamping = 0.97 0.99\n  \
          Gravity = {gravity:.4}\n  Lifetime = {:.0} {:.0}\n  SystemLifetime = {system_life:.0}\n  Size = {:.2} {:.2}\n  StartSizeRate = 0.00 0.00\n  \
          SizeRate = {growth:.3} {growth:.3}\n  SizeRateDamping = 1.00 1.00\n{keys}  ColorScale = 0.00 0.00\n  BurstDelay = {burst_delay:.0} {burst_delay:.0}\n  \
@@ -405,6 +446,7 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
         if radius > 0.05 { "SPHERE" } else { "POINT" },
         if radius > 0.05 { format!("  VolSphereRadius = {radius:.2}\n") } else { String::new() },
         shader = if additive { "ADDITIVE" } else { "ALPHA" },
+        priority = priority.ini(),
     )
 }
 
@@ -421,7 +463,7 @@ fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32, or
     if e.life_msec.base <= 0.0 {
         e.life_msec = Range { base: 700.0, amplitude: 200.0 };
     }
-    particle_system(name, &e, texture, false, delay_ms, 1.0, orient)
+    particle_system(name, &e, texture, false, delay_ms, Play { looping_secs: 1.0, priority: Priority::Weapon, orient })
 }
 
 #[cfg(test)]
@@ -445,7 +487,8 @@ mod effect_tests {
             ],
             ..Default::default()
         };
-        let ini = particle_system("ZHBO_test_0", &el, "zhbo_fx_smoke.tga", false, 0.0, 15.0, false);
+        let world = Play { looping_secs: 15.0, priority: Priority::Weapon, orient: false };
+        let ini = particle_system("ZHBO_test_0", &el, "zhbo_fx_smoke.tga", false, 0.0, world);
         assert!(ini.contains("Lifetime = 30 45"), "{ini}");
         assert!(ini.contains("BurstCount = 5 7"));
         assert!(ini.contains("InitialDelay = 2 2"));
@@ -456,8 +499,13 @@ mod effect_tests {
         assert!(ini.contains("Gravity = -0.1481"), "{ini}");
         // Looping parts end.
         let looping = Elem { looping: true, interval_msec: 3000, ..el };
-        let ini = particle_system("ZHBO_test_1", &looping, "zhbo_fx_smoke.tga", false, 0.0, 15.0, false);
+        let ini = particle_system("ZHBO_test_1", &looping, "zhbo_fx_smoke.tga", false, 0.0, world);
         assert!(ini.contains("SystemLifetime = 450") && ini.contains("BurstDelay = 90 90"), "{ini}");
+        assert!(ini.contains("Priority = WEAPON_EXPLOSION"), "{ini}");
+        // An area effect (the smoke screen) stands its time at AREA_EFFECT.
+        let area = Play { looping_secs: 12.0, priority: Priority::Area, orient: false };
+        let ini = particle_system("ZHBO_test_2", &looping, "zhbo_fx_smoke.tga", false, 0.0, area);
+        assert!(ini.contains("SystemLifetime = 360") && ini.contains("Priority = AREA_EFFECT"), "{ini}");
     }
 
     #[test]
@@ -474,7 +522,7 @@ mod effect_tests {
     #[test]
     fn a_shell_fxlist_orients_to_the_tag_with_bo2_axes() {
         let el = Elem { kind: kind::MODEL, velocity: ([0.3, 0.0, 0.0], [0.1, 0.0, 0.0]), ..Default::default() };
-        let ini = particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", false, 0.0, 1.0, true);
+        let ini = particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", false, 0.0, Play { looping_secs: 1.0, priority: Priority::Weapon, orient: true });
         // The tag's X is the eject direction: identity axes, nothing on Z (the world effects' map
         // puts it there, and the existing test still pins that).
         assert!(ini.contains("VelOrthoX = 1.667 2.222"), "{ini}");

@@ -20,6 +20,7 @@ class GameWindow;
 enum NameKeyType CPP_11(: Int); // Common/STLTypedefs.h
 class Object;
 class DamageInfo;
+class Path;
 class Xfer;
 
 #include <string>
@@ -65,6 +66,17 @@ void Zhbo_XferLogicCRC(Xfer *xfer, Bool logicFrame);
 /// The Assault Shield in the damage path (patch 0017, top of Object::attemptDamage): scales the
 /// damage a held/stowed shield stops or a deployed shield's object takes (the core wears that down).
 void Zhbo_ShieldDamage(Object *obj, DamageInfo *info);
+/// The smoke screen (patch 0024): whether one hides `victim` from `source` (the line between
+/// their centres passes through it), so `source` can neither acquire nor keep attacking it
+/// (WeaponSet::getAbleToAttackSpecificObject).
+Bool Zhbo_SmokeHides(const Object *source, const Object *victim);
+/// The pathfinder's extra cost for the cell at (cellX, cellY) while a screen stands over it
+/// (Pathfinder::examineNeighboringCells and findGroundPath): high, not blocking, so a unit inside
+/// can still leave and a goal inside can still be reached.
+Int Zhbo_SmokePathCost(Int cellX, Int cellY);
+/// Whether `path` (computed on frame `pathFrame`) passes under a screen that went off since: the
+/// move recomputes it once (AIInternalMoveToState::update).
+Bool Zhbo_SmokeCrossesPath(Path *path, UnsignedInt pathFrame);
 
 /// Force the in-game Create-a-Class pick screen open (the command bar's "Create a Class" entry;
 /// the at-spawn pick needs no forcing). One-shot latch consumed by the next client frame. The

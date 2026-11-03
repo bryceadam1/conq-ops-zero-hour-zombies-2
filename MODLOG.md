@@ -11025,3 +11025,74 @@ lines are in `ConquerOps_Instance02.log`.
 * Headless replay checks: the autopilot recording and the real-input recording both pass (above).
 * Logs: no error, desync or mismatch lines in any leg's `ConquerOps.log`, the MP logs or
   `zhbo-gfx.log`, once the remote-shot fix was in. There is no PullPin error any more.
+
+## The smoke screen: BO2's 12 s screen, drawn whatever the particle load, hiding units from Zero Hour's units and turning their paths (2026-11-03, branch `v1/smoke-screen`)
+
+Playtest: "smoke grenades just seem to fizzle a little bit, not make a large screen of smoke";
+units should not see through it and should go round it while it lasts.
+
+**BO2's rule** (`_smokegrenade.gsc`, t6mp). The grenade names no effect; the script spawns a timed
+effect entity of `smoke_center_mp` (whose `projExplosionEffect` is `weapon/grenade/fx_smoke_willy_pete`)
+for 12 s (`spawntimedfx(…, 12)`; `FUN_00623ed0` frees it at `time + 12000`) and makes it a
+visibility blocker (`blocksight`: radius 64 in, then every 0.75 s `clamp(r * 1.5, 10, 150)`;
+`fxblocksight` → `SV_FX_SetVisBlocker`, `FUN_006e3020`). The engine's sight test (`FUN_006e2f90`)
+lets points closer than 80 in always see each other, else blocks a segment whose closest point is
+within a blocker's radius of its centre (`FUN_006e2e10`). It is asked by the turrets' target sight
+(`FUN_0067d3a0` via `FUN_0067d490`), a lock-on think (`FUN_0064f580`), an unreferenced helper
+(`FUN_005d7cd0`) and `bullettracepassed`'s optional sixth argument, which no MP script passes
+(trophy, sensor, Black Hat, claymore and the compass do not consult it). In water the script
+raises nothing. The mod had 15 s and 220 in by hand, and a fixed circle.
+
+**Root causes.**
+* *The fizzle.* Every converted BO2 effect was `Priority = WEAPON_EXPLOSION`, Zero Hour's lowest.
+  `ParticleSystem::createParticle` refuses priorities below the dynamic LOD's `MinParticlePriority`
+  (`UNIT_DAMAGE_FX` under 25 fps, `GameLOD.ini`), and at `MaxParticleCount` (500 at the `Low`
+  static LOD, which this Mac's `Options.ini` detects) a new particle may only evict *strictly lower*
+  priorities (`removeOldestParticles(count, cap)` loops `i < cap`): a `WEAPON_EXPLOSION` particle is
+  simply not made, and anything higher evicts the cloud's. **Gotcha** for every converted effect
+  (explosions too — the explosion-fx item's): the lowest priority is the first to vanish under load.
+  The screen now converts at `AREA_EFFECT` (`fx::Priority::Area`, `Converted::add_area`), Zero
+  Hour's own priority for gameplay clouds and fields (poison, radiation, beacon smoke), its looping
+  parts standing the tuning pack's 12 s.
+* *Sight.* `cbSmoke` idled attackers with either end inside a 2D circle; a line through the cloud
+  was never blocked and the idle unit re-acquired the same target a moment later.
+* *Pathing.* Nothing.
+
+**Fix.**
+* `crate::smoke` (new): `Smoke { at, born }` (lockstep, hashed), `Params` from the tuning pack's
+  new `[Smoke]` keys (`smokeduration`, `smoke_blocksight_*`), the blocker's step-by-step growth,
+  BO2's sight test, the ground cover and "crosses a path computed before it" tests, and the water
+  rule (also skips the cloud in `projectiles::blast_fx`). `Sim::smoke_blockers()`; the sim tells
+  the engine each frame at the radius *now*.
+* A lock-free mirror (`ffi::publish_smokes`, like the shields') and three free functions,
+  `zhbo_logic_smoke_blocks/covers/crosses` (pending the next ABI bump).
+* Host patch `0024-smoke-screen.patch`: `WeaponSet::getAbleToAttackSpecificObject` refuses a
+  victim the screen hides (`Zhbo_SmokeHides`; one test serves acquisition, the attack states'
+  `cannotPossiblyAttackObject`, turrets and the UI cursor); the pathfinder adds a cell cost under
+  a screen (100, the engine's own tunnelling penalty: a cost, not a wall) in
+  `examineNeighboringCells` and `findGroundPath`; a move whose path crosses a newer screen repaths
+  once (`AIInternalMoveToState::update`).
+  **Gotcha:** the cost alone did nothing. The A* step first runs a straight line at the goal at half
+  a step per cell (`examineCellsCallback`), which never sees neighbour costs, and the path's
+  smoothing and the walk along it straighten it again through `isLinePassable`. All three now stop
+  at a screen's edge (a line that starts inside one may go anywhere, so units inside walk out).
+* `cbSmoke` only logs now; the converter reads the screen from `smoke_center_mp`'s effect.
+  **Gotcha:** the pooled `smoke_center_mp` copy's materials are reference stubs, so its effect
+  converted to an *empty* FXList; it is re-read by name from `common_mp`. The real-install test now
+  fails on any converted blast effect that draws nothing, and pins the screen's priority and time.
+
+**Tests.** `smoke::tests` (12 s, growth, the sight cases incl. over it and the 80 in rule, ground
+and path), `sim::tests` (`a_smoke_grenade_screens_for_its_time_then_clears`,
+`the_screen_blocks_sight_through_it`, `a_smoke_grenade_in_water_raises_no_screen`),
+`ffi::tests::the_smoke_hooks_answer_from_the_sims_screens`, `fx` (area priority), the tuning pins,
+and the in-game `scripts/autotest-mac.sh --smoke` (`ZHBO_AUTOPILOT=smoke`): a Ranger and a rebel
+80 apart across the screen stay idle for its 12 s and fight 12.3 s after it went off; a neutral
+Ranger ordered straight across passed 27.2 from the centre (radius 25) — before the line fixes,
+1.4. First-person captures show a dense cloud for the whole screen, fading after.
+
+**Verified.** `cargo test --workspace` 1,094 passed; clippy clean (all targets, and zhbo-core with
+`harness`); real-install suite 68/68 (the full-roster lockstep gate included); conformance
+byte-identical to integration7 (weapons 1,979 cells / 11 clusters, cac 0 + 4 BO2-only, 12 gap
+clusters); `cargo xtask build` with patches 0001–0024; in game `--smoke` 7/7, default 16/16, `--mp`
+23/23 with the state hash equal on all 2,767 common frames (a first `--mp` run missed the target's
+respawn order, 19/23 with the hashes still equal and no smoke in play; the rerun passed).
