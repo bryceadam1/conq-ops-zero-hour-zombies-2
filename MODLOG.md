@@ -11619,3 +11619,94 @@ no `zhbo_native` blob format changed.
   his second General was also shot entering before his round began, so his log had one round and
   no shellshock. The same run with 5 passes 34/34 (8,365 common frames, 5 shellshocks on both
   machines, CQB worn). TESTING.md and the script's header now say so.
+
+## Other players look and sound like BO2 third-person players (2026-11-03, branch `v1/remote-presentation`)
+
+Round 3 left another player's knife, knife hit and reload silent, his upper body frozen through a
+reload, throw or knife in the native body, nobody's death voice, and ASSISTS always 0. Notes, the
+weapon sweep and the probes are in `~/.opencode/plan/remote-presentation/`.
+
+**BO2's ground truth.**
+* *Torso.* `mp/playeranim.script`'s `EVENTS` pick an upper-body clip per action: `reload`,
+  `knife_melee` (and `knife_melee_charge` for the lunge), `meleeattack` (the shield's bash, the only
+  event with a riotshield entry), `fireweapon` (with an offhand as the weapon: the throw),
+  `prime_grenade`, `raiseweapon`, `dropweapon`, `firstraiseweapon`, each by `playerAnimType`,
+  `weaponclass` (with the script's own defines: `autofire` = mg and smg), stance, gait and aim. The
+  `pt_*` xanims track only the bones from `j_spinelower` up (checked for all 173 the converted
+  weapons reach), so they layer over the legs' clip.
+* *Reload sounds.* No MP weapon names a `reloadSound`/`reloadSoundPlayer` (sweep of all 172
+  `common_mp` weapon files, `weapons_more.txt`). Another player's reload foley is the torso clip's
+  own notetracks: `pt_reload_stand_rifle` carries `sndnt#fly_assault_reload_npc_mag_out`,
+  `_mag_in`, `_charge`; the pistol, SMG, LMG, shotgun, launcher, crossbow and ballistic-knife
+  reloads have theirs (35 aliases), the grenade prime `wpn_grenade_pull_pin`.
+* *Third-person def sounds.* `meleeSwipeSound` (`wpn_melee_whoosh_npc` on `knife_mp`,
+  `wpn_tac_knife_whoosh_npc` on the pistols, the shield's own), `raiseSound`/`firstRaiseSound`/
+  `putawaySound` (`fly_generic_*_npc`, the launchers' own), `pullbackSound` (Semtex, Shock Charge,
+  Sensor Grenade). `meleeHitSound` has no `Player` twin: `CG_EntityEvent` (t6mp `FUN_004c1590`,
+  case 0x35) plays it on the entity for everyone; cases 0x2a–0x2c pick the field without `Player`
+  when the event's entity is not the local player.
+* *Voices.* `_battlechatter_mp.gsc` `painvox`/`deathvox`: `level.teamprefix[team] + bcvoicenumber +
+  "_pain_small"` / `"_pain_death"`, `playsoundontag(…, "J_Head")` for everyone in a team game;
+  `bcVoiceNumber = randomintrange(0, 3)`; `snd_pain_player` is notified only when `self.health !=
+  self.maxhealth` as the damage arrives (`_globallogic_player.gsc:790`), so the first hit from full
+  health is silent; the pain probability dvar is 0 and `bcmp_pain_delay` reads as int 0. The team
+  prefixes (`teams/_teamset_multiteam.gsc`) are `vox_st` (SEALs), `vox_ch` (PLA), `vox_pm` (PMC):
+  the mod's USA, China, GLA bodies' factions; their aliases are in `en_faction_<team>_mp`'s
+  `mpl_vox_*` bank (150..1200").
+* *Assists.* `trackattackerdamage` (enemy player damage only, the friendly branch tracks none),
+  `playerkilled_awardassists` (every attacker but the killer on the killer's team, team games only;
+  `lpattackteam` is the victim's own team for a suicide and `world` for the world, so neither
+  credits anybody), `processassist` (`assist_` + `int(ceil(damage/25))` clamped 1..3 × 25),
+  `decayplayerdamages` (regeneration decays each attacker's damage by the health regained);
+  `mp/scoreinfo.csv` tdm score: kill 100, `assist_25` 25, `assist_50` 25, `assist_75` 50.
+
+**What changed.**
+* *Assists (sim, `sim/score.rs`).* The step and `rts_update` run through a pass-through host
+  (`score::Tally`) that records every `damage` call in order; afterwards an enemy seat's damage to a
+  seat's General joins his attacker list (BO2 health), regeneration decays it, and a seat's killing
+  blow credits every other attacker allied with the killer and not with the victim (Zero Hour's
+  alliance is BO2's team; a free-for-all credits none). `EventKind::Assist { level }` and
+  `Score::assists` per seat; a hit from a General whose seat record is gone (his grenade landed
+  after he died) is his seat's (`Score::generals`, each seat's last four). Hashed in the world part.
+  The scoreboard's ASSISTS is the sim's count; SCORE adds `client::ASSIST_POINTS`; the own HUD's
+  score popup shows the assist's points. Not carried: the weapon-keyed assist events
+  (concussion/flash/EMP/proximity, 50): the recorded damage names no weapon.
+* *Third-person def sounds.* The format reads the fields without `Player`; the weapon table carries
+  them as `NpcSounds` (`moment=event`, presentation), each a positional `ZHBO_BO2_SndNpc_<alias>`
+  event apart from the owner's 2D one (the shield names one alias for both); a gun's swing and hit
+  are the class knife's.
+* *Torso (`crate::torso`, `client/remote.rs`, `nativebody`).* The converter asks the script for
+  every weapon's (offhands too) every action × 12 contexts, groups identical answers into torso
+  sets (`TorsoAnims`; 28 sets, 173 clips on this install), puts the clips in each faction's body
+  manifest from id `torso::BASE`, and writes `torso`/`torso_clip`/`torso_note` rows into
+  `sound_layers.txt` (installed by the same `zhbo_load_sound_layers`). The client's `Remote` starts a
+  seat's torso on his `ReloadStarted`, `Melee` (the charge's when lunging), `OffhandReady`, `Thrown`,
+  `Shot`/`Launched` and his weapon change (the putaway's, raise's and first raise's moments, now one
+  stepper, `WeaponCues::step`, shared with the own 2D sounds), times it, plays its notetracks at him
+  (`ZHBO_NTN_<alias>`, positional) and the def sounds' third-person events, and publishes each
+  General's clip and time to a lock-free mirror the native body reads (no ABI). The native body
+  loads a torso clip the first time anyone plays it (one copy for every rig), samples it over the
+  bones it tracks and fades it over 0.2 s at both ends.
+* *Voices.* 18 events (`ZHBO_BO2_PainSmall_<F><n>`, `ZHBO_BO2_PainDeath_<F><n>`) from each
+  faction's language zone. The client plays pain on a `Damaged` from below full health and death on
+  `GeneralDied` where the General was last seen, in voice `seat % 3` (BO2's random draw, made
+  per seat so every machine agrees) and the faction the bridge names to `zhbo_native_body` (the USA
+  voice while none has: `ZHBO_NATIVE_BODY=0`). The General INI drops Zero Hour's hero death voice
+  (`FX_ColonelBurtonDie` & co.).
+* *Who hears.* Everything of a General's plays at him for everyone except a presented first-person
+  General's own (his viewmodel's 2D versions play); the voice plays for him too, as BO2 plays it on
+  his head.
+
+**Gotcha: the first raise is armed by the first frame seen.** `WeaponCues::step` treats a raise
+running when a seat is first seen as a new raise, so a General already up when this machine first
+sees him plays one raise; the own cues always did the same.
+
+**Tests.** `every_weapon_action_plays_the_torso_bo2_gives_it` (real install: every weapon × action
+× context through the table equals the script's pick, 15 BO2 spot picks, torso clips track no leg
+bone, combinations keep their base's set, the rifle reload's three `_npc_` notes);
+`others_hear_the_third_person_def_sounds`; the real-install sfx test checks the 18 voices;
+`client::remote::tests` (reload/knife/hit/pin/throw/raise at him, the presented first-person seat
+not heard, pain from below full health, death where he fell); `a_torso_clip_moves_the_upper_body_over_the_legs`;
+`sim::score::tests` (the rule, friendly/suicide/world/free-for-all none, decay, a dead attacker's
+seat, two machines agree, the step's damage reaches it); the lockstep leaf walk covers the score.
+`another_players_world_events_play_here_as_for_their_owner` compares voices by line, not speaker.

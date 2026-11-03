@@ -114,6 +114,16 @@ replicated messages alone. The rules, and what enforces each:
   sim's bodies are rewound, as BO2 rewinds only players: Zero Hour's units and an overhead General
   stand where they are. Melee, projectiles and equipment are not rewound. The history is a pure
   function of the stepped state, so `state_hash` leaves it out.
+* **Assists are sim state (`sim/score.rs`).** BO2's assist rule (`_globallogic_player.gsc`
+  `trackattackerdamage` / `playerkilled_awardassists`, `_globallogic_score.gsc` `processassist`):
+  every `LogicHost::damage` call a step (or `rts_update`) makes is recorded by a pass-through host
+  (`score::Tally`), in call order; an enemy seat's damage to a seat's General joins his attacker
+  list (BO2 health, decayed by his regeneration, `decayplayerdamages`), and a seat's killing blow
+  credits every other attacker on the killer's side and not the victim's (Zero Hour's alliance:
+  a free-for-all credits none) an `Assist { level }` event (`assist_25/50/75`) and one assist on
+  `Score::assists`. The lists, the counts and each seat's last Generals are hashed (the world part).
+  The scoreboard's ASSISTS is that count; the client adds the points (`client::ASSIST_POINTS`,
+  `mp/scoreinfo.csv`'s tdm column) to the SCORE column.
 * **The local player's prediction is presentation.** The client (`client/predict.rs`) predicts its
   own first-person General over the inputs in flight by running the sim's own step for him
   (`Sim::predict_step`) on a copy of the sim (`Sim::scratch`) through `sim::predict::Sandbox`,
@@ -465,6 +475,19 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     nothing at the particle cap.
   - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
     `zhbo_loadout_viewmodels`).
+* **The torso layer (body mode).** Over the movement clip the upper body plays the General's
+  action: BO2's `mp/playeranim.script` `EVENTS` torso clip for his reload, knife (`knife_melee`,
+  `knife_melee_charge`; the shield's `meleeattack`), throw and pin (the offhand's `fireweapon`,
+  `prime_grenade`), shot and weapon change (`raiseweapon`, `dropweapon`, `firstraiseweapon`), per
+  stance, gait and aim. The converter groups the weapons into torso sets (`WeaponDef::torso_anims`,
+  `TorsoAnims`), puts every torso clip in the faction body manifest at id `torso::BASE` (0x1000) +
+  its index, and writes the table into `sound_layers.txt` (see "Other players' actions" below). The
+  client times each General's action (`client::remote`) and hands it to the native pass through a
+  lock-free per-General mirror (`nativebody::ffi::publish_torso`, read by `torso_of`), as the
+  stowed weapon is: no ABI. The pass loads a torso clip the first time anyone plays it (shared by
+  every rig), samples it over the bones it tracks (a `pt_*` clip tracks the lower spine and up) and
+  fades it in and out over `nativebody::TORSO_BLEND`. The weapon-only mode stays rigid; the W3D
+  body keeps its per-set fire and reload.
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
   trigger, each with its own magazine), so its left gun plays its own `_LEFT` slot while the hands
   fire, reload or idle apart. The client hands that clip and time to the native pass with
@@ -1353,6 +1376,13 @@ three boxes (39 numbers; a table converted before it does not parse, so the arch
 rebuilt) and two sound events, `ZHBO_BO2_StepNpc` and `ZHBO_BO2_SprintStepNpc` (other players'
 footsteps). The native blob formats are unchanged.
 
+**Pending for the next bump (remote-presentation).** No ABI change. Archive `hud::VERSION` (85 → 86):
+the weapon table's `NpcSounds` and `TorsoAnims` keys (two new weapon fields: 156), the torso clips
+in each faction body manifest (ids from `torso::BASE`; `.zbc` format unchanged), the torso rows in
+`sound_layers.txt`, the new AudioEvents (`ZHBO_BO2_SndNpc_*`, `ZHBO_NTN_*`, the 18 voice events) and
+the General INI without the Zero Hour death voice. Until the archive is rebuilt the core finds no
+torso picks and no new events (the engine logs a missing event once).
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the
@@ -1373,6 +1403,32 @@ footsteps). The native blob formats are unchanged.
   both sides); the glue's `cbSoundGain` sets the AudioEventRTS volume to the event's INI volume ×
   gain (`setVolume` overrides). ABI 27.
   A host without the field plays the layer at its own volume (`ClientHost::sound_gain`'s default).
+
+### Other players' actions: torso, third-person def sounds, voices (`client/remote.rs`)
+
+* **The torso table** rides `sound_layers.txt` (the same file, the same `zhbo_load_sound_layers`
+  call, which installs `crate::torso` too): `torso <set> <action> <context> <clip id>`,
+  `torso_clip <clip id> <seconds> <name>`, `torso_note <clip id> <seconds> <event>` (actions and
+  contexts: `zhbo_native::thirdperson::torso`). A note's event is the torso clip's `sndnt#` alias as
+  a positional AudioEvent `ZHBO_NTN_<alias>` (`names::npc_notetrack_event`): BO2's third-person
+  reload foley (`fly_assault_reload_npc_mag_out`, …) lives only there — no MP weapon names a
+  `reloadSound`. A note whose alias no MP bank has is left out.
+* **Third-person def sounds.** `WeaponDef::npc_sounds` (`NpcSounds`: `raise`, `first_raise`,
+  `putaway`, `melee_swipe`, `melee_hit`, `pullback`) are BO2's fields without `Player`, each a
+  positional event `ZHBO_BO2_SndNpc_<alias>` (`names::npc_def_sound_event`) apart from the owner's
+  2D `ZHBO_BO2_Snd_<alias>` even where BO2 names one alias for both; a gun's swing and hit are the
+  class knife's.
+* **Voices.** `sounds::voice_event`: `ZHBO_BO2_PainSmall_<F><n>` / `ZHBO_BO2_PainDeath_<F><n>` per
+  faction letter `F` and voice number `n` (0..2), from the faction's language zone
+  (`en_faction_<team>_mp`, `vox_<team><n>_pain_small/_pain_death`). The client plays pain on a
+  `Damaged` event when the General was not at full health before it, and death on `GeneralDied`
+  where he was last seen, in seat `% 3`'s voice and the faction the bridge names to
+  `zhbo_native_body` (the USA voice while none has, e.g. `ZHBO_NATIVE_BODY=0`). The General INI no
+  longer plays Zero Hour's hero death voice.
+* **Who hears what.** Every seat's torso is tracked (the presented one too: an overhead General is
+  drawn); its notes, the def sounds and the weapon change's sounds play at the General for everyone
+  but a presented first-person General (his 2D versions play); the voices play for everyone, him
+  included. Presentation only: events and records in, nothing back.
 
 ### Adding an engine service (a new field in `ZhboLogicApi` or `ZhboClientApi`)
 
