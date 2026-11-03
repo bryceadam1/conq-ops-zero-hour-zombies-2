@@ -11716,3 +11716,16 @@ distance ranges are played).
 * **Presentation only.** No sim input, table field the sim reads, or `Role::Sim` value changed; the
   particle fields are client-side and not xfered. The projectile objects' INI gains Draw-module
   lines only.
+* **Verified in game** (`scripts/autotest-mac.sh`, this branch's engine with 0025 and its own
+  converted archive): default 16/16, `--smoke` 7/7, `--splash` 4/4, no INI or particle error in
+  the logs; `--equipment` C4 thrown and detonated, with the Trophy/Black Hat checks failing
+  identically on main's build (`cap-before-equipment.log`: a pre-existing failure, not this
+  branch's). Before/after captures (main's dist vs this branch, same scripted runs, every 20th
+  frame) as contact sheets in `~/.opencode/plan/fx-flipbook/ingame/`: `frag.png`,
+  `grenade_launcher.png`, `smaw.png`, `frag_splash.png`, `c4.png`, `flashbang.png` (a copy of the
+  default leg with the flash grenade), `smoke.png`, `muzzle.png`; `smaw-streak-build1.png` is the
+  STREAK regression the ribbon rule fixes. The DX8 reference build was not compiled (no Windows
+  VM here); the patch is shared engine code with no backend-specific path.
+* **Bumps for the integrator:** archive `hud::VERSION` 85 → 86 (CONTRACT "Pending"); no ABI,
+  struct or native blob change. The content CRC's "engine INI" part changes with the converted
+  INIs (the projectile objects gain `ParticleSysBone` lines), as any archive change does.
