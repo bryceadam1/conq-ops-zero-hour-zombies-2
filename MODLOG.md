@@ -11068,3 +11068,28 @@ player's plays as a 2D sound, and that his shot and launch are his chain. It fai
 `other_players_impacts_fill_only_the_slots_the_own_ones_leave` checks the slot order. The old
 `local_impacts_fill_the_record_and_pick_the_cue` asserted the bug ("another player's impact is not
 the local player's FX") and now asserts the opposite.
+
+## Bug sweep 3: the scoreboard lists every player (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom.** In a two-player match, Tab showed one row, "General", with the local player's own
+kills and deaths. The other player was not on it. `hud/scoreboard.rs` said so ("the core knows only
+the local player's own tally ... other players need the engine to list them"), and the HUD built
+that single row by hand.
+
+**Cause.** The board only took the HUD's own tally (`HudLui::kills`/`deaths`, counted in
+`present` for the presented seat). But every machine consumes every seat's sim events, so the
+other players' kills (`HitMarker { kill }`) and deaths (`GeneralDied`) were in hand all along.
+
+**Fix.** `Client::tally_seats` counts each seat's kills and deaths from the sim's events, before
+they are presented and drained. It also reads each first-person General's army colour and side
+(`objflags::ALLY`, relative to the local player's General) off the engine's logic while he
+stands. The board draws BO2's team-deathmatch shape: the local player's side first (his row from
+the HUD's tally, which the prediction confirms a frame sooner, then his allies), then the
+enemies under their army's colour. Each block is sorted by score. Names come from
+`ClientHost::player_name` (the lobby name), with "Player N" when none is set. Every machine
+counts the same events, so the boards agree. This is presentation only and touches no sim field.
+ASSISTS stays 0, because the sim credits none.
+
+**Test.** `the_scoreboard_lists_every_player_in_the_match` sets up two seats. The other seat
+kills twice (a non-kill marker does not count) and dies once. The test asserts his tally, his
+side and the board's text order: the local row first.

@@ -37,6 +37,36 @@ impl Client {
         }
     }
 
+    /// The scoreboard's tallies (`Client::seats`), from every seat's events since the last frame
+    /// (before they are presented and drained), and each first-person General's army and side as
+    /// the engine's logic reports it relative to the local player's General (`host`: the real
+    /// client always has it).
+    pub(super) fn tally_seats(&mut self, sim: &Sim, host: Option<&dyn LogicHost>, local: i32) {
+        for e in &sim.events {
+            let Some(t) = usize::try_from(e.player).ok().and_then(|i| self.seats.get_mut(i)) else { continue };
+            match e.kind {
+                EventKind::HitMarker { kill: true, .. } => t.kills += 1,
+                EventKind::GeneralDied { .. } => t.deaths += 1,
+                _ => {}
+            }
+            t.seen = true;
+        }
+        let viewer = sim.player(local).map(|p| p.general);
+        for (seat, p) in sim.players.iter().enumerate() {
+            let (Some(p), Some(t)) = (p, self.seats.get_mut(seat)) else { continue };
+            t.seen = true;
+            let Some(info) = host.and_then(|h| h.object(p.general, viewer.unwrap_or(p.general))) else { continue };
+            t.color = info.color;
+            // Only the local player's own General knows the sides; while he has none the last
+            // answer stands.
+            if seat as i32 == local {
+                t.ally = true;
+            } else if viewer.is_some() {
+                t.ally = info.has(crate::host::objflags::ALLY);
+            }
+        }
+    }
+
     /// Another player's event as this machine hears and sees it. What happens at a place in the
     /// world (a pellet's impact, a blast, a bounce, a dud, a Trophy System's kill, the deployed
     /// shield's plant, hits and destruction) BO2 plays for every client, so it plays here exactly

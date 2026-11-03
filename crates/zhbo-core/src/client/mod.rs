@@ -186,6 +186,23 @@ impl Default for ClientIn {
     }
 }
 
+/// One seat's match as this machine saw the sim's events: the scoreboard's row for a player other
+/// than the local one (whose own row is the HUD's tally, `HudLui::kills`/`deaths`, which the
+/// prediction confirms a frame sooner). Every machine consumes every event, so every machine's
+/// board agrees. Presentation only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SeatTally {
+    /// The seat has played in first person (it had a record or an event).
+    pub seen: bool,
+    /// Kills (`HitMarker { kill }`) and deaths (`GeneralDied`), as the HUD counts its own.
+    pub kills: u32,
+    pub deaths: u32,
+    /// His army's colour and whether he is on the local player's side (`objflags::ALLY`), last
+    /// read off his General while one stood.
+    pub color: u32,
+    pub ally: bool,
+}
+
 /// How many shot impacts one client frame can carry (`host/zhbo/zhbo_core.h`'s
 /// `ZHBO_CLIENT_HITS`). One shot per logic frame and at most a shotgun's pellets per shot; a
 /// render frame that spans two logic frames, or other players' rounds on top, can overflow it,
@@ -483,6 +500,8 @@ pub struct Client {
     /// This frame's impacts of the presented seat's rounds, copied into `ClientOut`.
     pub hits: [ClientHit; CLIENT_HITS],
     pub hits_len: usize,
+    /// Every seat's match (the scoreboard's other rows), by seat.
+    pub seats: [SeatTally; crate::sim::MAX_PLAYERS],
     /// This frame's impacts of other players' rounds (`events::present_remote`): they take the
     /// slots of `ClientOut.hits` the local player's leave.
     pub remote_hits: Vec<ClientHit>,
@@ -567,6 +586,7 @@ impl Client {
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
             remote_hits: Vec::with_capacity(CLIENT_HITS),
+            seats: [SeatTally::default(); crate::sim::MAX_PLAYERS],
             class_pick_forced: false,
             class_pick_declined: false,
             class_pick_open: false,
@@ -995,6 +1015,7 @@ impl Client {
             }
         };
         self.tracers.predicted = predicting;
+        self.tally_seats(sim, host, inp.local_player);
         self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
         self.tick_hud(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
