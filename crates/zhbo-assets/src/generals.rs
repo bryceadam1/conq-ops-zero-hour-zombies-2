@@ -598,11 +598,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     for id in &ids {
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = table.weapons.iter_mut().find(|d| &d.id == id) else { continue };
-        if let Some(f) = &w.world_flash_effect {
+        // A melee weapType never fires: BO2's fire step returns before the fire event for it
+        // (t6mp `FUN_008e1b80`: `weapType != 7`), so neither flash ever plays (the held knife's
+        // def names the pistol's).
+        let fires = w.weap_type != zhbo_formats::weapon::kind::MELEE;
+        if let Some(f) = w.world_flash_effect.as_ref().filter(|_| fires) {
             // Played at the muzzle bone with its matrix (X down the barrel), like BO2's.
             flashes.insert(id.clone(), effects.add_framed(f, crate::fx::Role::Flash, &|h| paks.image(h)));
         }
-        if let Some(f) = &w.view_flash_effect {
+        if let Some(f) = w.view_flash_effect.as_ref().filter(|_| fires) {
             // Only claim it when the converter can draw it (sprites or runner children). An effect
             // with only a light or a model would leave an empty FXList, and the bridge's generic
             // gas flash is better than nothing.

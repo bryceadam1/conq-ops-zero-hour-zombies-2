@@ -994,14 +994,19 @@ pub(crate) fn third_person_camo(general: u32, vm: i32) -> Option<String> {
     with_state(|s| s.sim.third_person_camo(general, vm)).flatten()
 }
 
-/// Third-person meshes of viewmodel `vm`'s weapon on the soldier model, or of the tablet for -2.
+/// Third-person meshes of third-person index `vm`'s weapon on the soldier model
+/// (`WeaponDef::world_index`), of the tablet for -2, and for -3 one past the highest index that
+/// carries any (an alt mode's own weapon sits past the converted viewmodels).
 #[no_mangle]
 pub extern "C" fn zhbo_world_mesh_count(vm: i32) -> i32 {
     let c = crate::weapons::catalog();
     if vm == -2 {
         return c.tablet_meshes as i32;
     }
-    c.all().iter().filter(|d| d.viewmodel == vm).map(|d| d.world_meshes as i32).max().unwrap_or(0)
+    if vm == -3 {
+        return c.world_index_end();
+    }
+    c.all().iter().filter(|d| d.world_index() == vm).map(|d| d.world_meshes as i32).max().unwrap_or(0)
 }
 
 /// The viewmodels of the General's kit, so the host can load them before they are first shown.

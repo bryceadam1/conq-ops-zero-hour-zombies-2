@@ -239,13 +239,20 @@ impl Catalog {
     /// draws it from its own `.zbw` instead.
     pub fn world_viewmodel(&self, def: &WeaponDef) -> i32 {
         if def.world_meshes > 0 {
-            return def.viewmodel;
+            return def.world_index();
         }
+        // An alt mode's own variant first (`gl_sa58_mp`, when its model is not its gun's), then
+        // its gun's base weapon.
         def.id
             .split('~')
             .filter_map(|part| self.by_id.get(attachments::split_id(part).0))
             .find(|b| b.world_meshes > 0)
-            .map_or(def.viewmodel, |b| b.viewmodel)
+            .map_or(def.viewmodel, |b| b.world_index())
+    }
+
+    /// One past the highest third-person index that carries W3D meshes (the bridge's scan).
+    pub fn world_index_end(&self) -> i32 {
+        self.order.iter().filter(|d| d.world_meshes > 0).map(|d| d.world_index() + 1).max().unwrap_or(0)
     }
 }
 
@@ -1174,6 +1181,19 @@ mod tests {
         assert_eq!(world("mp7_mp"), 5, "a base weapon shows its own");
         assert_eq!(world("mp7_mp+reflex"), 5, "a combination shows its base weapon's");
         assert_eq!(world("gl_an94_mp~an94_mp+gl"), 1, "an alt mode falls back through its parent");
+    }
+
+    /// An alt mode BO2 draws with its own `worldModel` (the SMR's launcher) has its own third-person
+    /// index: the W3D body shows its variant's meshes, the native pass its own `.zbw`.
+    #[test]
+    fn an_alt_mode_with_its_own_model_shows_its_own_world_weapon() {
+        let def = |id: &str, vm: i32, meshes: u8, world: i32| WeaponDef { id: id.into(), viewmodel: vm, world_meshes: meshes, world_weapon: world, ..WeaponDef::default() };
+        let c = Catalog::new(vec![def("sa58_mp", 3, 4, -1), def("sa58_mp+gl", 950, 0, -1), def("gl_sa58_mp~sa58_mp+gl", 950, 0, 20001), def("gl_sa58_mp", -1, 3, 20002)]);
+        let world = |id: &str| c.world_viewmodel(c.get(id).unwrap());
+        assert_eq!(world("sa58_mp+gl"), 3, "the main mode shows its gun");
+        assert_eq!(world("gl_sa58_mp~sa58_mp+gl"), 20002, "the launcher mode shows its variant's own meshes");
+        assert_eq!(c.get("gl_sa58_mp~sa58_mp+gl").unwrap().world_index(), 20001, "and its own native weapon");
+        assert_eq!(c.world_index_end(), 20003);
     }
 
     #[test]

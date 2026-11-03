@@ -1149,6 +1149,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "HudIcon", "BO2's `hudIcon`: the weapon's HUD icon material (the class buttons, the editor's rows, the offhand counters draw it), empty when none.", FieldKind::Str,
         |d: &WeaponDef| d.hud_icon.clone(),
         |d: &mut WeaponDef, v: Values| { d.hud_icon = v.text.into(); Ok(()) }),
+    field!(present "WorldWeapon", "The third-person weapon's own index (`W{index}{k}`, `ZW<index>.zbw`) when it is not the viewmodel's: an alt mode BO2 draws with its own worldModel; -1 for the viewmodel's.", FieldKind::Num,
+        |d: &WeaponDef| d.world_weapon.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.world_weapon = v.text.parse().map_err(|_| "number")?; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -1300,7 +1303,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 158);
+        assert_eq!(WEAPON_FIELDS.len(), 159);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

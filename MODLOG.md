@@ -11741,3 +11741,48 @@ size (`hud::merge_wanted`) instead of packing a duplicate MappedImage.
 **In game** (`cargo xtask build --dist target/zhbo-dist`, a fresh `ConquerOps_BO2.big`): default
 16/16, `--rts` 16/16, `--smoke` 7/7, `--mp` 25/25 (state hash agreed, no CRC mismatch). The
 offhand counters (frag, concussion) and the RTS kit bar draw the material-named icons.
+
+### Conformance gaps, round 2: alt-mode world models, the ADS registration, the held knife's flash (same branch)
+
+* **An alt mode draws its own `worldModel`.** `FUN_0052a4c0` draws the current weapon index's
+  `worldModel` with no altmode→parent swap, so BO2 shows the SMR's launcher mode as
+  `t6_wpn_ar_sa58_view` (the only alt whose model is not its gun's; the sweep is
+  `viewmodels::world_jobs` over every `<alt>~<combo>` def). Such an alt gets a third-person weapon
+  of its own past the converted viewmodels: `WeaponDef::world_weapon` (table `WorldWeapon`,
+  `world_index()`), its own `.zbw` with its gun's combination's parts, and the alt variant
+  (`gl_sa58_mp`) its own W3D meshes `W<index><k>`, which `Catalog::world_viewmodel` shows for every
+  combination's alt mode. The native poses send `world_index()`; the class camo still dresses it
+  (`nativebody::camo_for`). The bridge scans the W3D indices up to `zhbo_world_mesh_count(-3)` (one
+  past the highest index with meshes; at least 160, so an older core keeps the old range; CONTRACT
+  "Pending for the next bump").
+  **Residual, same 67 rows:** every part BO2 mounts on the launcher mode names `tag_weapon`, which
+  `t6_wpn_ar_sa58_view` (root `j_gun`) does not have. The mod hangs them at the model's origin (the
+  native composer refuses a missing tag, and BO2's DObj attach to a missing bone is not pinned
+  down), so `world_part_tags` reports `(origin)` against BO2's authored `tag_weapon`.
+* **The offhands' ADS slots stay empty (tried, reverted, with the evidence).** BO2's registration
+  (`FUN_0052d3e0`, G14 §5) plays slot 1 for any empty slot 1–0x57, and the runtime applies it
+  through `nativevm::clip_for` everywhere but the ADS layer. Writing the idle into the offhands'
+  ADS up/down slots is that rule, but the mod's ADS layer is sampled over every pose, at the hip
+  too (`Loaded::ads_clip` → `pose`'s `sample_over` at ads 0), and an idle keys every bone: the
+  real-install viewmodel sweep then failed `every_viewmodel_is_held_in_front_of_the_eye`
+  (`willy_pete_mp`'s throw, slot 0x4 at ads 0: 324 gun vertices 630″ out) and
+  `equipment_subbone_tracks_are_bo2s_authored_parking`. BO2's own ADS channel never plays for an
+  offhand; the mod's layer cannot carry the registered idle without replacing the throw, so the
+  20 cells stay as the honest floor.
+* **The held knife never flashes (expected side, cited).** The fire step `FUN_008e1b80` returns
+  before raising `EV_FIRE_WEAPON` (0x20-0x23, `FUN_008bd750`) unless the weapType is not melee
+  (`*(def + 0x1c) != 7`), so a melee weapon's `viewFlashEffect`/`worldFlashEffect` (the held
+  knife's copied `fx_pistol_flash_base`) never play. The expected side reports no flash for a melee
+  weapType; the converter no longer converts one for it.
+* **Sensor and Trophy `projectile_explosion_effect` stay.** The column is a faithful dump of the
+  def's `projExplosionEffect` for every weapon; the scripts never `detonate()` these two
+  (`_sensor_grenade.gsc:23`, `:113-118`; `_trophy_system.gsc:37`, `:251-266`), so the field never
+  plays, and the mod does not carry an effect it never plays.
+
+**Measured, round 2** (conformance CLI vs integration8): weapons 1,979 → 89 cells, 11 → 4 clusters;
+gap clusters 12 → 5 (cac unchanged). Closed this round: `world_model` `gl_sa58` (67) and
+`world_flash_effect` `knife_held_mp` (1). New: `world_part_tags` on the same 67 launcher-mode rows
+(see the residual above). Left: the offhands' ADS slots (20), Sensor/Trophy (2), the 4 cac MTX
+camos. The real-install viewmodel sweep (`every_viewmodel_is_held_in_front_of_the_eye`,
+`equipment_subbone_tracks_are_bo2s_authored_parking`) passes again after the ADS revert.
+

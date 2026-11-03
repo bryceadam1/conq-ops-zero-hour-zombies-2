@@ -485,8 +485,13 @@ pub struct WeaponDef {
     /// Viewmodel clips are the BO2 slot plus this: an alt mode's clips sit after its weapon's on the
     /// same viewmodel ([`ALT_CLIPS`]).
     pub clip_base: i32,
-    /// Third-person meshes of this weapon on the soldier model (`W{viewmodel:02}{k:02}`).
+    /// Third-person meshes of this weapon on the soldier model (`W{index:02}{k:02}`, the index
+    /// [`WeaponDef::world_index`]).
     pub world_meshes: u8,
+    /// The third-person weapon's own index (`zhbo_native::world_weapon_path`, `W<index><k>`) when it
+    /// is not the viewmodel's: an alt mode BO2 draws with its own `worldModel` (the SMR's launcher
+    /// mode, `t6_wpn_ar_sa58_view`); -1 draws the viewmodel's.
+    pub world_weapon: i32,
     /// Attachments on this weapon (BO2's names: `grip`, `reflex`), sorted.
     pub attachments: Vec<String>,
     /// Base weapons: each attachment BO2's create-a-class offers, and which `Attachment` it uses
@@ -1032,6 +1037,7 @@ impl Default for WeaponDef {
             anims: 0,
             clip_base: 0,
             world_meshes: 0,
+            world_weapon: -1,
             attachments: Vec::new(),
             allowed: Vec::new(),
             attributes: [0.0; 4],
@@ -1098,6 +1104,15 @@ pub const MELEE_RANGE: f32 = inches(55.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// The third-person weapon's index: [`WeaponDef::world_weapon`], else the viewmodel's.
+    pub fn world_index(&self) -> i32 {
+        if self.world_weapon >= 0 {
+            self.world_weapon
+        } else {
+            self.viewmodel
+        }
+    }
+
     /// The converted sprite of the def's HUD icon ([`WeaponDef::hud_icon`], under its material's
     /// name, `lui::materials::image`); empty when the def names none.
     pub fn hud_icon_image(&self) -> String {

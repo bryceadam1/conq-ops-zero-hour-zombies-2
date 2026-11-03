@@ -452,15 +452,21 @@ void serveNativeBody()
 
 void applyWorldPoses()
 {
-	enum { MAX_VIEWMODELS = 160 };
-	static int32_t s_meshes[MAX_VIEWMODELS];
+	// Every third-person index the soldier model carries meshes for: the converted viewmodels' and
+	// an alt mode's own past them (zhbo_world_mesh_count(-3) is one past the highest; a core that
+	// predates it answers 0, so the old 160 stands as the floor).
+	enum { MIN_WORLD_INDICES = 160 };
+	static std::vector<int32_t> s_meshes;
 	static int32_t s_tabletMeshes = -1;
 	if (s_tabletMeshes < 0)
 	{
 		s_tabletMeshes = zhbo_world_mesh_count(-2);
-		for (int32_t vm = 0; vm < MAX_VIEWMODELS; ++vm)
+		const int32_t end = std::max<int32_t>(MIN_WORLD_INDICES, zhbo_world_mesh_count(-3));
+		s_meshes.assign((size_t)end, 0);
+		for (int32_t vm = 0; vm < end; ++vm)
 			s_meshes[vm] = zhbo_world_mesh_count(vm);
 	}
+	const int32_t worldIndices = (int32_t)s_meshes.size();
 	// Which Generals the native pass drew this frame: their W3D weapon stays hidden.
 	std::set<uint32_t> nativeDrawn;
 	// Which of them the full-body pass drew (ZHBO_NATIVE_BODY=2): their W3D body is hidden.
@@ -569,7 +575,7 @@ void applyWorldPoses()
 			&& it->second.native == (nativeWeapon ? 1 : 0))
 			continue;
 		char name[16];
-		for (int32_t vm = 0; vm < MAX_VIEWMODELS; ++vm)
+		for (int32_t vm = 0; vm < worldIndices; ++vm)
 		{
 			for (int32_t k = 0; k < s_meshes[vm]; ++k)
 			{

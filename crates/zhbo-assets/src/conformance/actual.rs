@@ -627,7 +627,10 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             }
         }
     }
-    match (vm >= 0).then(|| sh.world_weapon(vm)).flatten() {
+    // The third-person weapon the game draws for this def (`WeaponDef::world_index`: an alt mode
+    // with its own model has its own index).
+    let world_vm = if d.world_weapon >= 0 { d.world_weapon } else { vm };
+    match (world_vm >= 0).then(|| sh.world_weapon(world_vm)).flatten() {
         Some(w) => {
             let mut rest: Vec<&zhbo_native::viewmodel::Part> = w.parts.iter().skip(1).collect();
             rest.sort_by_key(|p| cols::part_order(&stem(&p.model), p.tag.as_deref().unwrap_or("")));

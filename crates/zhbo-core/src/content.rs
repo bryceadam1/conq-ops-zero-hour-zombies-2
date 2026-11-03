@@ -487,6 +487,7 @@ mod tests {
         ("OverlayMaterialLowRes", &["overlay_material_low_res"]),
         ("DpadIcon", &["dpad_icon"]),
         ("HudIcon", &["hud_icon"]),
+        ("WorldWeapon", &["world_weapon"]),
         ("EnemyTracerFxWeapon", &["enemy_tracer_fx_weapon"]),
         ("FireSoundNpc", &["npc_fire_sound"]),
         ("FireStartSoundNpc", &["npc_fire_start_sound"]),

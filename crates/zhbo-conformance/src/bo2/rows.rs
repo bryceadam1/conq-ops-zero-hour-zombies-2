@@ -15,6 +15,8 @@ use crate::weapons::{self as cols, enum_name};
 use std::collections::{BTreeMap, HashMap};
 use zhbo_formats::t6zone::layouts::WeaponDef as WD;
 
+/// `weapType_t` melee.
+const MELEE: u32 = 7;
 /// `weapType_t` riotshield.
 const RIOTSHIELD: u32 = 8;
 /// The model BO2's engine attaches to a player whose weapon up is a riot shield
@@ -488,8 +490,12 @@ impl<'a> Expected<'a> {
             let from = if f == WD::meleeSwipeSoundPlayer || f == WD::meleeHitSound { md } else { d };
             b.opt_text(c, from.sound(f));
         }
-        b.opt_text("view_flash_effect", resolve::effect(w, 0, d.effect(WD::viewFlashEffect)))
-            .opt_text("world_flash_effect", resolve::effect(w, 1, d.effect(WD::worldFlashEffect)));
+        // The flashes play on the fire event (EV_FIRE_WEAPON, 0x20-0x23), which the fire step
+        // `FUN_008e1b80` never raises for a melee weapType (its guard `weapType != 7`): the held
+        // knife's `fx_pistol_flash_base` never plays.
+        let fires = d.weap_type() != MELEE;
+        b.opt_text("view_flash_effect", resolve::effect(w, 0, d.effect(WD::viewFlashEffect)).filter(|_| fires))
+            .opt_text("world_flash_effect", resolve::effect(w, 1, d.effect(WD::worldFlashEffect)).filter(|_| fires));
         for (c, f) in cols::EFFECTS[2..].iter().zip(DEF_EFFECT_FIELDS) {
             b.opt_text(c, d.effect(f));
         }

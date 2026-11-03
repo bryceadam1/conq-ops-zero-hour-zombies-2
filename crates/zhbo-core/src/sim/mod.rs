@@ -1042,7 +1042,7 @@ impl Sim {
                 let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();
                 NativePose {
                     general: p.general,
-                    weapon: a.current().def.viewmodel, // content: presentation (native_poses: the third-person draw)
+                    weapon: a.current().def.world_index(), // content: presentation (native_poses: the third-person draw)
                     stance: p.stance_index(),
                     state: p.body_state(engine_moving, run_speed),
                     time,

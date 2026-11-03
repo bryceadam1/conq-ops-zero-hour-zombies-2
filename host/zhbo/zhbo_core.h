@@ -488,7 +488,7 @@ void zhbo_client_rts_icons(uint32_t general, ZhboRtsIcons *out);
 int32_t zhbo_class_buttons(ZhboClassButton *out, int32_t cap);
 /* Non-zero once the General has assumed a class (the bar shows the class set until then). */
 int32_t zhbo_general_has_class(uint32_t general);
-int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
+int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet; -3: one past the highest index with meshes */
 int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit's viewmodels */
 /* The first-person FXList names for viewmodel `vm`'s weapon (Track R8): its muzzle flash and shell
    eject, converted from BO2's `viewFlashEffect`/`viewShellEjectEffect`. Non-zero when the weapon is

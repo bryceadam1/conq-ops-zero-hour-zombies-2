@@ -1340,6 +1340,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         anims: w.anims.iter().enumerate().take(128).filter(|(_, a)| a.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i)),
         clip_base: 0,
         world_meshes: 0,
+        world_weapon: -1,
         attachments: Vec::new(),
         allowed: w.attachment_variants.iter().map(|(_, id)| (short_name(id), id.clone())).collect(),
         // Filled from the attribute table by `apply_attributes`.
