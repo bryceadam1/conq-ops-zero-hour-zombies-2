@@ -11118,3 +11118,45 @@ archive is rebuilt, the events are missing and the engine logs `sound ZHBO_BO2_S
 
 **Test.** `other_generals_footsteps_are_heard_at_them`: one step per stride at the walker, the
 sprint's own event, none for the presented seat, none with Dead Silence, none overhead.
+
+## Bug sweep 3: a grenade or rocket thrown into rising ground hung in the air (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom (found by the new long multiplayer run).** No concussion thrown in the rounds ever went
+off. A per-frame dump of the sim's projectiles showed why. The grenade met the slope near the
+meeting point on Tournament Desert, then hung at one spot, `(993.7, 1375.1, 17.5)`, for 30 s while
+its fall speed grew without bound. Then the flight limit dropped it without a sound
+(`Outcome::Hit`).
+
+**Root cause (`Projectile::step_shielded`).** The ground test was one check. If the move ended
+below the ground at its *end point*, and the projectile was *falling*, the move was cut where the
+fall reached that end point's height. Ground that rose across the move was never tested:
+* A grenade flying level or upward into a hillside never "fell", so it passed into the hill. The
+  clamp then put it at the hill's height over a point short of the hill. From there each later move
+  ran into the hill with a cut fraction ≤ 0, so it stayed where it was.
+* An `ExplodeOnGround` grenade (concussion, EMP, smoke, Willy Pete) never comes to rest that way,
+  so it never goes off.
+* A frag hangs and explodes in mid-air.
+* An impact rocket or launcher grenade, and any thrown or launched equipment (C4, Claymore),
+  hangs until the 30 s limit and vanishes.
+It depends on the terrain, so the flat test world never showed it. It was not a desync: every
+machine hung the grenade the same way.
+
+**Fix.** `ground_crossing` walks the move across the height map in steps of at most 2 units (at
+most 32 steps). It places the contact where the height above the ground, linear between the two
+bracketing samples, reaches zero. That is exact on level ground, so every level-ground result is
+unchanged (the lockstep gate and every projectile test pass as before). The bounce now reflects
+off the ground's own face (`ground_normal`, from the height map's slope): speed along the face is
+kept by `along`, speed into it is turned back by `up`. On level ground that is the old
+`(vx·along, vy·along, −vz·up)`. A grenade lying on a slope and pressed into it slides down the
+face instead of sticking. On level ground it stays put, as before.
+
+**Test.** `a_projectile_flying_into_a_hillside_meets_it` throws or fires every catalog offhand and
+launcher with an end of its own into a 1:1 hillside. Each must end against the hill before the
+30 s limit and never pass under it. On the old code it fails (the C4 hangs at
+`(16.4, 0, 9.8)`). `a_bounce_on_level_ground_keeps_its_old_shape` pins the level-ground bounce.
+`FakeHost.hill` gives the test world a slope.
+
+**Reaches** the smoke grenade (owned by the smoke-screen item; it now goes off where it lands on a
+slope) and the explosion items (they now get their blast). There is no change to the sim's
+inputs, state layout or content. Every machine steps the same arithmetic over the same height
+map.

@@ -36,6 +36,9 @@ pub struct FakeHost {
     pub deep_water: std::cell::Cell<bool>,
     /// The ground's surface (`surface_at`); dirt when unset.
     pub ground: std::cell::Cell<Option<Surface>>,
+    /// A hillside: from x = `start` on, the ground rises `grade` units per unit of x (level, at 0,
+    /// when unset).
+    pub hill: std::cell::Cell<Option<(f32, f32)>>,
 }
 
 impl FakeHost {
@@ -59,8 +62,8 @@ impl FakeHost {
 
 impl LogicHost for FakeHost {
     fn log(&self, _msg: &str) {}
-    fn ground_height(&self, _x: f32, _y: f32) -> f32 {
-        0.0
+    fn ground_height(&self, x: f32, _y: f32) -> f32 {
+        self.hill.get().map_or(0.0, |(start, grade)| ((x - start) * grade).max(0.0))
     }
     fn is_walkable(&self, _x: f32, _y: f32) -> bool {
         !self.deep_water.get()
