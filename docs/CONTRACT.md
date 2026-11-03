@@ -411,15 +411,22 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `viewmodel_fired` (the right gun, or a single gun) flashes at `tag_flash` and ejects at
   `tag_brass`; `viewmodel_fired_left` (a dual-wield pair's left gun, appended to `ZhboClientOut`)
   at the `_lh` model's own `tag_flash1` and `tag_brass1`. A shell's X is the
-  eject direction, so its converted FXList sets `OrientToObject = Yes` and keeps BO2's axes, unlike
-  the world/impact effects' normal-up swap; `vViewShellEjectOffset`/`Rotation` are not applied.
+  eject direction, so its converted FXList sets `OrientToObject = Yes` and keeps BO2's axes, as
+  do the muzzle flashes (`ViewFlashFx`, the silencer pair, the world flash: played on the flash
+  bone's matrix, X down the barrel) and a bullet's impact cells (played on `zhboFrameAt`'s surface
+  frame, X along the normal): `fx::Converted::add_framed`, FXList `<name>_Framed`, offsets and
+  velocities in BO2's axes. Everything played with no matrix (a blast through the `fx` callback, a
+  bounce, a dud, the General's impacts) is the world copy, BO2's X (the normal) swapped to up;
+  `vViewShellEjectOffset`/`Rotation` are not applied.
   `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Viewmodel sound notetracks
   are unchanged (the bridge's `playNotes` runs before either path).
   - **Effects draw through the engine's `FXList` path, not the native pass.** The engine already
     owns particle systems, the blend modes from the material state bits, lifetimes and the world
     FX weapon pipeline; the native pass has no particle system and would duplicate all of it.
     Shell model elements are drawn as small sprites from the model's own colour map, because
-    Zero Hour's FXList has no model nugget.
+    Zero Hour's FXList has no model nugget. Every converted system has `Priority = CRITICAL`
+    (`fx::PRIORITY`): the lowest priority would be culled by the dynamic LOD below 25 fps and
+    could evict nothing at the particle cap.
   - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
     `zhbo_loadout_viewmodels`).
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per

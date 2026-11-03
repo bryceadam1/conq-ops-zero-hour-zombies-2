@@ -92,9 +92,13 @@ impl Shipped {
         let mut fx: HashMap<String, Vec<String>> = HashMap::new();
         for w in &bo2 {
             for e in [&w.view_flash_effect, &w.world_flash_effect, &w.view_shell_eject_effect, &w.view_last_shot_eject_effect, &w.explosion_effect].into_iter().flatten() {
-                let names = fx.entry(crate::fx::fxlist_name(&e.name)).or_default();
-                if !names.contains(&e.name) {
-                    names.push(e.name.clone());
+                // The world copy and the framed one (a flash, played on its bone's frame) both
+                // stand for the effect.
+                for list in [crate::fx::fxlist_name(&e.name), crate::fx::framed_fxlist_name(&e.name)] {
+                    let names = fx.entry(list).or_default();
+                    if !names.contains(&e.name) {
+                        names.push(e.name.clone());
+                    }
                 }
             }
         }
@@ -108,9 +112,11 @@ impl Shipped {
         }
         for name in [crate::fx::SILENCER_VIEW_FLASH, crate::fx::SILENCER_WORLD_FLASH] {
             if let Some(e) = zhbo_formats::fx::find(&common, name) {
-                let names = fx.entry(crate::fx::fxlist_name(&e.name)).or_default();
-                if !names.contains(&e.name) {
-                    names.push(e.name.clone());
+                for list in [crate::fx::fxlist_name(&e.name), crate::fx::framed_fxlist_name(&e.name)] {
+                    let names = fx.entry(list).or_default();
+                    if !names.contains(&e.name) {
+                        names.push(e.name.clone());
+                    }
                 }
             }
         }

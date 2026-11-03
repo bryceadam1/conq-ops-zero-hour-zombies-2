@@ -306,6 +306,22 @@ colour map and the native pass uses as the reflectance colour (RENDERER.md; pinn
 `the_camo_assets_convert_with_their_art` pins the converter's unresolved list to the 20 provably
 unreachable names (DLC-only stubs and diamond's colour-less technique).
 
+## The headless effect sheets (BO2 effects vs their conversion)
+
+`zhbo-assets fx-sheet <dir outside the repo> [--all] [--effects a,b]` (`fx_preview`) plays each
+converted effect by Zero Hour's particle rules (`ParticleSys.cpp`: logic-frame lifetimes counted
+down before the first draw, bursts, per-frame damping and gravity, size rates, key frames, ADDITIVE
+ignoring alpha keys) next to the BO2 effect it came from by `FxElemDef`'s (counts, delays, loops,
+the velocity graph's integrated delta, the visual-state graph, runners), from a soldier's eye 40 ft
+away. It writes a contact sheet per named effect (BO2's row over Zero Hour's at 50 ms … 2.5 s; the
+default set is every explosion, flash grenade, bullet impact and two muzzle flashes), the
+converter's INI for it (first line: images the packs did not have), and `metrics.csv`
+(width² × opacity over time, peak, reach, particle count, the additive "glow" part; every
+`common_mp` effect with `--all`). `zhbo-assets fx effect:<name>` prints every field of a BO2 effect.
+The gate is `fx_preview::install_tests::every_bo2_effect_converts_to_its_size` (ignored; reads
+the install): every runner starts the effects it names, no element's image is missing, three in
+four effects cover 0.5–2× BO2's, and each sheet effect 0.4–4×.
+
 ## The native-art audit
 
 `cargo run --release -p zhbo-assets -- audit-native <ConquerOps_BO2.big>` loads every converted

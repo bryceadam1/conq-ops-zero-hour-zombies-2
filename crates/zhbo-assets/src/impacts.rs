@@ -78,20 +78,24 @@ pub fn table_text(zone: &Zone, impact_types: &[u32], effects: &mut Converted, pa
 /// exit row): every slot except flesh (its own four cells) and default (written once, as the
 /// fallback).
 fn row_cells(zone: &Zone, t: u32, entry: u32, prefix: &str, text: &mut String, effects: &mut Converted, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<Rgba>) {
+    // A bullet's hit is played on the surface frame (`ZhboBridge.cpp`: X along the normal, as BO2
+    // plays it); everything else that reads the table (a blast, a bounce, a dud) is played upright
+    // with no frame.
+    let mut add = |e: &fx::Effect| if fx::is_bullet(t) { effects.add_framed(e, paks) } else { effects.add(e, paks) };
     for s in Surface::ALL.into_iter().filter(|s| !matches!(s, Surface::Flesh | Surface::Default)) {
         if let Some(e) = fx::impact(zone, entry, bo2_surface(s)) {
-            let name = effects.add(&e, paks);
+            let name = add(&e);
             text.push_str(&format!("{prefix}impact {t} {} {name}\n", s.name()));
         }
     }
     // The row's own default cell: what a surface without a cell falls back to.
     if let Some(e) = fx::impact(zone, entry, bo2_surface(Surface::Default)) {
-        let name = effects.add(&e, paks);
+        let name = add(&e);
         text.push_str(&format!("{prefix}impact {t} default {name}\n"));
     }
     for v in 0..4 {
         if let Some(e) = fx::impact_flesh_variant(zone, entry, v) {
-            let name = effects.add(&e, paks);
+            let name = add(&e);
             text.push_str(&format!("{prefix}flesh {t} {v} {name}\n"));
         }
     }

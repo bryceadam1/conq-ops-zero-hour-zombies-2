@@ -585,7 +585,7 @@ fn dump_effect(e: &zhbo_formats::fx::Effect, indent: &str) {
             r(el.spawn_angles[0]), r(el.spawn_angles[1]), r(el.spawn_angles[2]), r(el.initial_rotation), el.sort_order, r(el.spawn_range), r(el.fade_in_range), r(el.fade_out_range)
         );
         for m in &el.materials {
-            let img = m.color_map().map(|i| i.name.clone()).unwrap_or_default();
+            let img = m.color_map().map(|i| format!("{} {}x{} stream {:#x}", i.name, i.width, i.height, i.stream_hash)).unwrap_or_default();
             println!("{indent}     material {} techset {} blend {:?} image {img} consts {:?}", m.name, m.techset, m.blend(), m.constants.iter().map(|c| (format!("{:#x}", c.name_hash), c.value)).collect::<Vec<_>>());
         }
         if !el.models.is_empty() {

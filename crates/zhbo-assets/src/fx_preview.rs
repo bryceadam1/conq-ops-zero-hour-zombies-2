@@ -288,9 +288,23 @@ fn keyed<T: Copy>(keys: &[(T, u32)], age: u32, lerp: impl Fn(T, T, f32) -> T) ->
 /// Play the FXList `list` for `frames` logic frames and return what is drawn after the last one.
 /// An oriented list is shown as if played on the ground (its X along the normal: up).
 pub fn play_zh(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames: u32, seed: u64) -> Vec<Sprite> {
-    let mut rng = Rng(seed.max(1).wrapping_mul(0x9E3779B97F4A7C15) | 1);
     let mut out = Vec::new();
-    for nugget in &list.systems {
+    play_zh_each(list, systems, frames, seed, |f, s| {
+        if f + 1 == frames as usize {
+            out.push(s);
+        }
+    });
+    out
+}
+
+/// The most particles one system keeps (a guard for the sweep, far above any converted effect).
+const MAX_PARTICLES: usize = 20_000;
+
+/// [`play_zh`], handing every frame's sprites to `visit` (frame index from 0: after frame 1).
+pub fn play_zh_each(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames: u32, seed: u64, mut visit: impl FnMut(usize, Sprite)) {
+    for (i, nugget) in list.systems.iter().enumerate() {
+        // Each system its own stream: a shorter play is a prefix of a longer one.
+        let mut rng = Rng((seed.max(1) + i as u64 * 7919).wrapping_mul(0x9E3779B97F4A7C15) | 1);
         let Some(sys) = systems.get(&nugget.system) else { continue };
         // The frame the caller passes for an oriented list: X (BO2's normal) up, Y and Z level.
         let frame = |v: [f32; 3]| if nugget.orient { [v[1], v[2], v[0]] } else { v };
@@ -304,7 +318,7 @@ pub fn play_zh(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames: u32,
         let mut parts: Vec<ZhParticle> = Vec::new();
         // ParticleSystem::update, once per logic frame; the delay counts down first.
         let mut delay_left = delay;
-        for _ in 0..frames {
+        for fi in 0..frames as usize {
             if delay_left > 0 {
                 delay_left -= 1;
                 continue;
@@ -312,7 +326,7 @@ pub fn play_zh(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames: u32,
             if forever || life_left > 0 {
                 if burst_left == 0 {
                     let n = rng.range(sys.burst_count.0, sys.burst_count.1) as u32;
-                    for _ in 0..n {
+                    for _ in 0..n.min((MAX_PARTICLES - parts.len().min(MAX_PARTICLES)) as u32) {
                         let local = match sys.volume.as_str() {
                             "SPHERE" => {
                                 let r = rng.range(0.0, sys.sphere);
@@ -370,16 +384,15 @@ pub fn play_zh(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames: u32,
             if !forever && life_left > 0 {
                 life_left -= 1;
             }
-        }
-        for p in &parts {
+            for p in &parts {
             let alpha = if sys.additive { p.alpha.first().map_or(1.0, |a| a.0) } else { keyed(&p.alpha, p.age, |a, b, t| a + (b - a) * t).unwrap_or(1.0) };
             let color = keyed(&sys.color, p.age, |a, b, t| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]).unwrap_or([1.0; 3]);
             // ADDITIVE draws texture × colour; its alpha keys are not played.
             let alpha = if sys.additive { 1.0 } else { alpha.clamp(0.0, 1.0) };
-            out.push(Sprite { pos: p.pos, size: p.size.max(0.0), color, alpha, additive: sys.additive, texture: sys.texture.clone() });
+            visit(fi, Sprite { pos: p.pos, size: p.size.max(0.0), color, alpha, additive: sys.additive, texture: sys.texture.clone() });
+            }
         }
     }
-    out
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -424,6 +437,10 @@ fn play_bo2_at(effect: &Effect, at: [f32; 3], t_ms: f32, looping_ms: f32, rng: &
             }
         }
         for &born in &spawns {
+            // One draw from the effect's stream per spawn, so what a spawn looks like does not
+            // depend on the moment asked for.
+            let mut own = Rng(((rng.next() * 16_777_216.0) as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15) | 1);
+            let rng = &mut own;
             let age = t_ms - born;
             let life = el.life_msec.base + rng.next() * el.life_msec.amplitude;
             // The draw at `born` (runners start their effect then, wherever they spawned).
@@ -499,9 +516,13 @@ fn play_bo2_at(effect: &Effect, at: [f32; 3], t_ms: f32, looping_ms: f32, rng: &
             let x = tn * (el.vis.len() - 1) as f32;
             let i = (x as usize).min(el.vis.len().saturating_sub(2));
             let f = if el.vis.len() > 1 { x - i as f32 } else { 0.0 };
+            // A stretched sprite (a tail, a line, a non-uniform size) is drawn as the square of its
+            // area, as the converter draws it: Zero Hour's particles are square.
+            let stretched = matches!(el.kind, kind::TAIL | kind::LINE | kind::TRAIL) || el.flags & 0x1000_0000 != 0;
             let at_k = |k: usize| {
                 let v = el.vis[k.min(el.vis.len() - 1)];
-                let size = v.size[0] + v.size_amplitude[0] * rs;
+                let w = v.size[0] + v.size_amplitude[0] * rs;
+                let size = if stretched { (w.max(0.0) * (v.size[1] + v.size_amplitude[1] * rs).max(0.0)).sqrt() } else { w };
                 let c = |j: usize| (v.color[j] as f32 + (v.color_amplitude[j] as f32 - v.color[j] as f32) * rc) / 255.0;
                 (size, [c(0), c(1), c(2)], c(3))
             };
@@ -540,38 +561,73 @@ pub struct Metrics {
     pub count: usize,
     /// How long anything is visible (s).
     pub span: f32,
+    /// [`Metrics::mass`] and [`Metrics::peak`] of the additive particles alone: the flash and the
+    /// fire, which a blast's long smoke would otherwise outweigh.
+    pub glow_mass: f32,
+    pub glow_peak: f32,
 }
 
-/// Fold one moment's sprites into `m` (`dt` seconds long).
-pub fn accumulate(m: &mut Metrics, sprites: &[Sprite], t: f32, dt: f32) {
-    let mut area = 0.0;
-    for s in sprites {
+/// One moment's totals: covered area (width² × opacity), reach, particles.
+#[derive(Clone, Copy, Debug, Default)]
+struct Moment {
+    area: f32,
+    glow: f32,
+    reach: f32,
+    count: usize,
+}
+
+impl Moment {
+    fn add(&mut self, s: &Sprite) {
+        self.count += 1;
         let o = s.opacity();
         if o < 0.01 || s.size <= 0.0 {
-            continue;
+            return;
         }
-        area += s.size * s.size * o;
+        self.area += s.size * s.size * o;
+        if s.additive {
+            self.glow += s.size * s.size * o;
+        }
         let r = (s.pos[0] * s.pos[0] + s.pos[1] * s.pos[1] + s.pos[2] * s.pos[2]).sqrt() + s.size * 0.5;
-        m.reach = m.reach.max(r);
+        self.reach = self.reach.max(r);
     }
-    if area > 0.0 {
-        m.span = m.span.max(t);
+}
+
+fn fold(moments: &[Moment], dt: f32, t0: f32) -> Metrics {
+    let mut m = Metrics::default();
+    for (i, x) in moments.iter().enumerate() {
+        if x.area > 0.0 {
+            m.span = m.span.max(t0 + i as f32 * dt);
+        }
+        m.mass += x.area * dt;
+        m.glow_mass += x.glow * dt;
+        m.glow_peak = m.glow_peak.max(x.glow);
+        m.peak = m.peak.max(x.area);
+        m.reach = m.reach.max(x.reach);
+        m.count = m.count.max(x.count);
     }
-    m.mass += area * dt;
-    m.peak = m.peak.max(area);
-    m.count = m.count.max(sprites.len());
+    m
+}
+
+/// Fold one moment's sprites into `m` (`dt` seconds long, at `t`).
+pub fn accumulate(m: &mut Metrics, sprites: &[Sprite], t: f32, dt: f32) {
+    let mut x = Moment::default();
+    sprites.iter().for_each(|s| x.add(s));
+    let one = fold(&[x], dt, t);
+    m.mass += one.mass;
+    m.peak = m.peak.max(one.peak);
+    m.reach = m.reach.max(one.reach);
+    m.count = m.count.max(one.count);
+    m.span = m.span.max(one.span);
+    m.glow_mass += one.glow_mass;
+    m.glow_peak = m.glow_peak.max(one.glow_peak);
 }
 
 /// The metrics of a converted FXList, played frame by frame for `secs`.
 pub fn metrics_zh(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, secs: f32) -> Metrics {
-    let mut m = Metrics::default();
     let frames = (secs * 30.0) as u32;
-    // One playthrough, sampled each frame: replay from the start with the same seed.
-    for f in 1..=frames {
-        let s = play_zh(list, systems, f, 7);
-        accumulate(&mut m, &s, f as f32 / 30.0, 1.0 / 30.0);
-    }
-    m
+    let mut moments = vec![Moment::default(); frames as usize];
+    play_zh_each(list, systems, frames, 7, |f, s| moments[f].add(&s));
+    fold(&moments, 1.0 / 30.0, 1.0 / 30.0)
 }
 
 /// The metrics of a BO2 effect, sampled every Zero Hour frame for `secs`.
@@ -744,19 +800,25 @@ pub const SHEET_TIMES: [f32; 6] = [50.0, 150.0, 300.0, 600.0, 1200.0, 2500.0];
 fn csv_row(name: &str, b: &Metrics, z: &Metrics) -> String {
     let r = |a: f32, b: f32| if b > 0.0 { a / b } else { 0.0 };
     format!(
-        "{name},{:.2},{:.2},{:.1},{},{:.2},{:.2},{:.2},{:.1},{},{:.2},{:.3},{:.3},{:.3}\n",
-        b.mass, b.peak, b.reach, b.count, b.span, z.mass, z.peak, z.reach, z.count, z.span,
-        r(z.mass, b.mass), r(z.peak, b.peak), r(z.reach, b.reach)
+        "{name},{:.2},{:.2},{:.1},{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.1},{},{:.2},{:.2},{:.2},{:.3},{:.3},{:.3},{:.3},{:.3}\n",
+        b.mass, b.peak, b.reach, b.count, b.span, b.glow_mass, b.glow_peak, z.mass, z.peak, z.reach, z.count, z.span, z.glow_mass, z.glow_peak,
+        r(z.mass, b.mass), r(z.peak, b.peak), r(z.reach, b.reach), r(z.glow_mass, b.glow_mass), r(z.glow_peak, b.glow_peak)
     )
 }
 
 /// The sweep's CSV header.
-pub const CSV_HEADER: &str = "effect,bo2_mass,bo2_peak,bo2_reach,bo2_count,bo2_span,zh_mass,zh_peak,zh_reach,zh_count,zh_span,mass_ratio,peak_ratio,reach_ratio\n";
+pub const CSV_HEADER: &str = "effect,bo2_mass,bo2_peak,bo2_reach,bo2_count,bo2_span,bo2_glow_mass,bo2_glow_peak,zh_mass,zh_peak,zh_reach,zh_count,zh_span,zh_glow_mass,zh_glow_peak,mass_ratio,peak_ratio,reach_ratio,glow_mass_ratio,glow_peak_ratio\n";
 
 /// Convert `effect` alone and return the converter's FXList, systems and decoded textures, plus
 /// the textures BO2's own elements draw with (for the BO2 row).
-pub fn convert_one(effect: &Effect, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<Rgba>) -> (ZhList, BTreeMap<String, ZhSystem>, BTreeMap<String, Rgba>) {
-    let mut c = crate::fx::Converted::default();
+pub fn convert_one(effect: &Effect, pool: &[&zhbo_formats::t6zone::Zone], paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<Rgba>) -> (ZhList, BTreeMap<String, ZhSystem>, BTreeMap<String, Rgba>) {
+    let (list, systems, textures, _) = convert_one_text(effect, pool, paks);
+    (list, systems, textures)
+}
+
+/// [`convert_one`], with the converter's INI text (the particle systems, then the FXLists).
+pub fn convert_one_text(effect: &Effect, pool: &[&zhbo_formats::t6zone::Zone], paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<Rgba>) -> (ZhList, BTreeMap<String, ZhSystem>, BTreeMap<String, Rgba>, String) {
+    let mut c = crate::fx::Converted::with_pool(pool);
     let name = c.add(effect, paks);
     let systems = parse_systems(&c.particles);
     let list = parse_lists(&c.fxlists).remove(&name).unwrap_or_default();
@@ -767,12 +829,13 @@ pub fn convert_one(effect: &Effect, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) 
         }
     }
     let textures = decode_textures(&c.textures);
-    (list, systems, textures)
+    let text = format!("; images missing from the packs: {:?}\n{}{}", c.missing, c.particles, c.fxlists);
+    (list, systems, textures, text)
 }
 
 /// The metrics of every effect in `zone` (BO2's and the converted one's) as CSV rows, and for
 /// each name in `sheets` a contact sheet in `out`: BO2's row over Zero Hour's at [`SHEET_TIMES`].
-pub fn sweep(zone: &zhbo_formats::t6zone::Zone, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<Rgba>, out: &std::path::Path, sheets: &[&str], all: bool) -> Result<String, String> {
+pub fn sweep(zone: &zhbo_formats::t6zone::Zone, pool: &[&zhbo_formats::t6zone::Zone], paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<Rgba>, out: &std::path::Path, sheets: &[&str], all: bool) -> Result<String, String> {
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     let kind = zhbo_formats::fastfile::asset_type_id("fx").ok_or("no fx asset type")?;
     let mut names: Vec<String> = if all {
@@ -786,9 +849,11 @@ pub fn sweep(zone: &zhbo_formats::t6zone::Zone, paks: &dyn Fn(zhbo_formats::ipak
     let mut csv = String::from(CSV_HEADER);
     let cam = sheet_camera(zhbo_core::units::inches(480.0));
     for name in &names {
-        let Some(effect) = zhbo_formats::fx::find(zone, name) else { continue };
+        let Some(mut effect) = zhbo_formats::fx::find(zone, name) else { continue };
+        // BO2 draws the full material a stub names; so does its row here.
+        zhbo_formats::fx::bind_materials(&mut effect, pool);
         let looping_ms = (effect.looping_life_msec as f32).clamp(1000.0, 20000.0);
-        let (list, systems, textures) = convert_one(&effect, paks);
+        let (list, systems, textures, text) = convert_one_text(&effect, pool, paks);
         let secs = 6.0;
         let b = metrics_bo2(&effect, looping_ms, secs);
         let z = metrics_zh(&list, &systems, secs);
@@ -806,6 +871,7 @@ pub fn sweep(zone: &zhbo_formats::t6zone::Zone, paks: &dyn Fn(zhbo_formats::ipak
             let sheet = crate::images::sheet(&cells, cell, SHEET_TIMES.len() as u32);
             let file = out.join(format!("{}.png", name.replace('/', "__")));
             crate::images::write_png(&file, &sheet)?;
+            std::fs::write(file.with_extension("ini"), &text).map_err(|e| e.to_string())?;
         }
     }
     std::fs::write(out.join("metrics.csv"), &csv).map_err(|e| e.to_string())?;
@@ -815,8 +881,10 @@ pub fn sweep(zone: &zhbo_formats::t6zone::Zone, paks: &dyn Fn(zhbo_formats::ipak
 /// [`sweep`] over the player's install: `common_mp`'s effects.
 pub fn sweep_install(bo2_dir: &std::path::Path, out: &std::path::Path, sheets: &[&str], all: bool) -> Result<String, String> {
     let zone = crate::paks::load_zone(bo2_dir, "common_mp")?;
-    let paks = crate::paks::Paks::open(bo2_dir)?;
-    sweep(&zone, &|k| paks.image(k), out, sheets, all)
+    let patch = crate::paks::load_zone(bo2_dir, "patch_mp")?;
+    // As the archive build resolves them: stubs by name from the weapon pool's zones.
+    let paks = crate::paks::Paks::open_for(bo2_dir, &[&patch, &zone])?;
+    sweep(&zone, &[&patch, &zone], &|k| paks.image(k), out, sheets, all)
 }
 
 #[cfg(test)]
@@ -838,5 +906,68 @@ mod tests {
         let m = metrics_zh(&lists["L"], &systems, 1.0);
         assert_eq!(m.count, 3);
         assert!(m.mass > 0.0 && m.reach > 5.0);
+    }
+}
+
+/// The whole install's effects against their conversion: the regression gate for the causes that
+/// made BO2's explosions small in Zero Hour (runners never resolved, stub images and materials
+/// unresolved, one-frame particles never drawn, looping and one-shot counts misread).
+#[cfg(test)]
+mod install_tests {
+    use super::*;
+    use zhbo_formats::fx::kind;
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_bo2_effect_converts_to_its_size() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = crate::paks::load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = crate::paks::load_zone(&bo2_dir, "patch_mp").unwrap();
+        let pool = [&patch, &common];
+        let paks = crate::paks::Paks::open_for(&bo2_dir, &pool).unwrap();
+        let kind_fx = zhbo_formats::fastfile::asset_type_id("fx").unwrap();
+        let names: Vec<String> = common.assets.iter().filter(|a| a.kind == kind_fx).map(|a| common.str_ptr(a.addr).trim_start_matches(',').to_string()).collect();
+        let (mut runners, mut within, mut measured) = (0, 0, 0);
+        let mut failures = Vec::new();
+        for name in &names {
+            let Some(mut e) = zhbo_formats::fx::find(&common, name) else { continue };
+            // Every runner starts the effect it names when the zone defines it (the reader once
+            // dereferenced the name twice and dropped every runner's effect).
+            for el in all_elems(&e).into_iter().filter(|el| el.kind == kind::RUNNER) {
+                let reachable = el.runs.iter().filter(|n| n.contains('/') && zhbo_formats::fx::find(&common, n).is_some()).count();
+                runners += 1;
+                if el.children.len() != reachable {
+                    failures.push(format!("{name}: runner of {:?} started {} effects", el.runs, el.children.len()));
+                }
+            }
+            zhbo_formats::fx::bind_materials(&mut e, &pool);
+            let (list, systems, _, text) = convert_one_text(&e, &pool, &|k| paks.image(k));
+            if !text.starts_with("; images missing from the packs: {}") {
+                failures.push(format!("{name}: {}", text.lines().next().unwrap_or_default()));
+            }
+            let looping_ms = (e.looping_life_msec as f32).clamp(1000.0, 20000.0);
+            let b = metrics_bo2(&e, looping_ms, 6.0);
+            if b.mass <= 0.0 {
+                continue;
+            }
+            let z = metrics_zh(&list, &systems, 6.0);
+            measured += 1;
+            let ratio = z.mass / b.mass;
+            if (0.5..=2.0).contains(&ratio) {
+                within += 1;
+            }
+            // The explosions, flashes and impacts the mod plays stay near BO2's size: not a fraction
+            // (the missing flash and fire) nor a multiple (the Betty's looping parts emitting a
+            // whole count every frame for a second covered 8.6x). The band is wide because the
+            // metric weighs a long thin smoke like a short fireball.
+            if SHEET_EFFECTS.contains(&name.as_str()) && !(0.4..=4.0).contains(&ratio) {
+                failures.push(format!("{name}: covers {ratio:.2} of BO2's (mass {:.0} vs {:.0})", z.mass, b.mass));
+            }
+        }
+        assert!(runners > 100, "{runners} runners: the install's effects did not parse");
+        // Measured 2026-11-03: 305 of 371 (82 %); before the fixes 112 (30 %), 81 effects drawing
+        // nothing at all.
+        assert!(within * 4 >= measured * 3, "only {within} of {measured} effects cover 0.5-2x BO2's");
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }

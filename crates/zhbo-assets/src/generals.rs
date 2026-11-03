@@ -582,7 +582,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // BO2's own explosions for the converted weapons (and equipment breaking), as Zero Hour
     // particle systems.
-    let mut effects = crate::fx::Converted::default();
+    let fx_pool = [&patch, &common_patch, &common];
+    let mut effects = crate::fx::Converted::with_pool(&fx_pool);
     let mut ids: Vec<String> = crate::weapons::with_alt_modes(&table.weapons, &converted_base);
     ids.extend(table.weapons.iter().filter(|d| d.id.contains('~')).map(|d| d.id.clone()));
     // Each gun's muzzle flash as others see it (BO2's `worldFlashEffect`), by weapon id.
@@ -591,7 +592,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = table.weapons.iter_mut().find(|d| &d.id == id) else { continue };
         if let Some(f) = &w.world_flash_effect {
-            flashes.insert(id.clone(), effects.add(f, &|h| paks.image(h)));
+            // Played at the muzzle bone with its matrix (X down the barrel), like BO2's.
+            flashes.insert(id.clone(), effects.add_framed(f, &|h| paks.image(h)));
         }
         if let Some(f) = &w.view_flash_effect {
             // Only claim it when the converter can draw it (sprites or runner children). An effect
@@ -601,7 +603,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
                 zhbo_formats::fx::kind::is_sprite(e.kind) || e.kind == zhbo_formats::fx::kind::RUNNER
             });
             if drawable {
-                d.view_flash_fx = effects.add(f, &|h| paks.image(h));
+                d.view_flash_fx = effects.add_framed(f, &|h| paks.image(h));
             }
         }
         // The shared suppressor flash pair (BO2's `fx_muz_silencer_md` + `_3p`). BO2's
@@ -609,11 +611,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         // value when the weapon offers a silenced attachment.
         if w.attachment_variants.iter().any(|(kind, _)| atts.iter().any(|a| a.kind == *kind && a.silenced)) {
             if let Some(e) = zhbo_formats::fx::find(&common, crate::fx::SILENCER_VIEW_FLASH) {
-                d.silenced_view_flash_fx = effects.add(&e, &|h| paks.image(h));
+                d.silenced_view_flash_fx = effects.add_framed(&e, &|h| paks.image(h));
             }
             if !d.silenced_fx_weapon.is_empty() {
                 if let Some(e) = zhbo_formats::fx::find(&common, crate::fx::SILENCER_WORLD_FLASH) {
-                    let world_fx = effects.add(&e, &|h| paks.image(h));
+                    let world_fx = effects.add_framed(&e, &|h| paks.image(h));
                     fx_ini = ini_set(&fx_ini, "Weapon", &d.silenced_fx_weapon, "FireFX", &world_fx)?;
                 }
             }
@@ -1328,12 +1330,17 @@ mod tests {
             .collect();
         // The pistols' fx_pistol is the asset pool's: `patch_mp`'s, over `common_mp`'s own copy
         // (`zhbo_formats::fx::bind`). Its velocities are mostly +X in the tag's frame: identity axes
-        // put BO2's Z in VelOrthoZ (zero for exactly the elements whose Z is zero), where the old
-        // up-is-X swap put BO2's X.
+        // put BO2's Z in VelOrthoZ — only for elements whose velocity graph moves along Z at all
+        // (its first sample, or the integrated delta a speeding-up graph converts to) — where the
+        // old up-is-X swap put BO2's X.
         let live = zhbo_formats::fx::find(&load_zone(Path::new(&bo2), crate::fx::ZONE).unwrap(), "weapon/shellejects/fx_pistol").unwrap();
-        let moving_z = live.elems.iter().filter(|e| e.velocity.0[2] != 0.0 || e.velocity.1[2] != 0.0).count();
+        let z_of = |v: &zhbo_formats::fx::VelSample| v.local_velocity.0[2] != 0.0 || v.local_velocity.1[2] != 0.0 || v.local_delta.0[2] != 0.0 || v.local_delta.1[2] != 0.0;
+        let moving_z = live.elems.iter().filter(|e| e.kind == zhbo_formats::fx::kind::MODEL && e.vel.iter().any(z_of)).count();
         let vel = |a: &str| defs.iter().flat_map(|d| d.lines().filter(|l| l.trim_start().starts_with(a))).map(str::trim).collect::<Vec<_>>();
-        assert_eq!(vel("VelOrthoZ =").iter().filter(|l| !l.ends_with("0.000 0.000")).count(), moving_z, "{defs:?}");
+        let converted_z = vel("VelOrthoZ =").iter().filter(|l| !l.ends_with("0.000 0.000")).count();
+        assert!(converted_z <= moving_z, "{converted_z} systems move along Z, BO2 moves {moving_z}: {defs:?}");
+        // A shell is drawn the size BO2's model element gives no size for (never 0: invisible).
+        assert!(defs.iter().all(|d| !d.contains("Size = 0.00 0.00")), "{defs:?}");
         assert!(vel("VelOrthoX =").iter().any(|l| !l.ends_with("0.000 0.000")), "{defs:?}");
         // 5b family C: what others see. The AN-94's world brass (`fx_rifle`, a stub bound from
         // patch_mp) plays from its own FX weapon, placed from the flash bone to `tag_brass`; its

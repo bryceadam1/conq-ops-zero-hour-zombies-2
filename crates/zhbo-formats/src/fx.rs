@@ -85,6 +85,8 @@ pub struct Elem {
     pub models: Vec<String>,
     /// Effects a runner element starts.
     pub children: Vec<Effect>,
+    /// The names of the effects a runner starts, whether or not this zone holds them.
+    pub runs: Vec<String>,
     /// Flipbook atlas: columns and rows of the image (1 x 1 if none).
     pub atlas: (u32, u32),
     /// How the flipbook plays (`FxElemAtlas`).
@@ -299,12 +301,18 @@ fn read_elem(z: &Zone, e: u32, looping: bool, emission: bool, depth: u32) -> Ele
     match kind {
         k if kind::is_sprite(k) => elem.materials = visuals.iter().map(|&m| read_material(z, m)).collect(),
         kind::MODEL => elem.models = visuals.iter().map(|&m| z.str_ptr(m).trim_start_matches(',').to_string()).collect(),
-        // A runner names the effect it starts (`FxEffectDefRef`); look it up in this zone.
-        kind::RUNNER if depth > 0 => {
+        // A runner names the effect it starts. An `FxEffectDefRef` is loaded as its name (an
+        // xstring: `Load_FxEffectDefRef`), so the visual is the `char*` itself, not a pointer to
+        // one. Look the effect up in this zone.
+        kind::RUNNER => {
+            elem.runs = visuals.iter().map(|&f| z.cstr(f).trim_start_matches(',').to_string()).collect();
+            if depth == 0 {
+                return elem;
+            }
             elem.children = visuals
                 .iter()
                 .filter_map(|&f| {
-                    let name = z.str_ptr(f);
+                    let name = z.cstr(f);
                     let name = name.trim_start_matches(',');
                     if name.contains('/') {
                         find_depth(z, name, depth - 1)
@@ -336,6 +344,25 @@ pub fn bind(e: Option<Effect>, pool: &[&Zone]) -> Option<Effect> {
     let e = e?;
     let name = e.name.trim_start_matches(',');
     pool.iter().find_map(|z| find(z, name)).filter(|f| !f.elems.is_empty()).or_else(|| (!e.elems.is_empty()).then_some(e))
+}
+
+/// Bind every element's reference-stub material (`,gfx_fxt_smk_puff` in `common_mp`: a name with
+/// no textures, the full material living in another zone of the pool) to the full material of that
+/// name in the first zone of `pool` that has one, as BO2's asset pool does; runners' effects too.
+/// A stub nothing resolves stays (its element draws nothing).
+pub fn bind_materials(e: &mut Effect, pool: &[&Zone]) {
+    for el in &mut e.elems {
+        for m in &mut el.materials {
+            if m.color_map().is_none() {
+                if let Some(full) = pool.iter().find_map(|z| crate::xmodel::find_material(z, &m.name).filter(|f| f.color_map().is_some())) {
+                    *m = full;
+                }
+            }
+        }
+        for c in el.children.iter_mut().chain(el.on_death.as_deref_mut()).chain(el.on_impact.as_deref_mut()).chain(el.emitted.as_deref_mut()) {
+            bind_materials(c, pool);
+        }
+    }
 }
 
 pub fn find(z: &Zone, name: &str) -> Option<Effect> {
