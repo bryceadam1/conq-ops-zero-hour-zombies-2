@@ -135,6 +135,16 @@ impl Bearer {
         Some(lo * DRAWN_ZH_PER_INCH)
     }
 
+    /// How far `at` is from the shield's box (world units; 0 inside it): radius damage measures
+    /// each entity to its bounds (t6mp `FUN_005f1fd0`, as [`crate::hitscan::distance_to`] does for
+    /// Zero Hour's objects), and the box is where the shield is drawn ([`DRAWN_ZH_PER_INCH`]).
+    pub fn distance(&self, at: Vec3) -> f32 {
+        let o = self.body_of(at, true);
+        let o = qrot(qinv(self.b.rot), [o[0] - self.b.pos[0], o[1] - self.b.pos[1], o[2] - self.b.pos[2]]);
+        let out = |k: usize| (self.b.mins[k] - o[k]).max(o[k] - self.b.maxs[k]).max(0.0);
+        Vec3::new(out(0), out(1), out(2)).length() * DRAWN_ZH_PER_INCH
+    }
+
     /// The shield tag's origin and forward axis (axis 0 of its matrix), in the world.
     pub fn tag(&self) -> (Vec3, Vec3) {
         (self.world_of(self.b.pos, true), self.world_of(qrot(self.b.rot, [1.0, 0.0, 0.0]), false))
@@ -262,6 +272,31 @@ mod tests {
         assert_eq!(b.blast_protection(origin - fwd * 100.0, &t), 0.0);
         let at_45 = origin + (fwd + side) * 100.0;
         assert_eq!(b.blast_protection(at_45, &t), t.shield_blast_protection_120);
+    }
+
+    /// A blast's distance to a shield is to its box, at the drawn size: 0 inside, the gap off
+    /// each face, whichever box (held, stowed, planted) applies.
+    #[test]
+    fn a_blast_is_measured_to_the_shields_box() {
+        for held in [true, false] {
+            let b = bearer(held, 0.7);
+            let (origin, _) = b.tag();
+            let centre = b.world_of(
+                {
+                    let m = [(b.b.mins[0] + b.b.maxs[0]) * 0.5, (b.b.mins[1] + b.b.maxs[1]) * 0.5, (b.b.mins[2] + b.b.maxs[2]) * 0.5];
+                    let r = qrot(b.b.rot, m);
+                    [r[0] + b.b.pos[0], r[1] + b.b.pos[1], r[2] + b.b.pos[2]]
+                },
+                true,
+            );
+            assert!(b.distance(centre) < 1e-4, "inside");
+            assert!(b.ray(centre + Vec3::new(0.0, 0.0, 500.0), Vec3::new(0.0, 0.0, -1.0), 1000.0).is_some());
+            // Straight above the box's middle, 10 units over its top.
+            let top = 500.0 - b.ray(centre + Vec3::new(0.0, 0.0, 500.0), Vec3::new(0.0, 0.0, -1.0), 1000.0).unwrap();
+            let above = centre + Vec3::new(0.0, 0.0, top + 10.0);
+            assert!((b.distance(above) - 10.0).abs() < 1e-3, "{held}: {}", b.distance(above));
+            assert!(b.distance(origin + Vec3::new(0.0, 0.0, 1000.0)) > 900.0);
+        }
     }
 
     #[test]

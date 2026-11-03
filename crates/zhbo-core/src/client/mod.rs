@@ -186,12 +186,30 @@ impl Default for ClientIn {
     }
 }
 
+/// One seat's match as this machine saw the sim's events: the scoreboard's row for a player other
+/// than the local one (whose own row is the HUD's tally, `HudLui::kills`/`deaths`, which the
+/// prediction confirms a frame sooner). Every machine consumes every event, so every machine's
+/// board agrees. Presentation only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SeatTally {
+    /// The seat has played in first person (it had a record or an event).
+    pub seen: bool,
+    /// Kills (`HitMarker { kill }`) and deaths (`GeneralDied`), as the HUD counts its own.
+    pub kills: u32,
+    pub deaths: u32,
+    /// His army's colour and whether he is on the local player's side (`objflags::ALLY`), last
+    /// read off his General while one stood.
+    pub color: u32,
+    pub ally: bool,
+}
+
 /// How many shot impacts one client frame can carry (`host/zhbo/zhbo_core.h`'s
 /// `ZHBO_CLIENT_HITS`). One shot per logic frame and at most a shotgun's pellets per shot; a
-/// render frame that spans two logic frames can overflow it, and the extras are dropped.
+/// render frame that spans two logic frames, or other players' rounds on top, can overflow it,
+/// and the extras are dropped (others' first).
 pub const CLIENT_HITS: usize = 8;
 
-/// One shot impact of the local player's this frame: BO2 plays the impact table's cell at `point`,
+/// One shot impact this frame (the presented seat's, or another player's round): BO2 plays the impact table's cell at `point`,
 /// oriented by `dir`, in that surface's way (docs/CONTRACT.md "Shot impacts (R8d)").
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -268,7 +286,8 @@ pub struct ClientOut {
     /// The in-match class pick is up: the bridge leaves the cursor free and swallows the
     /// game-bound mouse/key messages behind it.
     pub menu_open: i32,
-    /// The local player's shot impacts this frame, in shot order (at most [`CLIENT_HITS`]).
+    /// This frame's shot impacts: the presented seat's in shot order, then other players' (at
+    /// most [`CLIENT_HITS`]).
     pub hits: [ClientHit; CLIENT_HITS],
     /// How many `hits` are valid.
     pub hits_len: i32,
@@ -478,9 +497,16 @@ pub struct Client {
     pub cues: Cues,
     /// The local player's shellshock as presented: its view kick and ringing loop.
     pub shock: crate::shellshock::Presented,
-    /// This frame's shot impacts (the local player's), copied into `ClientOut`.
+    /// This frame's impacts of the presented seat's rounds, copied into `ClientOut`.
     pub hits: [ClientHit; CLIENT_HITS],
     pub hits_len: usize,
+    /// Other first-person Generals' footsteps (`sounds::RemoteSteps`).
+    remote_steps: sounds::RemoteSteps,
+    /// Every seat's match (the scoreboard's other rows), by seat.
+    pub seats: [SeatTally; crate::sim::MAX_PLAYERS],
+    /// This frame's impacts of other players' rounds (`events::present_remote`): they take the
+    /// slots of `ClientOut.hits` the local player's leave.
+    pub remote_hits: Vec<ClientHit>,
     /// Set while the pick screen was forced open from outside a spawn (the command bar's
     /// Create-a-Class entry). It keeps the screen up even when a class is already chosen, so a
     /// pick can be replaced, and clears once one lands or Escape closes it.
@@ -561,6 +587,9 @@ impl Client {
             shock: Default::default(),
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
+            remote_hits: Vec::with_capacity(CLIENT_HITS),
+            seats: [SeatTally::default(); crate::sim::MAX_PLAYERS],
+            remote_steps: Default::default(),
             class_pick_forced: false,
             class_pick_declined: false,
             class_pick_open: false,
@@ -847,6 +876,15 @@ impl Client {
         let pick_wanted = self.class_pick_wanted(unclassed);
         // A spectator's view is the followed General's; the script never plays for him.
         let fps = matches!(self.view, ViewMode::Fps) && self.spectator.is_none();
+        // How far the shot leaves from the aim right now (the view kick, the idle sway, the sights'
+        // pose: `PlayerSim::fire_angles` against the input's angles), on the record first person
+        // shows: the multiplayer script holds its sights on the other General through the recoil, as
+        // a player does.
+        let shown = self.predict.view().or_else(|| sim.player(inp.local_player));
+        let off_aim = shown.map_or((0.0, 0.0), |p| {
+            let (fy, fp) = p.fire_angles();
+            (wrap_angle(fy - p.input.yaw), fp - p.input.pitch)
+        });
         let ap = self.autopilot.as_mut()?;
         if !fps {
             ap.t = 0.0;
@@ -858,12 +896,14 @@ impl Client {
             ap.in_fps = true;
             ap.session += 1;
             ap.mp_fight = None;
+            ap.mp_leave_at = None;
             if ap.mp {
-                ap.log.push(format!("autopilot mp: first-person session {}", ap.session));
+                let class = sim.player(inp.local_player).and_then(|p| p.class.clone()).unwrap_or_else(|| "none".into());
+                ap.log.push(format!("autopilot mp: first-person session {} (class {class})", ap.session));
             }
         }
         if ap.mp {
-            ap.mp_aim = autopilot_aim(sim, inp.local_player);
+            ap.mp_aim = autopilot_aim(sim, inp.local_player).map(|(yaw, pitch)| (wrap_angle(yaw - off_aim.0), pitch - off_aim.1));
             // What his General shows in third person on the other machines: the weapon in hand and
             // the camo it wears (`Sim::third_person_camo`, what their native pass composes).
             let holds = sim
@@ -989,7 +1029,9 @@ impl Client {
             }
         };
         self.tracers.predicted = predicting;
+        self.tally_seats(sim, host, inp.local_player);
         self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
+        self.remote_steps.update(&sim.players, viewed, &mut self.cues);
         self.tick_hud(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
         // the sim's record.
@@ -1224,9 +1266,18 @@ impl Client {
         let was_open = self.class_pick_open;
         self.class_pick_open = self.class_pick_wanted(unclassed);
         out.menu_open = self.class_pick_open as i32;
-        // The frame's impacts (consume_events filled them above).
+        // The frame's impacts (consume_events and the prediction filled them above): the
+        // presented seat's own, then other players' into the slots left.
         out.hits = self.hits;
-        out.hits_len = self.hits_len as i32;
+        let mut n = self.hits_len;
+        for hit in self.remote_hits.drain(..) {
+            if n == CLIENT_HITS {
+                break;
+            }
+            out.hits[n] = hit;
+            n += 1;
+        }
+        out.hits_len = n as i32;
         // A fresh open starts `animateIn`'s entrance fade (`codmenu.lua:2300-2326`); a screen that
         // stays up keeps its clock, and a closed one starts over on the next open.
         if self.class_pick_open && !was_open {

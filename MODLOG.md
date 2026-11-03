@@ -11335,3 +11335,212 @@ BO2-only rows, 12 gap clusters). In game (`cargo xtask build` into the worktree)
 the state hash agreeing on every common frame and no CRC mismatch. The four `--mp` failures (the
 target is not killed in the first fight, so no respawn) are the same on main 3cd2a0a built in this
 worktree (19/23, the same four) and on `v1/smoke-screen`: not this change.
+
+## Bug sweep 3: another player's impacts, blasts, launches and shield are seen and heard (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom (found reading for the first two-machine playtest).** On the other machine, a player's
+rounds landed with no puff, spark or blood and no impact sound; his grenades, C4, Claymores,
+launcher rounds and their bounces and duds went off silently (the blast's FX is the logic's
+`LogicApi.fx`, so it showed, but its sound did not); his SMAW, RPG, FHJ, crossbow, war machine and
+every rifle's grenade-launcher alt fired without a sound; his Trophy System's kill and his
+deployed shield's plant, hits and destruction were silent. In single player the same held for any
+AI seat's overhead General's grenades.
+
+**Root cause.** `Client::consume_events` presented the presented seat's events through
+`present`, and everyone else's through an allowlist of three kinds (`Shot`, `Thrown`, `Planted`)
+with a `_ => {}` arm. Every other kind — including all the ones that happen at a place in the
+world and that `present` already played positionally — was dropped for anyone but its owner.
+`Launched` had no remote form at all, though the converter builds every launcher's third-person
+chain (`ZHBO_BO2_FireNpc_*`, `Kind::Remote`) exactly as for a gun. A remote event of a seat with no
+record (his General just died with his grenade in the air) was also skipped before the match.
+CONTRACT listed "other players' impacts" as out of scope.
+
+**Fix (`client/events.rs`).** `world_event` plays an event that happens at a place — `Impact`,
+`Exploded`, `Bounced`, `Dud`, `Intercepted`, `ShieldDeployed`, `ShieldDestroyed`, `ShieldHit` —
+the same for whoever's it is: its cues at the place, its impact into `ClientOut.hits`. `present`
+and the new `present_remote` both go through it. `present_remote` plays another player's `Shot`
+and now `Launched` as his gun's third-person chain at him, and `Thrown`/`Planted` as before. Its
+match has no wildcard, so a new event kind must say who sees it. Every sound these play is already
+a positional, everyone type (`Kind::World`/`Kind::Remote`); none of another player's `*Player` 2D
+sounds is ever played here. The impacts of other players' rounds take only the `ZHBO_CLIENT_HITS`
+slots the presented seat's own leave (`Client::remote_hits`, merged after the prediction's), so no
+ABI change.
+
+**Not changed.** Another player's knife swing, knife hit and reload stay silent here: the mod
+converts only their `*Player` versions (2D); BO2's third-person versions (`meleeSwipeSound`, the
+third-person reload notetracks) are a converter item.
+
+**Test.** `another_players_world_events_play_here_as_for_their_owner` presents one event of every
+kind (all 42 variant shapes) from the local seat and from another, and asserts that every cue the
+owner hears at a place plays here too, that the impacts are the same, that nothing of another
+player's plays as a 2D sound, and that his shot and launch are his chain. It fails on main for
+`Impact`, `Exploded`, `Bounced`, `Dud`, `Intercepted` and the shield events.
+`other_players_impacts_fill_only_the_slots_the_own_ones_leave` checks the slot order. The old
+`local_impacts_fill_the_record_and_pick_the_cue` asserted the bug ("another player's impact is not
+the local player's FX") and now asserts the opposite.
+
+## Bug sweep 3: the scoreboard lists every player (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom.** In a two-player match, Tab showed one row, "General", with the local player's own
+kills and deaths. The other player was not on it. `hud/scoreboard.rs` said so ("the core knows only
+the local player's own tally ... other players need the engine to list them"), and the HUD built
+that single row by hand.
+
+**Cause.** The board only took the HUD's own tally (`HudLui::kills`/`deaths`, counted in
+`present` for the presented seat). But every machine consumes every seat's sim events, so the
+other players' kills (`HitMarker { kill }`) and deaths (`GeneralDied`) were in hand all along.
+
+**Fix.** `Client::tally_seats` counts each seat's kills and deaths from the sim's events, before
+they are presented and drained. It also reads each first-person General's army colour and side
+(`objflags::ALLY`, relative to the local player's General) off the engine's logic while he
+stands. The board draws BO2's team-deathmatch shape: the local player's side first (his row from
+the HUD's tally, which the prediction confirms a frame sooner, then his allies), then the
+enemies under their army's colour. Each block is sorted by score. Names come from
+`ClientHost::player_name` (the lobby name), with "Player N" when none is set. Every machine
+counts the same events, so the boards agree. This is presentation only and touches no sim field.
+ASSISTS stays 0, because the sim credits none.
+
+**Test.** `the_scoreboard_lists_every_player_in_the_match` sets up two seats. The other seat
+kills twice (a non-kill marker does not count) and dies once. The test asserts his tally, his
+side and the board's text order: the local row first.
+
+## Bug sweep 3: other players' footsteps are heard (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom.** Another player walking or sprinting up behind you made no sound. Only your own
+2D footsteps played (`Cues::update`, `ZHBO_BO2_Step`, `Kind::Player`). Zero Hour's infantry have
+no footsteps of their own, and nothing played anyone else's.
+
+**BO2.** `clientscripts/mp/_footsteps.csc` builds `fly_<move>_npc_<surface>` for every player
+but the local one (`firstperson = 0`) and `_plr_` for the local one. In `mp_raid`'s bank
+`fly_step_run_npc_grass` and `fly_step_sprint_npc_grass` are positional (200–1,250" and 200–1,650"),
+unlike the 2D `_plr_` ones. Dead Silence (`specialty_quieter`) silences a player's steps for
+everyone else.
+
+**Fix.** `sounds::RemoteSteps` (the client, presentation only). Every first-person General except
+the presented one puts a foot down once per stride he walks on the ground, at the stride the own
+steps use (54" walking, 69" sprinting). The step plays at him: `ZHBO_BO2_StepNpc`, or
+`ZHBO_BO2_SprintStepNpc` when he sprints. A General with `specialty_quieter` makes none. The
+converter adds the two events (`Kind::World`, from those aliases). A spectator hears the followed
+General's own steps as before, and everyone else's this way.
+
+**Needs `hud::VERSION`** (two new archive events; CONTRACT "Pending for the next bump"). Until the
+archive is rebuilt, the events are missing and the engine logs `sound ZHBO_BO2_StepNpc: error` once.
+
+**Test.** `other_generals_footsteps_are_heard_at_them`: one step per stride at the walker, the
+sprint's own event, none for the presented seat, none with Dead Silence, none overhead.
+
+## Bug sweep 3: a grenade or rocket thrown into rising ground hung in the air (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom (found by the new long multiplayer run).** No concussion thrown in the rounds ever went
+off. A per-frame dump of the sim's projectiles showed why. The grenade met the slope near the
+meeting point on Tournament Desert, then hung at one spot, `(993.7, 1375.1, 17.5)`, for 30 s while
+its fall speed grew without bound. Then the flight limit dropped it without a sound
+(`Outcome::Hit`).
+
+**Root cause (`Projectile::step_shielded`).** The ground test was one check. If the move ended
+below the ground at its *end point*, and the projectile was *falling*, the move was cut where the
+fall reached that end point's height. Ground that rose across the move was never tested:
+* A grenade flying level or upward into a hillside never "fell", so it passed into the hill. The
+  clamp then put it at the hill's height over a point short of the hill. From there each later move
+  ran into the hill with a cut fraction ≤ 0, so it stayed where it was.
+* An `ExplodeOnGround` grenade (concussion, EMP, smoke, Willy Pete) never comes to rest that way,
+  so it never goes off.
+* A frag hangs and explodes in mid-air.
+* An impact rocket or launcher grenade, and any thrown or launched equipment (C4, Claymore),
+  hangs until the 30 s limit and vanishes.
+It depends on the terrain, so the flat test world never showed it. It was not a desync: every
+machine hung the grenade the same way.
+
+**Fix.** `ground_crossing` walks the move across the height map in steps of at most 2 units (at
+most 32 steps). It places the contact where the height above the ground, linear between the two
+bracketing samples, reaches zero. That is exact on level ground, so every level-ground result is
+unchanged (the lockstep gate and every projectile test pass as before). The bounce now reflects
+off the ground's own face (`ground_normal`, from the height map's slope): speed along the face is
+kept by `along`, speed into it is turned back by `up`. On level ground that is the old
+`(vx·along, vy·along, −vz·up)`. A grenade lying on a slope and pressed into it slides down the
+face instead of sticking. On level ground it stays put, as before.
+
+**Test.** `a_projectile_flying_into_a_hillside_meets_it` throws or fires every catalog offhand and
+launcher with an end of its own into a 1:1 hillside. Each must end against the hill before the
+30 s limit and never pass under it. On the old code it fails (the C4 hangs at
+`(16.4, 0, 9.8)`). `a_bounce_on_level_ground_keeps_its_old_shape` pins the level-ground bounce.
+`FakeHost.hill` gives the test world a slope.
+
+**Reaches** the smoke grenade (owned by the smoke-screen item; it now goes off where it lands on a
+slope) and the explosion items (they now get their blast). There is no change to the sim's
+inputs, state layout or content. Every machine steps the same arithmetic over the same height
+map.
+
+## Bug sweep 3: the long two-instance run (2026-11-02, branch `v1/bug-sweep-3`)
+
+`scripts/mptest-mac.sh` with `ZHBO_MPTEST_ROUNDS=N` (N > 1) is the long run. It is a closer stand-in
+for a real match before the first two-machine playtest, and it found the hanging-grenade bug above.
+Each instance sets `ZHBO_AUTOPILOT_ROUNDS`. That value is script-only and outside the content CRC,
+like the role.
+
+* **The bridge** (`mpAutopilotFrame`) counts take-controls. It walks every life back to the
+  meeting point, and it takes a General who is back overhead and alive into first person again
+  while lives are left. The joiner leaves the game a few seconds into his last life, still in first
+  person, the way the quit menu's Exit does it (`MSG_SELF_DESTRUCT` with transfer, then
+  `exitGame`).
+* **The script** (`Autopilot::mp_round`). The joiner first declines his spawn (Escape on the class
+  screen). Every life after the first fight then plays the same round: the tactical at the other
+  General's feet, a hip burst, an aimed burst, a reload and a knife. The host ends the round with a
+  long aimed burst. In his third life the joiner changes class after his throw (the pick screen is
+  forced open and the second default class picked) and stays for the bursts. Each session's log
+  line names the class the record wears, so the check can see the next General wear the new class.
+* **New log lines.** `player P's General is shellshocked (<shock>, <seconds> s)` (the bridge, from
+  the sim's shock serials). Every machine logs it for every player, so the two logs must agree frame
+  for frame. The engine's sound report is now one line per event per outcome, not one per event: a
+  positional event's first play can be out of range ("no sound"), and a later one heard.
+* **Checks** (TESTING.md "Multiplayer in game"): the decline and the second take-control; rounds
+  on both sides; the same shellshock lines in both logs up to the leave; the class change told to
+  both machines and worn by the next General; the leave, the host letting go of the leaver's
+  General, and the host's sim running on until Zero Hour ends the game he has won. Both runs also
+  check that each machine played the other player's gunshot chain and footsteps.
+* **Headless twin.** `the_long_multiplayer_autopilot_run_fights_in_lockstep` runs the same script on
+  three machines with the bridge's part played by the test. A concussion's stun shows there as the
+  engine disable, because the built-in table has no `Shock` blocks.
+
+**Findings and the result.** The first long run (4 lives) found the hanging grenade above. The
+concussions never went off. The footstep check failed only because the engine had logged the
+event once, out of range. A first draft also deadlocked: the joiner waited for a burst from a host
+whose lives were spent, so the host now plays until the joiner leaves. The final run on this branch
+(`ZHBO_MPTEST_ROUNDS=5`, about 9 min of match, the host on to frame 15,836) passes. The state hash
+agreed on all 9,957 common frames and on 93 equal CRC frames. Zero Hour reported no CRC mismatch.
+The two logs carry the same 4 shellshock lines. The joiner's CQB change was worn by his next
+General. The host let go of the leaver's General and ran 5,900 frames past the leave. One check
+first failed: the joiner had not drawn a weapon the host took up after the joiner had left. That
+look check now stops at the leave. Results: `~/.opencode/plan/bug-sweep-3/mp-long3/`.
+
+## Bug sweep 3: the two-instance test's kill is no longer left to luck (2026-11-03, branch `v1/bug-sweep-3`)
+
+**Flake (reported by splash-damage and smoke-screen on main 3cd2a0a: 4 of 23 checks failed, a rerun
+passed).** In the failing run (`~/.opencode/plan/splash-damage/game-mp-base/`), the host's aimed
+burst hit the target 7 times, at frames 1884–1907, for 456 of his 500. The rest of the magazine
+went into the sand. The target lived with 44 and left by the field computer at 15 s, so there was
+no death, no respawn, and the respawn checks failed. The state hash agreed on every frame. This
+was not a sim or antilag bug: every round that met him landed through the rewind
+(`antilag: … 5 back`).
+
+**Cause.** The script set its look to the target's chest every frame, but a shot leaves along
+`PlayerSim::fire_angles`. That is the aim plus the view kick, the idle sway and, aimed, the
+sights' pose. The AN-94's kick climbs over a burst, and nothing pulled it down, so after about 7
+rounds the burst climbed off him. Whether 7 hits killed him depended on where in the climb they
+landed, so the test was a coin toss.
+
+**Fix (the script, as a player aims).**
+* `Client::autopilot_input` takes the shown record's offset of `fire_angles` from the input's
+  angles off the aim at the other General. The sights stay on him through the recoil, in both the
+  short and the long run.
+* The shooter fires until the target is down, at most 30 s into the fight, with a reload every
+  4.5 s. He then leaves by the field computer and leaves the target's next General alone.
+* The target stays in the fight until then (field computer only if he outlives it).
+
+`the_multiplayer_autopilot_fights_in_lockstep` (headless) still sees exactly one death and the
+respawn with his class.
+
+The footstep check (bug sweep 3's) was too strict for the short run: the joiner hears the host's
+steps only from overhead or far away, where the engine answers `no sound` (out of range). The check
+now accepts `playing` or `no sound`: either way the core played the step. A missing event logs
+`error` and still fails.

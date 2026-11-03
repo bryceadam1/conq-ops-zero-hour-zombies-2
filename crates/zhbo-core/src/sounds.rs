@@ -68,6 +68,11 @@ pub const HURT: &str = "ZHBO_BO2_Hurt";
 pub const STEP: &str = "ZHBO_BO2_Step";
 pub const SPRINT_STEP: &str = "ZHBO_BO2_SprintStep";
 pub const LAND: &str = "ZHBO_BO2_Land";
+/// Another player's footfalls, heard at him: BO2's third-person aliases
+/// (`clientscripts/mp/_footsteps.csc` builds `fly_step_run_npc_<surface>`; the sprint's
+/// `fly_step_sprint_npc_<surface>`), positional for everyone ([`RemoteSteps`]).
+pub const STEP_NPC: &str = "ZHBO_BO2_StepNpc";
+pub const SPRINT_STEP_NPC: &str = "ZHBO_BO2_SprintStepNpc";
 pub const IMPACT: &str = "ZHBO_BO2_Impact";
 pub const IMPACT_FLESH: &str = "ZHBO_BO2_ImpactFlesh";
 /// Hold breath (`FUN_0052e3d0` notifies `playerbreathinsound` / `playerbreathoutsound` /
@@ -206,6 +211,56 @@ pub struct Cues {
     /// Looping events' gains this frame (`ClientHost::sound_loop`; 0 stops one): a shellshock's
     /// ringing (`shellshock::Presented`).
     pub loops: Vec<(&'static str, f32)>,
+}
+
+/// Other players' footsteps: each first-person General but the presented one puts a foot down
+/// every stride he walks on the ground, at the stride the own steps use, heard at him
+/// ([`STEP_NPC`]/[`SPRINT_STEP_NPC`]). BO2 plays every other player's steps this way
+/// (`_footsteps.csc`'s `firstperson = 0` aliases); a General with Dead Silence
+/// (`specialty_quieter`) makes none. Presentation only: read off the sim's records.
+#[derive(Clone, Debug, Default)]
+pub struct RemoteSteps {
+    /// Per seat: his General, where his body was last frame and the stride left to the next step.
+    seats: [Option<(u32, Vec3, f32)>; crate::sim::MAX_PLAYERS],
+}
+
+impl RemoteSteps {
+    /// This frame's footfalls of every seat's first-person General but `presented`'s.
+    pub fn update(&mut self, players: &[Option<PlayerSim>], presented: i32, cues: &mut Cues) {
+        for (seat, slot) in self.seats.iter_mut().enumerate() {
+            let p = players.get(seat).and_then(|p| p.as_ref()).filter(|p| seat as i32 != presented && p.is_first_person());
+            let Some(p) = p else {
+                *slot = None;
+                continue;
+            };
+            let pos = p.body.pos;
+            let (stride, event) = if p.body.sprinting { (SPRINT_STRIDE, SPRINT_STEP_NPC) } else { (STRIDE, STEP_NPC) };
+            let left = match *slot {
+                // A new General (or one just seen): his first step half a stride on.
+                Some((general, last, left)) if general == p.general => {
+                    let moved = (pos - last).length_xy();
+                    // Teleports and respawns are not steps; nor is the air.
+                    if moved < 50.0 && p.body.on_ground {
+                        left - moved
+                    } else {
+                        left
+                    }
+                }
+                _ => STRIDE * 0.5,
+            };
+            let mut left = left;
+            if left <= 0.0 {
+                if !p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter) {
+                    cues.play_at(event, pos);
+                }
+                left += stride;
+                if left < 0.0 {
+                    left = STRIDE;
+                }
+            }
+            *slot = Some((p.general, pos, left));
+        }
+    }
 }
 
 /// The hold-breath sounds' state (`FUN_0052e3d0`, the client frame): how long the current breath
@@ -633,6 +688,46 @@ mod tests {
             sprint_steps += events(&mut c).iter().filter(|e| **e == SPRINT_STEP).count();
         }
         assert!(sprint_steps < steps, "{sprint_steps} sprint steps");
+    }
+
+    /// Another first-person General's steps are heard at him, one per stride, the sprint's with
+    /// its own event; the presented seat's are not (he hears his own 2D steps), nor a General
+    /// with Dead Silence's (`specialty_quieter`).
+    #[test]
+    fn other_generals_footsteps_are_heard_at_them() {
+        let walker = |general: u32| {
+            let mut p = PlayerSim::spawn_for_tests();
+            p.general = general;
+            p
+        };
+        let mut players: Vec<Option<PlayerSim>> = vec![Some(walker(1)), Some(walker(2)), None];
+        let mut steps = RemoteSteps::default();
+        let mut c = Cues::default();
+        let heard = |players: &mut Vec<Option<PlayerSim>>, steps: &mut RemoteSteps, c: &mut Cues| {
+            let mut n = Vec::new();
+            for _ in 0..100 {
+                for p in players.iter_mut().flatten() {
+                    p.body.pos.x += 1.0;
+                }
+                steps.update(players, 0, c);
+                n.extend(c.queue.drain(..).map(|r| (r.event, r.at)));
+            }
+            n
+        };
+        let n = heard(&mut players, &mut steps, &mut c);
+        assert!((10..=12).contains(&n.len()), "{} steps over 100 units", n.len());
+        assert!(n.iter().all(|(e, at)| *e == STEP_NPC && at.is_some_and(|a| a.y == 0.0 && a.x > 0.0)), "his, at him: {n:?}");
+        players[1].as_mut().unwrap().body.sprinting = true;
+        let n = heard(&mut players, &mut steps, &mut c);
+        assert!(!n.is_empty() && n.iter().all(|(e, _)| *e == SPRINT_STEP_NPC), "{n:?}");
+        // Dead Silence: none.
+        let p = players[1].as_mut().unwrap();
+        p.arsenal.loadout.perks.push(crate::weapons::Perk::by_id("DeadSilence").expect("Dead Silence"));
+        assert!(p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter));
+        assert!(heard(&mut players, &mut steps, &mut c).is_empty(), "Dead Silence");
+        // Overhead (no first person): none either.
+        players[1] = None;
+        assert!(heard(&mut players, &mut steps, &mut c).is_empty());
     }
 
     #[test]

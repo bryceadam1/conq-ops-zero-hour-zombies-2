@@ -133,6 +133,35 @@ pub fn materials() -> impl Iterator<Item = &'static str> {
 }
 
 /// The local player's army colour, from the General's own object (Zero Hour's radar colour).
+/// The scoreboard's sides: the local player's (his own row from the HUD's tally, his allies')
+/// under `own_color`, then everyone else who has played in first person, each sorted by score.
+fn scoreboard_blocks(host: &dyn ClientHost, client: &Client, own_color: u32, local_player: i32) -> Vec<scoreboard::Block> {
+    let st = &client.hud.lui;
+    let points = crate::client::KILL_POINTS;
+    let name = |seat: i32| host.player_name(seat).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| if seat == local_player { "General".to_string() } else { format!("Player {}", seat + 1) });
+    let mut own = scoreboard::Block { color: own_color, rows: vec![scoreboard::Row { name: name(local_player), values: [st.kills * points, st.kills, st.deaths, 0], you: true }] };
+    let mut enemies = scoreboard::Block { color: 0, rows: Vec::new() };
+    for (seat, t) in client.seats.iter().enumerate().filter(|(seat, t)| t.seen && *seat as i32 != local_player) {
+        let row = scoreboard::Row { name: name(seat as i32), values: [t.kills * points, t.kills, t.deaths, 0], you: false };
+        if t.ally {
+            own.rows.push(row);
+        } else {
+            if enemies.rows.is_empty() {
+                enemies.color = t.color;
+            }
+            enemies.rows.push(row);
+        }
+    }
+    let mut blocks = vec![own];
+    if !enemies.rows.is_empty() {
+        blocks.push(enemies);
+    }
+    for b in &mut blocks {
+        b.rows.sort_by(|a, b| b.values[0].cmp(&a.values[0]));
+    }
+    blocks
+}
+
 fn team_color(host: &dyn ClientHost, p: &PlayerSim) -> u32 {
     let mut objs = Vec::new();
     host.query(p.body.pos, 2.0, p.general, &mut objs);
@@ -254,12 +283,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     let map_open = client.hud.map_open;
     // BO2 hides its HUD under the scoreboard (`BIT_SCOREBOARD_OPEN` in every panel's visibility).
     if client.hud.scoreboard_open {
-        let row = scoreboard::Row {
-            name: "General".to_string(),
-            values: [st.kills * crate::client::KILL_POINTS, st.kills, st.deaths, 0],
-            you: true,
-        };
-        scoreboard::draw(&l, prims, team_color(host, p), &[row]);
+        scoreboard::draw(&l, prims, &scoreboard_blocks(host, client, team_color(host, p), local_player));
         host.ghost(0, Vec3::ZERO, 0.0, false);
     } else {
         if !tablet_up && !map_open {

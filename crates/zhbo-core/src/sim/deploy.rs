@@ -182,8 +182,9 @@ impl Sim {
         }
         let by_general = self.players.get(by).and_then(|p| p.as_ref()).map_or(0, |p| p.general);
         for i in 0..self.deployed.len() {
-            let (origin, _) = self.deployed[i].bearer.tag();
-            let dist = (origin - at).length();
+            // To the planted shield's box, as the blast measures every object to its solid
+            // (`projectiles::blast_distance`; BO2's radius damage, to each entity's bounds).
+            let dist = self.deployed[i].bearer.distance(at);
             if self.deployed[i].standing() && dist <= def.explosion_radius {
                 self.damage_deployed(host, i, Some(by), by_general, def.explosion_damage_at(dist), ShieldDamage::Explosive);
             }

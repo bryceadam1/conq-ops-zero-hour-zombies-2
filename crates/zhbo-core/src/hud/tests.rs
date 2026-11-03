@@ -518,6 +518,54 @@ fn tab_shows_the_scoreboard_and_hides_the_hud() {
     assert!(!images.contains(&crate::lui::materials::image("hud_mp_vis_right_lower")), "the ammo area hides under the scoreboard");
 }
 
+/// The board lists the other player too (a two-player match): his name, his kills and deaths as
+/// this machine saw the sim's events, under the enemies' block; the local player's own row first.
+/// (Before, the board had one hard-coded "General" row.)
+#[test]
+fn the_scoreboard_lists_every_player_in_the_match() {
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.add(general(2, 1));
+    let mut sim = Sim::new();
+    let mut client = Client::default();
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    sim.take_control(&host, 1, 2);
+    sim.choose_class(1, 2, 0, &[]);
+    let mut inp = ClientIn::default();
+    for f in 1..160 {
+        if f == 100 {
+            // Seat 1 kills twice and dies once; the local player kills once.
+            for kind in [
+                crate::sim::EventKind::HitMarker { headshot: false, kill: true },
+                crate::sim::EventKind::HitMarker { headshot: true, kill: true },
+                crate::sim::EventKind::HitMarker { headshot: false, kill: false },
+                crate::sim::EventKind::GeneralDied { general: 2 },
+            ] {
+                sim.events.push(crate::sim::Event { player: 1, kind });
+            }
+            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::HitMarker { headshot: false, kill: true } });
+        }
+        client.frame_with(&mut sim, Some(&host), &inp);
+        sim.step(&host, f);
+        inp.logic_frame = f;
+    }
+    let t = client.seats[1];
+    assert_eq!((t.seen, t.kills, t.deaths, t.ally), (true, 2, 1, false));
+    client.hud.scoreboard_open = true;
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let _prims = draw_hud(&rec, &client, &sim);
+    let texts = rec.texts.borrow();
+    let at = |want: &str| texts.iter().position(|t| t == want).unwrap_or_else(|| panic!("{want} in {texts:?}"));
+    // The local row (the HUD's tally: 1 kill, 100) comes before the other player's (200, 2, 1).
+    assert!(at("General") < at("Player 2"), "{texts:?}");
+    for want in ["100", "200", "2"] {
+        at(want);
+    }
+}
+
 /// A flashed shellshock whites the view out (`FUN_005105c0`: `min(left / whiteFade, 1)`), a full
 /// screen rectangle; none without a shock.
 #[test]

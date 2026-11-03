@@ -530,22 +530,17 @@ fn a_mod_only_divergence_is_seen_and_names_its_seat() {
     }
 }
 
-/// The two-instance in-engine test's script (`ZHBO_AUTOPILOT=mp`, `scripts/mptest-mac.sh`), headless
-/// on the same lockstep harness: two machines, each running the multiplayer autopilot for its own
-/// player only (the shooter and the target), a third that never renders, and the engine side the
-/// bridge plays in game (take control once each General stands at the meeting point; a fresh
-/// General from the Command Center when one dies). The script must reach every step it claims —
-/// the picks, the sidearm, the throw, the fight, a death, the respawned General coming back with
-/// his class and no pick, the field computer — with every machine agreeing on every frame.
+/// The two-instance test's script (`client::Autopilot::mp_input`, `rounds` lives each) on three
+/// machines, with the bridge's part played here: the take-controls, a dead General's
+/// replacement, and in the long run a General back overhead taken again. Every frame's
+/// fingerprint must agree. Returns C's events, the scripts' log lines and whether any General was
+/// stunned (shellshocked, or the engine's disable).
 #[cfg(feature = "autopilot")]
-#[test]
-fn the_multiplayer_autopilot_fights_in_lockstep() {
+fn mp_autopilot_match(rounds: u32, frames: u32) -> (Vec<Event>, Vec<String>, bool) {
     use crate::client::Autopilot;
-    let _g = crate::profile::lock();
-    crate::profile::reset();
     let peer = |local: i32, seed: u64, shooter: Option<bool>| {
         let mut p = Peer::bare(local, seed);
-        p.client.autopilot = shooter.map(|mp_shooter| Autopilot { mp: true, mp_shooter, ..Default::default() });
+        p.client.autopilot = shooter.map(|mp_shooter| Autopilot { mp: true, mp_shooter, mp_rounds: rounds, ..Default::default() });
         p
     };
     let mut a = peer(0, 0x0A11_CE5E_ED00_0001, Some(true));
@@ -564,14 +559,27 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
     let mut next_id = 102;
     let mut seen: Vec<Event> = Vec::new();
     let mut lines: Vec<String> = Vec::new();
-    for frame in 1..=30 * 45 {
+    // The long run's bridge: every take-control counted, and one back overhead alive taken again
+    // a second later while lives are left (the target's declined spawn is one more; the host
+    // plays on).
+    let limit = |i: usize| match (rounds > 1, i) {
+        (false, _) => 0,
+        (true, 1) => rounds as usize + 1,
+        (true, _) => usize::MAX,
+    };
+    let mut takes = [0usize; 2];
+    let mut overhead_since = [None::<u32>; 2];
+    let mut shocked = false;
+    for frame in 1..=frames {
         // The bridge: take control a little apart (each machine's walk ends on its own), and a
         // dead General's replacement from the Command Center a few seconds later.
         if frame == 10 {
             net.send(frame, 0, Cmd::TakeControl(generals[0]));
+            takes[0] += 1;
         }
         if frame == 40 {
             net.send(frame, 1, Cmd::TakeControl(generals[1]));
+            takes[1] += 1;
         }
         for (i, g) in generals.into_iter().enumerate() {
             let dead = a.host.objects.borrow().iter().any(|o| o.id == g && o.has(objflags::DEAD));
@@ -585,6 +593,17 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
                     p.host.add(fresh);
                 }
                 net.send(frame + 90, i as i32, Cmd::TakeControl(id));
+                takes[i] += 1;
+                overhead_since[i] = None;
+            } else if frame > 120 && takes[i] < limit(i) && a.sim.player(i as i32).is_some_and(|p| p.general == g && !p.is_first_person()) {
+                let since = *overhead_since[i].get_or_insert(frame);
+                if frame == since + 30 {
+                    net.send(frame, i as i32, Cmd::TakeControl(g));
+                    takes[i] += 1;
+                    overhead_since[i] = None;
+                }
+            } else {
+                overhead_since[i] = None;
             }
         }
         let cmds = net.take(frame);
@@ -595,6 +614,9 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
         assert_eq!(b.sim.fingerprint(), h, "B diverged from A at frame {frame}");
         assert_eq!(c.sim.fingerprint(), h, "C diverged from A at frame {frame}");
         seen.append(&mut c.sim.events);
+        // A concussion's stun reached a General (the built-in table has no `Shock` blocks, so
+        // headless the stun is the engine's disable; in game the shellshock rides with it).
+        shocked |= c.sim.players.iter().flatten().any(|p| p.shock.active.is_some()) || c.host.disabled.borrow().iter().any(|&(id, _, _)| generals.contains(&id));
         // Each player's machine: its client runs the autopilot and the bridge sends what it says.
         for p in [&mut a, &mut b] {
             let inp = ClientIn { dt: LOGIC_DT, local_player: p.local, logic_frame: frame, input_allowed: 1, screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
@@ -610,6 +632,22 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
             lines.append(&mut p.client.autopilot.as_mut().unwrap().log);
         }
     }
+    (seen, lines, shocked)
+}
+
+/// The two-instance in-engine test's script (`ZHBO_AUTOPILOT=mp`, `scripts/mptest-mac.sh`), headless
+/// on the same lockstep harness: two machines, each running the multiplayer autopilot for its own
+/// player only (the shooter and the target), a third that never renders, and the engine side the
+/// bridge plays in game (take control once each General stands at the meeting point; a fresh
+/// General from the Command Center when one dies). The script must reach every step it claims —
+/// the picks, the sidearm, the throw, the fight, a death, the respawned General coming back with
+/// his class and no pick, the field computer — with every machine agreeing on every frame.
+#[cfg(feature = "autopilot")]
+#[test]
+fn the_multiplayer_autopilot_fights_in_lockstep() {
+    let _g = crate::profile::lock();
+    crate::profile::reset();
+    let (seen, lines, _) = mp_autopilot_match(1, 30 * 45);
     let count = |player: i32, f: &dyn Fn(&EventKind) -> bool| seen.iter().filter(|e| e.player == player && f(&e.kind)).count();
     for player in [0, 1] {
         assert!(count(player, &|k| matches!(k, EventKind::ClassChosen { .. })) >= 1, "player {player} picked a class");
@@ -628,6 +666,33 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
     // One line per General at least (headless every viewmodel index is -1, so a swap logs nothing
     // new; in game each weapon change logs its own).
     assert!(lines.iter().filter(|l| l.contains("in hand")).count() >= 3, "each side logged what it holds: {lines:?}");
+    crate::profile::reset();
+}
+
+/// The long two-instance run (`ZHBO_AUTOPILOT_ROUNDS`, `mptest-mac.sh` with
+/// `ZHBO_MPTEST_ROUNDS`), headless: the target declines his first spawn and is taken again, both
+/// play rounds of tacticals (a shellshock), bursts, reloads and knives, the target changes class
+/// mid-life after combat and his next General wears it — every machine agreeing on every frame.
+#[cfg(feature = "autopilot")]
+#[test]
+fn the_long_multiplayer_autopilot_run_fights_in_lockstep() {
+    let _g = crate::profile::lock();
+    crate::profile::reset();
+    let (seen, lines, shocked) = mp_autopilot_match(4, 30 * 200);
+    let count = |player: i32, f: &dyn Fn(&EventKind) -> bool| seen.iter().filter(|e| e.player == player && f(&e.kind)).count();
+    // The decline: back overhead before any class, then taken again and picked.
+    let first_return = seen.iter().position(|e| e.player == 1 && matches!(e.kind, EventKind::ReturnedToRts { .. }));
+    let first_pick = seen.iter().position(|e| e.player == 1 && matches!(e.kind, EventKind::ClassChosen { .. }));
+    assert!(matches!((first_return, first_pick), (Some(r), Some(c)) if r < c), "the target declined his spawn, then picked: {lines:?}");
+    assert!(lines.iter().filter(|l| l.contains("round") && l.contains("starts")).count() >= 2, "rounds were played: {lines:?}");
+    for player in [0, 1] {
+        assert!(count(player, &|k| matches!(k, EventKind::Thrown { lethal: false })) >= 1, "player {player} threw his tactical");
+        assert!(count(player, &|k| matches!(k, EventKind::ReloadStarted)) >= 1, "player {player} reloaded");
+    }
+    assert!(shocked, "a concussion stunned a General");
+    assert!(count(1, &|k| matches!(k, EventKind::ClassAtNextSpawn { .. })) >= 1, "the target's mid-life change waited for his next spawn: {lines:?}");
+    let change = lines.iter().position(|l| l.contains("changing class mid-life")).expect("the change was made");
+    assert!(lines[change..].iter().any(|l| l.contains("first-person session") && l.contains("(class cqb)")), "his next General wore it: {lines:?}");
     crate::profile::reset();
 }
 

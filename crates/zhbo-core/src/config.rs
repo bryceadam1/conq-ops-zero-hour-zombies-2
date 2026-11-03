@@ -55,6 +55,9 @@ pub struct Config {
     pub native_body: u8,
     /// `ZHBO_AUTOPILOT_ROLE` for the multiplayer autopilot (`target`, or the shooter otherwise).
     pub mp_role: MpRole,
+    /// `ZHBO_AUTOPILOT_ROUNDS`: how many first-person lives the multiplayer autopilot plays (1, the
+    /// default: the short run; more: the long run, `client::Autopilot::mp_round`). Script only.
+    pub mp_rounds: u32,
     /// `ZHBO_STATE_HASH_LOG`: log [`crate::sim::Sim::state_hash`] after every logic step
     /// (`state hash: frame N <hash> world <hash> seats <seat>:<hash> …` in `ConquerOps.log`: `Sim::fingerprint` and its parts), so two machines' logs of one network game
     /// can be compared frame by frame. A log only; never a sim input.
@@ -70,6 +73,7 @@ impl Config {
             native_viewmodel: false,
             native_body: 0,
             mp_role: MpRole::Shooter,
+            mp_rounds: 1,
             state_hash_log: false,
         }
     }
@@ -80,6 +84,7 @@ impl Config {
             native_viewmodel: on_by_default(env("ZHBO_NATIVE_VIEWMODEL")),
             native_body: body_mode(env("ZHBO_NATIVE_BODY")),
             mp_role: mp_role(env("ZHBO_AUTOPILOT_ROLE")),
+            mp_rounds: env("ZHBO_AUTOPILOT_ROUNDS").and_then(|v| v.trim().parse().ok()).filter(|&n| n >= 1).unwrap_or(1),
             state_hash_log: flag(env("ZHBO_STATE_HASH_LOG")),
             ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT"))
         }
@@ -154,7 +159,7 @@ pub fn init(config: Config) {
 /// once locked the defaults in, so `init` silently dropped every variable it parsed.
 pub fn get() -> &'static Config {
     static DEFAULT: Config =
-        Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0, mp_role: MpRole::Shooter, state_hash_log: false };
+        Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0, mp_role: MpRole::Shooter, mp_rounds: 1, state_hash_log: false };
     CONFIG.get().unwrap_or(&DEFAULT)
 }
 

@@ -178,6 +178,144 @@
         }
     }
 
+    /// Every event of another player's, of every kind: what its owner hears or sees at a place in
+    /// the world (a pellet's impact and its effect, a blast, a bounce, a dud, a Trophy kill, the
+    /// deployed shield) plays the same here, and nothing of his plays as the local player's own
+    /// (2D) sound. His shots and launches are his gun's third-person chain at him. (Before, only
+    /// others' shots, throws and set-downs played: their impacts, grenades, launchers and shield
+    /// were silent and drew no impact on every other machine.)
+    #[test]
+    fn another_players_world_events_play_here_as_for_their_owner() {
+        use crate::impacts::Surface;
+        use crate::sim::EventKind as K;
+        let at = Vec3::new(40.0, 30.0, 5.0);
+        let dir = Vec3::new(1.0, 0.0, 0.0);
+        let kinds = [
+            K::EnteredFps { general: 1 },
+            K::ClassChosen { general: 1, class: crate::sim::ClassName::new("x") },
+            K::ClassAtNextSpawn { general: 1, class: crate::sim::ClassName::new("x") },
+            K::FieldComputerOpened,
+            K::ReturnedToRts { general: 1 },
+            K::Shot { origin: at, end: at, left: false },
+            K::Shot { origin: at, end: at, left: true },
+            K::Impact { at, dir, surface: Surface::Concrete, head: false, fatal: false, impact_type: 1, exit: false },
+            K::Impact { at, dir, surface: Surface::Flesh, head: true, fatal: true, impact_type: 1, exit: true },
+            K::HitMarker { headshot: false, kill: true },
+            K::Recoil { gun_kick: (1.0, 1.0) },
+            K::Flinch { pitch_deg: 1.0 },
+            K::Damaged { amount: 10.0 },
+            K::ReloadStarted,
+            K::Swapped,
+            K::GeneralDied { general: 1 },
+            K::Melee,
+            K::MeleeHit,
+            K::OffhandReady { lethal: true },
+            K::Thrown { lethal: true },
+            K::CantPlant { lethal: true },
+            K::Launched,
+            K::Exploded { at, sound: "ZHBO_BO2_Snd_test_blast", impact_type: 7, surface: Surface::Dirt },
+            K::Bounced { at, sound: "ZHBO_BO2_Snd_test_bounce" },
+            K::Dud { at, sound: "ZHBO_BO2_Snd_test_dud", surface: Surface::Dirt },
+            K::Planted { kind: crate::equipment::Kind::Claymore },
+            K::Detonated,
+            K::Intercepted { at },
+            K::DestroyedEquipment,
+            K::Hacked,
+            K::Hacking { progress: 0.5 },
+            K::AltToggled,
+            K::Hammer { up: true },
+            K::BuildPlaced { template: 1 },
+            K::BuildRefused { status: 0 },
+            K::Working { kind: 0, percent: 50.0 },
+            K::WorkDone { kind: 0 },
+            K::ShieldDeployed { at },
+            K::ShieldPickedUp,
+            K::ShieldDestroyed { by: None, at },
+            K::ShieldHit { at, dir, knife: false, impact_type: 1 },
+            K::ShieldHit { at, dir, knife: true, impact_type: 1 },
+        ];
+        // The other player's gun has a third-person chain (`soundlayers`): his shot and launch.
+        let fx = "ZHBO_FX_test_remote_world";
+        let layer = crate::soundlayers::Layer { event: "ZHBO_BO2_FireNpc_test_remote_world", min: 0.0, max: 1000.0, min_curve: crate::soundlayers::FLAT, curve: crate::soundlayers::FLAT };
+        crate::soundlayers::install(&crate::soundlayers::format_row(fx, "ZHBO_BO2_FireNpc_test_remote_world", &layer));
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { fx_weapon: fx.into(), ..crate::weapons::catalog().get("an94_mp").unwrap().clone() }));
+        // What a frame presents of one event of `player`'s: the positional cues, the 2D cues and
+        // the impacts.
+        let present = |player: i32, kind: K| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            host.add(general(2, 1));
+            let mut sim = Sim::new();
+            let mut client = Client::default();
+            let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+            sim.take_control(&host, 0, 1);
+            sim.choose_class(0, 1, 0, &[]);
+            sim.take_control(&host, 1, 2);
+            sim.choose_class(1, 2, 0, &[]);
+            frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+            for p in sim.players.iter_mut().flatten() {
+                let active = p.arsenal.active;
+                p.arsenal.weapons[active] = crate::weapons::WeaponState::new(def);
+            }
+            client.cues.queue.clear();
+            sim.events.push(crate::sim::Event { player, kind });
+            let out = client.frame(&mut sim, &inp);
+            let mut placed: Vec<(&str, [i32; 3])> = client.cues.queue.iter().filter_map(|c| c.at.map(|a| (c.event, [a.x as i32, a.y as i32, a.z as i32]))).collect();
+            placed.sort();
+            let flat: Vec<&str> = client.cues.queue.iter().filter(|c| c.at.is_none() && !c.event.contains("Step")).map(|c| c.event).collect();
+            (placed, flat, out.hits[..out.hits_len as usize].to_vec())
+        };
+        for kind in kinds {
+            let (own_placed, _, own_hits) = present(0, kind);
+            let (placed, flat, hits) = present(1, kind);
+            for cue in &own_placed {
+                assert!(placed.contains(cue), "{kind:?}: the owner hears {cue:?} at its place, so everyone does: {placed:?}");
+            }
+            assert_eq!(hits, own_hits, "{kind:?}: the same impacts as its owner's");
+            assert!(flat.is_empty(), "{kind:?}: another player's event plays nothing as the local player's own: {flat:?}");
+            if matches!(kind, K::Shot { .. } | K::Launched) {
+                assert!(placed.iter().any(|(e, _)| *e == "ZHBO_BO2_FireNpc_test_remote_world"), "{kind:?}: his gun's third-person chain: {placed:?}");
+            }
+        }
+        // And they are heard: every place the test names plays something for the other player.
+        for kind in [kinds[7], kinds[22], kinds[23], kinds[24], kinds[27], kinds[37], kinds[39], kinds[40]] {
+            assert!(!present(1, kind).0.is_empty(), "{kind:?} is heard on the other machine");
+        }
+        assert_eq!(present(1, kinds[7]).2.len(), 1, "another player's impact is drawn here");
+    }
+
+    /// The local player's own impacts keep their slots: other players' rounds take only what is
+    /// left of the frame's `CLIENT_HITS`.
+    #[test]
+    fn other_players_impacts_fill_only_the_slots_the_own_ones_leave() {
+        use crate::impacts::Surface;
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(general(2, 1));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        sim.take_control(&host, 1, 2);
+        sim.choose_class(1, 2, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let hit = |x: f32| crate::sim::EventKind::Impact { at: Vec3::new(x, 0.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0), surface: Surface::Dirt, head: false, fatal: false, impact_type: 1, exit: false };
+        // The other player's shotgun first in the event order, then three of the local player's.
+        for i in 0..CLIENT_HITS {
+            sim.events.push(crate::sim::Event { player: 1, kind: hit(100.0 + i as f32) });
+        }
+        for i in 0..3 {
+            sim.events.push(crate::sim::Event { player: 0, kind: hit(i as f32) });
+        }
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.hits_len as usize, CLIENT_HITS);
+        let xs: Vec<i32> = out.hits.iter().map(|h| h.point.x as i32).collect();
+        assert_eq!(xs, vec![0, 1, 2, 100, 101, 102, 103, 104]);
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.hits_len, 0, "a frame's impacts are its own");
+    }
+
     #[test]
     fn the_camera_carries_the_sims_view_kick_and_its_roll_without_moving_the_mouse_aim() {
         let host = FakeHost::default();
@@ -279,12 +417,13 @@
         assert_eq!(client.view, ViewMode::Fps);
         client.cues.queue.clear();
 
-        // Another player's impact is not the local player's FX.
+        // Another player's impact is the world's: drawn and heard here as well (seat 1 has no
+        // record here; the event needs none).
         sim.events.push(impact(1, crate::impacts::Surface::Metal, false, false));
         let out = client.frame(&mut sim, &inp);
-        assert_eq!(out.hits_len, 0);
-        let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
-        assert!(!cues.contains(&sounds::IMPACT) && !cues.contains(&sounds::IMPACT_FLESH), "no cue for someone else's hit: {cues:?}");
+        assert_eq!(out.hits_len, 1);
+        assert!(client.cues.queue.iter().any(|c| c.event == sounds::IMPACT && c.at == Some(Vec3::new(5.0, 0.0, 1.0))), "someone else's hit is heard where it landed");
+        client.cues.queue.clear();
 
         // A blood kill and a wall.
         sim.events.push(impact(0, crate::impacts::Surface::Flesh, true, true));

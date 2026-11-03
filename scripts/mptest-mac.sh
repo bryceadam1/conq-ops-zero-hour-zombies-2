@@ -26,16 +26,34 @@
 #     127.0.0.1 with per-instance ports, so no `sudo ifconfig lo0 alias` is needed.
 #   * Each instance after the first writes ConquerOps_InstanceNN.log / .profile (user data dir).
 #
+# The long run (ZHBO_MPTEST_ROUNDS=N, N > 1; ZHBO_AUTOPILOT_ROUNDS in both instances): the joiner
+# plays N lives and the host plays until the joiner has left, every life walked to the meeting point. The target first declines his spawn (Escape
+# on the class screen; the bridge takes control again). Every life after the first fight throws the
+# tactical at the other General (a concussion: a shellshock on both machines' sims), fires, reloads,
+# knifes and goes back overhead by the field computer, unless he dies (the host ends each round with a
+# long aimed burst). In his third life the target changes class mid-life after his throw and stays
+# for the bursts (the next General wears it). In his last life he leaves the
+# game in first person (the quit menu's Exit), and the host must carry on alone. The long run's own
+# checks: the decline, the rounds, the same shellshocks on both machines, the class change worn,
+# and the host past the leave (his General dies, the host's sim runs on, no mismatch).
+#
+# Both runs also check that each machine presented the other player: his gunshots and footsteps
+# were played ("sound ZHBO_BO2_FireNpc_…: playing", "sound ZHBO_BO2_StepNpc: playing|no sound").
+#
 # Environment: ZHBO_ZH_DIR / ZHBO_BO2_DIR as for the launcher; DIST for a staged build other
 # than the default dist; OUT for the results folder; ZHBO_MPTEST_MAP (default Tournament Desert);
-# ZHBO_MPTEST_SECONDS, the wall-clock limit (default 480).
+# ZHBO_MPTEST_ROUNDS (default 1, the short run); ZHBO_MPTEST_SECONDS, the wall-clock limit (default
+# 480, the long run 1800).
 set -euo pipefail
 
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
 userdata="$HOME/Library/Application Support/Command and Conquer Generals Zero Hour Data"
 out="${OUT:-${TMPDIR:-/tmp}/ConquerOps-mp}"
 map="${ZHBO_MPTEST_MAP:-maps/tournament desert/tournament desert.map}"
-limit="${ZHBO_MPTEST_SECONDS:-480}"
+rounds="${ZHBO_MPTEST_ROUNDS:-1}"
+long=0
+(( rounds > 1 )) && long=1
+limit="${ZHBO_MPTEST_SECONDS:-$(( long ? 1800 : 480 ))}"
 # -autoNetworkMode skips the primary instance slot: the host is instance 2, the joiner 3.
 host_log="$userdata/ConquerOps_Instance02.log"
 join_log="$userdata/ConquerOps_Instance03.log"
@@ -85,7 +103,7 @@ rm -f "$join_profile"
 # Both instances: the same ZHBO_AUTOPILOT and ZHBO_LOADOUT (both are in the content CRC the LAN
 # join compares); the role only scripts the local player's own input.
 export GGC_NETWORK_AUTOSTART=1 GGC_LOOPBACK_INSTANCE_PORTS=1 GGC_NO_FOCUS=1 GGC_AUTO_EXIT_SECONDS="$limit"
-export ZHBO_AUTOPILOT=mp ZHBO_STATE_HASH_LOG=1
+export ZHBO_AUTOPILOT=mp ZHBO_STATE_HASH_LOG=1 ZHBO_AUTOPILOT_ROUNDS="$rounds"
 unset ZHBO_LOADOUT
 window=(-win -xres 960 -yres 540)
 
@@ -112,6 +130,11 @@ while true; do
         exit 1
     fi
     grep -q "autopilot mp: done" "$host_log" 2>/dev/null && grep -q "autopilot mp: done" "$join_log" 2>/dev/null && break
+    # The long run's joiner has left: the host plays on alone for a minute at most.
+    if (( long )) && grep -q "leaving the game in first person" "$join_log" 2>/dev/null; then
+        left_at=${left_at:-$(date +%s)}
+        (( $(date +%s) - left_at > 60 )) && break
+    fi
     [[ -z "$(game_pids)" ]] && break
     (( $(date +%s) - started > limit )) && break
     sleep 2
@@ -155,7 +178,8 @@ both "a General died" "General [0-9]+ died"
 in_log "the target ordered the next General" "$j" "my General died; ordering the next one"
 in_log "the next General came in with the class" "$j" "first-person session 2"
 both "opened the field computer" "opened the field computer"
-in_log "the host's run finished" "$h" "autopilot mp: done"
+# The long run's host plays until the target has left and Zero Hour has ended the won game.
+(( long )) || in_log "the host's run finished" "$h" "autopilot mp: done"
 in_log "the joiner's run finished" "$j" "autopilot mp: done"
 # Zero Hour's logic CRC carries the sim (host patch 0020: `MARKER:ConquerOps` after the AI): its
 # CRC frames log the fingerprint, and the two machines' lines for the same frames are equal.
@@ -171,6 +195,13 @@ else
 fi
 # A round at the other first-person General resolved against where the shooter saw him (antilag).
 both "a rewound round hit the other General (antilag)" "antilag: General [0-9]+'s round hit General [0-9]+ where he stood"
+# Each machine presented the other player's General: his gunshots and his footsteps were played
+# here (the core plays both only for another player; the engine logs each event's first play per
+# outcome). A step is positional and short-ranged: from overhead or across the map the engine
+# answers "no sound" (out of range), which still shows the core played it; "error" (a missing
+# event) does not count.
+both "another player's gunshot was heard" "sound ZHBO_BO2_FireNpc_[^ ]*: playing"
+both "another player's footsteps were played" "sound ZHBO_BO2_StepNpc: (playing|no sound)"
 if grep -q "CRC mismatch" "$h" "$j" 2>/dev/null; then fail "no Zero Hour CRC mismatch" "$(grep -h "CRC mismatch" "$h" "$j" | head -1)"; else pass "no Zero Hour CRC mismatch"; fi
 
 # The sim's state hash, frame by frame, on the frames both machines ran: the network game's lines
@@ -198,9 +229,13 @@ else
 fi
 
 # Each machine draws the other player's General with what that player holds.
+# (Up to the long run's leave: after it the joiner's machine is gone.)
+left=$( (grep -oE "leaving the game in first person \(General [0-9]+, frame [0-9]+\)" "$j" 2>/dev/null || true) | head -1)
+left_general=$(sed -E 's/.*General ([0-9]+),.*/\1/' <<<"$left")
+left_frame=$(sed -E 's/.*frame ([0-9]+)\)/\1/' <<<"$left")
 remote_look() { # name, the holder's log, the viewer's log
     local held seen=0 missing=0 line g v c
-    held=$(grep -oE "autopilot mp: General [0-9]+ weapon [0-9]+ camo [A-Za-z0-9_]+ in hand" "$2" | sort -u || true)
+    held=$( (grep -E "autopilot mp: General [0-9]+ weapon [0-9]+ camo [A-Za-z0-9_]+ in hand" "$2" || true) | awk -v f="${left_frame:-999999999}" -F'[][]' '$2 + 0 < f' | grep -oE "autopilot mp: General [0-9]+ weapon [0-9]+ camo [A-Za-z0-9_]+ in hand" | sort -u || true)
     while read -r line; do
         [[ -z "$line" ]] && continue
         g=$(awk '{print $4}' <<<"$line"); v=$(awk '{print $6}' <<<"$line"); c=$(awk '{print $8}' <<<"$line")
@@ -211,6 +246,44 @@ remote_look() { # name, the holder's log, the viewer's log
 remote_look "the joiner draws the host's weapon and camo" "$h" "$j"
 remote_look "the host draws the joiner's weapon and camo" "$j" "$h"
 if grep -qE "autopilot mp: General [0-9]+ weapon [0-9]+ camo camo_gold in hand" "$h"; then pass "the host's custom wears its camo"; else fail "the host's custom wears its camo"; fi
+
+if (( long )); then
+    in_log "the target declined his first spawn" "$j" "declining the spawn"
+    in_log "and was taken into first person again" "$j" "back overhead; taking control again"
+    for side in "$h" "$j"; do
+        n=$( (grep -oE "autopilot mp: round [0-9]+ starts" "$side" 2>/dev/null || true) | wc -l | tr -d ' ')
+        if [[ $n -ge 2 ]]; then pass "rounds after the first fight (${side##*/}: $n)"; else fail "rounds after the first fight (${side##*/})" "$n"; fi
+    done
+    # The same shellshocks, frame for frame, in both logs (up to the joiner's leave).
+    shocks() { grep -oE "^\[[0-9]+\] player [0-9]+'s General is shellshocked.*" "$1" 2>/dev/null | sort -u || true; }
+    shocks "$h" | awk -v f="${left_frame:-999999999}" -F'[][]' '$2 + 0 < f' >"$out/host-shocks.txt"
+    shocks "$j" >"$out/join-shocks.txt"
+    n=$(wc -l <"$out/join-shocks.txt" | tr -d ' ')
+    if [[ $n -ge 1 ]] && cmp -s "$out/host-shocks.txt" "$out/join-shocks.txt"; then
+        pass "the same shellshocks on both machines ($n)"
+    else
+        fail "the same shellshocks on both machines" "$(wc -l <"$out/host-shocks.txt" | tr -d ' ') vs $n"
+    fi
+    in_log "the target changed class mid-life" "$j" "changing class mid-life after combat"
+    # Both machines told him; his next General came in wearing it (the session line after the
+    # change names the record's class).
+    next=$( (grep -oE "the [A-Za-z0-9 ]+ class comes in at the next spawn" "$j" || true) | tail -1 | sed -E 's/^the (.*) class comes in.*/\1/')
+    worn=$(awk '/class comes in at the next spawn/ {after = 1} after && /first-person session [0-9]+ \(class / {sub(/.*\(class /, ""); sub(/\).*/, ""); print; exit}' "$j")
+    if [[ -n "$next" ]] && grep -q "the $next class comes in at the next spawn" "$h" && [[ "$(tr '[:upper:]' '[:lower:]' <<<"$worn")" == "$(tr '[:upper:]' '[:lower:]' <<<"$next")" ]]; then
+        pass "the next General wore the new class ($next)"
+    else
+        fail "the next General wore the new class" "${next:-no next-spawn line} / worn ${worn:-nothing}"
+    fi
+    if [[ -n "$left_frame" ]]; then
+        pass "the joiner left in first person (General $left_general, frame $left_frame)"
+        if grep -qE "General $left_general died|returned General $left_general to RTS" "$h"; then pass "the host let go of the leaver's General"; else fail "the host let go of the leaver's General"; fi
+        # With nobody left against him the host wins and Zero Hour ends his game a few seconds on.
+        last=$(awk '/game start: a network game/ {keep = 1} keep && match($0, /state hash: frame [0-9]+ /) {f = substr($0, RSTART + 18, RLENGTH - 19) + 0; if (f > m) m = f} END {print m + 0}' "$h")
+        if (( last >= left_frame + 60 )); then pass "the host played on alone (to frame $last)"; else fail "the host played on alone" "last frame $last"; fi
+    else
+        fail "the joiner left in first person"
+    fi
+fi
 
 echo "logs: $out (host.log, join.log, *-stdout.txt, hashes-joined.txt)"
 exit $ok

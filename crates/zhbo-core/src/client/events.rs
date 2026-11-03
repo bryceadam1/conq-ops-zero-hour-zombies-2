@@ -1,9 +1,11 @@
 //! The client's half of the sim's events: what the local player hears and sees of them (his own
-//! shots, hits, reloads, throws and the camera transitions; others' shots and throws as heard
-//! here), and, while first person is predicted, the matching of the sim's own events against what
-//! the predictions already presented (`predict`).
+//! shots, hits, reloads, throws and the camera transitions; what happens at a place in the world —
+//! impacts, blasts, bounces, the deployed shield — whoever's it is; others' shots, launches and
+//! throws as heard here), and, while first person is predicted, the matching of the sim's own
+//! events against what the predictions already presented (`predict`).
 
 use super::*;
+use crate::sim::Event;
 
 impl Client {
     /// The sim's events since the last frame: others' shots and throws as heard here, and the
@@ -15,30 +17,10 @@ impl Client {
     /// rest).
     pub(super) fn consume_events(&mut self, sim: &mut Sim, inp: &ClientIn, me: i32, own: bool, body_pos: Option<Vec3>, owed: Option<Vec<EventKind>>) {
         let mut mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
-        // Other players' shots: BO2's third-person chain, layer by layer at the listener's distance.
-        for e in sim.events.iter().filter(|e| e.player != me) {
-            let Some(p) = sim.player(e.player) else { continue };
-            match e.kind {
-                EventKind::Shot { origin, .. } => self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, origin, body_pos),
-                // An offhand leaving another player's hand: its third-person `fireSound` at them
-                // (`sounds::remote_offhand`), as BO2 plays it for everyone but the thrower.
-                EventKind::Thrown { lethal } => {
-                    let def = if lethal { p.arsenal.lethal.def } else { p.arsenal.tactical.def };
-                    if let Some(cue) = sounds::remote_offhand(def) {
-                        self.cues.play_at(cue, p.body.eye());
-                    }
-                }
-                EventKind::Planted { kind } => {
-                    let set_down = [p.arsenal.lethal.def, p.arsenal.tactical.def].into_iter().find(|d| d.equipment_kind == kind && d.place == crate::weapons::Place::Plant);
-                    if let Some(cue) = set_down.and_then(sounds::remote_offhand) {
-                        self.cues.play_at(cue, p.body.eye());
-                    }
-                }
-                _ => {}
-            }
-        }
+        let others: Vec<Event> = sim.events.iter().filter(|e| e.player != me).copied().collect();
         sim.events.clear();
         self.hits_len = 0;
+        self.remote_hits.clear();
         if let Some(owed) = owed {
             let r = self.predict.reconcile(mine, owed);
             mine = r.present;
@@ -48,6 +30,172 @@ impl Client {
         }
         let auth = sim.player(me).cloned();
         self.present(inp, own, auth.as_ref(), auth.as_ref(), body_pos, mine);
+        // Everyone else's events, after the presented seat's own: their impacts take the frame's
+        // impact slots the own shots left (`ClientOut.hits`).
+        for e in others {
+            self.present_remote(sim, e, body_pos);
+        }
+    }
+
+    /// The scoreboard's tallies (`Client::seats`), from every seat's events since the last frame
+    /// (before they are presented and drained), and each first-person General's army and side as
+    /// the engine's logic reports it relative to the local player's General (`host`: the real
+    /// client always has it).
+    pub(super) fn tally_seats(&mut self, sim: &Sim, host: Option<&dyn LogicHost>, local: i32) {
+        for e in &sim.events {
+            let Some(t) = usize::try_from(e.player).ok().and_then(|i| self.seats.get_mut(i)) else { continue };
+            match e.kind {
+                EventKind::HitMarker { kill: true, .. } => t.kills += 1,
+                EventKind::GeneralDied { .. } => t.deaths += 1,
+                _ => {}
+            }
+            t.seen = true;
+        }
+        let viewer = sim.player(local).map(|p| p.general);
+        for (seat, p) in sim.players.iter().enumerate() {
+            let (Some(p), Some(t)) = (p, self.seats.get_mut(seat)) else { continue };
+            t.seen = true;
+            let Some(info) = host.and_then(|h| h.object(p.general, viewer.unwrap_or(p.general))) else { continue };
+            t.color = info.color;
+            // Only the local player's own General knows the sides; while he has none the last
+            // answer stands.
+            if seat as i32 == local {
+                t.ally = true;
+            } else if viewer.is_some() {
+                t.ally = info.has(crate::host::objflags::ALLY);
+            }
+        }
+    }
+
+    /// Another player's event as this machine hears and sees it. What happens at a place in the
+    /// world (a pellet's impact, a blast, a bounce, a dud, a Trophy System's kill, the deployed
+    /// shield's plant, hits and destruction) BO2 plays for every client, so it plays here exactly
+    /// as it does for its owner ([`Self::world_event`]). His shots, launches, throws and set-downs
+    /// play their third-person sounds at him. The rest is his own first person (his view, kick,
+    /// flinch, viewmodel, 2D sounds, hit marker, HUD) and plays only on his machine; the match is
+    /// exhaustive so that a new event has to say who sees it.
+    fn present_remote(&mut self, sim: &Sim, e: Event, listener: Option<Vec3>) {
+        if self.world_event(e.kind, false) {
+            return;
+        }
+        let Some(p) = sim.player(e.player) else { return };
+        match e.kind {
+            // BO2's third-person chain, layer by layer at the listener's distance. A launcher's
+            // shot is the same chain (its FX weapon's `_npc` layers), from the eye it left.
+            EventKind::Shot { origin, .. } => self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, origin, listener),
+            EventKind::Launched => self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, p.body.eye(), listener),
+            // An offhand leaving another player's hand: its third-person `fireSound` at them
+            // (`sounds::remote_offhand`), as BO2 plays it for everyone but the thrower.
+            EventKind::Thrown { lethal } => {
+                let def = if lethal { p.arsenal.lethal.def } else { p.arsenal.tactical.def };
+                if let Some(cue) = sounds::remote_offhand(def) {
+                    self.cues.play_at(cue, p.body.eye());
+                }
+            }
+            EventKind::Planted { kind } => {
+                let set_down = [p.arsenal.lethal.def, p.arsenal.tactical.def].into_iter().find(|d| d.equipment_kind == kind && d.place == crate::weapons::Place::Plant);
+                if let Some(cue) = set_down.and_then(sounds::remote_offhand) {
+                    self.cues.play_at(cue, p.body.eye());
+                }
+            }
+            // His alone. The swing, the knife's hit and the C4 trigger are BO2's `*Player`
+            // (2D) sounds; their third-person versions are not converted.
+            EventKind::EnteredFps { .. }
+            | EventKind::ClassChosen { .. }
+            | EventKind::ClassAtNextSpawn { .. }
+            | EventKind::FieldComputerOpened
+            | EventKind::ReturnedToRts { .. }
+            | EventKind::HitMarker { .. }
+            | EventKind::Recoil { .. }
+            | EventKind::Flinch { .. }
+            | EventKind::Damaged { .. }
+            | EventKind::ReloadStarted
+            | EventKind::Swapped
+            | EventKind::GeneralDied { .. }
+            | EventKind::Melee
+            | EventKind::MeleeHit
+            | EventKind::OffhandReady { .. }
+            | EventKind::CantPlant { .. }
+            | EventKind::Detonated
+            | EventKind::DestroyedEquipment
+            | EventKind::Hacked
+            | EventKind::Hacking { .. }
+            | EventKind::AltToggled
+            | EventKind::Hammer { .. }
+            | EventKind::BuildPlaced { .. }
+            | EventKind::BuildRefused { .. }
+            | EventKind::Working { .. }
+            | EventKind::WorkDone { .. }
+            | EventKind::ShieldPickedUp => {}
+            // The world's: `world_event` took them above.
+            EventKind::Impact { .. }
+            | EventKind::Exploded { .. }
+            | EventKind::Bounced { .. }
+            | EventKind::Dud { .. }
+            | EventKind::Intercepted { .. }
+            | EventKind::ShieldDeployed { .. }
+            | EventKind::ShieldDestroyed { .. }
+            | EventKind::ShieldHit { .. } => {}
+        }
+    }
+
+    /// An event that happens at a place in the world, played the same for whoever's it is: its
+    /// sounds at the place and its impact effect (`own`: the presented seat's, whose impacts come
+    /// first in `ClientOut.hits`; another player's fill what is left). False for any other event.
+    fn world_event(&mut self, kind: EventKind, own: bool) -> bool {
+        match kind {
+            // A pellet landed: BO2's impact FX (the bridge plays it from `ClientOut.hits`) and
+            // the impact table's sound for the gun's type and the surface here (`sounds::impact_cue`).
+            EventKind::Impact { at, dir, surface, head, fatal, impact_type, exit } => {
+                let cue = if exit { sounds::exit_cue(impact_type, surface) } else { sounds::impact_cue(impact_type, surface) };
+                if let Some(cue) = cue {
+                    self.cues.play_at(cue, at);
+                }
+                let hit = ClientHit { point: at, dir, surface: surface as i32, head: head as i32, fatal: fatal as i32, impact_type, exit: exit as i32 };
+                self.push_hit(hit, own);
+            }
+            EventKind::Exploded { at, sound, impact_type, surface } => {
+                for cue in sounds::explosion_cues(sound, impact_type, surface).into_iter().flatten() {
+                    self.cues.play_at(cue, at);
+                }
+            }
+            EventKind::Bounced { at, sound } => {
+                if let Some(cue) = sounds::some(sound) {
+                    self.cues.play_at(cue, at);
+                }
+            }
+            EventKind::Dud { at, sound, surface } => {
+                for cue in sounds::dud_cues(sound, surface).into_iter().flatten() {
+                    self.cues.play_at(cue, at);
+                }
+            }
+            EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
+            // The shield going down plays the plant (BO2's own `wpn_riotshield_plant` is a
+            // notetrack sound the mod does not convert yet).
+            EventKind::ShieldDeployed { at } => self.cues.play_at(sounds::SHIELD_PLANT, at),
+            EventKind::ShieldDestroyed { at, .. } => self.cues.play_at(sounds::SHIELD_DESTROY, at),
+            // A shield hit: the shield's own impact sound and a metal spark (no blood).
+            EventKind::ShieldHit { at, dir, knife, impact_type } => {
+                self.cues.play_at(if knife { sounds::SHIELD_HIT_KNIFE } else { sounds::SHIELD_HIT_BULLET }, at);
+                let surface = crate::impacts::Surface::Metal as i32;
+                self.push_hit(ClientHit { point: at, dir, surface, head: 0, fatal: 0, impact_type, exit: 0 }, own);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// One impact for `ClientOut.hits`: the presented seat's own while there is room, another
+    /// player's into what the own ones leave (`Client::frame_with` merges them).
+    fn push_hit(&mut self, hit: ClientHit, own: bool) {
+        if !own {
+            if self.remote_hits.len() < CLIENT_HITS {
+                self.remote_hits.push(hit);
+            }
+        } else if self.hits_len < CLIENT_HITS {
+            self.hits[self.hits_len] = hit;
+            self.hits_len += 1;
+        }
     }
 
     /// The events this frame's prediction brought (`predict::Advance`): the own gun's tracers for
@@ -115,6 +263,10 @@ impl Client {
             if !own && !spectated_event(&kind) {
                 continue;
             }
+            // What happens at a place in the world plays the same for everyone (`world_event`).
+            if self.world_event(kind, true) {
+                continue;
+            }
             match kind {
                 EventKind::EnteredFps { general } => {
                     if let Some(p) = auth {
@@ -152,26 +304,6 @@ impl Client {
                     self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }
-                // A pellet landed: BO2's impact FX (the bridge plays it from `ClientOut.hits`) and
-                // the impact table's sound for the gun's type and the surface here (`sounds::impact_cue`).
-                EventKind::Impact { at, dir, surface, head, fatal, impact_type, exit } => {
-                    let cue = if exit { sounds::exit_cue(impact_type, surface) } else { sounds::impact_cue(impact_type, surface) };
-                    if let Some(cue) = cue {
-                        self.cues.play_at(cue, at);
-                    }
-                    if self.hits_len < CLIENT_HITS {
-                        self.hits[self.hits_len] = ClientHit {
-                            point: at,
-                            dir,
-                            surface: surface as i32,
-                            head: head as i32,
-                            fatal: fatal as i32,
-                            impact_type,
-                            exit: exit as i32,
-                        };
-                        self.hits_len += 1;
-                    }
-                }
                 EventKind::Shot { left: false, .. } => self.vm_events.shot = true,
                 EventKind::Shot { left: true, .. } => self.vm_events.left_shot = true,
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
@@ -196,22 +328,6 @@ impl Client {
                 }
                 EventKind::Thrown { lethal } => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
                 EventKind::Launched => self.cues.play(held.map_or(sounds::FIRE_LAUNCHER, |(def, ammo, ..)| sounds::shot_for(def, ammo, sounds::launch_for(def)))),
-                EventKind::Exploded { at, sound, impact_type, surface } => {
-                    for cue in sounds::explosion_cues(sound, impact_type, surface).into_iter().flatten() {
-                        self.cues.play_at(cue, at);
-                    }
-                }
-                EventKind::Bounced { at, sound } => {
-                    if let Some(cue) = sounds::some(sound) {
-                        self.cues.play_at(cue, at);
-                    }
-                }
-                EventKind::Dud { at, sound, surface } => {
-                    for cue in sounds::dud_cues(sound, surface).into_iter().flatten() {
-                        self.cues.play_at(cue, at);
-                    }
-                }
-                EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
                 EventKind::Hacking { progress } => {
                     self.hud.hack_progress = progress;
                     self.hud.hack_shown = 0.15;
@@ -227,20 +343,7 @@ impl Client {
                     }
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),
-                // The shield going down plays the plant (BO2's own `wpn_riotshield_plant` is a
-                // notetrack sound the mod does not convert yet).
-                EventKind::ShieldDeployed { at } => self.cues.play_at(sounds::SHIELD_PLANT, at),
                 EventKind::ShieldPickedUp => self.vm_events.swapped = true,
-                EventKind::ShieldDestroyed { at, .. } => self.cues.play_at(sounds::SHIELD_DESTROY, at),
-                // A shield hit: the shield's own impact sound and a metal spark (no blood).
-                EventKind::ShieldHit { at, dir, knife, impact_type } => {
-                    self.cues.play_at(if knife { sounds::SHIELD_HIT_KNIFE } else { sounds::SHIELD_HIT_BULLET }, at);
-                    if self.hits_len < CLIENT_HITS {
-                        let surface = crate::impacts::Surface::Metal as i32;
-                        self.hits[self.hits_len] = ClientHit { point: at, dir, surface, head: 0, fatal: 0, impact_type, exit: 0 };
-                        self.hits_len += 1;
-                    }
-                }
                 EventKind::DestroyedEquipment => {}
                 // BO2's weapon hint ("Cannot Plant Here"): set afresh, drawn by the HUD.
                 // BO2's `iprintlnbold` hints: the plant refusal, and a mid-life class pick that
@@ -272,6 +375,15 @@ impl Client {
                     self.cues.play(sounds::PLANT);
                     self.note(crate::building::work_text(kind).done);
                 }
+                // The world's: `world_event` played them above.
+                EventKind::Impact { .. }
+                | EventKind::Exploded { .. }
+                | EventKind::Bounced { .. }
+                | EventKind::Dud { .. }
+                | EventKind::Intercepted { .. }
+                | EventKind::ShieldDeployed { .. }
+                | EventKind::ShieldDestroyed { .. }
+                | EventKind::ShieldHit { .. } => {}
             }
         }
     }

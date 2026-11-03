@@ -850,15 +850,23 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   soldier the round is inside). A table without `HitBox` lines (the built-in one) keeps the
   16-inch cylinder with a head band. Deterministic, sim-only inputs.
 * **The client carries at most `ZHBO_CLIENT_HITS` (8) impacts per frame** in `ZhboClientOut.hits`,
-  filled by `consume_events` (so the impact sound is the surface's, not a guess); a frame that
-  overflows drops the extras.
+  filled by `consume_events` (so the impact sound is the surface's, not a guess): the presented
+  seat's own first, then other players' rounds into the slots left; a frame that overflows drops
+  the extras (others' first).
 * **The bridge plays the name the core resolves.** `zhbo_impact_fx(impact_type, surface, head,
   fatal, …)` (or `zhbo_impact_exit_fx` for a hit with `ZhboClientHit.exit`: the type's exit row,
   BO2's impact flag 4 — rows 1/4/8/10/6, `exit impact`/`exit flesh` lines) looks the cell up in the converted `Data\ConquerOps\impacts.txt` (loaded by
   `zhbo_load_impacts` at init) and the bridge calls `FXList::doFXPos` with a frame whose X is
   `-dir` (the surface's outward normal). A missing/stale archive plays nothing and is counted, never
   a bogus name — the same degrade-don't-panic rule as the renderer's draws.
-* **What is out**: other players' impacts (they keep the converted `FireFX`).
+* **Every player's impacts play on every machine.** BO2 plays an impact for each client whoever
+  fired (the event is the world's), so the client presents another player's `Impact` and
+  `ShieldHit` exactly as its owner's: the same cell and the same sound at the point
+  (`client::events::world_event`). The same goes for every other event that happens at a place —
+  `Exploded`, `Bounced`, `Dud`, `Intercepted`, `ShieldDeployed`, `ShieldDestroyed`. Another
+  player's `Shot` and `Launched` play his gun's third-person chain at him, his `Thrown`/`Planted`
+  the offhand's third-person `fireSound`; the rest of his events are his own first person.
+  `present_remote`'s match is exhaustive, so a new event kind has to say who sees it.
 * **The pellet's sound is the table's too**: `consume_events` plays `sounds::impact_cue(impact_type,
   surface)` — the `sound` row for the gun's type (`prj_bullet_impact_<size>_<surface>`), silent on a
   `NONE` row (BO2's hash miss), and the fixed flesh/hard cue only for a type with no sound rows (an
@@ -1333,6 +1341,10 @@ converted materials `hud_shoutcasting_change_tab` and `hud_shoutcasting_viewing_
 `zhbo_logic_smoke_crosses(ax, ay, bx, by, since)` (each `int32_t`), for host patch 0024; no struct
 or API table moves. Archive `hud::VERSION` should move too: the smoke screen's particle systems are
 `AREA_EFFECT` and stand the tuning pack's 12 s (the converted INI changes).
+
+**Pending for the next bump** (bug-sweep-3; not bumped): no ABI change. The archive gains two sound
+events, `ZHBO_BO2_StepNpc` and `ZHBO_BO2_SprintStepNpc` (other players' footsteps), so
+`hud::VERSION` must move.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

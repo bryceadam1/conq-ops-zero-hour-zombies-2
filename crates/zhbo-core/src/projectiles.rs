@@ -146,11 +146,22 @@ impl Projectile {
             }
             let mut next = self.pos + self.vel * dt;
             // A move into the ground ends where it meets it: nothing beyond (or under) is struck.
-            let ground = host.ground_height(next.x, next.y);
-            if next.z <= ground && self.pos.z > next.z {
-                let t = ((self.pos.z - ground) / (self.pos.z - next.z)).clamp(0.0, 1.0);
-                next = self.pos + (next - self.pos) * t;
-                next.z = next.z.max(ground);
+            // The ground rising across the move (a slope, a hillside) counts as much as the
+            // ground it falls onto.
+            let mut contact = false;
+            if let Some(t) = ground_crossing(host, self.pos, next) {
+                if t <= 0.0 {
+                    // Lying on a slope and pressed into it: it slides down the face (the move
+                    // less its part into the ground). Level ground keeps it where it is.
+                    let n = ground_normal(host, self.pos.x, self.pos.y);
+                    let step = next - self.pos;
+                    let into = step.dot(n);
+                    next = if n.z < SLOPE_NORMAL_Z && into < 0.0 { self.pos + (step - n * into) } else { self.pos };
+                } else {
+                    next = self.pos + (next - self.pos) * t;
+                }
+                next.z = next.z.max(host.ground_height(next.x, next.y));
+                contact = true;
             }
             // Not armed yet when this move ends short of the activation distance (BO2 compares the
             // path summed so far, this move included, `FUN_00604280`).
@@ -186,6 +197,11 @@ impl Projectile {
                 // Where along this move it met him, not the move's end (a bolt covers 25 units
                 // a step).
                 let at = self.pos + (next - self.pos) * t;
+                // Met short of where the move met the ground: it never reached the ground this
+                // step (the object turns it before it can), so no ground contact follows.
+                if t < 1.0 {
+                    contact = false;
+                }
                 self.travelled -= (next - at).length();
                 let dud = self.def.activate_dist > 0.0 && self.travelled < self.def.activate_dist;
                 next = at;
@@ -215,7 +231,7 @@ impl Projectile {
                 }
             }
             let ground = host.ground_height(next.x, next.y);
-            if next.z <= ground {
+            if contact || next.z <= ground {
                 self.pos = Vec3::new(next.x, next.y, ground);
                 if spawns {
                     return Some(self.spawn(host, None));
@@ -233,9 +249,16 @@ impl Projectile {
                         return Some(Outcome::Hit { at: self.pos, kill: false });
                     }
                 } else {
+                    // Off the ground's own face: the speed along it kept by `along`, into it
+                    // turned back by `up` (BO2's parallel/perpendicular bounce). On level ground
+                    // the face is up: the horizontal speed scales and the fall turns over.
                     let surface = host.surface_at(self.pos.x, self.pos.y);
                     let (along, up) = self.bounce_scales(surface);
-                    self.vel = Vec3::new(self.vel.x * along, self.vel.y * along, -self.vel.z * up);
+                    let n = ground_normal(host, self.pos.x, self.pos.y);
+                    let into = self.vel.dot(n);
+                    let normal = n * into;
+                    let tangent = self.vel - normal;
+                    self.vel = if into < 0.0 { tangent * along - normal * up } else { tangent * along + normal };
                     self.bounce(host, surface);
                     if self.vel.length() < self.flight.rest_speed {
                         self.resting = true;
@@ -543,6 +566,49 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
     Blast { hit_enemy, kill, surface }
 }
 
+/// Where the move `from` → `to` first meets the ground, as a share of the move (0..=1), if it does:
+/// the move is walked in steps of at most [`GROUND_STEP`] across the height map, and the crossing
+/// is placed where the height above the ground, taken as linear between the two samples that
+/// bracket it, reaches zero (exact on level ground). Ground that rises across the move — a slope
+/// or a hillside the grenade flies into — is met as surely as ground it falls onto. Before, only a
+/// fall was tested, against the ground at the move's end: a grenade flying into rising ground was
+/// put back where it was every frame, hanging in the air until it timed out without going off.
+fn ground_crossing(host: &dyn LogicHost, from: Vec3, to: Vec3) -> Option<f32> {
+    let above = |t: f32| {
+        let p = from + (to - from) * t;
+        p.z - host.ground_height(p.x, p.y)
+    };
+    let steps = ((to - from).length_xy() / GROUND_STEP).ceil().clamp(1.0, MAX_GROUND_STEPS) as u32;
+    let (mut t0, mut h0) = (0.0f32, above(0.0));
+    for i in 1..=steps {
+        let t1 = i as f32 / steps as f32;
+        let h1 = above(t1);
+        if h1 <= 0.0 {
+            // Already in the ground at the start of the step: the contact is there.
+            return Some(if h0 <= 0.0 { t0 } else { t0 + (t1 - t0) * h0 / (h0 - h1) });
+        }
+        (t0, h0) = (t1, h1);
+    }
+    None
+}
+
+/// The ground's upward normal at (`x`, `y`), from the height map's slope across
+/// [`GROUND_STEP`] (straight up on level ground).
+fn ground_normal(host: &dyn LogicHost, x: f32, y: f32) -> Vec3 {
+    let d = GROUND_STEP * 0.5;
+    let dx = (host.ground_height(x + d, y) - host.ground_height(x - d, y)) / (2.0 * d);
+    let dy = (host.ground_height(x, y + d) - host.ground_height(x, y - d)) / (2.0 * d);
+    Vec3::new(-dx, -dy, 1.0).normalized_or_zero()
+}
+
+/// The ground test's step along a projectile's move (Zero Hour units), and the most steps a move
+/// takes (a fast rocket's move is walked more coarsely).
+const GROUND_STEP: f32 = 2.0;
+/// Ground whose normal leans further than this from straight up (about 2.5°) is a slope a lying
+/// grenade slides down.
+const SLOPE_NORMAL_Z: f32 = 0.999;
+const MAX_GROUND_STEPS: f32 = 32.0;
+
 /// BO2's grenade-on-ground rule (t6mp `FUN_0060a480`, the missile's explode think): a def with
 /// `bExplodeOnGround` whose fuse runs out while the grenade is off the ground
 /// (`groundEntityNum == ENTITYNUM_NONE`) thinks again next frame instead of going off, for up to
@@ -626,6 +692,87 @@ mod tests {
             }
         }
         assert!(struck > 0, "some reached the hull");
+    }
+
+    /// Every projectile the catalog throws or fires, aimed into a hillside (a 1:1 slope rising
+    /// 10 units ahead): it meets the slope and comes to its end there — a blast, a dud, a landing,
+    /// a bolt's grenade — never hanging in the air until the flight's 30 s limit drops it without
+    /// a sound. (Before, a move into ground that rose across it was put back where it started, so a
+    /// concussion or a rocket thrown at a hill hung in place; the in-game multiplayer test's
+    /// concussions never went off.) On level ground nothing changed.
+    #[test]
+    fn a_projectile_flying_into_a_hillside_meets_it() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.hill.set(Some((10.0, 1.0)));
+        let defs: Vec<_> = crate::weapons::catalog().all().iter().copied().filter(|d| d.class == crate::weapons::Class::Launcher || (d.class.is_offhand() && d.place == crate::weapons::Place::Throw))
+            // Ones with an end of their own (a stand-in launcher without projectile data flies and
+            // lies forever).
+            .filter(|d| d.fuse_time > 0.0 || d.impact_explode || d.effect == Effect::Impact || !d.spawns.is_empty() || crate::equipment::Kind::of(d) != crate::equipment::Kind::Other)
+            .collect();
+        assert!(defs.len() >= 3, "{}", defs.len());
+        for def in defs {
+            let mut p = Projectile::launch(def, 1, Vec3::new(0.0, 0.0, 8.0), Vec3::new(1.0, 0.0, 0.05).normalized_or_zero(), def.fuse_time, &host, 0.0);
+            let mut outcome = None;
+            for _ in 0..(40.0 / LOGIC_DT) as u32 {
+                if let Some(o) = p.step(&host) {
+                    outcome = Some(o);
+                    break;
+                }
+                assert!(p.pos.z >= host.ground_height(p.pos.x, p.pos.y) - 1e-3, "{}: under the hill at {:?}", def.id, p.pos);
+            }
+            let outcome = outcome.unwrap_or_else(|| panic!("{} never finished", def.id));
+            assert!(p.age < 30.0, "{}: hung until the flight limit ({outcome:?} at {:?})", def.id, p.pos);
+            assert!(p.pos.x > 9.0, "{}: it reached the hill: {:?}", def.id, p.pos);
+        }
+    }
+
+    /// A grenade whose move would end in the ground but meets a hull first (it passes beside the
+    /// tank, low) bounces off the hull where it met it and is not also put on the ground and
+    /// bounced off it in the same step (the ground crossing is the move's, the strike comes first).
+    #[test]
+    fn a_hull_met_before_the_ground_turns_it_in_the_air() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(crate::host::ObjInfo {
+            id: 5,
+            owner_player: 1,
+            flags: objflags::VEHICLE,
+            geom_type: crate::host::geom::BOX,
+            major_radius: 26.0,
+            minor_radius: 13.0,
+            height: 15.0,
+            health: 1100.0,
+            max_health: 1100.0,
+            pos: Vec3::new(22.0, 20.0, 0.0),
+            ..Default::default()
+        });
+        let def = weapon("frag_grenade_mp");
+        let mut p = Projectile::launch(def, 1, Vec3::new(20.0, 0.0, 1.0), Vec3::ZERO, 10.0, &host, 0.0);
+        // 10 units on and 2 down this step: the ground is met halfway, the hull (its axis beside
+        // the path at x = 22) at two-fifths.
+        p.vel = Vec3::new(10.0, 0.0, -2.0) * (1.0 / LOGIC_DT);
+        p.step(&host);
+        assert_eq!(p.last_struck, Some(5));
+        assert!((p.pos.x - 22.0).abs() < 1e-3 && p.pos.z > 0.5, "where it met the hull, in the air: {:?}", p.pos);
+        assert!(p.vel.x < 0.0 && p.vel.z < 0.0, "turned by the hull only: {:?}", p.vel);
+    }
+
+    /// On level ground the bounce is what it always was: the horizontal speed kept by `along`, the
+    /// fall turned over by `up`.
+    #[test]
+    fn a_bounce_on_level_ground_keeps_its_old_shape() {
+        let host = FakeHost::default();
+        let def = weapon("frag_grenade_mp");
+        let mut p = Projectile::launch(def, 1, Vec3::new(0.0, 0.0, 0.5), Vec3::ZERO, 10.0, &host, 0.0);
+        p.vel = Vec3::new(30.0, 0.0, -30.0);
+        let (along, up) = p.bounce_scales(Surface::Dirt);
+        while p.bounced.is_none() {
+            p.step(&host);
+        }
+        assert!((p.vel.x - 30.0 * along).abs() < 1e-3, "{:?}", p.vel);
+        assert!(p.vel.z > 0.0 && p.pos.z == 0.0, "{:?} {:?}", p.vel, p.pos);
+        let _ = up;
     }
 
     #[test]

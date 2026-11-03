@@ -12,9 +12,12 @@
 //! bytecode lists them; their binding to each box is not fully decoded, so the widths are
 //! approximate.
 //!
-//! Deliberate divergence: the core knows only the local player's own tally (score = kills ×
-//! `KILL_POINTS`), so the board shows the player's row under their Zero Hour army; other players
-//! need the engine to list them.
+//! The board lists every player who has played in first person, as BO2's team deathmatch does:
+//! the local player's side (his row and his allies') first under his army's colour, then the
+//! enemies under theirs, each block sorted by score. A row's score is kills × `KILL_POINTS`; the
+//! local player's row is the HUD's own tally, everyone else's what this machine saw of the sim's
+//! events (`client::SeatTally`), so every machine's board agrees. ASSISTS stays 0: the sim
+//! credits no assists.
 
 use super::frame::Lui;
 use super::*;
@@ -44,12 +47,31 @@ pub fn board(l: &Lui) -> Rect {
     Place::new((false, false, -w * 0.5, w * 0.5), (true, false, 80.0, 640.0)).resolve(l.screen())
 }
 
-pub fn draw(l: &Lui, prims: &mut Vec<Prim>, team_color: u32, rows: &[Row]) {
+/// One side's block: its army colour and its players' rows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Block {
+    pub color: u32,
+    pub rows: Vec<Row>,
+}
+
+/// The gap between two sides' blocks.
+pub const BLOCK_GAP: f32 = 12.0;
+
+pub fn draw(l: &Lui, prims: &mut Vec<Prim>, blocks: &[Block]) {
     let b = board(l);
     let title = Rect { x: b.x, y: b.y, w: b.w, h: 25.0 };
     l.text(prims, title, Family::Default, crate::weapons::catalog().label("MENU_SCOREBOARD_CAPS"), Some(Align::Left), (true, false), (1.0, 1.0, 1.0), 1.0);
+    let mut y = b.y + 30.0;
+    for block in blocks {
+        y = draw_block(l, prims, b, y, block) + BLOCK_GAP;
+    }
+}
+
+/// One side at `top`: its header, the column heads and its rows; returns where it ends.
+fn draw_block(l: &Lui, prims: &mut Vec<Prim>, b: Rect, top: f32, block: &Block) -> f32 {
+    let (team_color, rows) = (block.color, block.rows.as_slice());
     // The team header: the icon, the team's score, the army's colour as the plate.
-    let header = Rect { x: b.x, y: b.y + 30.0, w: b.w, h: HEADER_H };
+    let header = Rect { x: b.x, y: top, w: b.w, h: HEADER_H };
     let hp = l.px(header);
     prims.push(Prim::Rect { x: hp.x, y: hp.y, w: hp.w, h: hp.h, argb: (team_color & 0x00FF_FFFF) | 0x4000_0000 });
     let icon = l.px(Rect { x: header.x + 18.0, y: header.y + 18.0, w: 64.0, h: 64.0 });
@@ -78,6 +100,7 @@ pub fn draw(l: &Lui, prims: &mut Vec<Prim>, team_color: u32, rows: &[Row]) {
         }
         y += ROW_H + ROW_GAP;
     }
+    y
 }
 
 #[cfg(test)]
@@ -90,7 +113,7 @@ mod tests {
         crate::lui::font::load("");
         let l = Lui::new(1280.0, 720.0);
         let mut prims = Vec::new();
-        draw(&l, &mut prims, 0xFF22_44AA, &[Row { name: "General".into(), values: [300, 3, 1, 0], you: true }]);
+        draw(&l, &mut prims, &[Block { color: 0xFF22_44AA, rows: vec![Row { name: "General".into(), values: [300, 3, 1, 0], you: true }] }]);
         let texts: Vec<_> = prims.iter().filter_map(|p| if let Prim::Text { text, .. } = p { Some(text.as_str()) } else { None }).collect();
         for want in ["SCOREBOARD", "SCORE", "KILLS", "DEATHS", "ASSISTS", "General", "300", "3", "1"] {
             assert!(texts.contains(&want), "{want} in {texts:?}");
