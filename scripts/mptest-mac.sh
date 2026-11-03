@@ -217,6 +217,14 @@ match_hashes() { # log -> "frame<TAB>hash world … seats …", by frame
 }
 match_hashes "$h" >"$out/host-hashes.txt" || true
 match_hashes "$j" >"$out/join-hashes.txt" || true
+# The long run's leaver: once his own machine has quit (`leaving the game`, then the bridge makes him
+# a spectator as his General goes), it steps its last frames without the other player's commands
+# (the network game is over for it), so his seat's input there is not the host's. Compare up to the
+# frame before he turned spectator.
+gone=$( (awk '/leaving the game in first person/ {l = 1} l && /\] spectator:/ {print; exit}' "$j" 2>/dev/null || true) | sed -E 's/^\[([0-9]+)\].*/\1/')
+if [[ -n "$gone" ]]; then
+    awk -F '\t' -v g="$gone" '$1 + 0 < g' "$out/join-hashes.txt" >"$out/join-hashes.cut" && mv "$out/join-hashes.cut" "$out/join-hashes.txt"
+fi
 join -t $'\t' "$out/host-hashes.txt" "$out/join-hashes.txt" >"$out/hashes-joined.txt" || true
 common=$(wc -l <"$out/hashes-joined.txt" | tr -d ' ')
 differ=$(awk -F '\t' '$2 != $3' "$out/hashes-joined.txt" | wc -l | tr -d ' ')
