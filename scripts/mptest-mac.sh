@@ -26,7 +26,8 @@
 #     127.0.0.1 with per-instance ports, so no `sudo ifconfig lo0 alias` is needed.
 #   * Each instance after the first writes ConquerOps_InstanceNN.log / .profile (user data dir).
 #
-# The long run (ZHBO_MPTEST_ROUNDS=N, N > 1; ZHBO_AUTOPILOT_ROUNDS in both instances): the joiner
+# The long run (ZHBO_MPTEST_ROUNDS=N, N > 1; ZHBO_AUTOPILOT_ROUNDS in both instances; its checks need
+# N >= 5, see TESTING.md: the class change in the joiner's third life is worn by a fourth): the joiner
 # plays N lives and the host plays until the joiner has left, every life walked to the meeting point. The target first declines his spawn (Escape
 # on the class screen; the bridge takes control again). Every life after the first fight throws the
 # tactical at the other General (a concussion: a shellshock on both machines' sims), fires, reloads,

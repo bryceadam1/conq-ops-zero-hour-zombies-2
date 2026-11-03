@@ -11544,3 +11544,78 @@ The footstep check (bug sweep 3's) was too strict for the short run: the joiner 
 steps only from overhead or far away, where the engine answers `no sound` (out of range). The check
 now accepts `playing` or `no sound`: either way the core played the step. A missing event logs
 `error` and still fails.
+
+## Integration: playtest round 3 (2026-11-03, `v1/integration8`)
+
+Merged onto main 3cd2a0a, in this order: `v1/explosion-fx` (which already carried `v1/smoke-screen`),
+`v1/shield-scale`, `v1/splash-damage`, `v1/bug-sweep-3`. The branch entries above are kept as
+written. explosion-fx's MODLOG had a stray `||||||| 3cd2a0a` diff3 marker committed inside its
+entry; it is removed here and the "Verified in game" lines under it kept.
+
+**Conflicts.** Textual ones were unions: the MODLOG entries; the autopilot's mode flags (`smoke`,
+`splash` and bug-sweep's `mp_rounds` side by side in `config::Autopilot::Scripted`, `client::Autopilot`,
+`ffi.rs` and their tests; the bridge's `autopilot_smoke`/`autopilot_splash` and the riflemen
+skipped for either scene); the bridge's per-mode autopilot state; CONTRACT's "Units" (the drawn
+scale beside splash's damage and solid rules) and the Pending notes; TESTING's two new rows;
+the projectile tests of splash and bug-sweep. The autotest scripts merged on their own: `--smoke`
+and `--splash` are both in the mode table, and mptest carries bug-sweep's long run.
+
+**Semantic resolutions.**
+* *props.rs vs explosion-fx/smoke-screen.* Neither FX branch touched `viewmodels.rs`'s projectile
+  code that shield-scale moved into `props.rs`: the effects are named in `generals.rs` and
+  `impacts.rs` (FXList names only), the props' INI blocks in `props.rs`. Nothing to port; the
+  real-install `every_prop_is_drawn_at_the_bodys_scale` and the fx preview gate both pass.
+* *projectiles.rs.* The merge keeps splash's rule — `last_struck` is forgotten only when the move no
+  longer meets the struck object, never by touching the ground — under bug-sweep's ground walk
+  (`ground_crossing`, the slope slide and the bounce off the ground's face). **One interaction
+  fixed:** `ground_crossing` marks a contact for the whole move, but an object met earlier in the
+  move cuts it short (`next = at`); the grenade was then both turned by the hull in the air and put
+  on the ground and bounced off it in the same step. A strike short of the move's end now clears
+  the contact (`a_hull_met_before_the_ground_turns_it_in_the_air`, which fails without it).
+  `a_grenade_against_a_hull_strikes_it_once`, `a_projectile_flying_into_a_hillside_meets_it`,
+  `a_bounce_on_level_ground_keeps_its_old_shape` and `conformance::splash` pass.
+* *Drawn scale vs blast-to-solid.* The held/stowed shield's blast protection is by angle from the
+  shield tag (drawn, `DRAWN_ZH_PER_INCH`), not a distance, so it agrees with splash's
+  `blast_distance` as it is. The **planted** shield was still measured to its tag origin while every
+  other object is measured to its solid; it is now measured to its drawn deployed box
+  (`shield::Bearer::distance`; `a_blast_is_measured_to_the_shields_box`), as BO2's radius damage
+  measures the deployed shield entity to its bounds. A General's blast solid stays splash's
+  infantry cylinder (`hitscan::solid`: BO2's 16 in radius, the engine's height), not the drawn hit
+  boxes: BO2 measures to bounds, not hit boxes.
+* *Smoke vs the bounding-sphere query.* The smoke sim makes no `LogicHost::query` call (its old
+  `cbSmoke` partition scan is gone; the engine asks `zhbo_logic_smoke_*`), so nothing to convert to
+  `origin_within`.
+* *Remote world events vs `_Framed` FX.* Another player's impacts go into the same `ClientOut.hits`
+  as the local ones and the bridge plays the same impact-table row, so a remote bullet impact gets
+  the framed list exactly as an own one does. Blasts and the smoke cloud are played by the sim
+  (`projectiles::blast` → `host.fx`), which runs on every machine, so every machine plays the cloud
+  (the smoke leg and the mp leg both show it). Remote muzzle flashes are the engine's `FireFX` (the
+  framed world flash).
+* *Host patches.* Only smoke adds one (0024); numbering 0001–0024 is unique and all apply in
+  `cargo xtask build`.
+
+**Bumps.** `ZHBO_ABI_VERSION` 30 → 31 on both sides (the three smoke free functions); CONTRACT
+"Versioning" has the ABI 31 paragraph in place of the two Pending notes, with splash's query
+meaning. `hud::VERSION` 84 → 85 (explosion-fx's effects, the smoke screen, the props' scale and
+the 3-box `Shield` field, the remote footstep events). The weapon table has no version of its own:
+it is in the archive, so the archive bump is what keeps a 26-number `Shield` table from being read;
+no `zhbo_native` blob format changed.
+
+**Verification.**
+* `cargo test --workspace` 1,120 passed; clippy `--workspace --all-targets` and zhbo-core
+  `--features harness` clean.
+* Real install (`--ignored`): zhbo-assets 71 passed, 1 failed — the enumerator test
+  `conformance_the_enumerator_matches_the_expected_rows`, which fails identically on main 3cd2a0a
+  (the Peacekeeper rows only BO2 has; earlier integrations skipped it with `--skip conformance`).
+  The roster lockstep gate, the fx preview gate, the props scale test and the splash sweep pass.
+* Conformance: all ten files byte-identical to integration7's (1,979 weapon cells in 11 clusters;
+  cac 0 cells, 4 BO2-only rows; 12 gap clusters).
+* In game: default 16/16, `--classpick` 12/12, `--rts` 16/16, `--scope` 1/1, `--w3d-ads` 2/2,
+  `--input` 3/3, `--build` 18/18, `--replay` 5/5, `--smoke` 7/7, `--splash` 4/4, `--mp` 25/25; no
+  error, desync or mismatch line in any log.
+* **Gotcha: the long run needs `ZHBO_MPTEST_ROUNDS` ≥ 5.** With 3, four checks fail by
+  construction (state hash, CRC and the leave all passed): the joiner's class change is scripted in
+  his third life and must be worn by a fourth, but his third life is his last and he leaves in it;
+  his second General was also shot entering before his round began, so his log had one round and
+  no shellshock. The same run with 5 passes 34/34 (8,365 common frames, 5 shellshocks on both
+  machines, CQB worn). TESTING.md and the script's header now say so.

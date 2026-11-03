@@ -54,7 +54,9 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 * Radius damage measures each object to its **solid** (`projectiles::blast_distance`: its Zero Hour
   geometry box/cylinder/sphere, BO2's soldier-sized cylinder for infantry, `hitscan::solid`), as
   BO2's measures each entity to its bounds (t6mp `FUN_005f1fd0`, from `FUN_005f2130`), and falls
-  off from the inner damage at the solid to the outer at the radius. A concussion's stun time runs
+  off from the inner damage at the solid to the outer at the radius. A planted Assault Shield is
+  measured the same way, to its deployed box where it is drawn (`shield::Bearer::distance`, at
+  `DRAWN_ZH_PER_INCH`), not to its tag. A concussion's stun time runs
   over the distance to the soldier's origin, as `_weapons.gsc:1366` measures it.
 * The object query (`LogicHost::query`, the bridge's `cbQuery`) returns every object whose
   **bounding sphere** comes within the radius (Zero Hour's `FROM_BOUNDINGSPHERE_3D`, the measure its
