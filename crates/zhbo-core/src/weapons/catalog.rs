@@ -619,6 +619,18 @@ UiText WEAPON_NO_AMMO
   Text = No Ammo
 End
 
+UiText PLATFORM_RELOAD
+  Text = ^3[{+reload}]^7 Reload
+End
+
+UiText PLATFORM_LOW_AMMO_NO_RELOAD
+  Text = Low Ammo
+End
+
+UiText PLATFORM_HOLD_BREATH
+  Text = Press ^3&&1^7 and hold to steady
+End
+
 UiText MENU_SELECT_RETICLE
   Text = Select Reticle
 End

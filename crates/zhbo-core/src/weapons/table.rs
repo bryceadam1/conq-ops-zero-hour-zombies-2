@@ -1103,6 +1103,13 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("GuidedMissileType", "The missile guidance enum (`guidedMissileType_t`; 6 is TV-guided).", FieldKind::Num,
         |d: &WeaponDef| d.guided_missile_type.to_string(),
         |d: &mut WeaponDef, v: Values| { d.guided_missile_type = v.text_num()? as u32; Ok(()) }),
+    field!(present "LowAmmoWarning", "The HUD's low-ammo warning (`FUN_0049d3e0`): `lowAmmoWarningThreshold`, `bNoPartialReload`, and whether `ammoCounterClip` counts a clip (1) or not (0).", FieldKind::Nums(3),
+        |d: &WeaponDef| format!("{} {} {}", d.low_ammo_threshold, d.no_partial_reload as u8, d.ammo_counter as u8),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(3)?;
+            (d.low_ammo_threshold, d.no_partial_reload, d.ammo_counter) = (v.num(0), v.flag(1), v.flag(2));
+            Ok(())
+        }),
     field!(present "DpadIcon", "BO2's `dpadIcon`: the action-slot material the alt-fire slot draws (`hud_gl_select`), empty when none.", FieldKind::Str,
         |d: &WeaponDef| d.dpad_icon.clone(),
         |d: &mut WeaponDef, v: Values| { d.dpad_icon = v.text.into(); Ok(()) }),
@@ -1288,7 +1295,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 154);
+        assert_eq!(WEAPON_FIELDS.len(), 155);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

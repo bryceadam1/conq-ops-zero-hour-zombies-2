@@ -72,10 +72,11 @@ pub fn fire_rate_material(fire: FireMode) -> &'static str {
     }
 }
 
-/// The engine's `lowClip`: under a third of the magazine. The weapon table does not carry BO2's
-/// per-weapon warning threshold yet.
-pub fn low_clip(ammo: u16, clip: u16) -> bool {
-    clip > 0 && (ammo as f32) < clip as f32 / 3.0
+/// The engine's `lowClip` (`FUN_004d8970`, the ammo event the LUI counter pulses on): the clip at
+/// or under the weapon's `lowAmmoWarningThreshold` of its size (both capped at 999).
+pub fn low_clip(ammo: u16, def: &weapons::WeaponDef) -> bool {
+    let clip = def.clip.min(999);
+    clip > 0 && (ammo.min(999) as f32) <= clip as f32 * def.low_ammo_threshold
 }
 
 /// An attachment's display name, from the converted table.
@@ -249,8 +250,8 @@ pub fn draw(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, since_ms: f32, clock:
     // `CoD.AmmoArea.UpdateWeapon` sets `hideAmmo` for a `melee` weapType and the digits go to alpha
     // 0; the weapon label and the offhand counters stay.
     if w.def.class != crate::weapons::Class::Melee {
-        let red = if low_clip(w.ammo, w.def.clip) { digit::pulse(clock) } else { 0.0 };
-        let left = w.left_ammo().map(|n| (n, if low_clip(n, w.def.clip) { digit::pulse(clock) } else { 0.0 }));
+        let red = if low_clip(w.ammo, w.def) { digit::pulse(clock) } else { 0.0 };
+        let left = w.left_ammo().map(|n| (n, if low_clip(n, w.def) { digit::pulse(clock) } else { 0.0 }));
         draw_digits(l, prims, w.ammo, w.reserve, red, left);
     }
     draw_weapon_label(l, prims, &w.def.display_name, &w.main.attachments, fire_rate_material(w.def.fire), since_ms);
@@ -366,9 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn low_clip_is_a_third() {
-        assert!(low_clip(9, 30));
-        assert!(!low_clip(10, 30));
-        assert!(!low_clip(0, 0));
+    fn low_clip_is_the_weapons_threshold() {
+        let rifle = weapons::WeaponDef { clip: 30, low_ammo_threshold: 0.33, ..Default::default() };
+        assert!(low_clip(9, &rifle) && !low_clip(10, &rifle));
+        let lmg = weapons::WeaponDef { clip: 100, low_ammo_threshold: 0.2, ..Default::default() };
+        assert!(low_clip(20, &lmg) && !low_clip(21, &lmg), "at or under 0.2 of 100");
+        assert!(!low_clip(0, &weapons::WeaponDef { clip: 0, ..Default::default() }));
     }
 }

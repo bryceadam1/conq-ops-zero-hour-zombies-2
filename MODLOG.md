@@ -11718,3 +11718,30 @@ C4 only when none of the player's is down (`scavenger_think`'s `satchel_charge_m
 grace period, the C4 with one already down. `Sim::scavenger_kill` gates the bullet, knife and
 projectile-impact kills (the blast kills were already excluded) on all three; a projectile's struck
 victim is not known and counts as a soldier. Test: `scavenger_follows_bo2s_drop_rules`.
+
+## Bug sweep 4: the low-ammo warning is BO2's (2026-11-03, branch `v1/bug-sweep-4`)
+
+**Found reading a default-leg screenshot.** Under the crosshair the HUD drew "Press  R  to reload"
+(hard-coded English) once the clip was under a third, "Reloading..." during every reload, and the
+reload prompt also when nothing was left to reload with. BO2's warning is `t6mp` `FUN_0049d3e0`
+(ownerdraw 123, `weaponinfo.menu`'s `lowammowarning`): drawn only for a weapon with a clip counter
+(`ammoCounterClip`) and no `unlimitedAmmo`, never in the reload states (0x0b-0x12), only at or
+under `lowAmmoWarningThreshold` of the clip (`FUN_004d8970`, per weapon: 0.33 for most guns, 0.2
+for the QBB, 0.25 for the crossbow and SRM, 0.1 for the minigun; 0 for the shield and knives, which
+have no counter). With rounds in reserve it is `PLATFORM_RELOAD` "^3[{+reload}]^7 Reload" (not for
+`bNoPartialReload` or a one-round clip); with none, `WEAPON_NO_AMMO` on an empty clip, else
+`PLATFORM_LOW_AMMO_NO_RELOAD` "Low Ammo". Each pulses at 1.7 Hz between its dvar colours
+(`lowAmmoWarningColor1/2` white, `NoReloadColor1/2` (0.7, 0.7, 0, 0.8)→yellow, `NoAmmoColor1/2`
+(0.8, 0, 0, 0.8)→red; `FUN_00499c30`). The LUI ammo counter's red pulse (`lowClip`) is the same
+test, and was also "under a third".
+
+**Fix.** The weapon table's `LowAmmoWarning` line (presentation: threshold, `bNoPartialReload`,
+counter; WEAPON_FIELDS 154 → 155) from `WeaponDef` +0x744/+0x669/+0x3c4. `hud::hints` draws the
+warning by BO2's cases with the localized strings (three new `UI_TEXT_KEYS`, the hold-breath hint's
+`PLATFORM_HOLD_BREATH` among them, which was hard-coded too), the reload key filled into `{+reload}`
+and the `^3`/`^7` runs coloured; `hud::ammo::low_clip` uses the threshold. Placement: centred in
+the item's rect (`-320 -8 640 100` at the safe area's middle, `textalign 9`). Tests:
+`the_low_ammo_warning_follows_bo2s_cases`, `a_hint_fills_in_the_key_and_splits_at_the_colour_codes`,
+`the_warning_pulses_between_its_colours`, `low_clip_is_the_weapons_threshold`.
+
+**Needs `hud::VERSION`** (the table's new line; a table without it keeps a third and a counter).

@@ -486,6 +486,7 @@ mod tests {
         ("CamoMaterial", &["camo_material"]),
         ("OverlayMaterialLowRes", &["overlay_material_low_res"]),
         ("DpadIcon", &["dpad_icon"]),
+        ("LowAmmoWarning", &["low_ammo_threshold", "no_partial_reload", "ammo_counter"]),
         ("EnemyTracerFxWeapon", &["enemy_tracer_fx_weapon"]),
         ("FireSoundNpc", &["npc_fire_sound"]),
         ("Name", &["name"]),
