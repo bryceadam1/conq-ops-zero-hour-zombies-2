@@ -11202,3 +11202,35 @@ The two logs carry the same 4 shellshock lines. The joiner's CQB change was worn
 General. The host let go of the leaver's General and ran 5,900 frames past the leave. One check
 first failed: the joiner had not drawn a weapon the host took up after the joiner had left. That
 look check now stops at the leave. Results: `~/.opencode/plan/bug-sweep-3/mp-long3/`.
+
+## Bug sweep 3: the two-instance test's kill is no longer left to luck (2026-11-03, branch `v1/bug-sweep-3`)
+
+**Flake (reported by splash-damage and smoke-screen on main 3cd2a0a: 4 of 23 checks failed, a rerun
+passed).** In the failing run (`~/.opencode/plan/splash-damage/game-mp-base/`), the host's aimed
+burst hit the target 7 times, at frames 1884–1907, for 456 of his 500. The rest of the magazine
+went into the sand. The target lived with 44 and left by the field computer at 15 s, so there was
+no death, no respawn, and the respawn checks failed. The state hash agreed on every frame. This
+was not a sim or antilag bug: every round that met him landed through the rewind
+(`antilag: … 5 back`).
+
+**Cause.** The script set its look to the target's chest every frame, but a shot leaves along
+`PlayerSim::fire_angles`. That is the aim plus the view kick, the idle sway and, aimed, the
+sights' pose. The AN-94's kick climbs over a burst, and nothing pulled it down, so after about 7
+rounds the burst climbed off him. Whether 7 hits killed him depended on where in the climb they
+landed, so the test was a coin toss.
+
+**Fix (the script, as a player aims).**
+* `Client::autopilot_input` takes the shown record's offset of `fire_angles` from the input's
+  angles off the aim at the other General. The sights stay on him through the recoil, in both the
+  short and the long run.
+* The shooter fires until the target is down, at most 30 s into the fight, with a reload every
+  4.5 s. He then leaves by the field computer and leaves the target's next General alone.
+* The target stays in the fight until then (field computer only if he outlives it).
+
+`the_multiplayer_autopilot_fights_in_lockstep` (headless) still sees exactly one death and the
+respawn with his class.
+
+The footstep check (bug sweep 3's) was too strict for the short run: the joiner hears the host's
+steps only from overhead or far away, where the engine answers `no sound` (out of range). The check
+now accepts `playing` or `no sound`: either way the core played the step. A missing event logs
+`error` and still fails.

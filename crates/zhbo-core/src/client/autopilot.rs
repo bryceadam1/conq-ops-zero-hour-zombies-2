@@ -28,6 +28,11 @@ fn custom_class_key() -> Key {
         .unwrap_or(Key::Key1)
 }
 
+/// The short fight's bound: the shooter fires at the target until he is down or this many seconds
+/// into the fight have passed, reloading every [`MP_RELOAD_EVERY`].
+const MP_KILL_TIME: f32 = 30.0;
+const MP_RELOAD_EVERY: f32 = 4.5;
+
 /// How far below the aim at his chest the long run throws its tactical (radians).
 const MP_TACTICAL_DIP: f32 = 0.2;
 
@@ -97,6 +102,10 @@ pub struct Autopilot {
     /// The long run's class change has been made (once, by the target), and its spawn declined.
     pub(crate) mp_changed_class: bool,
     pub(crate) mp_declined: bool,
+    /// When this session's fight ended and the field computer went down (the short fight).
+    pub(crate) mp_leave_at: Option<f32>,
+    /// The short fight's target went down (the shooter's burst stops for good).
+    pub(crate) mp_target_down: bool,
     /// First-person sessions so far (the client counts each take-control).
     pub(crate) session: u32,
     pub(crate) in_fps: bool,
@@ -409,18 +418,37 @@ impl Autopilot {
         // long aimed one. The shooter's fight starts a couple of seconds before the target's (he
         // waited at the meeting point; the target's clock starts after his own entry), so the
         // windows are far enough apart that the target fires before he is killed.
+        // The shooter fires until the target is down (no first-person General left to aim at),
+        // reloading as he goes, for at most MP_KILL_TIME; the target stays in the fight until then.
+        // Once he is down the fight is over: the next General he brings is left alone.
+        if self.mp_shooter && c >= 9.0 && self.mp_aim.is_none() {
+            self.mp_target_down = true;
+        }
+        let target_up = self.mp_aim.is_some() && !self.mp_target_down;
         if self.mp_shooter {
-            if (7.5..13.0).contains(&c) {
+            let firing = (8.0..MP_KILL_TIME).contains(&c) && (c < 9.0 || target_up);
+            if (7.5..MP_KILL_TIME).contains(&c) && (c < 9.0 || target_up) {
                 keys.set_down(b.ads, true);
             }
-            if (8.0..13.0).contains(&c) {
+            // A reload every few seconds of the burst (the magazine runs dry in about 2.5 s).
+            let reloading = c >= 8.0 && ((c - 8.0) % MP_RELOAD_EVERY) < 0.1 && c > 9.0;
+            if reloading {
+                keys.set_down(b.reload, true);
+            } else if firing {
                 keys.set_down(b.fire, true);
             }
         } else if (5.0..5.3).contains(&c) {
             keys.set_down(b.fire, true);
         }
-        if (15.0..15.1).contains(&c) {
-            keys.set_down(b.field_computer, true);
+        // Out by the field computer once the fight is over: the shooter when the target is down
+        // (or the time is up), the target only if he outlived it.
+        let done = (self.mp_shooter && !target_up && c >= 15.0) || c >= MP_KILL_TIME + 2.0;
+        if done {
+            let at = c;
+            let start = *self.mp_leave_at.get_or_insert(at);
+            if (start..start + 0.1).contains(&c) {
+                keys.set_down(b.field_computer, true);
+            }
         }
         Scripted { keys, class_pick: pick, look, ..Default::default() }
     }

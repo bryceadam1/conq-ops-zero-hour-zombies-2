@@ -363,7 +363,10 @@ How two instances run on one machine (host patch 0022 and the bridge):
 * **Lockstep-safe scripting.** `ZHBO_AUTOPILOT=mp` spawns nothing: the bridge orders the General
   from the Command Center (`MSG_QUEUE_UNIT_CREATE`), walks him to a meeting point between the bases
   (`MSG_DO_MOVETO`) and takes control; the core's `mp_input` aims at the other first-person General
-  and plays the fight; a dead General is ordered again and taken once more. Every step travels as
+  — holding its sights on him through the recoil, as a player does (the aim less the record's
+  `fire_angles` offset) — and plays the fight: the shooter fires, reloading every 4.5 s, until the
+  target is down (at most 30 s into the fight), and the target stays until then; a dead General is
+  ordered again and taken once more. Every step travels as
   a replicated message. `ZHBO_AUTOPILOT_ROLE` (`shooter` for the host, `target` for the joiner) is
   the only difference between the machines and only scripts the local input.
 
@@ -380,8 +383,9 @@ the other log's `autopilot mp: General G weapon V camo C in hand`). Results go t
 (default `$TMPDIR/ConquerOps-mp`): `host.log`, `join.log`, both stdouts, `hashes-joined.txt`.
 
 Both runs also check that each machine presented the other player: his gunshot chain and his
-footsteps were played there (`sound ZHBO_BO2_FireNpc_…: playing`, `sound ZHBO_BO2_StepNpc:
-playing`; the core plays both only for another player).
+footsteps were played there (`sound ZHBO_BO2_FireNpc_…: playing`; `sound ZHBO_BO2_StepNpc:
+playing` or `no sound`, the engine's answer for a step out of the listener's short range, e.g.
+from overhead; the core plays both only for another player).
 
 **The long run** (`ZHBO_MPTEST_ROUNDS=N`, N > 1, sets `ZHBO_AUTOPILOT_ROUNDS` in both instances;
 limit 1,800 s): the joiner plays N lives and the host plays until the joiner has left, each life

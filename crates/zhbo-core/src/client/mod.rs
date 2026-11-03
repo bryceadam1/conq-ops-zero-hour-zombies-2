@@ -876,6 +876,15 @@ impl Client {
         let pick_wanted = self.class_pick_wanted(unclassed);
         // A spectator's view is the followed General's; the script never plays for him.
         let fps = matches!(self.view, ViewMode::Fps) && self.spectator.is_none();
+        // How far the shot leaves from the aim right now (the view kick, the idle sway, the sights'
+        // pose: `PlayerSim::fire_angles` against the input's angles), on the record first person
+        // shows: the multiplayer script holds its sights on the other General through the recoil, as
+        // a player does.
+        let shown = self.predict.view().or_else(|| sim.player(inp.local_player));
+        let off_aim = shown.map_or((0.0, 0.0), |p| {
+            let (fy, fp) = p.fire_angles();
+            (wrap_angle(fy - p.input.yaw), fp - p.input.pitch)
+        });
         let ap = self.autopilot.as_mut()?;
         if !fps {
             ap.t = 0.0;
@@ -887,13 +896,14 @@ impl Client {
             ap.in_fps = true;
             ap.session += 1;
             ap.mp_fight = None;
+            ap.mp_leave_at = None;
             if ap.mp {
                 let class = sim.player(inp.local_player).and_then(|p| p.class.clone()).unwrap_or_else(|| "none".into());
                 ap.log.push(format!("autopilot mp: first-person session {} (class {class})", ap.session));
             }
         }
         if ap.mp {
-            ap.mp_aim = autopilot_aim(sim, inp.local_player);
+            ap.mp_aim = autopilot_aim(sim, inp.local_player).map(|(yaw, pitch)| (wrap_angle(yaw - off_aim.0), pitch - off_aim.1));
             // What his General shows in third person on the other machines: the weapon in hand and
             // the camo it wears (`Sim::third_person_camo`, what their native pass composes).
             let holds = sim
