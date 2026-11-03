@@ -504,4 +504,21 @@ mod tests {
         }
         assert!(played(&mut c).iter().all(|(e, _)| !e.starts_with("ZHBO_BO2_Bc_")), "Dead Silence says nothing");
     }
+
+    /// Overhead, Zero Hour fires his gun and the sim spends the round: the gun's shot torso.
+    #[test]
+    fn an_overhead_generals_spent_round_is_a_shot() {
+        let _g = crate::ffi::state_lock();
+        crate::torso::install(TABLE);
+        let mut players = vec![None, Some(soldier(2))];
+        players[1].as_mut().unwrap().mode = crate::sim::Mode::Rts;
+        let mut r = Remote::default();
+        let mut c = Cues::default();
+        r.update(&players, 0, 0.0, &mut c);
+        r.update(&players, 0, 1.0 / 30.0, &mut c);
+        assert_eq!(r.torso(1), None, "no round spent, no shot");
+        players[1].as_mut().unwrap().arsenal.rts_shot(0);
+        r.update(&players, 0, 1.0 / 30.0, &mut c);
+        assert_eq!(r.torso(1).map(|t| (t.action, t.clip)), Some((torso::FIRE, 4103)));
+    }
 }
