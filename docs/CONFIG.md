@@ -122,7 +122,7 @@ player's own `GameLOD.ini`). The bridge logs the applied level once (`graphics d
 game, the dynamic level's changes and the frame rate every 5 s (`frame rate: …`). Graphics detail is
 presentation only: it is not in the content CRC and never reaches the sim.
 
-## The render rate (host patch 0026)
+## The render rate (host patches 0026, 0027)
 
 Zero Hour capped rendering at `FramesPerSecondLimit` (30) and, outside network games, ran one logic
 frame per rendered frame, so the render cap was also the game's speed. The mod separates them at
@@ -148,4 +148,13 @@ every game start (`MSG_NEW_GAME` → `Zhbo_PaceNewGame`, `ZhboDetail.cpp`):
   integrate them by the phase). The viewmodel, sway, bob, ADS, HUD and tracers run on the client's
   real `dt`.
 
-The bridge logs `render rate: up to N fps (<why>; display M Hz), logic L fps` when a game starts.
+* **A script's game speed.** A map script's `SET_FPS_LIMIT` (and `ScriptEngine::reset`, which put
+  the default back) set the render cap, which in stock *was* the game's speed. Host patch 0027 makes
+  it set the logic rate instead (`Zhbo_ScriptGameSpeed`; 0 restores the game's own speed, a replay
+  follows it), and leaves the render rate to the display.
+* **The autotest captures** (`GGC_BGFX_SCREENSHOT_AFTER`/`_INTERVAL`, a harness flag of the bgfx
+  backend) count logic frames since host patch 0027, so a capture schedule is the same game time at
+  any render rate. The DX8 backend's `GGC_DX8_SCREENSHOT_*` still count render frames.
+
+The bridge logs `render rate: up to N fps (<why>; display M Hz), logic L fps` when a game starts,
+and `game speed: N fps (a script's | the game's own)` when a script changes it.

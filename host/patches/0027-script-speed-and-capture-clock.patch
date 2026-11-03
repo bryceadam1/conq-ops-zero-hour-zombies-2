@@ -1,0 +1,93 @@
+diff --git a/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp b/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
+index 2a465eed7..2cc81d4ff 100644
+--- a/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
++++ b/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
+@@ -6128,12 +6128,19 @@ void BgfxBackend::End_Scene(bool /*flip_frame*/)
+                 interval = static_cast<uint32_t>(parsedInterval);
+             }
+         }
++        // ZHBO: counted in logic frames, not render frames, so a capture schedule means the same
++        // game time at any render rate (host patch 0026 renders at the display's rate).
++        const uint32_t shotClock = static_cast<uint32_t>(GGC_GetCurrentLogicFrame());
+         static uint32_t s_lastShotFrame = 0;
++        if (shotClock < s_lastShotFrame)
++        {
++            s_lastShotFrame = 0; // a new game's logic starts over
++        }
+         if (captureFrame > 0
+-            && static_cast<int>(g_stats.frameIndex) >= captureFrame
+-            && (g_stats.frameIndex - s_lastShotFrame) >= interval)
++            && static_cast<int>(shotClock) >= captureFrame
++            && (shotClock - s_lastShotFrame) >= interval)
+         {
+-            s_lastShotFrame = g_stats.frameIndex;
++            s_lastShotFrame = shotClock;
+             const char * basePath = GGC_GetBgfxScreenshotPath();
+             if ((basePath == nullptr || basePath[0] == '\0'))
+             {
+@@ -6145,7 +6152,7 @@ void BgfxBackend::End_Scene(bool /*flip_frame*/)
+                 const char * ext = BgfxScreenshotBaseExtension(basePath, &baseLen);
+                 char numbered[512];
+                 std::snprintf(numbered, sizeof(numbered), "%.*s.%06u.%s",
+-                              static_cast<int>(baseLen), basePath, g_stats.frameIndex, ext);
++                              static_cast<int>(baseLen), basePath, shotClock, ext);
+                 bgfx::requestScreenShot(BGFX_INVALID_HANDLE, numbered);
+             }
+         }
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp
+index d55922329..111a20d7a 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp
+@@ -28,6 +28,7 @@
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/AudioAffect.h"
+ #include "Common/AudioHandleSpecialValues.h"
+@@ -7131,16 +7132,10 @@ void ScriptActions::executeAction( ScriptAction *pAction )
+ 			doSetStoppingDistance(pAction->getParameter(0)->getString(), pAction->getParameter(1)->getReal());
+ 			return;
+ 		case ScriptAction::SET_FPS_LIMIT:
+-			if (!pAction->getParameter(0)->getInt())
+-			{
+-				TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
+-			}
+-			else
+-			{
+-				TheFramePacer->setFramesPerSecondLimit(pAction->getParameter(0)->getInt());
+-			}
+-			// Setting the fps limit doesn't do much good if we don't use it.  jba.
+-			TheWritableGlobalData->m_useFpsLimit = true;
++			// ZHBO: with the logic and render rates apart (host patch 0026), the script's "FPS limit"
++			// is what it always meant, the game's speed (0: the game's own), and the render rate is
++			// left to the display.
++			Zhbo_ScriptGameSpeed(pAction->getParameter(0)->getInt());
+ 			return;
+ 
+ 		case ScriptAction::DISABLE_SPECIAL_POWER_DISPLAY:
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp
+index 33781422d..731a3b220 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp
+@@ -27,6 +27,7 @@
+ // Author: John Ahlquist, Nov. 2001
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/DataChunk.h"
+ #include "Common/file.h"
+@@ -5262,8 +5263,9 @@ void ScriptEngine::init()
+ void ScriptEngine::reset()
+ {
+ 	// setting FPS limit in case a script had changed it
+-	if (TheFramePacer && TheGlobalData)
+-		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
++	// ZHBO: a script's limit is the game's speed (SET_FPS_LIMIT); put the game's own back and leave
++	// the render rate to the display (host patch 0026).
++	Zhbo_ScriptGameSpeed(0);
+ 
+ 	if (TheScriptActions) {
+ 		TheScriptActions->reset();

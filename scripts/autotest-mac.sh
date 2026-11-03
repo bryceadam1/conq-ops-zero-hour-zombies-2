@@ -57,7 +57,8 @@
 # then click Solo Play > Skirmish > Play Game. The game saves 3 seconds in and quits.
 #
 # Screenshots come from the engine's own capture (GGC_BGFX_SCREENSHOT_*), so the autopilot test
-# needs no permissions. The input test posts real key and mouse events and needs Accessibility
+# needs no permissions. Its AFTER and INTERVAL count logic frames (30 a second; host patch 0027),
+# whatever the render rate, and each file is named by its logic frame. The input test posts real key and mouse events and needs Accessibility
 # permission for the app running this script (System Settings > Privacy & Security).
 #
 # Environment: ZHBO_ZH_DIR and ZHBO_BO2_DIR as for the launcher; OUT for the results folder; DIST
@@ -545,9 +546,11 @@ EOF
     check "$rec" "recorded: first person" "entered first-person control"
     check "$play" "replay: the General came back" "entered first-person control"
     check "$play" "replay: the viewer follows him" "spectator: following seat [0-9]+'s General"
-    # While following, the view is the recorded aim (interpolated across one logic frame), and the
-    # recorded aim moves (the scripted mouse).
-    if awk '/spectator: still following/ { for (i = 1; i <= NF; ++i) { if ($i == "view" && $(i+1) == "yaw") v = $(i+2); if ($i == "aim" && $(i+1) == "yaw") a = $(i+2) } v += 0; a += 0; d = v - a; while (d > 3.14159) d -= 6.28318; while (d < -3.14159) d += 6.28318; if (d < 0) d = -d; if (d > 0.1) bad = 1; n++; seen[a] = 1 } END { k = 0; for (x in seen) k++; exit !(n >= 3 && k >= 2 && !bad) }' "$play"; then
+    # While following, the view is the recorded aim interpolated across one logic frame: at a render
+    # rate above 30 Hz it trails the aim by at most the frame's own turn (from its previous yaw).
+    # And the recorded aim moves (the scripted mouse).
+    if awk 'function wrap(d) { while (d > 3.14159) d -= 6.28318; while (d < -3.14159) d += 6.28318; return d < 0 ? -d : d }
+            /spectator: still following/ { for (i = 1; i <= NF; ++i) { if ($i == "view" && $(i+1) == "yaw") v = $(i+2); if ($i == "aim" && $(i+1) == "yaw") a = $(i+2); if ($i == "from" && $(i+1) == "yaw") f = $(i+2) } v += 0; a += 0; f += 0; if (wrap(v - a) > wrap(a - f) + 0.02) bad = 1; n++; seen[a] = 1 } END { k = 0; for (x in seen) k++; exit !(n >= 3 && k >= 2 && !bad) }' "$play"; then
         printf '%-34s PASS\n' "replay: view = recorded aim"
     else
         printf '%-34s FAIL\n' "replay: view = recorded aim"; ok=1

@@ -94,6 +94,14 @@ constexpr Int MIN_DEFAULT_RENDER_FPS = 60;
 Int s_loggedCap = -1;
 Int s_loggedLogic = -1;
 Int s_notedSpeed = 0;
+Int s_gameSpeed = LOGICFRAMES_PER_SECOND; // the starting game's own logic rate
+
+void setLogicRate(Int logicFps)
+{
+	TheFramePacer->setLogicTimeScaleFps(logicFps);
+	TheFramePacer->enableLogicTimeScale(TRUE);
+	TheFramePacer->setGameLogicFps(logicFps);
+}
 
 void applyPacing(Int gameLogicFps)
 {
@@ -127,9 +135,8 @@ void applyPacing(Int gameLogicFps)
 	}
 	TheFramePacer->setFramesPerSecondLimit(cap);
 	TheWritableGlobalData->m_useFpsLimit = TRUE;
-	TheFramePacer->setLogicTimeScaleFps(logicFps);
-	TheFramePacer->enableLogicTimeScale(TRUE);
-	TheFramePacer->setGameLogicFps(logicFps);
+	s_gameSpeed = logicFps;
+	setLogicRate(logicFps);
 	if (cap != s_loggedCap || logicFps != s_loggedLogic)
 	{
 		logf("render rate: up to %d fps (%s; display %d Hz), logic %d fps", cap == (Int)RenderFpsPreset::UncappedFpsValue ? 0 : cap,
@@ -156,4 +163,14 @@ void zhboPaceStartingGame()
 {
 	applyPacing(s_notedSpeed);
 	s_notedSpeed = 0;
+}
+
+void Zhbo_ScriptGameSpeed(Int fps)
+{
+	if (!TheFramePacer)
+		return;
+	const Int logicFps = fps > 0 ? fps : s_gameSpeed;
+	if (logicFps != TheFramePacer->getGameLogicFps())
+		logf("game speed: %d fps (%s)", logicFps, fps > 0 ? "a script's" : "the game's own");
+	setLogicRate(logicFps);
 }

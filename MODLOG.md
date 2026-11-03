@@ -11682,3 +11682,57 @@ High/3000 and written; old Low/Low → High; chosen Low kept with its 500 cap; c
 1,234 kept); `--splash` 4/4 and `--smoke` 7/7 at High: 30.0 fps steady at the cap, VeryHigh
 throughout; uncapped (`-noFPSLimit -fixedLogicFPS 30`) 87–191 fps at High vs 103–247 at Low on an
 M1 Pro.
+
+## The render rate follows the display; the logic stays at 30 (2026-11-03, `v1/graphics-high`)
+
+Found while measuring the High detail: first person rendered at exactly 30 fps. BO2 plays at 60+.
+
+**Root cause.** Zero Hour caps rendering at `FramesPerSecondLimit` (GameData, 30) and, outside a
+network game, steps one logic frame per rendered frame (`GameEngine::canUpdateRegularGameLogic`
+returns true every update while SuperHackers' logic time scale is off, its default). The render cap
+*is* the game's speed: the skirmish speed slider is `MSG_NEW_GAME`'s fourth argument, written into
+`FramePacer::setFramesPerSecondLimit`, and a map script's `SET_FPS_LIMIT` slows a cinematic the same
+way. Network games were already uncapped (`m_useFpsLimit = false` in the LAN/online start), their
+logic paced by the network. W3D's animation clock also advanced only on a logic update
+(`WW3D::Sync(hasUpdated())`), and drawables are placed at their object's logic transform, so even an
+uncapped render showed units and animations in 30 Hz steps. Particles were already integrated by
+the phase (SuperHackers), and the core already interpolates the first-person eye, kick and roll and
+runs the viewmodel, HUD and tracers on real `dt`.
+
+**Fix (host patches 0026, 0027; `ZhboDetail.cpp`).**
+* At every game start, `MSG_NEW_GAME` notes the game's speed (`Zhbo_PaceNewGame`) and
+  `Zhbo_Reset` (from `GameLogic::startNewGame`, so a loaded save too: **gotcha, `-loadsave` sends no
+  `MSG_NEW_GAME`**, which is why the first build still rendered at 30) applies it: the logic time
+  scale at that speed (else 30), the render cap at the display's refresh rate (SDL3's current mode;
+  `EnumDisplaySettings` on DX8), at least 60, or the player's `Options.ini` `MaxRenderFPS` (a number,
+  never below the logic rate; `Uncapped`; `Display`/0/absent). Vsync stays off: the engine's limiter
+  paces every build alike (DX8's swap interval only works fullscreen).
+* A replay plays at its recorded speed (`FramePacer::setGameLogicFps`; stock tied a replay's logic
+  to the render update, which would have doubled its speed at 60).
+* `Drawable::getRenderTransformMatrix` draws an object's drawable between its last two logic
+  transforms at the render's logic-frame phase (one logic frame behind, like the eye; position lerp,
+  rotation slerp when orthonormal, snap over 100 units a frame, snap on a frame it was not drawn on);
+  the native third-person body and weapon take it. `WW3D::Sync` steps every render update by its
+  share of the logic frame while the logic runs (not while paused).
+* A script's `SET_FPS_LIMIT` keeps its meaning, the game's speed: it sets the logic rate
+  (`Zhbo_ScriptGameSpeed`; 0 and `ScriptEngine::reset` restore the game's own), not the render cap.
+* The bgfx backend's periodic autotest capture (`GGC_BGFX_SCREENSHOT_AFTER`/`_INTERVAL`) counts logic
+  frames, so the autotests' schedules and file numbers mean the same game time at any render rate.
+
+**Determinism.** The sim steps the same frames: the core sends one input per logic frame
+(`last_sent_frame`) whatever the render rate, nothing render-rate dependent feeds it, and the only
+logic code reading a drawn bone is `LaserUpdate` (visual). W3D animation state is not read by the
+logic. Network games already rendered at their own uncapped rates on each machine.
+
+**Measured** (M1 Pro, 120 Hz ProMotion display, High): `--splash` holds the 120 cap, 5 s averages
+115–120 fps with one 94.8 just after the frag (was a flat 30); the default leg 99–120, `--input`
+96–120. Legs: `--splash` 4/4, default 16/16, `--input` 3/3.
+`--mp` 25/25 (both machines held 120 fps; the state hashes and CRCs agree). `--replay` first failed 4/5
+on "view = recorded aim": the check allowed a fixed 0.1 rad between the spectator's view and the
+recorded aim, which held only because the view drew the aim itself at 30 Hz; above 30 Hz the view is
+interpolated across the logic frame (as designed) and trails a fast scripted turn by up to that
+frame's turn (0.106 rad). The spectator log now also prints the yaw the view interpolates from
+(`from yaw`), and the check allows exactly that frame's turn. **Gotcha:** any in-game check that
+compares a drawn value with the sim's must allow one logic frame's change now that rendering
+outpaces the logic. Also: `cargo xtask build` re-stages dist and drops `ConquerOps_BO2.big` from a
+dist it did not put there; copy (`cp -c`) the archive back or the launcher reconverts.
