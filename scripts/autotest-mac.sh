@@ -150,7 +150,9 @@ if [[ $mode == detail ]]; then
     rm -f "$keep"
     [[ -f "$options" ]] && cp -p "$options" "$keep"
     put_back() { if [[ -f "$keep" ]]; then cp -p "$keep" "$options"; else rm -f "$options"; fi; }
-    trap 'finish; put_back' EXIT
+    # finish's capture loop returns non-zero when there are no captures; under set -e that would
+    # turn a passing run's exit status into 1.
+    trap 'finish || true; put_back' EXIT
     ok=0
     check() { # name, file, pattern
         if grep -qE "$3" "$2"; then printf '%-40s PASS\n' "$1"; else printf '%-40s FAIL\n' "$1"; ok=1; fi
