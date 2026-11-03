@@ -118,9 +118,28 @@ pub mod torso {
         "reload", "knife_melee", "knife_melee_charge", "fireweapon", "prime_grenade", "fireweapon", "raiseweapon", "dropweapon", "firstraiseweapon", "flinch", "jump", "land",
     ];
 
+    /// The death: the script's `DEATH` section (whole body), played through and held on the corpse.
+    /// Not a per-weapon action: its clip comes from [`death_context`].
+    pub const DEATH: u8 = 12;
+
     /// Whether an action's clip moves the whole body (the legs too).
     pub const fn whole_body(action: u8) -> bool {
-        matches!(action, JUMP | LAND)
+        matches!(action, JUMP | LAND | DEATH)
+    }
+
+    /// The `DEATH` section's damage types (`dmgType`) and directions (`dmgDirection`) the mod asks
+    /// in; `none` matches no `dmgType` entry (a death the script keys on stance and gait only).
+    pub const DMG_TYPES: [&str; 6] = ["none", "explosive", "normal_shotgun", "headshot", "meleebash", "melee"];
+    pub const DMG_DIRECTIONS: [&str; 4] = ["front", "back", "left", "right"];
+    pub const DEATH_CONTEXTS: u16 = 3 * 2 * 6 * 4;
+    /// A death's context: stance (0 stand, 1 crouch, 2 prone), moving, a [`DMG_TYPES`] index and a
+    /// [`DMG_DIRECTIONS`] index.
+    pub const fn death_context(stance: u8, moving: bool, dmg_type: u8, dmg_dir: u8) -> u16 {
+        (if stance > 2 { 2 } else { stance }) as u16 * 48 + (moving as u16) * 24 + (dmg_type % 6) as u16 * 4 + (dmg_dir % 4) as u16
+    }
+    /// A death context's parts.
+    pub const fn split_death(c: u16) -> (u8, bool, u8, u8) {
+        ((c / 48) as u8, (c / 24) % 2 == 1, ((c / 4) % 6) as u8, (c % 4) as u8)
     }
 
     /// The contexts an action is asked in: stance (0 stand, 1 crouch, 2 prone) × moving × aimed.

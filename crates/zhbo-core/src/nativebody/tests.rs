@@ -421,25 +421,28 @@ fn a_torso_clip_moves_the_upper_body_over_the_legs() {
     let mut out = Posed::default();
     let close = |a: [f32; 4], b: [f32; 4]| (0..4).all(|k| (a[k] - b[k]).abs() < 1e-4) || (0..4).all(|k| (a[k] + b[k]).abs() < 1e-4);
     // Mid-clip: the spine is the torso's, the hip the legs'.
-    l.pose(&req, Some(&legs), Some((&torso, 0.5)), &mut out);
+    l.pose(&req, Some(&legs), Some((&torso, 0.5, false)), &mut out);
     assert!(close(out.local[spine].0, turn), "the torso turns the spine: {:?}", out.local[spine].0);
     assert!(close(out.local[hip_bone].0, hip), "the legs keep walking: {:?}", out.local[hip_bone].0);
     // At its very start and end it is the movement clip's (it fades in and out).
-    l.pose(&req, Some(&legs), Some((&torso, 0.0)), &mut out);
+    l.pose(&req, Some(&legs), Some((&torso, 0.0, false)), &mut out);
     assert!(close(out.local[spine].0, QUAT_IDENTITY), "no torso at its first frame");
-    l.pose(&req, Some(&legs), Some((&torso, 1.0)), &mut out);
+    l.pose(&req, Some(&legs), Some((&torso, 1.0, false)), &mut out);
     assert!(close(out.local[spine].0, QUAT_IDENTITY), "nor at its end");
     assert_eq!(torso_weight(TORSO_BLEND * 0.5, 1.0), 0.5);
+    // A death is held at its end (the corpse), long past the clip.
+    l.pose(&req, Some(&legs), Some((&torso, 5.0, true)), &mut out);
+    assert!(close(out.local[spine].0, turn), "the corpse keeps the last frame");
     // A pin or a throw: the gun is not drawn (BO2's one entity weapon is the grenade then); the body
     // still is.
-    l.pose(&req, Some(&legs), Some((&torso, 0.5)), &mut out);
+    l.pose(&req, Some(&legs), Some((&torso, 0.5, false)), &mut out);
     l.hide_weapon(&mut out);
     let gun_bone = l.skeleton.bone("tag_weapon").unwrap();
     assert_eq!(out.palette[gun_bone], [0.0; 16], "the gun collapses");
     assert_ne!(out.palette[spine], [0.0; 16], "the body draws");
     // Weapon-only mode is rigid: no torso.
     let rigid = Request { mode: Mode::Weapon, ..req };
-    l.pose(&rigid, None, Some((&torso, 0.5)), &mut out);
+    l.pose(&rigid, None, Some((&torso, 0.5, false)), &mut out);
     assert!(out.local.iter().all(|x| x.0 != turn));
 }
 

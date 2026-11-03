@@ -13,6 +13,8 @@
 //! * `torso <set> <action> <context> <clip id>`
 //! * `torso_clip <clip id> <seconds> <name>`
 //! * `torso_note <clip id> <seconds> <event>`
+//! * `death <death context> <clip id>...`: the `DEATH` section's alternatives
+//!   ([`death_context`]: stance, gait, BO2's `dmgType` and `dmgDirection`)
 //!
 //! The clips themselves are in the faction body manifest under the same ids (the native body
 //! layers them, `nativebody`). Presentation only: the client picks and times the action from the
@@ -21,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-pub use zhbo_native::thirdperson::torso::{context, whole_body, ACTIONS, CONTEXTS, DROP, FIRE, FIRST_RAISE, FLINCH, JUMP, LAND, MELEE, MELEE_CHARGE, PRIME, RAISE, RELOAD, THROW};
+pub use zhbo_native::thirdperson::torso::{context, death_context, whole_body, ACTIONS, DEATH, DEATH_CONTEXTS, DMG_DIRECTIONS, DMG_TYPES, CONTEXTS, DROP, FIRE, FIRST_RAISE, FLINCH, JUMP, LAND, MELEE, MELEE_CHARGE, PRIME, RAISE, RELOAD, THROW};
 
 /// A torso clip: its length and its sound notetracks (seconds in, event).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -36,6 +38,7 @@ pub struct Clip {
 pub struct Table {
     picks: HashMap<(u16, u8, u8), u16>,
     clips: HashMap<u16, Clip>,
+    deaths: HashMap<u16, Vec<u16>>,
 }
 
 impl Table {
@@ -46,6 +49,11 @@ impl Table {
 
     pub fn clip(&self, id: u16) -> Option<&Clip> {
         self.clips.get(&id)
+    }
+
+    /// The `DEATH` section's alternatives in death context `context` ([`death_context`]).
+    pub fn death(&self, context: u16) -> &[u16] {
+        self.deaths.get(&context).map_or(&[], Vec::as_slice)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -71,6 +79,11 @@ pub fn parse(text: &str) -> Table {
                     let c = t.clips.entry(id).or_default();
                     c.length = length;
                     c.name = name;
+                }
+            }
+            Some("death") => {
+                if let Some(c) = it.next().and_then(|c| c.parse::<u16>().ok()) {
+                    t.deaths.insert(c, it.filter_map(|x| x.parse().ok()).collect());
                 }
             }
             Some("torso_note") => {

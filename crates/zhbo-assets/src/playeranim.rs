@@ -50,6 +50,9 @@ enum Define {
 pub struct Script {
     moves: Vec<(String, Vec<Entry>)>,
     events: Vec<(String, Vec<EventEntry>)>,
+    /// The `DEATH` section: each entry's conditions and its alternatives (`both` lines; the
+    /// engine picks one).
+    deaths: Vec<(Conditions, Vec<String>)>,
     defines: HashMap<(String, String), Define>,
 }
 
@@ -69,12 +72,22 @@ impl Script {
             if line.is_empty() {
                 continue;
             }
-            if depth == 0 && matches!(line, "DEFINES" | "ANIMATIONS" | "EVENTS") {
+            if depth == 0 && matches!(line, "DEFINES" | "ANIMATIONS" | "EVENTS" | "DEATH") {
                 section = match line {
                     "DEFINES" => "defines",
                     "ANIMATIONS" => "anims",
+                    "DEATH" => "death",
                     _ => "events",
                 };
+                continue;
+            }
+            // The `DEATH` block is one braced section among the events: a name at the top level
+            // after it is an event again.
+            if section == "death" && depth == 0 && line != "{" {
+                section = "events";
+            }
+            if section == "death" {
+                s.death_line(line, &mut depth, &mut header);
                 continue;
             }
             if section == "defines" {
@@ -155,6 +168,37 @@ impl Script {
                 _ => {}
             },
         }
+    }
+
+    /// One line of the `DEATH` section: `{ <conditions> { both <clip> ... } ... }`.
+    fn death_line(&mut self, line: &str, depth: &mut usize, header: &mut Option<String>) {
+        match line {
+            "{" => {
+                *depth += 1;
+                if *depth == 2 {
+                    let c = header.take().map(|h| conditions(&h)).unwrap_or_default();
+                    self.deaths.push((c, Vec::new()));
+                }
+            }
+            "}" => *depth = depth.saturating_sub(1),
+            _ => match *depth {
+                1 => *header = Some(line.to_string()),
+                2 => {
+                    let mut w = line.split_whitespace();
+                    if let (Some("both"), Some(anim), Some(last)) = (w.next(), w.next(), self.deaths.last_mut()) {
+                        last.1.push(anim.to_string());
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    /// The death clips the `DEATH` section offers in context `ctx` (`stance`, `movestatus`,
+    /// `direction`, `dmgtype`, `dmgdirection`): the first entry whose every condition holds, its
+    /// alternatives (empty when none holds).
+    pub fn death(&self, ctx: Context) -> &[String] {
+        self.deaths.iter().find(|(c, _)| c.iter().all(|(k, vals)| self.holds(k, vals, ctx))).map_or(&[], |(_, a)| a.as_slice())
     }
 
     fn define(&mut self, line: &str) {
@@ -308,6 +352,15 @@ fireweapon
         let dw = [("weaponclass", "pistol"), ("weapon_position", "ads"), ("movestatus", "run"), ("playeranimtype", "dualwield")];
         assert_eq!(s.event("fireweapon", &dw), None, "the first match plays nothing");
         assert_eq!(s.event("reload", &rifle), None, "no such event");
+        let death = Script::parse("DEATH\n{\n\tstance prone\n\t{\n\t\tboth pb_prone_death\n\t}\n\tdmgType headshot, dmgDirection front\n\t{\n\t\tboth pb_death_headshot_front\n\t\tboth pb_death_headshot_front_v2\n\t}\n\tdefault\n\t{\n\t\tboth pb_stand_death\n\t}\n}\n");
+        let ctx = |stance, ty, dir| [("stance", stance), ("dmgtype", ty), ("dmgdirection", dir), ("movestatus", "stationary"), ("direction", "none")];
+        assert_eq!(death.death(&ctx("prone", "headshot", "front")), ["pb_prone_death"], "the first entry that holds");
+        assert_eq!(death.death(&ctx("stand", "headshot", "front")), ["pb_death_headshot_front", "pb_death_headshot_front_v2"], "its alternatives");
+        assert_eq!(death.death(&ctx("stand", "melee", "back")), ["pb_stand_death"]);
+        // An event after the block still parses.
+        let after = Script::parse("EVENTS\nreload\n{\n\tdefault\n\t{\n\t\ttorso pt_a\n\t}\n}\nDEATH\n{\n\tdefault\n\t{\n\t\tboth pb_d\n\t}\n}\nprime_grenade\n{\n\tdefault\n\t{\n\t\ttorso pt_prime\n\t}\n}\n");
+        assert_eq!(after.event("prime_grenade", &[]), Some("pt_prime"));
+        assert_eq!(after.event("reload", &[]), Some("pt_a"));
         assert!(s.pick("idle", &rifle).is_some(), "the movement types still parse after the events");
     }
 

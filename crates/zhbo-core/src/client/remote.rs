@@ -39,15 +39,70 @@ struct Seat {
     /// Overhead: each gun slot's rounds (magazine and spare) last frame: Zero Hour fires his guns
     /// then (`Arsenal::rts_shot` spends them), and a round gone is a shot's recoil.
     rts_rounds: [Option<u32>; 2],
+    /// How his General was killed (`EventKind::KilledBy`), for the death that follows.
+    killed: Option<(crate::damage::MeansOfDeath, Option<Vec3>)>,
+    /// Last frame: his feet, yaw, stance, whether he moved, his weapon and its body set.
+    pos: Vec3,
+    yaw: f32,
+    stance: u8,
+    moving: bool,
+    vm: i32,
+    body_anims: u8,
     /// How many chatter moments he has had (`sounds::chatter_roll`'s draw: the same on every
     /// machine, which all see the same events).
     chatter: u32,
 }
 
+/// A dead General's body: BO2's death clip played through and held (the corpse).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Corpse {
+    pub general: u32,
+    /// The weapon he held (drawn hidden: BO2 drops it) and his body set's standing clip id.
+    pub vm: i32,
+    pub state: u16,
+    pub clip: u16,
+    pub t: f32,
+}
+
+/// How long a corpse is drawn: past Zero Hour's General's own `DestructionDelay` (8 s), after
+/// which the bridge finds no object to draw it on.
+pub const CORPSE_TIME: f32 = 10.0;
+
 /// Every seat's third-person presentation ([`self`]).
 #[derive(Clone, Debug, Default)]
 pub struct Remote {
     seats: [Seat; MAX_PLAYERS],
+    corpses: Vec<Corpse>,
+}
+
+/// BO2's `dmgType` of a means of death (the `DEATH` section's keys; `torso::DMG_TYPES` index): a
+/// blast `explosive`, a head shot `headshot`, the knife `melee`; anything else none. A shotgun's
+/// pellet and the shield's bash (`normal_shotgun`, `meleebash`) key on the weapon, which the
+/// recorded hit does not name.
+pub fn dmg_type(how: crate::damage::MeansOfDeath) -> u8 {
+    use crate::damage::MeansOfDeath as M;
+    match how {
+        M::GrenadeSplash | M::ProjectileSplash | M::Explosive | M::Grenade | M::Projectile => 1,
+        M::HeadShot => 3,
+        M::Melee | M::Bayonet => 5,
+        _ => 0,
+    }
+}
+
+/// BO2's `dmgDirection` of a hit from `from` on a General at `pos` facing `yaw`: where the hit came
+/// from in his frame (`torso::DMG_DIRECTIONS`: front, back, left, right).
+pub fn dmg_direction(pos: Vec3, yaw: f32, from: Option<Vec3>) -> u8 {
+    let Some(from) = from else { return 0 };
+    let to = from - pos;
+    let (fwd, left) = ((yaw.cos(), yaw.sin()), (-yaw.sin(), yaw.cos()));
+    let (f, l) = (to.x * fwd.0 + to.y * fwd.1, to.x * left.0 + to.y * left.1);
+    if f.abs() >= l.abs() {
+        if f >= 0.0 { 0 } else { 1 }
+    } else if l >= 0.0 {
+        2
+    } else {
+        3
+    }
 }
 
 /// The torso context of a General now: his stance, whether he is moving, whether he aims.
@@ -66,9 +121,15 @@ impl Remote {
         self.seats.get(seat).and_then(|s| s.torso)
     }
 
-    /// Every General in a torso action, for the body pass.
+    /// Every General in a torso action, and every corpse in its death, for the body pass.
     pub fn torsos(&self) -> impl Iterator<Item = crate::nativebody::ffi::TorsoAction> + '_ {
-        self.seats.iter().filter_map(|s| s.torso.map(|t| crate::nativebody::ffi::TorsoAction { general: s.general, action: t.action, clip: t.clip, t: t.t, lethal: t.lethal }))
+        let live = self.seats.iter().filter_map(|s| s.torso.map(|t| crate::nativebody::ffi::TorsoAction { general: s.general, action: t.action, clip: t.clip, t: t.t, lethal: t.lethal }));
+        live.chain(self.corpses.iter().map(|c| crate::nativebody::ffi::TorsoAction { general: c.general, action: torso::DEATH, clip: c.clip, t: c.t, lethal: false }))
+    }
+
+    /// The corpses, for the body pass's poses (`zhbo_client_native_poses`).
+    pub fn corpses(&self) -> &[Corpse] {
+        &self.corpses
     }
 
     fn start(&mut self, seat: usize, def: &WeaponDef, action: u8, context: u8) {
@@ -131,14 +192,32 @@ impl Remote {
                     self.chatter(seat, kind, p, cues);
                 }
             }
+            EventKind::KilledBy { how, from } => {
+                if let Some(s) = self.seats.get_mut(seat) {
+                    s.killed = Some((how, from));
+                }
+            }
             EventKind::GeneralDied { general } => {
                 // Where he was last seen: the record is gone with him.
                 if let Some(s) = self.seats.get(seat).filter(|s| s.general != 0) {
                     let general = if general != 0 { general } else { s.general };
                     cues.play_at(sounds::voice_event(sounds::Voice::Death, crate::nativebody::ffi::faction_of(general), seat), s.eye);
+                    // His body falls as the script's `DEATH` says for his stance, gait and how he
+                    // was hit; the engine picks one of its alternatives (here by his General's id,
+                    // the same on every machine).
+                    let (how, from) = s.killed.unwrap_or_default();
+                    let ctx = torso::death_context(s.stance, s.moving, dmg_type(how), dmg_direction(s.pos, s.yaw, from));
+                    let alts = torso::get().death(ctx);
+                    if !alts.is_empty() {
+                        let clip = alts[general as usize % alts.len()];
+                        let state = zhbo_native::thirdperson::state::id(s.body_anims, zhbo_native::thirdperson::state::STAND_IDLE);
+                        self.corpses.retain(|c| c.general != general);
+                        self.corpses.push(Corpse { general, vm: s.vm, state, clip, t: 0.0 });
+                    }
                 }
                 if let Some(s) = self.seats.get_mut(seat) {
                     s.torso = None;
+                    s.killed = None;
                 }
             }
             _ => {}
@@ -181,6 +260,11 @@ impl Remote {
     /// third-person sounds, and where his eye is is remembered.
     pub fn update(&mut self, players: &[Option<PlayerSim>], presented: i32, dt: f32, cues: &mut Cues) {
         let table = torso::get();
+        // The corpses fall and lie until Zero Hour removes the body.
+        for c in &mut self.corpses {
+            c.t += dt;
+        }
+        self.corpses.retain(|c| c.t < CORPSE_TIME);
         for (seat, s) in self.seats.iter_mut().enumerate() {
             let Some(p) = players.get(seat).and_then(|p| p.as_ref()) else {
                 s.torso = None;
@@ -191,6 +275,12 @@ impl Remote {
                 *s = Seat { general: p.general, grounded: p.body.on_ground, chatter: s.chatter, ..Default::default() };
             }
             s.eye = p.body.eye();
+            s.pos = p.body.pos;
+            s.yaw = p.yaw;
+            s.stance = p.stance_index() as u8;
+            s.moving = p.body.horizontal_speed() > 0.2;
+            s.vm = p.arsenal.current().def.viewmodel; // content: presentation (the corpse's draw)
+            s.body_anims = p.arsenal.current().def.body_anims;
             let heard = !(seat as i32 == presented && p.is_first_person());
             // The weapon change: the putaway's and the raise's torso and third-person sounds.
             let ctx = context_of(p);
@@ -520,5 +610,43 @@ mod tests {
         players[1].as_mut().unwrap().arsenal.rts_shot(0);
         r.update(&players, 0, 1.0 / 30.0, &mut c);
         assert_eq!(r.torso(1).map(|t| (t.action, t.clip)), Some((torso::FIRE, 4103)));
+    }
+
+    /// His death: the script's `DEATH` clip for how he was hit and from where, played on his body
+    /// through to the corpse (held, the gun dropped), until Zero Hour removes the body.
+    #[test]
+    fn a_killed_general_falls_by_the_scripts_death() {
+        let _g = crate::ffi::state_lock();
+        // Headshot (3) from the front (0), standing still: context 12; the default: context 0.
+        crate::torso::install("death 12 8000 8001\ndeath 0 8002\ntorso_clip 8000 1.5 pb_death_headshot_front\ntorso_clip 8001 1.5 pb_death_headshot_front_v2\ntorso_clip 8002 2.0 pb_stand_death_neckdeath\n");
+        assert_eq!(torso::death_context(0, false, 3, 0), 12);
+        let mut p = soldier(2);
+        p.yaw = 0.0;
+        let players = vec![None, Some(p.clone())];
+        let mut r = Remote::default();
+        let mut c = Cues::default();
+        r.update(&players, 0, 0.0, &mut c);
+        // Shot in the head by a General in front of him (+X).
+        r.event(1, &EventKind::KilledBy { how: crate::damage::MeansOfDeath::HeadShot, from: Some(p.body.pos + Vec3::new(100.0, 0.0, 0.0)) }, Some(&p), true, &mut c);
+        r.event(1, &EventKind::GeneralDied { general: 2 }, None, true, &mut c);
+        let corpse = r.corpses()[0];
+        assert!(corpse.clip == 8000 || corpse.clip == 8001, "{corpse:?}");
+        assert!(r.torsos().any(|a| a.general == 2 && a.action == torso::DEATH));
+        // A death to anything else: the stance's default.
+        let mut r2 = Remote::default();
+        r2.update(&players, 0, 0.0, &mut c);
+        r2.event(1, &EventKind::GeneralDied { general: 2 }, None, true, &mut c);
+        assert_eq!(r2.corpses()[0].clip, 8002);
+        // The corpse lies until Zero Hour's body is gone.
+        let none: Vec<Option<PlayerSim>> = vec![None, None];
+        for _ in 0..(CORPSE_TIME * 10.0) as usize + 2 {
+            r.update(&none, 0, 0.1, &mut c);
+        }
+        assert!(r.corpses().is_empty());
+        // Where the hit came from, in his frame.
+        let at = Vec3::new(0.0, 0.0, 0.0);
+        assert_eq!(dmg_direction(at, 0.0, Some(Vec3::new(-50.0, 0.0, 0.0))), 1, "behind");
+        assert_eq!(dmg_direction(at, 0.0, Some(Vec3::new(0.0, 50.0, 0.0))), 2, "left");
+        assert_eq!(dmg_direction(at, std::f32::consts::FRAC_PI_2, Some(Vec3::new(0.0, 50.0, 0.0))), 0, "turned to face it");
     }
 }

@@ -126,6 +126,7 @@ impl Client {
             | EventKind::Melee
             | EventKind::MeleeHit
             | EventKind::Assist { .. }
+            | EventKind::KilledBy { .. }
             | EventKind::OffhandReady { .. }
             | EventKind::CantPlant { .. }
             | EventKind::Detonated
@@ -329,6 +330,8 @@ impl Client {
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
+                // His death animation is the third person's (`remote`).
+                EventKind::KilledBy { .. } => {}
                 EventKind::ClassChosen { .. } => {
                     // No cue here: BO2's class change applies silently on spawn. The menu already
                     // played the equip when the pick was made (and the command bar does too).

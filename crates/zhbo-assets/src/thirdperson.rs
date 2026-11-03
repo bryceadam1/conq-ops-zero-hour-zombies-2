@@ -230,6 +230,28 @@ pub(crate) struct TorsoSets {
     pub clips: Vec<String>,
     /// Per set, per `action * CONTEXTS + context`, the clip index.
     pub sets: Vec<Vec<Option<u16>>>,
+    /// Per death context (`torso::death_context`), the `DEATH` section's alternatives.
+    pub deaths: Vec<Vec<u16>>,
+}
+
+/// The `DEATH` section's alternatives for each death context (`torso::DEATH_CONTEXTS`), the
+/// zone's clips only.
+fn death_picks(script: &crate::playeranim::Script, names: &[String]) -> Vec<Vec<String>> {
+    use zhbo_native::thirdperson::torso;
+    let have = |c: &str| names.iter().find(|n| n.eq_ignore_ascii_case(c)).map(|n| n.to_ascii_lowercase());
+    (0..torso::DEATH_CONTEXTS)
+        .map(|c| {
+            let (stance, moving, ty, dir) = torso::split_death(c);
+            let ctx = [
+                ("stance", ["stand", "crouch", "prone"][stance as usize]),
+                ("movestatus", if moving { "run" } else { "stationary" }),
+                ("direction", if moving { "forward" } else { "none" }),
+                ("dmgtype", torso::DMG_TYPES[ty as usize]),
+                ("dmgdirection", torso::DMG_DIRECTIONS[dir as usize]),
+            ];
+            script.death(&ctx).iter().filter_map(|n| have(n)).collect()
+        })
+        .collect()
 }
 
 /// What the torso of a soldier holding a weapon with key `k` plays for each action and context
@@ -267,7 +289,7 @@ fn torso_picks(script: &crate::playeranim::Script, names: &[String], k: &Key, sh
 /// Without the script there are no torso clips and every def keeps set 0 (empty).
 pub(crate) fn assign_torso_sets(common: &Zone, bo2: &[zhbo_formats::weapon::Weapon], defs: &mut [zhbo_core::weapons::WeaponDef]) -> TorsoSets {
     let Some(script) = zhbo_formats::havok_lua::rawfile(common, crate::playeranim::PATH).map(|b| crate::playeranim::Script::parse(&String::from_utf8_lossy(&b))) else {
-        return TorsoSets { clips: Vec::new(), sets: vec![Vec::new()] };
+        return TorsoSets { clips: Vec::new(), sets: vec![Vec::new()], deaths: Vec::new() };
     };
     let types = anim_types(common);
     let names = anim_names(common);
@@ -275,7 +297,8 @@ pub(crate) fn assign_torso_sets(common: &Zone, bo2: &[zhbo_formats::weapon::Weap
         .iter()
         .map(|d| bo2.iter().find(|w| w.name == d.id).map(|w| torso_picks(&script, &names, &Key::of(w, &types), w.weap_type == zhbo_formats::weapon::kind::RIOTSHIELD)))
         .collect();
-    let mut clips: Vec<String> = picks.iter().flatten().flatten().flatten().cloned().collect();
+    let death_names = death_picks(&script, &names);
+    let mut clips: Vec<String> = picks.iter().flatten().flatten().flatten().cloned().chain(death_names.iter().flatten().cloned()).collect();
     clips.sort();
     clips.dedup();
     let index = |n: &Option<String>| n.as_ref().and_then(|n| clips.binary_search(n).ok()).map(|i| i as u16);
@@ -292,7 +315,8 @@ pub(crate) fn assign_torso_sets(common: &Zone, bo2: &[zhbo_formats::weapon::Weap
             }
         };
     }
-    TorsoSets { clips, sets }
+    let deaths = death_names.iter().map(|alts| alts.iter().filter_map(|n| clips.binary_search(n).ok()).map(|i| i as u16).collect()).collect();
+    TorsoSets { clips, sets, deaths }
 }
 
 /// The torso table the client reads (`zhbo_core::torso`, rows in `names::SOUND_LAYERS_PATH`):
@@ -301,7 +325,7 @@ pub(crate) fn assign_torso_sets(common: &Zone, bo2: &[zhbo_formats::weapon::Weap
 /// body manifest, and the note events to convert.
 pub(crate) fn torso_table(common: &Zone, t: &TorsoSets) -> (String, Vec<Clip>, Vec<String>) {
     use zhbo_native::thirdperson::torso;
-    let mut rows = String::from("; Third-person torso actions (zhbo_core::torso): torso <set> <action> <context> <clip id> | torso_clip <clip id> <seconds> <name> | torso_note <clip id> <seconds> <event>\n");
+    let mut rows = String::from("; Third-person torso actions (zhbo_core::torso): torso <set> <action> <context> <clip id> | torso_clip <clip id> <seconds> <name> | torso_note <clip id> <seconds> <event> | death <death context> <clip id>...\n");
     for (set, picks) in t.sets.iter().enumerate() {
         for (i, clip) in picks.iter().enumerate() {
             if let Some(c) = clip {
@@ -309,6 +333,9 @@ pub(crate) fn torso_table(common: &Zone, t: &TorsoSets) -> (String, Vec<Clip>, V
                 rows.push_str(&format!("torso {set} {action} {context} {}\n", torso::BASE + c));
             }
         }
+    }
+    for (c, alts) in t.deaths.iter().enumerate().filter(|(_, a)| !a.is_empty()) {
+        rows.push_str(&format!("death {c}{}\n", alts.iter().map(|i| format!(" {}", torso::BASE + i)).collect::<String>()));
     }
     let mut out = Vec::new();
     let mut aliases = Vec::new();
@@ -603,11 +630,25 @@ mod tests {
         let whole: Vec<u16> = (0..sets.sets.len())
             .flat_map(|set| (0..torso::CONTEXTS).flat_map(move |c| [torso::JUMP, torso::LAND].map(|a| (set, a, c))))
             .filter_map(|(set, a, c)| t.pick(set as u16, a, c))
+            .chain((0..torso::DEATH_CONTEXTS).flat_map(|c| t.death(c).to_vec()))
             .collect();
         for c in clips.iter().filter(|c| !whole.contains(&c.state)) {
             let legs: Vec<&str> = c.anim.bones.iter().map(|b| b.name.as_str()).filter(|b| ["j_hip", "j_knee", "j_ankle", "j_ball", "j_mainroot", "pelvis"].iter().any(|l| b.starts_with(l))).collect();
             assert!(legs.is_empty(), "{} tracks the legs: {legs:?}", c.anim.name);
         }
+        // The deaths (`DEATH`): a headshot from the front, a blast from behind, prone, the default.
+        let death = |stance, moving, ty: &str, dir: &str| {
+            let ty = torso::DMG_TYPES.iter().position(|x| *x == ty).unwrap() as u8;
+            let dir = torso::DMG_DIRECTIONS.iter().position(|x| *x == dir).unwrap() as u8;
+            let mut names: Vec<String> = t.death(torso::death_context(stance, moving, ty, dir)).iter().map(|&c| t.clip(c).unwrap().name.clone()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(death(0, false, "headshot", "front"), ["pb_death_headshot_front", "pb_death_headshot_front_v2"]);
+        assert_eq!(death(0, false, "explosive", "back"), ["pb_death_faceplant", "pb_death_forwardtoface"]);
+        assert_eq!(death(2, false, "headshot", "front"), ["pb_prone_death_quickdeath"], "prone comes first");
+        assert!(death(0, false, "none", "front").contains(&"pb_stand_death_neckdeath".to_string()));
+        assert!((0..torso::DEATH_CONTEXTS).all(|c| !t.death(c).is_empty()), "every context has a death");
         // The rifle reload is heard: BO2's third-person reload foley rides its notetracks.
         let reload = t.clip(t.pick(table.weapons.iter().find(|d| d.id == "an94_mp").unwrap().torso_anims, torso::RELOAD, 0).unwrap()).unwrap();
         let notes: Vec<&str> = reload.notes.iter().map(|n| n.1).collect();

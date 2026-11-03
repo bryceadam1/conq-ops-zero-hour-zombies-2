@@ -226,13 +226,15 @@ impl State {
         if let Some(a) = action {
             self.want_torso(&rig.loaded, a.clip);
         }
-        let torso = action.and_then(|a| self.torso.get(&a.clip).map(|c| (c, a.t)));
+        // A death is played through and held (the corpse); every other action fades out at its end.
+        let torso = action.and_then(|a| self.torso.get(&a.clip).map(|c| (c, a.t, a.action == zhbo_native::thirdperson::torso::DEATH)));
         rig.loaded.pose(&req, clip, torso, &mut self.posed);
         // A grenade's pin and throw: BO2 draws the offhand on `tag_inhand` as the entity's one
         // weapon (t6mp `FUN_0052a4c0` attaches only the entity's current weapon; `FUN_0052a470`
         // puts a grenade on `tag_inhand`), so the gun in hand is not drawn meanwhile.
         let in_hand = action.filter(|a| matches!(a.action, zhbo_native::thirdperson::torso::THROW | zhbo_native::thirdperson::torso::PRIME));
-        if in_hand.is_some() {
+        // A corpse has dropped his gun (BO2's `dropweaponfordeath`).
+        if in_hand.is_some() || action.is_some_and(|a| a.action == zhbo_native::thirdperson::torso::DEATH) {
             rig.loaded.hide_weapon(&mut self.posed);
         }
         rig.loaded.show_offhand(&mut self.posed, in_hand.map(|a| if a.lethal { 0 } else { 1 }));
@@ -321,7 +323,7 @@ pub fn faction_of(general: u32) -> Option<u8> {
 /// Each General's torso action this frame (`general << 32 | action << 28 | lethal << 27 | clip
 /// << 14 | milliseconds in`), published by the client (`client::remote`; the headless third-person
 /// render's `--torso` too): the body pass layers it. Presentation only.
-static TORSO: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+static TORSO: [std::sync::atomic::AtomicU64; 2 * crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; 2 * crate::sim::MAX_PLAYERS];
 
 /// One General's torso action as the body pass takes it.
 #[derive(Clone, Copy, Debug, PartialEq)]

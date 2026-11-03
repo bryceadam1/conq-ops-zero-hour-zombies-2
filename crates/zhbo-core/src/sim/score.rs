@@ -111,6 +111,8 @@ pub struct Hit {
     /// Zero Hour damage.
     pub amount: f32,
     pub kill: bool,
+    /// BO2's means of death (the presentation of the death: `EventKind::KilledBy`).
+    pub how: crate::damage::MeansOfDeath,
 }
 
 impl Score {
@@ -199,6 +201,9 @@ impl Sim {
                     self.award_assists(host, killer, h.shooter, h.victim);
                 }
                 self.score.forget(h.victim);
+                // How he died, for his death animation (presentation: the script's `DEATH`).
+                let from = host.object(h.shooter, h.shooter).map(|o| o.pos);
+                self.emit(victim_seat, EventKind::KilledBy { how: h.how, from });
             }
         }
     }
@@ -276,7 +281,7 @@ impl LogicHost for Tally<'_> {
     }
     fn damage(&self, shooter: u32, victim: u32, amount: f32, how: crate::damage::MeansOfDeath) -> bool {
         let kill = self.host.damage(shooter, victim, amount, how);
-        self.hits.borrow_mut().push(Hit { shooter, victim, amount, kill });
+        self.hits.borrow_mut().push(Hit { shooter, victim, amount, kill, how });
         kill
     }
     fn heal(&self, id: u32, amount: f32) {
@@ -339,7 +344,7 @@ mod tests {
     fn hit(sim: &mut Sim, host: &FakeHost, shooter: u32, victim: u32, bo2_damage: f32) {
         let amount = bo2_damage * crate::units::BO2_TO_ZH_DAMAGE;
         let kill = host.damage(shooter, victim, amount, crate::damage::MeansOfDeath::RifleBullet);
-        sim.score_hits(host, &[Hit { shooter, victim, amount, kill }]);
+        sim.score_hits(host, &[Hit { shooter, victim, amount, kill, how: crate::damage::MeansOfDeath::RifleBullet }]);
     }
 
     fn assists(sim: &Sim) -> Vec<(i32, u8)> {
@@ -362,6 +367,8 @@ mod tests {
         assert_eq!(assists(&sim), [(1, 3)], "seat 1's 60 is assist_75; the killer scores none");
         assert_eq!(sim.score.assists, { let mut a = [0; MAX_PLAYERS]; a[1] = 1; a });
         assert!(sim.score.attacked.iter().all(|a| a.victim != 102), "his list ends with him");
+        // His death's presentation: how he was killed and where the killer stood.
+        assert!(sim.events.iter().any(|e| e.player == 2 && matches!(e.kind, EventKind::KilledBy { how: crate::damage::MeansOfDeath::RifleBullet, from: Some(_) })));
         assert_eq!([assist_level(0.0), assist_level(25.0), assist_level(25.5), assist_level(50.0), assist_level(51.0), assist_level(500.0)], [1, 1, 2, 2, 3, 3]);
     }
 

@@ -985,7 +985,14 @@ pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::f
     if out.is_null() || cap <= 0 {
         return 0;
     }
-    let poses = with_state(|s| s.sim.native_poses((local_general != 0).then_some((local_general, local_moving != 0)), s.client.first_person_general())).unwrap_or_default();
+    let poses = with_state(|s| {
+        let mut poses = s.sim.native_poses((local_general != 0).then_some((local_general, local_moving != 0)), s.client.first_person_general());
+        // The dead Generals' bodies: their death clips through to the corpse (`client::remote`).
+        let corpses: Vec<crate::sim::NativePose> = s.client.remote.corpses().iter().filter(|c| c.vm >= 0 && !poses.iter().any(|p| p.general == c.general)).map(|c| crate::sim::NativePose { general: c.general, weapon: c.vm, stance: 0, state: c.state, time: 0.0, rate: 1.0, sidearm: false }).collect();
+        poses.extend(corpses);
+        poses
+    })
+    .unwrap_or_default();
     let n = poses.len().min(cap as usize);
     for (i, p) in poses.into_iter().take(n).enumerate() {
         *out.add(i) = crate::nativebody::ffi::ZhboNativePose { general: p.general, weapon: p.weapon, stance: p.stance, state: p.state as i32, time: p.time, rate: p.rate, sidearm: p.sidearm as i32 };

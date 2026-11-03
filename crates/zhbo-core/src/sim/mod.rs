@@ -171,6 +171,10 @@ pub enum EventKind {
     /// or 3 for `assist_25`, `assist_50`, `assist_75`, or the tactical his last hit was
     /// (`assist_concussion`, ...).
     Assist { level: u8, tactical: Option<score::Tactical> },
+    /// This player's General was killed by a seat's damage: BO2's means of death and where the
+    /// killer stood (presentation: the death animation's `dmgType` and `dmgDirection`). A death to
+    /// anything else (Zero Hour's own weapons) has none.
+    KilledBy { how: crate::damage::MeansOfDeath, from: Option<Vec3> },
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },

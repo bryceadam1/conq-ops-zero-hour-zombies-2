@@ -416,7 +416,8 @@ impl Loaded {
 
     /// Pose this frame and compute the palette: the movement clip, and over it `torso` (a torso
     /// clip and seconds into it) on the bones it tracks.
-    pub fn pose(&self, req: &Request, anim: Option<&AnimClip>, torso: Option<(&AnimClip, f32)>, out: &mut Posed) {
+    /// A held action (the death) fades in and then keeps its last frame.
+    pub fn pose(&self, req: &Request, anim: Option<&AnimClip>, torso: Option<(&AnimClip, f32, bool)>, out: &mut Posed) {
         match (req.mode, anim) {
             (Mode::Body, Some(a)) => {
                 let frame = a.frame_at(req.time * req.rate.max(0.0), true);
@@ -427,10 +428,11 @@ impl Loaded {
                 out.local.extend(self.skeleton.bind_pose());
             }
         }
-        if let (Mode::Body, Some((clip, t))) = (req.mode, torso) {
+        if let (Mode::Body, Some((clip, t, hold))) = (req.mode, torso) {
             out.under.clone_from(&out.local);
             self.skeleton.sample_over(clip, clip.frame_at(t, false), &mut out.local);
-            zhbo_native::pose::blend(&out.under, &mut out.local, torso_weight(t, clip.duration()));
+            let w = if hold { (t / TORSO_BLEND).min(1.0) } else { torso_weight(t, clip.duration()) };
+            zhbo_native::pose::blend(&out.under, &mut out.local, w);
         }
         self.skeleton.model_space(&out.local, &mut out.model);
         out.root = self.placement(req, &out.model);
