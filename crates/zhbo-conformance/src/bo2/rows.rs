@@ -67,6 +67,30 @@ impl<'a> Expected<'a> {
         Expected { install, variants: install.variants(), default_att: atts.get("defaultattachment").copied(), materials: Default::default() }
     }
 
+    /// The third-person parts as the DObj links them (`FUN_00783290`): each part's tag is looked up
+    /// in the model it hangs from (the world model, `FUN_0052a4c0` passes its index) and the models
+    /// already linked under it; a tag none of them has prints "Part '%s' not found in model '%s'"
+    /// and leaves the part with no parent bone (0xff). The SMR's launcher mode draws
+    /// `t6_wpn_ar_sa58_view`, whose root is `j_gun`, so every part it names on `tag_weapon` hangs
+    /// from no bone.
+    fn linked_world_parts(&self, world_model: Option<String>, parts: Vec<Part>) -> Vec<Part> {
+        let Some(world) = world_model.and_then(|m| self.install.model(&m)) else { return parts };
+        let mut bones: Vec<String> = world.bones.iter().map(|b| b.name.clone()).collect();
+        parts
+            .into_iter()
+            .map(|mut p| {
+                if bones.contains(&p.tag) {
+                    if let Some(m) = self.install.model(&p.model) {
+                        bones.extend(m.bones.iter().map(|b| b.name.clone()));
+                    }
+                } else {
+                    p.tag = cols::NO_PARENT_TAG.to_string();
+                }
+                p
+            })
+            .collect()
+    }
+
     /// A model's LOD0 surface materials, `;`-joined (cached by model).
     fn model_materials(&self, model: &str) -> String {
         if let Some(m) = self.materials.borrow().get(model) {
@@ -470,7 +494,7 @@ impl<'a> Expected<'a> {
             part_cols(&mut b, "world_part", &[]);
         } else {
             b.opt_text("world_model", d.world_model());
-            part_cols(&mut b, "world_part", &resolve::world_parts(pw));
+            part_cols(&mut b, "world_part", &self.linked_world_parts(d.world_model(), resolve::world_parts(pw)));
         }
 
         // Animations.

@@ -21,7 +21,7 @@ use zhbo_native::viewmodel::{Viewmodel, INSTANCE_LEFT};
 
 /// A part with no tag rides the composed skeleton's origin (`Skeleton::compose`: `IDENTITY`) — in
 /// third person the body's, not the gun's `j_gun`.
-const ORIGIN: &str = "(origin)";
+const ORIGIN: &str = zhbo_conformance::weapons::NO_PARENT_TAG;
 
 /// The archive's MappedImage INI (the HUD's sprite collection).
 const MAPPED_IMAGES: &str = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini";

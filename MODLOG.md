@@ -11786,3 +11786,21 @@ gap clusters 12 → 5 (cac unchanged). Closed this round: `world_model` `gl_sa58
 camos. The real-install viewmodel sweep (`every_viewmodel_is_held_in_front_of_the_eye`,
 `equipment_subbone_tracks_are_bo2s_authored_parking`) passes again after the ADS revert.
 
+### Conformance gaps, round 3: the launcher mode's part tags (same branch)
+
+The 67 `world_part_tags` rows are the expected side's. BO2 links a DObj's models in
+`FUN_00783290` (reached from `FUN_006c9980` → `FUN_00784130` → `FUN_00784090`): a part's tag is looked
+up in the model whose index the entry names (`FUN_0052a4c0` passes the world model's to
+`FUN_008ace30`) and the models linked under it (`FUN_00791c20`); when none has it the engine prints
+"WARNING: Part '%s' not found in model '%s' or any of its descendants" and the part keeps parent
+0xff, no bone. `t6_wpn_ar_sa58_view` (the launcher mode's model) has no `tag_weapon`, so every part
+hangs from no bone. The expected side now links its parts that way (`Expected::linked_world_parts`,
+`weapons::NO_PARENT_TAG`), which is the mod's `(origin)`. BO2 hangs such a part in the DObj's root
+frame; the mod hangs it from the weapon's root, so the two place it differently, but neither mounts
+it on a bone.
+
+**Measured, round 3** (vs integration8): weapons 1,979 → 22 cells, 11 → 2 clusters (the offhands'
+ADS slots, 20; Sensor/Trophy, 2), no new cell; gap clusters 12 → 4 (with the cac MTX camos). The
+expected side moved `fire_start_sound` 7, `world_part_tags` 67, the knife's two flashes and the
+shield's `world_model`, each with its citation above.
+

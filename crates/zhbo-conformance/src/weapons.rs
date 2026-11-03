@@ -31,6 +31,8 @@ pub const ANIM_SLOTS: [&str; 0x58] = [
 ];
 
 /// `weapType_t`.
+/// A part hung from no bone: the column value for a tag the model it names does not have.
+pub const NO_PARENT_TAG: &str = "(origin)";
 pub const WEAP_TYPE: &[&str] = &["bullet", "grenade", "projectile", "binoculars", "gas", "bomb", "mine", "melee", "riotshield"];
 /// `weapClass_t`.
 pub const WEAP_CLASS: &[&str] = &[
@@ -288,7 +290,7 @@ pub fn schema() -> Schema {
         .col("view_part_materials", "materials", Kind::List, "each hip part's LOD0 surface materials, `;`-joined per part").asset()
         .col("world_model", "worldparts", Kind::Text, "the third-person model: worldModel[0], a riot shield's the carried model the engine attaches (FUN_0052a4c0, FUN_00967450)").asset()
         .col("world_part_models", "worldparts", Kind::List, "third person: base attachWorldModel slots then each attachment's resolved unique (FUN_008ace30)").asset()
-        .col("world_part_tags", "worldparts", Kind::List, "each world part's tag")
+        .col("world_part_tags", "worldparts", Kind::List, "each world part's tag; (origin) where the model it hangs from lacks it (FUN_00783290 leaves the part unparented)")
         .col("world_part_offsets", "worldparts", Kind::Floats(INCH_EPS), "each world part's offset, flattened, inches")
         .col("world_part_rotations", "worldparts", Kind::Floats(QUAT_EPS), "each world part's rotation as a unit quaternion x,y,z,w (w >= 0), flattened");
 
