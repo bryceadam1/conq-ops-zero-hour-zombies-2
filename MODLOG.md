@@ -11737,3 +11737,7 @@ material under two names packed it twice. Named by material, the FHJ's `menu_mp_
 both its HUD icon and its action-slot icon: the wanted sprites now merge by name at the largest
 size (`hud::merge_wanted`) instead of packing a duplicate MappedImage.
 
+
+**In game** (`cargo xtask build --dist target/zhbo-dist`, a fresh `ConquerOps_BO2.big`): default
+16/16, `--rts` 16/16, `--smoke` 7/7, `--mp` 25/25 (state hash agreed, no CRC mismatch). The
+offhand counters (frag, concussion) and the RTS kit bar draw the material-named icons.
