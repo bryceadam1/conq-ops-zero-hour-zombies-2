@@ -1083,6 +1083,12 @@ impl Sim {
             .collect()
     }
 
+    /// Each General's lethal and tactical as converted world weapons (`WeaponDef::viewmodel`, -1
+    /// for none): the third-person body holds the one primed or thrown (`nativebody::OFFHAND_TAG`).
+    pub fn offhand_weapons(&self) -> Vec<(u32, [i32; 2])> {
+        self.players.iter().flatten().map(|p| (p.general, [p.arsenal.lethal.def.viewmodel, p.arsenal.tactical.def.viewmodel])).collect() // content: presentation (offhand_weapons: the third-person draw)
+    }
+
     /// Every General's body state now (`nativebody::state_of`, from the sim's own stance, gait,
     /// sprint and ADS — never the render clock): the pose his hit boxes take in a trace.
     pub(super) fn hit_states(&self) -> Vec<(u32, u16)> {

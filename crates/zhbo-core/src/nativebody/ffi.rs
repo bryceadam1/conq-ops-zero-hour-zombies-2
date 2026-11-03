@@ -178,7 +178,8 @@ impl State {
         }
         let faction = inp.faction as u8;
         let stowed = if mode == Mode::Body { stowed_of(inp.general) } else { -1 };
-        let key = (faction, inp.vm, mode as u8, stowed);
+        let offhands = if mode == Mode::Body { offhands_of(inp.general) } else { [-1; 2] };
+        let key = (faction, inp.vm, mode as u8, stowed, offhands);
         if self.failed.contains(&key) {
             return NOT_NATIVE;
         }
@@ -230,9 +231,11 @@ impl State {
         // A grenade's pin and throw: BO2 draws the offhand on `tag_inhand` as the entity's one
         // weapon (t6mp `FUN_0052a4c0` attaches only the entity's current weapon; `FUN_0052a470`
         // puts a grenade on `tag_inhand`), so the gun in hand is not drawn meanwhile.
-        if action.is_some_and(|a| matches!(a.action, zhbo_native::thirdperson::torso::THROW | zhbo_native::thirdperson::torso::PRIME)) {
+        let in_hand = action.filter(|a| matches!(a.action, zhbo_native::thirdperson::torso::THROW | zhbo_native::thirdperson::torso::PRIME));
+        if in_hand.is_some() {
             rig.loaded.hide_weapon(&mut self.posed);
         }
+        rig.loaded.show_offhand(&mut self.posed, in_hand.map(|a| if a.lethal { 0 } else { 1 }));
         self.last = Some(general);
         #[cfg(feature = "renderer")]
         let answer = super::gpu::draw(self, &mut rig, inp);
@@ -257,12 +260,30 @@ fn request(inp: &ZhboNativeBodyIn, mode: Mode) -> Request {
         yaw: inp.yaw,
         tag,
         stowed: if mode == Mode::Body { stowed_of(inp.general) } else { -1 },
+        offhands: if mode == Mode::Body { offhands_of(inp.general) } else { [-1; 2] },
     }
 }
 
 /// Lock-free per-General stowed weapon (`general << 32 | vm + 1`), published by the core after each
 /// logic step (`Sim::stowed_weapons`): presentation only, read by the third-person frame.
 static STOWED: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+/// Each General's lethal and tactical (`general << 32 | (lethal vm + 1) << 16 | tactical vm + 1`),
+/// published with the stowed weapon (`Sim::offhand_weapons`). Presentation only.
+static OFFHANDS: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+pub fn publish_offhands(rows: &[(u32, [i32; 2])]) {
+    use std::sync::atomic::Ordering;
+    for (i, slot) in OFFHANDS.iter().enumerate() {
+        let v = rows.get(i).map_or(0, |&(g, [l, t])| ((g as u64) << 32) | (((l + 1) as u64 & 0xffff) << 16) | ((t + 1) as u64 & 0xffff));
+        slot.store(v, Ordering::Relaxed);
+    }
+}
+
+fn offhands_of(general: u32) -> [i32; 2] {
+    use std::sync::atomic::Ordering;
+    OFFHANDS.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or([-1; 2], |v| [((v >> 16) & 0xffff) as i32 - 1, (v & 0xffff) as i32 - 1])
+}
 
 pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
     use std::sync::atomic::Ordering;
@@ -297,8 +318,8 @@ pub fn faction_of(general: u32) -> Option<u8> {
     ((v >> 8) as u32 == general && v != 0).then_some((v & 0xff) as u8)
 }
 
-/// Each General's torso action this frame (`general << 32 | action << 28 | clip << 15 |
-/// milliseconds in`), published by the client (`client::remote`; the headless third-person
+/// Each General's torso action this frame (`general << 32 | action << 28 | lethal << 27 | clip
+/// << 14 | milliseconds in`), published by the client (`client::remote`; the headless third-person
 /// render's `--torso` too): the body pass layers it. Presentation only.
 static TORSO: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
 
@@ -311,6 +332,8 @@ pub struct TorsoAction {
     /// The body manifest's clip id and seconds into it.
     pub clip: u16,
     pub t: f32,
+    /// A pin or throw's offhand: the lethal (else the tactical).
+    pub lethal: bool,
 }
 
 pub fn publish_torso(torsos: impl Iterator<Item = TorsoAction>) {
@@ -318,7 +341,7 @@ pub fn publish_torso(torsos: impl Iterator<Item = TorsoAction>) {
     let mut it = torsos;
     for slot in TORSO.iter() {
         let v = it.next().map_or(0, |a| {
-            ((a.general as u64) << 32) | (((a.action & 0xf) as u64) << 28) | (((a.clip & 0x1fff) as u64) << 15) | (a.t * 1000.0).clamp(0.0, 32767.0) as u64
+            ((a.general as u64) << 32) | (((a.action & 0xf) as u64) << 28) | ((a.lethal as u64) << 27) | (((a.clip & 0x1fff) as u64) << 14) | (a.t * 1000.0).clamp(0.0, 16383.0) as u64
         });
         slot.store(v, Ordering::Relaxed);
     }
@@ -330,8 +353,9 @@ pub(crate) fn torso_of(general: u32) -> Option<TorsoAction> {
     TORSO.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| TorsoAction {
         general,
         action: ((v >> 28) & 0xf) as u8,
-        clip: ((v >> 15) & 0x1fff) as u16,
-        t: (v & 0x7fff) as f32 / 1000.0,
+        lethal: (v >> 27) & 1 != 0,
+        clip: ((v >> 14) & 0x1fff) as u16,
+        t: (v & 0x3fff) as f32 / 1000.0,
     })
 }
 

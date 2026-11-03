@@ -22,6 +22,8 @@ pub struct Torso {
     pub action: u8,
     pub clip: u16,
     pub t: f32,
+    /// A pin or throw's offhand: the lethal (else the tactical).
+    pub lethal: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -34,6 +36,9 @@ struct Seat {
     /// Last frame he was on the ground, and held the trigger (his jump, landing and dry fire).
     grounded: bool,
     fire_held: bool,
+    /// Overhead: each gun slot's rounds (magazine and spare) last frame: Zero Hour fires his guns
+    /// then (`Arsenal::rts_shot` spends them), and a round gone is a shot's recoil.
+    rts_rounds: [Option<u32>; 2],
     /// How many chatter moments he has had (`sounds::chatter_roll`'s draw: the same on every
     /// machine, which all see the same events).
     chatter: u32,
@@ -63,13 +68,17 @@ impl Remote {
 
     /// Every General in a torso action, for the body pass.
     pub fn torsos(&self) -> impl Iterator<Item = crate::nativebody::ffi::TorsoAction> + '_ {
-        self.seats.iter().filter_map(|s| s.torso.map(|t| crate::nativebody::ffi::TorsoAction { general: s.general, action: t.action, clip: t.clip, t: t.t }))
+        self.seats.iter().filter_map(|s| s.torso.map(|t| crate::nativebody::ffi::TorsoAction { general: s.general, action: t.action, clip: t.clip, t: t.t, lethal: t.lethal }))
     }
 
     fn start(&mut self, seat: usize, def: &WeaponDef, action: u8, context: u8) {
+        self.start_offhand(seat, def, action, context, false);
+    }
+
+    fn start_offhand(&mut self, seat: usize, def: &WeaponDef, action: u8, context: u8, lethal: bool) {
         let Some(s) = self.seats.get_mut(seat) else { return };
         if let Some(clip) = torso::pick_for(def, action, context) {
-            s.torso = Some(Torso { action, clip, t: 0.0 });
+            s.torso = Some(Torso { action, clip, t: 0.0, lethal });
         }
     }
 
@@ -155,10 +164,10 @@ impl Remote {
             }
             EventKind::MeleeHit => npc(cues, a.melee_weapon(), NpcSound::MeleeHit),
             EventKind::OffhandReady { lethal } => {
-                self.start(seat, offhand(lethal), torso::PRIME, ctx);
+                self.start_offhand(seat, offhand(lethal), torso::PRIME, ctx, lethal);
                 npc(cues, offhand(lethal), NpcSound::Pullback);
             }
-            EventKind::Thrown { lethal } => self.start(seat, offhand(lethal), torso::THROW, ctx),
+            EventKind::Thrown { lethal } => self.start_offhand(seat, offhand(lethal), torso::THROW, ctx, lethal),
             // Hurt: the flinch, unless a longer action is on.
             EventKind::Damaged { .. } if !self.busy(seat) => self.start(seat, held, torso::FLINCH, ctx),
             // A shot's recoil, unless a longer action is on (BO2 fires from none of them).
@@ -196,7 +205,7 @@ impl Remote {
                     sounds::Moment::Raise(_, RaiseKind::Alt) | sounds::Moment::AltSwitch(_) | sounds::Moment::AdsZoom(_) => return,
                 };
                 if let Some(clip) = table.pick(def.torso_anims, action, ctx) {
-                    started = Some(Torso { action, clip, t: 0.0 });
+                    started = Some(Torso { action, clip, t: 0.0, lethal: false });
                 }
                 if heard {
                     if let Some(e) = sound.and_then(|m| sounds::some(def.npc_sound(m))) {
@@ -217,7 +226,7 @@ impl Remote {
                     _ => None,
                 };
                 if let Some(clip) = action.and_then(|a| table.pick(held.torso_anims, a, ctx).map(|c| (a, c))) {
-                    s.torso = Some(Torso { action: clip.0, clip: clip.1, t: 0.0 });
+                    s.torso = Some(Torso { action: clip.0, clip: clip.1, t: 0.0, lethal: false });
                 }
                 // The trigger pulled on an empty magazine: his `emptyFireSound` at him.
                 let w = p.arsenal.current();
@@ -230,6 +239,28 @@ impl Remote {
                 s.fire_held = fire;
             }
             s.grounded = p.body.on_ground;
+            // Overhead, Zero Hour fires his guns (no sim shot event): a round spent is the gun's
+            // `fireweapon` torso, as BO2 plays it for every shot.
+            if !p.is_first_person() {
+                for (slot, last) in s.rts_rounds.iter_mut().enumerate() {
+                    let Some(w) = p.arsenal.weapons.get(slot) else {
+                        *last = None;
+                        continue;
+                    };
+                    let (ammo, spare) = w.main_rounds();
+                    let now = ammo as u32 + spare as u32;
+                    let fired = last.is_some_and(|l| now < l);
+                    *last = Some(now);
+                    let busy = s.torso.is_some_and(|t| !matches!(t.action, torso::FIRE | torso::FLINCH));
+                    if fired && !busy {
+                        if let Some(clip) = table.pick(w.def.torso_anims, torso::FIRE, ctx) {
+                            s.torso = Some(Torso { action: torso::FIRE, clip, t: 0.0, lethal: false });
+                        }
+                    }
+                }
+            } else {
+                s.rts_rounds = [None; 2];
+            }
             // The torso runs on; its sound notetracks play as it passes them.
             if let Some(t) = &mut s.torso {
                 let from = t.t;
@@ -314,7 +345,7 @@ mod tests {
         c.queue.clear();
         // His reload.
         r.event(1, &EventKind::ReloadStarted, players[1].as_ref(), true, &mut c);
-        assert_eq!(r.torso(1), Some(Torso { action: torso::RELOAD, clip: 4096, t: 0.0 }));
+        assert_eq!(r.torso(1), Some(Torso { action: torso::RELOAD, clip: 4096, t: 0.0, lethal: false }));
         let mut heard = Vec::new();
         for _ in 0..80 {
             r.update(&players, 0, 1.0 / 30.0, &mut c);

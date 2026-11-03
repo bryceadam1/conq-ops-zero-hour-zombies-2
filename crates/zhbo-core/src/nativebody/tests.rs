@@ -237,7 +237,7 @@ fn a_tagless_world_part_rides_the_weapon_in_body_mode() {
         (zhbo_native::body_path('U'), body_manifest.to_bytes()),
         (zhbo_native::model_path("body"), body.to_bytes()),
     ];
-    let req = Request { vm: 7, faction: b'U', mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
+    let req = Request { vm: 7, faction: b'U', mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [-1; 2] };
     let mut files = Files::default();
     let mut loaded = None;
     for _ in 0..8 {
@@ -295,7 +295,7 @@ fn each_world_part_wears_its_own_camo_asset() {
         (zhbo_native::camo_path("camo_optic"), blob("camo_optic", "optic_atacs.tga").to_bytes()),
     ];
     for mode in [Mode::Weapon, Mode::Body] {
-        let req = Request { vm: 7, faction: b'U', mode, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
+        let req = Request { vm: 7, faction: b'U', mode, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [-1; 2] };
         let mut files = Files::default();
         let mut loaded = None;
         for _ in 0..8 {
@@ -396,7 +396,7 @@ fn a_torso_clip_moves_the_upper_body_over_the_legs() {
         (zhbo_native::body_path('U'), body_manifest.to_bytes()),
         (zhbo_native::model_path("body"), body.to_bytes()),
     ];
-    let req = Request { vm: 7, faction: b'U', mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
+    let req = Request { vm: 7, faction: b'U', mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [-1; 2] };
     let mut files = Files::default();
     let mut loaded = None;
     for _ in 0..8 {
@@ -441,4 +441,47 @@ fn a_torso_clip_moves_the_upper_body_over_the_legs() {
     let rigid = Request { mode: Mode::Weapon, ..req };
     l.pose(&rigid, None, Some((&torso, 0.5)), &mut out);
     assert!(out.local.iter().all(|x| x.0 != turn));
+}
+
+/// The class's lethal and tactical ride `tag_inhand` (t6mp `FUN_0052a470`), drawn only while one
+/// is primed or thrown; a missing offhand manifest is no grenade, not a failed rig.
+#[test]
+fn the_primed_offhand_rides_the_hand_tag() {
+    let body = model("body", vec![bone("tag_origin", None, [0.0; 3]), bone("tag_weapon_right", Some(0), [10.0, -8.0, 40.0]), bone("tag_inhand", Some(0), [12.0, -6.0, 42.0])]);
+    let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3])]);
+    let nade = model("nade", vec![bone("j_nade", None, [0.0; 3])]);
+    let part = |m: &str| ViewmodelPart { model: zhbo_native::model_path(m), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: None, ads_swap: None };
+    let files_in = [
+        (zhbo_native::world_weapon_path(7), Weapon { id: "gun_mp".into(), parts: vec![part("gun")], hide: vec![] }.to_bytes()),
+        (zhbo_native::world_weapon_path(8), Weapon { id: "frag_grenade_mp".into(), parts: vec![part("nade")], hide: vec![] }.to_bytes()),
+        (zhbo_native::model_path("gun"), gun.to_bytes()),
+        (zhbo_native::model_path("nade"), nade.to_bytes()),
+        (zhbo_native::body_path('U'), zhbo_native::thirdperson::Body { faction: b'U', model: zhbo_native::model_path("body"), weapon_tag: "tag_weapon_right".into(), clips: vec![] }.to_bytes()),
+        (zhbo_native::model_path("body"), body.to_bytes()),
+    ];
+    let req = Request { vm: 7, faction: b'U', mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [8, 9] };
+    let mut files = Files::default();
+    let mut loaded = None;
+    for _ in 0..12 {
+        if let Some(l) = load(&mut files, &req, None).unwrap() {
+            loaded = Some(l);
+            break;
+        }
+        let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+        for w in &wanted {
+            files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+        }
+    }
+    let l = loaded.expect("the rig loads without the tactical's manifest");
+    assert!(l.offhand_parts[0].is_some() && l.offhand_parts[1].is_none());
+    let nade_bone = l.skeleton.bone("j_nade").unwrap();
+    let at = l.skeleton.bones[nade_bone].bind.1;
+    assert!((at[0] - 12.0).abs() < 1e-4 && (at[2] - 42.0).abs() < 1e-4, "on tag_inhand: {at:?}");
+    let mut out = Posed::default();
+    l.pose(&req, None, None, &mut out);
+    l.show_offhand(&mut out, None);
+    assert_eq!(out.palette[nade_bone], [0.0; 16], "not in the hand until primed");
+    l.pose(&req, None, None, &mut out);
+    l.show_offhand(&mut out, Some(0));
+    assert_ne!(out.palette[nade_bone], [0.0; 16], "the lethal in the hand");
 }

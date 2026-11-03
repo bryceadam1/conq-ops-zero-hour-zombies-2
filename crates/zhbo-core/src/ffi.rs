@@ -531,6 +531,7 @@ pub extern "C" fn zhbo_reset() {
         publish_shields(&s.sim);
         publish_smokes(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
+        crate::nativebody::ffi::publish_offhands(&s.sim.offhand_weapons());
     });
 }
 
@@ -542,6 +543,7 @@ pub extern "C" fn zhbo_logic_take_control(player: i32, general: u32) {
         publish_shields(&s.sim);
         publish_smokes(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
+        crate::nativebody::ffi::publish_offhands(&s.sim.offhand_weapons());
     });
 }
 
@@ -618,6 +620,7 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
         publish_shields(&s.sim);
         publish_smokes(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
+        crate::nativebody::ffi::publish_offhands(&s.sim.offhand_weapons());
         log_step(s, s.sim.first_event_since(before), frame);
         for (shooter, target, seen) in std::mem::take(&mut s.sim.antilag_hits) {
             use crate::host::LogicHost;

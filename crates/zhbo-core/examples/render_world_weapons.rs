@@ -271,7 +271,9 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
     for (k, (name, clip)) in poses.iter().enumerate() {
         let general = 900 + k as u32;
         let t = clip.and_then(|(_, c)| torso::get().clip(c)).map_or(0.0, |c| c.length * 0.45);
-        ffi::publish_torso(clip.map(|(action, clip)| ffi::TorsoAction { general, action, clip, t }).into_iter());
+        // His class's frag is the lethal the pin and the throw hold (`tag_inhand`).
+        ffi::publish_offhands(&[(general, [frag.map_or(-1, |f| f.viewmodel), -1])]);
+        ffi::publish_torso(clip.map(|(action, clip)| ffi::TorsoAction { general, action, clip, t, lethal: true }).into_iter());
         let px = render_body(archive, &shot, def.viewmodel, def.body_anims, general)?;
         let clip_name = clip.and_then(|(_, c)| torso::get().clip(c)).map_or(String::new(), |c| c.name.clone());
         println!("{id} {name}: {clip_name} at {t:.2} s");
@@ -313,7 +315,7 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
         }
         let (mut core, start, mut drawn) = (std::time::Duration::ZERO, std::time::Instant::now(), 0);
         for k in 0..FRAMES {
-            ffi::publish_torso(generals.iter().filter(|g| *g % 2 == 0).filter_map(|&g| reload.map(|(action, clip)| ffi::TorsoAction { general: g, action, clip, t: k as f32 / 30.0 })));
+            ffi::publish_torso(generals.iter().filter(|g| *g % 2 == 0).filter_map(|&g| reload.map(|(action, clip)| ffi::TorsoAction { general: g, action, clip, t: k as f32 / 30.0, lethal: true })));
             let c = std::time::Instant::now();
             for &g in &generals {
                 drawn += (unsafe { ffi::zhbo_native_body(&input(g, k)) } == DRAWN) as u32;

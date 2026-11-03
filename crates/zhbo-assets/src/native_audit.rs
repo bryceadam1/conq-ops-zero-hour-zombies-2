@@ -158,7 +158,7 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
             }
         }
         report.third_person += 1;
-        let req = nativebody::Request { vm: d.viewmodel, faction: b'U', mode: Mode::Weapon, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
+        let req = nativebody::Request { vm: d.viewmodel, faction: b'U', mode: Mode::Weapon, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [-1; 2] };
         match drive(&mut files, read, |files| nativebody::load(files, &req, None)) {
             Ok(l) if l.mesh.surfaces.is_empty() => fail(format!("ZW{:02}: no surface", d.viewmodel)),
             Ok(l) => {
@@ -172,7 +172,7 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
     // Each faction's body, once, with the first converted weapon in hand.
     if let Some(d) = weapons.iter().find(|d| d.viewmodel >= 0) {
         for f in factions() {
-            let req = nativebody::Request { vm: d.viewmodel, faction: f, mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
+            let req = nativebody::Request { vm: d.viewmodel, faction: f, mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [-1; 2] };
             match drive(&mut files, read, |files| nativebody::load(files, &req, None)) {
                 Ok(l) if l.mesh.surfaces.is_empty() => report.problems.push(Problem { weapon: d.id.clone(), what: format!("body {}: no surface", f as char) }),
                 Ok(l) => {

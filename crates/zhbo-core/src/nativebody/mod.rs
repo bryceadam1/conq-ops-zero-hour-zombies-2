@@ -84,10 +84,17 @@ pub struct Request {
     /// A converted weapon carried but not up whose stowed manifest the body wears (the Assault
     /// Shield on the back, BO2's `tag_stowed_back`), or -1. Body mode only.
     pub stowed: i32,
+    /// The class's lethal and tactical (converted indices, -1 for none): their world models ride
+    /// the body's [`OFFHAND_TAG`], drawn only while one is primed or thrown. Body mode only.
+    pub offhands: [i32; 2],
 }
 
-/// What a composed rig is: `(faction, vm, mode, stowed vm)`.
-pub type RigKey = (u8, i32, u8, i32);
+/// Where a grenade is held in third person: BO2 attaches an entity's weapon of type grenade on
+/// `tag_inhand` (t6mp `FUN_0052a470`; the throw and prime clips animate it).
+pub const OFFHAND_TAG: &str = "tag_inhand";
+
+/// What a composed rig is: `(faction, vm, mode, stowed vm, offhand vms)`.
+pub type RigKey = (u8, i32, u8, i32, [i32; 2]);
 
 /// A world weapon's manifest and the models it names, decoded.
 pub struct WeaponAsset {
@@ -115,6 +122,8 @@ pub struct Loaded {
     pub mesh: Mesh,
     /// The class camo option painted on it (`None`: stock), part of the cache identity.
     pub camo: Option<String>,
+    /// The composition's part of each offhand (`Request::offhands`), if it composed.
+    pub offhand_parts: [Option<usize>; 2],
 }
 
 /// A body clip, decoded (`zhbo_native::anim::Anim`).
@@ -207,12 +216,42 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
             }
         }
     }
+    // The offhands' world models (body mode), to hang on `tag_inhand` while one is in hand. A
+    // missing manifest is no grenade in the hand, not a failed rig.
+    let mut offhand_models: Vec<(usize, Model)> = Vec::new();
+    if body.is_some() {
+        // Every file still coming is asked for in the same round.
+        let mut waiting = false;
+        for (k, &vm) in req.offhands.iter().enumerate().filter(|(_, vm)| **vm >= 0) {
+            let opath = zhbo_native::world_weapon_path(vm);
+            if files.is_missing(&opath) {
+                continue;
+            }
+            let Some(obytes) = files.get(&opath) else {
+                waiting = true;
+                continue;
+            };
+            let omanifest = Weapon::from_bytes(&obytes).map_err(|e| format!("{opath}: {e}"))?;
+            let Some(first) = omanifest.parts.first() else { continue };
+            if files.is_missing(&first.model) {
+                continue;
+            }
+            match files.get(&first.model) {
+                Some(b) => offhand_models.push((k, Model::from_bytes(&b).map_err(|e| format!("{}: {e}", first.model))?)),
+                None => waiting = true,
+            }
+        }
+        if waiting {
+            return Ok(None);
+        }
+    }
     // Compose: the body first (no tag), then the weapon's base part on its own tag when the
     // manifest names one (the Assault Shield's `tag_weapon_left`) else the body's weapon_tag, then
     // its attachments on their own tags, then a stowed weapon's parts on theirs. Weapon-only mode
     // hangs the base part from the model's origin.
     let mut all_models: Vec<&Model> = Vec::new();
     let mut parts: Vec<PartRef> = Vec::new();
+    let mut offhand_parts = [None; 2];
     match &body {
         Some(b) => {
             all_models.push(&b.model);
@@ -228,6 +267,11 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
             for (p, m) in &stowed {
                 all_models.push(m);
                 parts.push(PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid });
+            }
+            for (k, m) in &offhand_models {
+                offhand_parts[*k] = Some(parts.len());
+                all_models.push(m);
+                parts.push(PartRef { model: m, tag: Some(OFFHAND_TAG), offset: IDENTITY, rigid: true });
             }
         }
         None => {
@@ -270,7 +314,10 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
     }
     files.forget(&path);
     let camo = camo.map(str::to_string);
-    Ok(Some(Loaded { key: (req.faction, req.vm, req.mode as u8, req.stowed), weapon: WeaponAsset { vm: req.vm, manifest, models }, body, skeleton, mesh, camo }))
+    for &vm in req.offhands.iter().filter(|vm| **vm >= 0) {
+        files.forget(&zhbo_native::world_weapon_path(vm));
+    }
+    Ok(Some(Loaded { key: (req.faction, req.vm, req.mode as u8, req.stowed, req.offhands), weapon: WeaponAsset { vm: req.vm, manifest, models }, body, skeleton, mesh, camo, offhand_parts }))
 }
 
 /// The class camo option a General's weapon `vm` wears in third person: his class camo when `vm` is
@@ -337,6 +384,19 @@ pub fn torso_weight(t: f32, length: f32) -> f32 {
 }
 
 impl Loaded {
+    /// Show offhand `which` (0 the lethal, 1 the tactical) in the hand, or none: every other
+    /// offhand part collapses. Call after [`Loaded::pose`].
+    pub fn show_offhand(&self, out: &mut Posed, which: Option<usize>) {
+        for (k, part) in self.offhand_parts.iter().enumerate() {
+            let Some(part) = part.and_then(|i| self.skeleton.parts.get(i)) else { continue };
+            if Some(k) != which {
+                for p in out.palette.iter_mut().skip(part.first).take(part.count) {
+                    *p = [0.0; 16];
+                }
+            }
+        }
+    }
+
     /// Hide the weapon in hand for this pose (its parts' palette entries collapse): the body and
     /// a stowed weapon keep drawing.
     pub fn hide_weapon(&self, out: &mut Posed) {
