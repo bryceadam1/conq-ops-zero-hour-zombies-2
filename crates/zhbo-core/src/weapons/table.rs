@@ -796,7 +796,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "PullbackSound", "The offhand's pull-back (`pullbackSoundPlayer`).", FieldKind::Str,
         |d: &WeaponDef| d.pullback_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.pullback_sound = v.text.into(); Ok(()) }),
-    field!(present "NpcSounds", "The third-person def-level sounds (`moment=event`: raise, first_raise, putaway, melee_swipe, melee_hit, pullback; BO2's fields without `Player`), heard at another player.", FieldKind::Pairs,
+    field!(present "NpcSounds", "The third-person def-level sounds (`moment=event`: raise, first_raise, putaway, melee_swipe, melee_hit, pullback, empty_fire; BO2's fields without `Player`), heard at another player.", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.npc_sounds),
         |d: &mut WeaponDef, v: Values| { d.npc_sounds = parse_pairs(v.text); Ok(()) }),
     field!(present "SilencedFireStartSound", "The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).", FieldKind::Str,

@@ -1169,6 +1169,7 @@ fn npc_sounds(w: &Weapon) -> Vec<(String, String)> {
                 NpcSound::MeleeSwipe => &w.melee_swipe_sound,
                 NpcSound::MeleeHit => &w.melee_hit_sound,
                 NpcSound::Pullback => &w.pullback_sound,
+                NpcSound::EmptyFire => &w.empty_fire_sound,
             };
             alias.as_deref().map(|a| (m.key().to_string(), zhbo_core::names::npc_def_sound_event(a)))
         })

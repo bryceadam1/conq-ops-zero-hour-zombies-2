@@ -106,10 +106,22 @@ pub mod torso {
     pub const RAISE: u8 = 6;
     pub const DROP: u8 = 7;
     pub const FIRST_RAISE: u8 = 8;
-    pub const ACTIONS: u8 = 9;
+    /// `flinch`: hurt (asked from the front: the sim carries no damage direction).
+    pub const FLINCH: u8 = 9;
+    /// `jump` and `land`: the script's `legs` clips, whole-body one-shots that take over the
+    /// movement clip while they run.
+    pub const JUMP: u8 = 10;
+    pub const LAND: u8 = 11;
+    pub const ACTIONS: u8 = 12;
     /// The script's event for each action.
-    pub const EVENTS: [&str; ACTIONS as usize] =
-        ["reload", "knife_melee", "knife_melee_charge", "fireweapon", "prime_grenade", "fireweapon", "raiseweapon", "dropweapon", "firstraiseweapon"];
+    pub const EVENTS: [&str; ACTIONS as usize] = [
+        "reload", "knife_melee", "knife_melee_charge", "fireweapon", "prime_grenade", "fireweapon", "raiseweapon", "dropweapon", "firstraiseweapon", "flinch", "jump", "land",
+    ];
+
+    /// Whether an action's clip moves the whole body (the legs too).
+    pub const fn whole_body(action: u8) -> bool {
+        matches!(action, JUMP | LAND)
+    }
 
     /// The contexts an action is asked in: stance (0 stand, 1 crouch, 2 prone) × moving × aimed.
     pub const CONTEXTS: u8 = 12;

@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-pub use zhbo_native::thirdperson::torso::{context, ACTIONS, CONTEXTS, DROP, FIRE, FIRST_RAISE, MELEE, MELEE_CHARGE, PRIME, RAISE, RELOAD, THROW};
+pub use zhbo_native::thirdperson::torso::{context, whole_body, ACTIONS, CONTEXTS, DROP, FIRE, FIRST_RAISE, FLINCH, JUMP, LAND, MELEE, MELEE_CHARGE, PRIME, RAISE, RELOAD, THROW};
 
 /// A torso clip: its length and its sound notetracks (seconds in, event).
 #[derive(Clone, Debug, Default, PartialEq)]

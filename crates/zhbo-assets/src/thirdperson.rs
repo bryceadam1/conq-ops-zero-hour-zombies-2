@@ -252,6 +252,8 @@ fn torso_picks(script: &crate::playeranim::Script, names: &[String], k: &Key, sh
                 ("movestatus", if moving { "run" } else { "stationary" }),
                 ("direction", if moving { "forward" } else { "none" }),
                 ("playeranimtype", k.anim_type.as_str()),
+                // A flinch from the front: the sim's damage carries no direction.
+                ("dmgdirection", "front"),
             ];
             out.push(script.event(ev, &ctx).and_then(have));
         }
@@ -590,11 +592,19 @@ mod tests {
             ("knife_held_mp", torso::MELEE, 0, "pt_knife_stand_melee_swipe"),
             ("frag_grenade_mp", torso::THROW, 0, "pt_grenade_stand_throw"),
             ("frag_grenade_mp", torso::PRIME, 0, "pt_grenade_stand_prime"),
+            ("an94_mp", torso::FLINCH, 0, "pt_stand_flinch_forward"),
+            ("an94_mp", torso::JUMP, 0, "pb_standjump_takeoff"),
+            ("an94_mp", torso::LAND, 0, "pb_standjump_land"),
+            ("fnp45_mp", torso::LAND, 0, "pb_standjump_land_pistol"),
         ] {
             assert_eq!(at(id, action, stance), want, "{id} action {action} stance {stance}");
         }
-        // A torso clip moves the upper body only.
-        for c in &clips {
+        // A torso clip moves the upper body only (the jump and the landing are whole-body clips).
+        let whole: Vec<u16> = (0..sets.sets.len())
+            .flat_map(|set| (0..torso::CONTEXTS).flat_map(move |c| [torso::JUMP, torso::LAND].map(|a| (set, a, c))))
+            .filter_map(|(set, a, c)| t.pick(set as u16, a, c))
+            .collect();
+        for c in clips.iter().filter(|c| !whole.contains(&c.state)) {
             let legs: Vec<&str> = c.anim.bones.iter().map(|b| b.name.as_str()).filter(|b| ["j_hip", "j_knee", "j_ankle", "j_ball", "j_mainroot", "pelvis"].iter().any(|l| b.starts_with(l))).collect();
             assert!(legs.is_empty(), "{} tracks the legs: {legs:?}", c.anim.name);
         }

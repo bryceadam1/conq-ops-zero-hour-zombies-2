@@ -141,9 +141,10 @@ impl Script {
                 0 => self.events.push((line.to_ascii_lowercase(), Vec::new())),
                 1 => *header = Some(line.to_string()),
                 2 => {
-                    // The entry's first `torso` line is its clip.
+                    // The entry's first `torso` line is its clip (`legs` for the whole-body
+                    // events: `jump`, `land`).
                     let mut w = line.split_whitespace();
-                    if let (Some("torso"), Some(anim)) = (w.next(), w.next()) {
+                    if let (Some("torso" | "legs"), Some(anim)) = (w.next(), w.next()) {
                         if let Some((_, Some(last))) = self.events.last_mut().map(|(n, e)| (n, e.last_mut())) {
                             if last.1.is_none() {
                                 last.1 = Some(anim.to_string());

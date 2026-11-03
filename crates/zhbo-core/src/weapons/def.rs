@@ -1279,10 +1279,12 @@ pub enum NpcSound {
     MeleeHit,
     /// `pullbackSound`: an offhand's pin or charge.
     Pullback,
+    /// `emptyFireSound`: the trigger pulled on an empty magazine.
+    EmptyFire,
 }
 
 impl NpcSound {
-    pub const ALL: [NpcSound; 6] = [NpcSound::Raise, NpcSound::FirstRaise, NpcSound::Putaway, NpcSound::MeleeSwipe, NpcSound::MeleeHit, NpcSound::Pullback];
+    pub const ALL: [NpcSound; 7] = [NpcSound::Raise, NpcSound::FirstRaise, NpcSound::Putaway, NpcSound::MeleeSwipe, NpcSound::MeleeHit, NpcSound::Pullback, NpcSound::EmptyFire];
 
     pub const fn key(self) -> &'static str {
         match self {
@@ -1292,6 +1294,7 @@ impl NpcSound {
             NpcSound::MeleeSwipe => "melee_swipe",
             NpcSound::MeleeHit => "melee_hit",
             NpcSound::Pullback => "pullback",
+            NpcSound::EmptyFire => "empty_fire",
         }
     }
 }

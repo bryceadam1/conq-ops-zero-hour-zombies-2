@@ -97,6 +97,8 @@ pub const SFX: &[Sfx] = &[
     // third-person aliases (`_footsteps.csc`, `firstperson = 0`), positional for everyone.
     Sfx { event: "ZHBO_BO2_StepNpc", from: From::World, layers: &["fly_step_run_npc_grass"], kind: Kind::World, limit: 4 },
     Sfx { event: "ZHBO_BO2_SprintStepNpc", from: From::World, layers: &["fly_step_sprint_npc_grass"], kind: Kind::World, limit: 4 },
+    // ... and their landings (`_footsteps.csc` `playerland`, `fly_land_npc_<surface>`).
+    Sfx { event: "ZHBO_BO2_LandNpc", from: From::World, layers: &["fly_land_npc_grass"], kind: Kind::World, limit: 4 },
     // Hold breath: `clientscripts/mp/_audio.csc` plays `<teamclientprefix>_sinper_*` (`vox_gen` by
     // default) on the engine's `playerbreath*sound` notifies (`FUN_0052e3d0`).
     Sfx { event: "ZHBO_BO2_BreathIn", from: From::Voice, layers: &["vox_gen_sinper_hold"], kind: Kind::Player, limit: 1 },
@@ -576,6 +578,18 @@ pub fn files(
                 }
             }
         }
+        // The battle chatter's lines (`zhbo_core::sounds::CHATTER_LINES`), each voice's own.
+        for n in 0..zhbo_core::sounds::VOICES {
+            for line in zhbo_core::sounds::CHATTER_LINES {
+                let event = zhbo_core::sounds::chatter_event_name(letter, n, line);
+                let alias = src.as_ref().and_then(|s| voice_alias(s, n, &format!("_{line}")));
+                if alias.is_some_and(|a| add(&event, src.as_ref().expect("an alias has a bank"), &[a.as_str()], Kind::World, 2)) {
+                    voices_made += 1;
+                } else {
+                    missing.push(event);
+                }
+            }
+        }
     }
 
     let mut ui_made = 0;
@@ -782,6 +796,16 @@ mod tests {
             assert!(event(v).contains("world shrouded everyone"), "{v}");
             assert_eq!(field(v, "MaxRange"), zhbo_core::units::inches(1200.0).round(), "{v}");
         }
+        // ... and every battle chatter line in each voice (`_battlechatter_mp.gsc`).
+        for &f in &zhbo_core::sounds::VOICE_FACTIONS {
+            for n in 0..zhbo_core::sounds::VOICES {
+                for line in zhbo_core::sounds::CHATTER_LINES {
+                    let e = zhbo_core::sounds::chatter_event_name(f, n, line);
+                    assert!(event(&e).contains("world shrouded everyone"), "{e}");
+                }
+            }
+        }
+        assert!(event("ZHBO_BO2_LandNpc").contains("world shrouded everyone"));
     }
 
     /// Needs the player's BO2 install. The menu cues the converter leaves missing are in no bank

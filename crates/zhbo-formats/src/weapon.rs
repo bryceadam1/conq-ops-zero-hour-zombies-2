@@ -857,6 +857,7 @@ pub struct Weapon {
     pub reload_sound: Option<String>,
     pub reload_sound_player: Option<String>,
     pub melee_miss_sound: Option<String>,
+    pub empty_fire_sound: Option<String>,
     /// HUD art (material names).
     pub hud_icon: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
@@ -1417,6 +1418,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.reload_sound = opt_str(z, d + WD::reloadSound);
     w.reload_sound_player = opt_str(z, d + WD::reloadSoundPlayer);
     w.melee_miss_sound = opt_str(z, d + WD::meleeMissSound);
+    w.empty_fire_sound = opt_str(z, d + WD::emptyFireSound);
     w.impact_type = z.u32(d + WD::impactType);
     w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
     let bounce = z.u32(d + WD::bounceSound);
