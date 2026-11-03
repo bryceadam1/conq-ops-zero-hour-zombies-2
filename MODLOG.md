@@ -11834,3 +11834,8 @@ watchers (`_weaponobjects.gsc` `weaponobjectdamage` → `waitanddetonate` → ea
 Tests: `every_item_breaks_as_its_script_says`, `blasts_break_chain_and_spare_by_their_effect`, the
 Trophy test's kill effect, blast and spent effect, and the real-install
 `every_equipment_effect_is_in_the_install`. **Needs `hud::VERSION`** for the four new converted effects.
+
+In game after both fixes (`~/.opencode/plan/bug-sweep-4/`): `--equipment` 8/8 (Trophy shot down a
+rocket, Black Hat hack, the drone changed sides), `--rts-dry` 5/5, `--showcase` captured, default
+16/16, `--splash` 4/4, `--rts` 16/16, mp short 25/25; the real-install roster lockstep gate, content
+variants and props scale pass.
