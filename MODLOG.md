@@ -11619,3 +11619,128 @@ no `zhbo_native` blob format changed.
   his second General was also shot entering before his round began, so his log had one round and
   no shellshock. The same run with 5 passes 34/34 (8,365 common frames, 5 shellshocks on both
   machines, CQB worn). TESTING.md and the script's header now say so.
+
+## Dropped weapons and pickups, BO2's way (2026-11-03, branch `v1/weapon-drops`)
+
+Gap: BO2 drops a dying player's weapon and lets others take its ammo or swap for it; the mod had
+neither ("Dropped weapons do not exist as objects"). Every rule below is BO2's, from the GSC and
+t6mp (decompiles in `~/.opencode/plan/weapon-drops/`).
+
+**What BO2 does.**
+* *The death drop* (`_globallogic_player.gsc:1912-1919` → `_weapons.gsc:364-457`
+  `dropweaponfordeath`): not in the grace period, not for a team kill or a suicide; the
+  `lastdroppableweapon` (`maydropweapon` :342: inventory `primary`, not a hack/killstreak weapon —
+  an alt mode never qualifies, so its weapon is the one), still held, with ammo in some mode, clip +
+  stock > 0, stock capped at `weaponmaxammo`, never `isheldkillstreakweapon` (m32, minigun: the
+  data flags the same guns `bIsCarriedKillstreakWeapon`, WeaponDef+1591). `itemweaponsetammo`, the
+  item's owner, `deletepickupafterawhile` (`wait 60`). `disableweapondrop` is 0 in
+  `gamesettings_default.cfg` (1 only in gun game, sharpshooter, OIC, SAS and zombies).
+* *The item* (t6mp `Drop_Item` `FUN_005fae60`, spawn `FUN_005fab50`): from the dropper's middle,
+  velocity = facing × 10 + (crandom × 100, crandom × 100, 10 + crandom × 5) in/s (`FUN_0064aa40` is
+  crandom), bounds ±1 in, a think 1000 ms later that clears its owner (`FUN_008bbb00` refuses the
+  owner until then). `g_maxDroppedWeapons` 16 (2..32): one more frees the item farthest from every
+  living player, skipping `avoidDropCleanup` (WeaponDef+1374, `FUN_005f9230`).
+* *The walk-over* (touch `FUN_005fba10` → `FUN_005fb900` → `FUN_005faa60`/`FUN_005fa880`): for the
+  item's weapon and its alt mode, the player's matching weapon (`FUN_005f9120`: exact, else the same
+  base byte; `FUN_008dda40`); holding the exact weapon he is offered stock + clip, else stock only;
+  `FUN_005fa6a0` adds to his stock up to the max and returns what it took, taken from the item's
+  stock first, then its clip; exact and any taken → the item goes. EV_AMMO_PICKUP (0x0c).
+* *The swap* (use: `FUN_005fb7d0` → `FUN_005fb450`): refused when he holds the exact weapon
+  (`FUN_008bba00`), when prone for a `blocksProne` weapon (+1684, the riot shield), while holding a
+  carried killstreak gun unless the item is its base. Fewer than two primaries (`FUN_008dd9e0`,
+  carried killstreak guns not counted): just given. Otherwise one goes: a primary of weapType
+  melee first (`FUN_008eb4d0`: the held knife), else the current weapon, an alt as its base
+  (`FUN_005f9050`); it is put down where the item lay (`FUN_005fb0e0`, trace to the ground) with its
+  options (`+0x8c`) only if it has rounds (`FUN_005f93b0`; `bClipOnly` needs a clip) — no 60 s timer
+  on it (the GSC thread is only on the death drop). The new weapon is given with the item's options
+  (`FUN_00670460`), clip and stock (`FUN_005fa9b0`), EV_ITEM_PICKUP (0x0b), and switched to.
+* *The use list* (`FUN_00676d50`): within `player_useRadius` (128) of the eye, score = distance +
+  256 × (1 − (dot + 1) / 2), an ungrabbable item +10000; the lowest wins.
+* *The hint* (`FUN_004dbbe0` type 7, `FUN_004db920`): `PLATFORM_PICKUPNEWWEAPON` ("Press ^3&&1^7 to
+  pick up") under two primaries, `PLATFORM_SWAPWEAPONS` ("Press ^3&&1^7 for") at two, then the
+  weapon's name and each attachment's (`FUN_008eb300`); the `hudIcon` sized by `hudIconRatio` (2:1
+  and 4:1 twice as wide, 4:1 half as tall: 2.0 at `0x00b1bbec`, 0.5 at `0x00c733cc`); placed by
+  `common_mp`'s `cursorhints.menu` (`rect 0 70 40 40 9 9`, item `-20 0 40 40`, textscale 0.315).
+* *Sounds*: `pickupSoundPlayer`/`pickupSound` on EV_ITEM_PICKUP, `ammoPickupSoundPlayer`/
+  `ammoPickupSound` on EV_AMMO_PICKUP (the data: `fly_generic_pickup_plr`, `wpn_ammo_pickup_plr`,
+  …). `EV_RAISE_PICKUP_WEAPON` still plays nothing; the new weapon's raise is its first raise.
+
+**The mod.**
+* Sim: `sim/drops.rs` — `Sim::drops` (`Dropped`: the `Carried` weapon — the combination itself,
+  so its attachments — its clip/stock and alt clip/stock, its `WeaponOptions` camo/reticle/colour;
+  position, fall, rest, expiry frame, owner and owner frame, its object) and `Sim::kills` (the
+  step runs through a `Witness` host that notes each kill with whether it was the victim's own or a
+  teammate's), both hashed in the world's part. The death drop runs where `step_player` reads the
+  death (first person or overhead; the object's place). The use key (FIELD_COMPUTER) with a use
+  target swaps instead of opening the field computer (held back by an offhand, melee or alt toggle
+  as the field computer is); `step_drops` falls, expires and walks over. No new input: the use key
+  already travels in `MSG_ZHBO_FPS_INPUT`.
+* `weapons/pickup.rs`: `Carried`, `WeaponOptions` (on `WeaponState::options` for a picked-up
+  weapon), `Arsenal::death_drop/take_ammo/pick_up/primaries`. The CaC model is untouched: the
+  loadout stays the class (the respawn, Scavenger's refill — over every primary, the picked one too —
+  and the RTS slots read the arsenal); a picked-up weapon is a non-class weapon held until death or a
+  class that applies at once (giveloadout takes it, as BO2). `PlayerSim::held_camos/held_reticles/
+  held_reticle/held_reticle_color` and `Sim::third_person_camo` give a picked-up weapon its own
+  options first.
+* Data: the weapon table carries `Drop` (carried killstreak, avoid drop cleanup, blocks prone;
+  Role::Sim), `DropObject` (Sim), and the presentation `HudIconRatio`, `PickupSound`,
+  `AmmoPickupSound`, `PickupSoundNpc`, `AmmoPickupSoundNpc` (`WEAPON_FIELDS` 154 → 161). The tuning
+  pack's `[Drops]` has the numbers (`g_maxDroppedWeapons`, `player_useRadius`, `UseListDotScale`,
+  `deletepickupafterawhile`, `DroppedItemOwnerTime`, the toss speeds, `DroppedItemHalfSize`,
+  `PlayerBoxHeight`). `PLATFORM_PICKUPNEWWEAPON`/`PLATFORM_SWAPWEAPONS` join `UI_TEXT_KEYS`.
+* Converter: `props::drops` writes `ZHBO_Drop_<base>` (W3D `ZDR###_SKN`, `ZHBO_BO2_Drops.ini`) for
+  every converted base weapon that drops and holds rounds: its BO2 `worldModel` turned on its side
+  (a quarter turn about its length) with its lowest point on the ground, at `GENERAL_SCALE`, inert
+  and unclickable; every def of that base names it. 44 ground models on the install.
+* Presentation: `hud/pickup.rs` (the hint), the pickup and ammo sounds (own 2D, others' at the
+  spot), `WeaponPickedUp` predicted like a swap.
+
+**Decisions.**
+* *Zero Hour's infantry drop nothing*: their weapons are Zero Hour's, there is no BO2 item to
+  leave; only a seat's General has an arsenal.
+* *The ground model is the base weapon's.* BO2's item draws the combination (its attachment parts
+  and camo). The W3D prop route draws the base world model only; the item still carries the
+  attachments and camo into the pickup. Drawing the combination on the ground would mean the native
+  third-person pass drawing a loose weapon (a new ABI call per drop) — a follow-up, not a rule gap.
+* *It lies on its side and rests where it lands*: BO2's item physics (bounce, roll, settle) are not
+  ported; the fall is gravity onto the ground height.
+* *The use list has no sight trace* (BO2 traces eye → item for the first visible candidate); the
+  mod's items lie in the open.
+* *Weapon states 0x1e–0x22* refuse a touch in BO2 (`FUN_005fb900`); the mod holds the swap back
+  while an offhand, melee or alt toggle runs, as it does the field computer.
+* *A General killed overhead* drops too (he carries his arsenal; BO2 has no overhead mode).
+
+**Gotchas.**
+* A death is read on the victim's next step, often a frame after the kill, so the kill record
+  must outlive the step that dealt it: it is sim state (hashed), dropped once read or when its
+  victim has no record any more.
+* The lockstep gate's rounds now drop weapons where the next round's Generals stand, and the
+  script's field-computer press at t 625 swaps for one in reach instead of going overhead on some
+  rounds; every machine agrees (the gate checks `dropped:`/`picked:` labels).
+* `knife_held_mp` is BO2 inventory `primary`: it counts as one of the two primaries (the hint says
+  "for", not "pick up", for a one-gun class) and is the slot a pickup replaces first; it never
+  drops (no rounds).
+
+**Bumps needed (the integrator's).** `hud::VERSION` (the archive gains `ZHBO_BO2_Drops.ini`, the
+`ZDR###` models, the weapon table's seven new fields and two UI strings). No ABI change: the sim
+spawns, moves and destroys the props through the existing `LogicHost` calls, and the hint draws
+through the HUD's own primitives.
+
+**Verification.**
+* `cargo test --workspace` 1,135 passed, 0 failed; clippy `--workspace --all-targets` and zhbo-core
+  `--features harness` clean.
+* Real install (`--ignored --skip conformance`): zhbo-assets 72 passed (after adding the two UI
+  strings' built-in stand-ins), the roster lockstep gate and the new drop sweep among them (44
+  ground models; by class, weapons/dropped: Rifle 5,590/4,430, SMG 3,354/2,766, LMG 1,596/1,444,
+  Pistol 174/174, Shotgun 424/424, Sniper 419/419, Special 11/11, Shield 1/1, Launcher 615/3 — the
+  rest are `gl_` alt modes; offhands, equipment and melee 0).
+* Conformance: all ten files byte-identical to integration8's (1,979 cells / 11 clusters; cac 0
+  cells, 4 BO2-only rows; 12 gap clusters).
+* In game (own dist): `--drops` 7/7 (the first General killed at frame 752 drops `an94_mp+gl` as
+  `ZHBO_Drop_an94_mp`; the next takes its stock, swaps for it and his `an94_mp+reflex` lies in its
+  place; the hint "Press F for AN-94 Launcher" with the icon under it), default 16/16, `--mp`
+  short 25/25 (drops on both machines, the same object ids), long `ZHBO_MPTEST_ROUNDS=5` 34/34 on
+  the second run (5 drops on both machines, 8,107 common frames). The first long run failed one
+  check: the state hash differed on the last common frame only (7919, two frames after the
+  joiner left; the host's seat, the world equal); its log ran one frame further past the leave than
+  the runs that pass — the leaving machine's last frame, not a drop (none touched the host's seat).

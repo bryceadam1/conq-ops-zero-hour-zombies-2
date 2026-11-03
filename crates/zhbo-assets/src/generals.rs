@@ -534,6 +534,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let mut projectile_models = BTreeMap::new();
     summary.push(crate::props::projectiles(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
     crate::props::share_projectiles(&mut table.weapons);
+    summary.push(crate::props::drops(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

@@ -598,6 +598,34 @@ pub struct WeaponDef {
     /// An Assault Shield (BO2 weapType `riotshield`): its held, stowed and deployed collision
     /// boxes, posed by the converter. `None` for every other weapon.
     pub shield: Option<ShieldGeometry>,
+    /// BO2's data for the weapon-drop rules ([`DropRules`]; `crate::sim::drops`).
+    pub drop: DropRules,
+    /// The Zero Hour object a dropped one lies on the ground as (`ZHBO_Drop_<base>`: its BO2
+    /// `worldModel` at the General's drawn scale, `zhbo_assets::props`); empty when it never drops
+    /// or the converter made none.
+    pub drop_object: String,
+    /// BO2's `hudIconRatio` (0 1:1, 1 2:1, 2 4:1): the pickup hint's icon is twice as wide for
+    /// 2:1 and 4:1, half as tall for 4:1 (t6mp `FUN_004dbbe0`, hint type 7).
+    pub hud_icon_ratio: u8,
+    /// The pickup's converted events: the player's own (`pickupSoundPlayer` on EV_ITEM_PICKUP,
+    /// `ammoPickupSoundPlayer` on EV_AMMO_PICKUP) and what others hear (`pickupSound`,
+    /// `ammoPickupSound`), t6mp `CG_EntityEvent` (`FUN_004c1590`).
+    pub pickup_sound: String,
+    pub ammo_pickup_sound: String,
+    pub npc_pickup_sound: String,
+    pub npc_ammo_pickup_sound: String,
+}
+
+/// BO2's per-def data the weapon-drop rules read (t6mp, `WeaponDef`): never dropped and not one
+/// of the primaries a pickup swaps against (`bIsCarriedKillstreakWeapon`, `FUN_008dd9e0`; the GSC's
+/// `isheldkillstreakweapon` names the same guns), spared by `g_maxDroppedWeapons`' cleanup
+/// (`avoidDropCleanup`, `FUN_005f9230`), and refused to a player lying prone (`blocksProne`,
+/// `FUN_005fb900`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DropRules {
+    pub carried_killstreak: bool,
+    pub avoid_drop_cleanup: bool,
+    pub blocks_prone: bool,
 }
 
 /// A held or thrown weapon in the sim state is its definition by identity: the id, which names one
@@ -726,7 +754,8 @@ pub struct UiText {
 /// (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`, `classpreview.lua:3640-3660`:
 /// `MPUI_<slot>_CAPS`, and the lethal slot's under Tactician) and the HUD's weapon hints
 /// (`WEAPON_CANT_PLANT_EQUIPMENT`, `sim::hint_text`), and the spectator's switch bar and view
-/// prompt (`hud/deadspectate.lua`: `MPUI_SPECTATING`; `MPUI_FIRST_PERSON_VIEW`). The reticle grid's per-optic cell names
+/// prompt (`hud/deadspectate.lua`: `MPUI_SPECTATING`; `MPUI_FIRST_PERSON_VIEW`), and the dropped
+/// weapon's pickup hint (`PLATFORM_PICKUPNEWWEAPON`/`PLATFORM_SWAPWEAPONS`, `FUN_004db920`). The reticle grid's per-optic cell names
 /// (`MPUI_RETICLE_<OPTIC>_<N>`, [`super::reticle_name_key`]) are written beside these, every one
 /// the install has.
 pub const UI_TEXT_KEYS: &[&str] = &[
@@ -743,7 +772,7 @@ pub const UI_TEXT_KEYS: &[&str] = &[
     "MPUI_DLC2_CAPS", "MENU_CUSTOMIZED_CAPS", "MENU_SCOREBOARD_CAPS", "MPUI_SCORE_CAPS",
     "MPUI_KILLS_CAPS", "MPUI_DEATHS_CAPS", "MPUI_ASSISTS_CAPS", "WEAPON_NO_AMMO",
     "MENU_SELECT_RETICLE", "MENU_X_OPTICS", "MP_CHANGE_CLASS_NEXT_SPAWN", "MPUI_SPECTATING",
-    "MPUI_FIRST_PERSON_VIEW",
+    "MPUI_FIRST_PERSON_VIEW", "PLATFORM_PICKUPNEWWEAPON", "PLATFORM_SWAPWEAPONS",
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1052,6 +1081,13 @@ impl Default for WeaponDef {
             enemy_tracer_fx_weapon: String::new(),
             tracer_interval: 0,
             shield: None,
+            drop: DropRules::default(),
+            drop_object: String::new(),
+            hud_icon_ratio: 0,
+            pickup_sound: String::new(),
+            ammo_pickup_sound: String::new(),
+            npc_pickup_sound: String::new(),
+            npc_ammo_pickup_sound: String::new(),
         }
     }
 }
@@ -1148,6 +1184,10 @@ impl WeaponDef {
         self.bounce.clone_from(&from.bounce);
         self.dud_fx.clone_from(&from.dud_fx);
         self.dud_sound.clone_from(&from.dud_sound);
+        self.pickup_sound.clone_from(&from.pickup_sound);
+        self.ammo_pickup_sound.clone_from(&from.ammo_pickup_sound);
+        self.npc_pickup_sound.clone_from(&from.npc_pickup_sound);
+        self.npc_ammo_pickup_sound.clone_from(&from.npc_ammo_pickup_sound);
     }
 
     /// The bounce off `surface` ([`Self::bounce`]): (along, into) kept, if the def has it.
@@ -1179,6 +1219,10 @@ impl WeaponDef {
             (&self.explode_sound, true),
             (&self.dud_sound, true),
             (&self.npc_fire_sound, true),
+            (&self.pickup_sound, false),
+            (&self.ammo_pickup_sound, false),
+            (&self.npc_pickup_sound, true),
+            (&self.npc_ammo_pickup_sound, true),
         ]
         .into_iter()
         .map(|(e, world)| (e.as_str(), world))

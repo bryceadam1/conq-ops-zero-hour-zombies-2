@@ -621,7 +621,7 @@ void autopilotSpawn()
 
 	// Three enemy riflemen ahead of the General (inside rifle range, outside the base). The smoke
 	// scene places its own units around the screen once it stands.
-	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash)
+	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash && !s_config.autopilot_drops)
 	{
 		for (Int i = -1; i <= 1; ++i)
 		{
@@ -1015,6 +1015,50 @@ void autopilotShellFrame()
 	}
 }
 
+// ZHBO_AUTOPILOT=drops: the first General, 22 s into first person (past BO2's grace period, his
+// class change for the next spawn made by the script), is killed where he stands: the core drops his
+// rifle (`sim::drops`). The next General stands 30 units behind the spot, facing it, and two
+// seconds later takes control; the script walks him onto the rifle and swaps for it.
+static void dropsAutopilotFrame(UnsignedInt frame)
+{
+	Autopilot &a = s_autopilot;
+	Object *general = TheGameLogic->findObjectByID(a.general);
+	if (a.respawned)
+	{
+		if (!a.dropsTaken && general && frame - a.dropsNextFrame >= 2 * LOGICFRAMES_PER_SECOND)
+		{
+			a.dropsTaken = TRUE;
+			logf("autopilot drops: General %u takes control", (unsigned)general->getID());
+			Zhbo_RequestTakeControl(general);
+		}
+		return;
+	}
+	if (!general || !zhbo_logic_is_controlled((uint32_t)a.general))
+		return;
+	if (a.controlledFrame == 0)
+	{
+		a.controlledFrame = frame;
+		return;
+	}
+	if (frame - a.controlledFrame < 22 * LOGICFRAMES_PER_SECOND || general->isEffectivelyDead())
+		return;
+	const Coord3D pos = *general->getPosition();
+	const Real yaw = general->getOrientation();
+	Team *team = general->getTeam();
+	logf("autopilot drops: killing General %u at (%.0f, %.0f)", (unsigned)general->getID(), pos.x, pos.y);
+	general->kill();
+	Coord3D behind;
+	behind.set(pos.x - Cos(yaw) * 30.0f, pos.y - Sin(yaw) * 30.0f, pos.z);
+	Object *next = spawnAt("ZHBO_General_USA", team, behind, yaw);
+	if (next)
+	{
+		a.general = next->getID();
+		logf("autopilot drops: next General %u at (%.0f, %.0f)", (unsigned)next->getID(), behind.x, behind.y);
+	}
+	a.respawned = TRUE;
+	a.dropsNextFrame = frame;
+}
+
 void autopilotFrame()
 {
 	// A replay plays back what the scripted run sent; nothing is sent again.
@@ -1040,6 +1084,11 @@ void autopilotFrame()
 	}
 	if (s_config.autopilot_splash)
 		splashAutopilotFrame();
+	if (s_config.autopilot_drops)
+	{
+		dropsAutopilotFrame(frame);
+		return;
+	}
 	if (s_autopilot.build)
 	{
 		buildAutopilotFrame(frame);

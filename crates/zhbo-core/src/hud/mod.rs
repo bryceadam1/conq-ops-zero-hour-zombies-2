@@ -30,6 +30,7 @@ pub mod digit;
 pub mod frame;
 pub mod map;
 mod panels;
+pub mod pickup;
 pub mod rewards;
 pub mod score;
 pub mod scoreboard;
@@ -298,6 +299,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
                 draw_hitmarker(prims, w, h, client);
                 draw_score_popup(&l, prims, client);
                 draw_hint(&l, prims, client);
+                pickup::draw(&l, prims, sim, p, crate::input::key_name(client.cfg.bindings.field_computer));
                 draw_hack(prims, w, h, s, client);
             }
             if p.hammer.is_none() && !p.building && !spectating {

@@ -639,6 +639,14 @@ UiText MPUI_FIRST_PERSON_VIEW
   Text = 1st Person View
 End
 
+UiText PLATFORM_PICKUPNEWWEAPON
+  Text = Press ^3&&1^7 to pick up
+End
+
+UiText PLATFORM_SWAPWEAPONS
+  Text = Press ^3&&1^7 for
+End
+
 Perk LIGHTWEIGHT
   Name = Lightweight
   Description = Move faster.  Take no damage when falling.
@@ -853,6 +861,7 @@ End
 
 Weapon gl_an94_mp
   DisplayName = Grenade Launcher
+  Inventory = altmode
   Class = launcher
   WeapClass = grenade
   Fire = semi
@@ -939,6 +948,7 @@ End
 
 Weapon frag_grenade_mp
   DisplayName = Grenade
+  Inventory = offhand
   Class = lethal
   CacSlot = primarygrenade
   Fire = semi
@@ -960,6 +970,7 @@ End
 
 Weapon claymore_mp
   DisplayName = Claymore
+  Inventory = item
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -982,6 +993,7 @@ End
 ; detonator (`hasDetonator`). Generic offhand times.
 Weapon satchel_charge_mp
   DisplayName = C4
+  Inventory = item
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -1002,6 +1014,7 @@ End
 
 Weapon concussion_grenade_mp
   DisplayName = Concussion
+  Inventory = offhand
   Class = tactical
   CacSlot = specialgrenade
   Fire = semi
@@ -1024,6 +1037,7 @@ End
 ; Placed tactical equipment (BO2's `specialgrenade` slot lists it beside the grenades).
 Weapon trophy_system_mp
   DisplayName = Trophy System
+  Inventory = item
   Class = equipment
   CacSlot = specialgrenade
   Fire = semi
@@ -1042,6 +1056,8 @@ End
 Weapon knife_held_mp
   DisplayName = Knife
   Class = melee
+  Inventory = primary
+  WeapType = melee
   Melee = 135 0.6
   MeleeDelay = 0.05
   Viewmodel = 4
@@ -1072,6 +1088,8 @@ End
 Weapon knife_mp
   DisplayName = Knife
   Class = melee
+  Inventory = melee
+  WeapType = melee
   Melee = 135 0.75
   MeleeDelay = 0.1
   Viewmodel = 4

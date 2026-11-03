@@ -820,6 +820,13 @@ pub struct Weapon {
     pub explode_on_ground: bool,
     pub dual_wield: bool,
     pub clip_only: bool,
+    /// The weapon-drop rules' data (t6mp): `bIsCarriedKillstreakWeapon` (a held killstreak gun:
+    /// never dropped, not counted among the primaries a pickup swaps against), `avoidDropCleanup`
+    /// (`g_maxDroppedWeapons`' cleanup skips it, `FUN_005f9230`) and `blocksProne` (a dropped one
+    /// cannot be picked up lying prone, `FUN_005fb900`).
+    pub carried_killstreak: bool,
+    pub avoid_drop_cleanup: bool,
+    pub blocks_prone: bool,
     pub rifle_bullet: bool,
     pub silenced: bool,
     /// The variant's `mmsMaxDist` (inches): the millimetre scanner's reach (its `mmsWeapon` is
@@ -848,6 +855,15 @@ pub struct Weapon {
     pub fire_start_sound_player: Option<String>,
     /// HUD art (material names).
     pub hud_icon: Option<String>,
+    /// `hudIconRatio` (`weaponIconRatioType_t`: 0 1:1, 1 2:1, 2 4:1): the pickup hint draws the
+    /// icon twice as wide for 2:1 and 4:1, half as tall for 4:1 (t6mp `FUN_004dbbe0`).
+    pub hud_icon_ratio: u32,
+    /// The pickup's sounds (`pickupSound`/`pickupSoundPlayer` on EV_ITEM_PICKUP,
+    /// `ammoPickupSound`/`ammoPickupSoundPlayer` on EV_AMMO_PICKUP, `FUN_004c1590`).
+    pub pickup_sound: Option<String>,
+    pub pickup_sound_player: Option<String>,
+    pub ammo_pickup_sound: Option<String>,
+    pub ammo_pickup_sound_player: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
     pub hud_icon_key: Option<crate::ipak::ImageKey>,
     pub dpad_icon: Option<String>,
@@ -1358,6 +1374,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
     w.dual_wield_weapon = opt_str(z, d + WD::szDualWieldWeaponName);
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;
+    w.carried_killstreak = z.u8(d + WD::bIsCarriedKillstreakWeapon) != 0;
+    w.avoid_drop_cleanup = z.u8(d + WD::avoidDropCleanup) != 0;
+    w.blocks_prone = z.u8(d + WD::blocksProne) != 0;
     w.rifle_bullet = z.u8(d + WD::bRifleBullet) != 0;
     w.reload_quick_add_time = ms(z, d + WD::iReloadQuickAddTime);
     w.reload_start_add = int(z, d + WD::iReloadStartAdd);
@@ -1425,6 +1444,11 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     // Bound against the pool by `all_in`/`pooled` (a patched def's may be a stub of `common_mp`'s).
     w.explosion_effect = crate::fx::read_or_stub(z, fx);
     w.hud_icon = named(z, d + WD::hudIcon);
+    w.hud_icon_ratio = z.u32(d + WD::hudIconRatio);
+    w.pickup_sound = opt_str(z, d + WD::pickupSound);
+    w.pickup_sound_player = opt_str(z, d + WD::pickupSoundPlayer);
+    w.ammo_pickup_sound = opt_str(z, d + WD::ammoPickupSound);
+    w.ammo_pickup_sound_player = opt_str(z, d + WD::ammoPickupSoundPlayer);
     w.weapon_camo = named(z, d + WD::weaponCamo);
     w.hud_icon_key = icon_key(z, z.try_u32(d + WD::hudIcon)?);
     Ok(w)

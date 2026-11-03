@@ -61,6 +61,7 @@ pub fn predictable(kind: &EventKind) -> bool {
             | Launched
             | CantPlant { .. }
             | Hammer { .. }
+            | WeaponPickedUp { .. }
     )
 }
 

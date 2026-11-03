@@ -28,6 +28,12 @@ fn custom_class_key() -> Key {
         .unwrap_or(Key::Key1)
 }
 
+/// The number key for the profile's `n`-th custom class (0-based), from the live pick list.
+fn nth_custom_class_key(n: usize) -> Option<Key> {
+    let rows = crate::classui::pick_rows(false);
+    rows.iter().position(|r| matches!(r, crate::classui::PickRow::Custom(i) if *i == n)).and_then(crate::classui::pick_key)
+}
+
 /// The short fight's bound: the shooter fires at the target until he is down or this many seconds
 /// into the fight have passed, reloading every [`MP_RELOAD_EVERY`].
 const MP_KILL_TIME: f32 = 30.0;
@@ -87,6 +93,13 @@ pub struct Autopilot {
     /// The splash run ([`Autopilot::splash_input`]): the seeded SMAW class fires one rocket into
     /// the enemy armour group the bridge stands ahead of him.
     pub splash: bool,
+    /// The weapon-drop run ([`Autopilot::drops_input`], `ZHBO_AUTOPILOT=drops`): the first General
+    /// dies and drops his rifle; the next walks over it and swaps for it.
+    pub drops: bool,
+    /// The drops run: where the nearest dropped weapon is from the eye (yaw, pitch, the distance
+    /// across the ground), set by the client from the sim, and when the use key was pressed.
+    pub(crate) drop_aim: Option<(f32, f32, f32)>,
+    pub(crate) drop_used: Option<f32>,
     /// The classpick script's next action and whether the previous key still needs a release frame
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
@@ -149,7 +162,7 @@ pub struct Scripted {
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
     }
 
     /// What it does at time `t`.
@@ -165,6 +178,9 @@ impl Autopilot {
         }
         if self.splash {
             return self.splash_input(b);
+        }
+        if self.drops {
+            return self.drops_input(b);
         }
         if self.equipment {
             let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
@@ -586,6 +602,50 @@ impl Autopilot {
             keys.set_down(b.field_computer, true);
         }
         Scripted { keys, class_pick: pick, ..Default::default() }
+    }
+
+    /// `ZHBO_AUTOPILOT=drops`, two lives. The first General picks the profile's first custom (the
+    /// AN-94 with a grenade launcher), fires a burst, and past the grace period re-opens the class
+    /// screen and picks the second custom (the AN-94 with a reflex sight): it waits for the next
+    /// spawn. The bridge then kills him (his rifle drops) and stands the next General behind the
+    /// spot; he fires and reloads (room for spare rounds), walks onto the dropped rifle (its stock
+    /// is his: the same base weapon) and presses the use key over it: the swap.
+    pub fn drops_input(&mut self, b: &Bindings) -> Scripted {
+        let t = self.t;
+        let mut keys = KeySet::default();
+        if self.session <= 1 {
+            let mut pick = (0.3..0.4).contains(&t).then(custom_class_key);
+            if (2.0..2.6).contains(&t) {
+                keys.set_down(b.fire, true);
+            }
+            let force = (18.0..18.1).contains(&t) as i32;
+            if (18.5..18.6).contains(&t) {
+                pick = nth_custom_class_key(1);
+            }
+            return Scripted { keys, class_pick: pick, pick_force: force, ..Default::default() };
+        }
+        if (2.0..2.5).contains(&t) {
+            keys.set_down(b.fire, true);
+        }
+        if (3.0..3.1).contains(&t) {
+            keys.set_down(b.reload, true);
+        }
+        let mut look = None;
+        if t >= 7.0 {
+            if let Some((yaw, pitch, dist)) = self.drop_aim {
+                look = Some((yaw, pitch));
+                if dist > crate::units::inches(6.0) && self.drop_used.is_none() {
+                    keys.set_down(b.forward, true);
+                } else if self.drop_used.is_none() && t >= 9.0 {
+                    self.drop_used = Some(t);
+                    self.log.push(format!("autopilot drops: over the drop at t {t:.1}, pressing use"));
+                }
+            }
+        }
+        if self.drop_used.is_some_and(|u| t < u + 0.1) {
+            keys.set_down(b.field_computer, true);
+        }
+        Scripted { keys, look, ..Default::default() }
     }
 
     pub fn equipment_input(&self, b: &Bindings) -> KeySet {

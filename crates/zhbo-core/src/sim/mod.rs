@@ -14,6 +14,7 @@
 pub mod antilag;
 mod build;
 pub mod deploy;
+pub mod drops;
 pub mod guard;
 mod fire;
 mod hack;
@@ -214,6 +215,14 @@ pub enum EventKind {
     ShieldPickedUp,
     /// This player's deployed shield was destroyed (by the player `by`, if one).
     ShieldDestroyed { by: Option<i32>, at: Vec3 },
+    /// His General died and dropped this weapon (`dropweaponfordeath`), from `at`.
+    WeaponDropped { def: &'static crate::weapons::WeaponDef, at: Vec3 },
+    /// He picked a dropped weapon up with the use key (BO2's EV_ITEM_PICKUP): the def's
+    /// `pickupSoundPlayer`, `pickupSound` for everyone else at `at`.
+    WeaponPickedUp { def: &'static crate::weapons::WeaponDef, at: Vec3 },
+    /// He walked over a dropped weapon and took its ammo (EV_AMMO_PICKUP): `ammoPickupSoundPlayer`,
+    /// `ammoPickupSound` for everyone else.
+    AmmoPickedUp { def: &'static crate::weapons::WeaponDef, at: Vec3 },
     /// This player's round or strike met an Assault Shield (held, stowed or deployed) at `at`:
     /// no damage to its bearer; drawn as a metal impact, heard as the shield's.
     ShieldHit { at: Vec3, dir: Vec3, knife: bool, impact_type: i32 },
@@ -352,31 +361,39 @@ impl PlayerSim {
         (crate::math::det::atan2(w.y, w.x), crate::math::det::asin(w.z.clamp(-1.0, 1.0)))
     }
 
-    /// Each held weapon paired with the class camo it wears (`_class.gsc:585-682`): the primary
-    /// `calcweaponoptions(class, 0)` (`primarycamo`), the sidearm `(class, 1)` (`secondarycamo`)
-    /// and the melee weapon `(class, 2)` (`knifecamo`). The client hands these to the viewmodel
-    /// draw (`nativevm::class_camos`).
-    pub fn held_camos(&self) -> [(&str, &str); 3] {
+    /// Each held weapon paired with the camo it wears: a picked-up weapon its own (the options it
+    /// was dropped with, `sim::drops`), listed first; then the class's (`_class.gsc:585-682`): the
+    /// primary `calcweaponoptions(class, 0)` (`primarycamo`), the sidearm `(class, 1)`
+    /// (`secondarycamo`) and the melee weapon `(class, 2)` (`knifecamo`). The client hands these to
+    /// the viewmodel draw (`nativevm::class_camos`), which takes the first pair for a weapon.
+    pub fn held_camos(&self) -> Vec<(&str, &str)> {
         let kit = &self.arsenal.loadout;
-        [
-            (kit.primary.as_str(), self.camo.as_str()),
-            (kit.secondary.as_str(), self.secondary_camo.as_str()),
-            (kit.melee.as_str(), self.knife_camo.as_str()),
-        ]
+        let picked = self.arsenal.weapons.iter().filter_map(|w| w.options.as_ref().map(|o| (w.main.id.as_str(), o.camo.as_str())));
+        picked
+            .chain([
+                (kit.primary.as_str(), self.camo.as_str()),
+                (kit.secondary.as_str(), self.secondary_camo.as_str()),
+                (kit.melee.as_str(), self.knife_camo.as_str()),
+            ])
+            .collect()
     }
 
-    /// Each weapon slot paired with the class reticle its optic wears: the primary's
-    /// `primaryreticle`, the sidearm's `secondaryreticle` (`calcweaponoptions(class, 0/1)`, the
-    /// same per-slot options as the camos). The client hands these to the viewmodel draw
-    /// (`nativevm::class_reticles`).
-    pub fn held_reticles(&self) -> [(&str, &str); 2] {
+    /// Each weapon paired with the reticle its optic wears: a picked-up weapon's own first, then
+    /// the primary's `primaryreticle` and the sidearm's `secondaryreticle`
+    /// (`calcweaponoptions(class, 0/1)`, the same per-slot options as the camos). The client hands
+    /// these to the viewmodel draw (`nativevm::class_reticles`).
+    pub fn held_reticles(&self) -> Vec<(&str, &str)> {
         let kit = &self.arsenal.loadout;
-        [(kit.primary.as_str(), self.reticle.as_str()), (kit.secondary.as_str(), self.secondary_reticle.as_str())]
+        let picked = self.arsenal.weapons.iter().filter_map(|w| w.options.as_ref().map(|o| (w.main.id.as_str(), o.reticle.as_str())));
+        picked.chain([(kit.primary.as_str(), self.reticle.as_str()), (kit.secondary.as_str(), self.secondary_reticle.as_str())]).collect()
     }
 
-    /// The class reticle of the weapon in hand: the sidearm's (or its alt mode's) when the
-    /// sidearm is up, the primary's otherwise.
+    /// The reticle of the weapon in hand: a picked-up weapon's own; else the sidearm's (or its
+    /// alt mode's) when the sidearm is up, the primary's otherwise.
     pub fn held_reticle(&self) -> &str {
+        if let Some(o) = &self.arsenal.current().options {
+            return &o.reticle;
+        }
         let current = &self.arsenal.current().def;
         let kit = &self.arsenal.loadout;
         let secondary = !kit.secondary.is_empty()
@@ -386,6 +403,11 @@ impl PlayerSim {
         } else {
             &self.reticle
         }
+    }
+
+    /// The reticle colour of the weapon in hand: a picked-up weapon's own, else the class's.
+    pub fn held_reticle_color(&self) -> &str {
+        self.arsenal.current().options.as_ref().map_or(self.reticle_color.as_str(), |o| o.reticle_color.as_str())
     }
 
     pub fn is_first_person(&self) -> bool {
@@ -511,6 +533,11 @@ pub struct Sim {
     pub shields: Vec<crate::shield::Bearer>,
     /// Deployed Assault Shields (`sim/deploy.rs`).
     pub deployed: Vec<deploy::Deployed>,
+    /// Weapons lying in the world (`sim/drops.rs`).
+    pub drops: Vec<drops::Dropped>,
+    /// Kills of seat Generals not yet read by their death, and whether each was friendly (a
+    /// suicide or a teammate's: no drop).
+    pub kills: Vec<drops::Kill>,
     /// The players (bit per seat) whose step emitted a combat event (`spawn::is_combat`, BO2's
     /// `hasdonecombat`), set by [`Sim::emit`]. The step reads this, never [`Sim::events`]: the
     /// events are presentation that each client drains at its own render cadence (a headless
@@ -556,6 +583,8 @@ impl Sim {
             tracers: Vec::new(),
             shields: Vec::new(),
             deployed: Vec::new(),
+            drops: Vec::new(),
+            kills: Vec::new(),
             combat_seen: 0,
             emitted: 0,
             antilag_hits: Vec::new(),
@@ -655,6 +684,13 @@ impl Sim {
 
     /// Once per logic frame, after the frame's messages were dispatched.
     pub fn step(&mut self, host: &dyn LogicHost, frame: u32) {
+        // Every kill the step deals is noted, so a death knows whether it drops its weapon.
+        let witness = drops::Witness::new(host);
+        self.step_witnessed(&witness, frame);
+        self.note_kills(witness.take());
+    }
+
+    fn step_witnessed(&mut self, host: &dyn LogicHost, frame: u32) {
         self.frame = frame;
         self.shields = self.shield_bearers();
         self.equipment.shields.clone_from(&self.shields);
@@ -678,6 +714,7 @@ impl Sim {
         self.step_equipment(host);
         self.apply_shock_hits();
         self.step_deployed(host);
+        self.step_drops(host);
         let (frame, smoke) = (self.frame, self.smoke);
         self.smokes.retain(|s| s.stands(frame, &smoke));
         for s in &self.smokes {
@@ -828,12 +865,14 @@ impl Sim {
 
     fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
         let Some(info) = host.object(p.general, p.general) else {
+            self.drop_for_death(host, idx, p, None);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         };
         if info.has(objflags::DEAD) {
             host.set_controlled(p.general, false);
             self.equipment.clear_owner(host, idx);
+            self.drop_for_death(host, idx, p, Some(info.pos));
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         }
@@ -899,6 +938,17 @@ impl Sim {
                 let picked_up = p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 && self.use_picks_up_shield(host, idx, p);
                 if picked_up {
                     input.pressed &= !buttons::FIELD_COMPUTER;
+                }
+                // The use key with a dropped weapon in its use list swaps for it (BO2's +activate),
+                // instead of opening the field computer. A weapon change is held back by an
+                // offhand, a melee or an alt toggle (`FUN_008e0e60`): the press waits for them.
+                if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 && self.use_target(p).is_some() {
+                    input.pressed &= !buttons::FIELD_COMPUTER;
+                    if p.arsenal.holds_switch_back() {
+                        p.pressed_accum |= buttons::FIELD_COMPUTER;
+                    } else {
+                        self.use_drop(host, idx, p);
+                    }
                 }
                 // The laptop is a weapon change (BO2's killstreak remotes are): an offhand, a melee
                 // or an alt toggle under way holds it back, and the press is carried to the next
@@ -1017,6 +1067,11 @@ impl Sim {
     /// ([`crate::nativebody::camo_for`]).
     pub fn third_person_camo(&self, general: u32, vm: i32) -> Option<String> {
         let p = self.players.iter().flatten().find(|p| p.general == general)?;
+        // A picked-up weapon wears the camo it was dropped with.
+        let picked = p.arsenal.weapons.iter().filter_map(|w| w.options.as_ref().map(|o| (w.main, o.camo.as_str())));
+        if let Some(c) = picked.filter_map(|(d, camo)| crate::nativebody::camo_for(d, camo, vm)).next() {
+            return Some(c);
+        }
         let primary = crate::weapons::catalog().get(&p.arsenal.loadout.primary)?;
         crate::nativebody::camo_for(primary, &p.camo, vm)
     }
@@ -1149,6 +1204,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
         ShieldDeployed { at } => format!("player {} deployed the Assault Shield at ({:.0}, {:.0})", e.player, at.x, at.y),
         ShieldPickedUp => format!("player {} picked the Assault Shield back up", e.player),
         ShieldDestroyed { .. } => format!("player {}'s deployed Assault Shield was destroyed", e.player),
+        WeaponDropped { def, at } => format!("player {}'s General dropped his {} at ({:.0}, {:.0})", e.player, def.id, at.x, at.y),
+        WeaponPickedUp { def, .. } => format!("player {} picked up the {}", e.player, def.id),
+        AmmoPickedUp { def, .. } => format!("player {} took ammo from a dropped {}", e.player, def.id),
         _ => return None,
     };
     Some(msg)

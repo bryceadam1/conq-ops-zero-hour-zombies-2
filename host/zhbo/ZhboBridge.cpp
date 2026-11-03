@@ -225,6 +225,7 @@ void readConfig()
 	s_config.autopilot_mp = s_config.autopilot_enabled && strcmp(autopilot, "mp") == 0;
 	s_config.autopilot_smoke = s_config.autopilot_enabled && strcmp(autopilot, "smoke") == 0;
 	s_config.autopilot_splash = s_config.autopilot_enabled && strcmp(autopilot, "splash") == 0;
+	s_config.autopilot_drops = s_config.autopilot_enabled && strcmp(autopilot, "drops") == 0;
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
 	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
