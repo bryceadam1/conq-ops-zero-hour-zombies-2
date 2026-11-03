@@ -180,6 +180,18 @@ fn dpad_icons(weapons: &[zhbo_formats::weapon::Weapon], roster: &crate::weapons:
     icons
 }
 
+/// The wanted sprites with each name once: the first source, the largest size.
+fn merge_wanted(wanted: Vec<(String, Source, u32)>) -> Vec<(String, Source, u32)> {
+    let mut out: Vec<(String, Source, u32)> = Vec::with_capacity(wanted.len());
+    for (name, source, max) in wanted {
+        match out.iter_mut().find(|(n, ..)| *n == name) {
+            Some(w) => w.2 = w.2.max(max),
+            None => out.push((name, source, max)),
+        }
+    }
+    out
+}
+
 /// A standalone overlay page's texture: the file the archive stores (`Art\Textures\<this>`) and
 /// the name its MappedImage gives, one spelling for both.
 fn standalone_texture(name: &str) -> String {
@@ -248,9 +260,6 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         // sprite per material, shared by every def that names it (an alt mode names its gun's).
         let Some(icon) = &w.hud_icon else { continue };
         let name = zhbo_core::lui::materials::image(icon);
-        if wanted.iter().any(|(n, ..)| *n == name) {
-            continue;
-        }
         match w.hud_icon_key {
             Some(hash) => wanted.push((name, Source::Hash(hash), 64)),
             // Equipment icons are stubs in common_mp; the menus' zones hold the real material.
@@ -314,6 +323,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             None => report.missing.push((format!("attachment {short}"), "no icon in mp/attachmenttable.csv".into())),
         }
     }
+    // One sprite per name: a material several surfaces draw (the FHJ's `menu_mp_weapons_fhj` is
+    // its HUD icon and its action-slot icon) is packed once, at the largest size any asks for.
+    let wanted = merge_wanted(wanted);
     let overlay_names: std::collections::HashSet<String> = zhbo_core::hud::OVERLAY_MATERIALS.iter().map(|(m, _)| zhbo_core::lui::materials::image(m)).collect();
     for (name, source, max) in &wanted {
         let hash = match source {
@@ -657,6 +669,17 @@ mod tests {
             vec![30, 30, 40, 40, 0, 0],
             vec![0, 0, 0, 0, 0, 0],
         ]);
+    }
+
+    #[test]
+    fn a_sprite_two_surfaces_want_is_packed_once_at_the_larger_size() {
+        let w = vec![
+            ("ZHBO_Mat_menu_mp_weapons_fhj".to_string(), Source::Dynamic("menu_mp_weapons_fhj".into()), 64),
+            ("ZHBO_Mat_hud_gl_select".to_string(), Source::Dynamic("hud_gl_select".into()), 128),
+            ("ZHBO_Mat_menu_mp_weapons_fhj".to_string(), Source::Dynamic("menu_mp_weapons_fhj".into()), 128),
+        ];
+        let m = merge_wanted(w);
+        assert_eq!(m.iter().map(|(n, _, max)| (n.as_str(), *max)).collect::<Vec<_>>(), [("ZHBO_Mat_menu_mp_weapons_fhj", 128), ("ZHBO_Mat_hud_gl_select", 128)]);
     }
 
     #[test]

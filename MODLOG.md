@@ -11694,8 +11694,11 @@ the carried model for weapType 8; the mod already drew it.
   (`FUN_0052d3e0`) but never aims an offhand; the mod's ADS layer (`Loaded::ads_clip`) has no idle
   fallback by design, and only a gun may aim (`wants_ads`). Reporting or loading the idle would
   change nothing a player sees.
-* *`world_flash_effect` `knife_held_mp` (1).* The held knife is `bUseAsMelee`: its fire button
-  melees, so no shot (and no flash) ever leaves it; the mod gives it no FX weapon.
+* *`world_flash_effect` `knife_held_mp` (1).* The def names `fx_pistol_flash_base` (a copied
+  default), but the held knife is a melee weapType whose attack is a stab in BO2 and in the mod: the
+  mod gives a melee weapon no FX weapon, so nothing carries a world flash. Not proven in t6mp that
+  a melee weapType never raises a fire event (`FUN_008da950`'s callers only choose the melee
+  weapon); left as a data-only cell.
 * *`projectile_explosion_effect` sensor, Trophy (2).* Both are weapon objects whose watcher's
   `detonate` is script (`_sensor_grenade.gsc:23` → `sensorgrenadedestroyed`, `:113-118`;
   `_trophy_system.gsc:37` → `trophysystemdetonate`, `:251-266`): `playfx` and `delete`, never the
@@ -11720,3 +11723,17 @@ breaks it.
 `FireLastSoundNpc`, `ScreenFx`, `HudIcon`; `ExplosionFx` empties on the smoke grenade; the HUD
 icons are renamed by material; the offhands' and `knife_mp`'s `DisplayName`s change). No C ABI
 change.
+
+**Measured** (conformance CLI into ~/.opencode/plan/conformance-gaps/conf vs integration8): weapons
+1,979 → 90 cells, 11 → 5 clusters (`hud_icon` 1,871, the four sound columns 11, `display_name` 5,
+riot shield `world_model` 1, smoke `projectile_explosion_effect` 1 → 0), no new or changed cell; the
+expected side moved only `fire_start_sound` (7) and the shield's `world_model` (1). cac files
+byte-identical (0 cells, 4 BO2-only rows). Gap clusters 12 → 6. Real install: zhbo-assets 73
+passed, the conformance gate red by design (the clusters above); the enumerator test, the roster
+lockstep gate and the archive build pass.
+
+**Gotcha.** The HUD archive named a weapon's icon by its id, so two surfaces that wanted one
+material under two names packed it twice. Named by material, the FHJ's `menu_mp_weapons_fhj` is
+both its HUD icon and its action-slot icon: the wanted sprites now merge by name at the largest
+size (`hud::merge_wanted`) instead of packing a duplicate MappedImage.
+
