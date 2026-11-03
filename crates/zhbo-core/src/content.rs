@@ -178,12 +178,15 @@ pub fn vocabulary(t: &Table) -> u32 {
     h.get()
 }
 
-/// The [`Part::Tuning`] hash: every key and the bits of its value (the parsed pack, so a comment
-/// or the spacing of the file changes nothing).
+/// The [`Part::Tuning`] hash: every key and the bits of its value, then the `[MeansOfDeath]`
+/// table's rows (the parsed pack, so a comment or the spacing of the file changes nothing).
 pub fn tuning(t: &crate::tuning::Tuning) -> u32 {
     let mut h = Hash::default();
     for (key, v) in crate::tuning::Tuning::KEYS.iter().zip(t.values()) {
         h.str(key).u32(v.to_bits());
+    }
+    for (m, zh) in t.means_of_death.entries() {
+        h.str(m.name()).str(zh);
     }
     h.get()
 }
@@ -404,6 +407,9 @@ mod tests {
         let b = crate::tuning::parse("; a comment\n  g_speed   =   190.0\n");
         assert_eq!(tuning(&a), tuning(&b));
         assert_ne!(tuning(&a), tuning(&crate::tuning::parse("g_speed = 191\n")));
+        // The means-of-death table is sim data too: a peer mapping an impact to another armour
+        // row would deal other damage.
+        assert_ne!(tuning(&a), tuning(&crate::tuning::parse("g_speed = 190\nMOD_IMPACT = SMALL_ARMS\n")));
         let basic = crate::classes::basic();
         let mut other = basic.clone();
         other.swap(0, 1);

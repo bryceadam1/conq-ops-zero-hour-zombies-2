@@ -15,7 +15,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | The General's position and facing while first-person | zhbo-core | `AIUpdateInterface::update` and `PhysicsBehavior::update` return early while `zhbo_logic_is_controlled(id)`. |
 | The General's position while under RTS control (field computer up) | Zero Hour AI | Control returns through `set_controlled(id, false)`, which issues `aiIdle`. |
 | A stun (concussion, flashbang, Shock Charge, EMP) on a General | zhbo-core: a shellshock on the first-person General (`crate::shellshock`: slower run and look; presented as the renderer's blur/grab/white layer, the camera's view kick and the ringing loop — see "The shellshock's presentation"); Zero Hour: `disable(PARALYZED)` on everything else (its units, a General under RTS control) | The first-person General never receives `disable(PARALYZED)`: Zero Hour's paralysis froze the player outright. `sim::guard` intercepts it and the sim plays BO2's shock instead. |
-| Shots: when, where, what is hit, how much damage | zhbo-core | Damage is applied with `Object::attemptDamage` (`DAMAGE_SMALL_ARMS` / `DAMAGE_MELEE`), so ZH armor, retaliation and kill credit work natively. |
+| Shots: when, where, what is hit, how much damage | zhbo-core | Damage is applied with `Object::attemptDamage` by the Zero Hour `DamageType` the tuning pack maps each hit's BO2 means of death to (see "Units", Damage), so ZH armor, retaliation and kill credit work natively. |
 | Muzzle flash, tracer, fire sound | Zero Hour | `WeaponTemplate::fireWeaponTemplate(..., inflictDamage = FALSE)` with the `ZHBO_*_FX` weapons. |
 | Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
@@ -40,17 +40,52 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   what blocks is where it is drawn (the eye is the drawn body's too); gameplay distances (speeds,
   ranges, radii) stay `inches`.
 * Damage: BO2 damage (100 HP scale) × `BO2_TO_ZH_DAMAGE` (1.5; a Ranger has 180 HP), for every
-  target; Zero Hour's armour then scales it by the damage kind (`SMALL_ARMS`, `MELEE`, `EXPLOSION`:
-  a blast is `EXPLOSION`, which `TankArmor`, `TruckArmor`, `StructureArmor` and `HumanArmor` take at
-  100 %, the aircraft armours at 100–130 %). BO2's two kinds of victim map onto Zero Hour's objects:
-  a **soldier** (a General, Zero Hour infantry) is BO2's player and takes BO2's numbers as they are;
-  **anything else** (a vehicle, an aircraft, a structure) is BO2's vehicle/killstreak gear and takes
-  BO2's vehicle rules: a missile's direct hit deals `iDamage` × the weapon's
-  `getvehicleprojectilescalar` (tuning pack `getvehicleprojectilescalar.<weapon>`: SMAW and FHJ-18
-  0.2, every other weapon 1; `projectiles::impact_damage`), and radius damage is unscaled (BO2's
-  splash scalar is 1 for every player weapon). A SMAW into a Crusader group (480 HP): the struck tank
+  target. Every hit carries **BO2's means of death** (`zhbo_core::damage::MeansOfDeath`, t6mp's
+  `meansOfDeath_t` in its order, `FUN_00678440`), chosen where BO2's engine chooses it: a round
+  `MOD_RIFLE_BULLET` (`MOD_PISTOL_BULLET` from a pistol, `MOD_HEAD_SHOT` on a soldier's head or
+  helmet, `isheadshot`); a blow `MOD_MELEE`; a missile's strike (`FUN_00608c10`) `MOD_IMPACT` when
+  it is a dud or its def does not go off on impact (a frag or Semtex striking, the crossbow's bolt,
+  a ballistic knife, a combat axe), else its missile handler's direct means (`MOD_GRENADE` for a
+  `weapType` grenade, `FUN_00607730`; `MOD_PROJECTILE` for anything launched, `FUN_0060d330`; the
+  handler table at `0x00c8c0e4`); radius damage the handler's splash means (`MOD_GRENADE_SPLASH`,
+  `MOD_PROJECTILE_SPLASH`, `FUN_00604240`). `LogicHost::damage` takes the means of death; the FFI
+  host sends `LogicApi.damage` the **Zero Hour damage type** the tuning pack's `[MeansOfDeath]`
+  table names for it (`MOD_IMPACT = EXPLOSION`; the kind is an ABI code, `ZHBO_DAMAGE_*`, one per
+  Zero Hour `DamageType` by name, `damage::ZH_DAMAGE_TYPES`; the bridge's `s_zhboDamageTypes`
+  maps it), and Zero Hour's armour scales it by that type's row. The shipped table: bullets
+  `SMALL_ARMS` (BO2's vehicles cut bullets — the AI tank ×0.3, the turrets'
+  `bulletdamagereduction` — as tank armour's 25 % does; soldiers take them whole), grenades,
+  rockets, blasts and **impacts** `EXPLOSION` (every vehicle, aircraft and structure armour takes it
+  at 70–130 %: an impact has no rule in `callback_vehicledamage` and falls to every killstreak's
+  full-damage branch, where `SMALL_ARMS` cut a dud or a thrown axe on a tank to a quarter), blows
+  `MELEE` (BO2's turrets ignore them, `_turret_killstreak.gsc:907`; Zero Hour's vehicles and
+  structures take 0 %), the rest by their namesakes (`CRUSH`, `FALLING`, `FLAME`, `WATER`, `POISON`,
+  `UNRESISTABLE` for the script's kills). The table is sim data: it is in the content fingerprint's
+  tuning part. BO2's two kinds of victim map onto Zero Hour's objects:
+  a **soldier** (a General, Zero Hour infantry) is BO2's player and takes BO2's numbers as they are
+  (his perks by the means of death: Flak Jacket only `isexplosivedamage`'s — the splash means and
+  `MOD_GRENADE`, never a rocket's direct hit nor an impact —; the blast shellshock
+  `_shellshock.gsc:19`'s causes); **anything else** (a vehicle, an aircraft, a structure) is BO2's
+  vehicle/killstreak gear and takes `_globallogic_vehicle.gsc`'s rules by the means of death
+  (`damage::vehicle_scale`, every scalar a tuning-pack key by weapon name): radius damage ×
+  `getvehicleprojectilesplashscalar` (`callback_vehicleradiusdamage`; 1 for every player weapon),
+  then `MOD_PROJECTILE`/`MOD_GRENADE` × `getvehicleprojectilescalar` (SMAW and FHJ-18 0.2),
+  `MOD_GRENADE_SPLASH` × `getvehicleunderneathsplashscalar` (**C4's blast ×30** on any vehicle it
+  reaches: the radius damage reaches `callback_vehicledamage` through `finishvehicleradiusdamage`,
+  t6mp `FUN_0066a3e0` → `G_Damage` → `FUN_005f0810`), everything × `vehicledamagescalar` (1). A
+  sticky def (`stickiness` all/all_orient) stuck to a vehicle strikes it for its
+  `iExplosionInnerDamage` by its direct means and spares it the radius (`FUN_0060a480`): C4 stuck
+  to a tank deals its 200 by `MOD_GRENADE`, not ×30. Killstreak-specific rules (the AI tank's
+  hatchet-as-bullet, the helicopters' rocket one-shots) belong to BO2 entities with their own
+  damage pools that Zero Hour's objects do not have: Zero Hour's armour rows stand in for them.
+  A SMAW into a Crusader group (480 HP): the struck tank
   300, each neighbour 105–225 by the gap between the hulls, so two rockets wreck the group; into
   infantry: 1500 on the one struck, the blast kills a Ranger within three-eighths of the radius (BO2's falloff: 225 at the solid).
+* A projectile in flight strikes an object by its **solid** too (`projectiles::struck_solid`): a
+  soldier's thin cylinder, anything else its Zero Hour box, cylinder or sphere
+  (`hitscan::solid`), grown by half the projectile's radius, so a rocket passing a tank's side
+  strikes it where its side is, not within a circle of its length. A knife reaches a vehicle when
+  its footprint (the same solid) is within `player_meleeRange`.
 * Radius damage measures each object to its **solid** (`projectiles::blast_distance`: its Zero Hour
   geometry box/cylinder/sphere, BO2's soldier-sized cylinder for infantry, `hitscan::solid`), as
   BO2's measures each entity to its bounds (t6mp `FUN_005f1fd0`, from `FUN_005f2130`), and falls
@@ -928,8 +963,9 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   row has no flesh cell, so a grenade off a soldier raises nothing), and their constants live once
   in `zhbo_core::impacts` (`GRENADE_BOUNCE`, `PROJECTILE_DUD`, `DUD_HIT_SOUND_TYPE`). No ABI change.
 * **A missile's strike** (t6mp `FUN_00608c10`). Every strike of an object deals the def's `iDamage`
-  (`damage[0]`; × the weapon's `getvehicleprojectilescalar` on anything but a soldier, see Damage
-  above) first: a rocket's or launcher grenade's direct hit takes only that, because BO2's
+  (`damage[0]`) first, by its means of death (`MOD_IMPACT` for a dud or a def that does not go off on
+  impact, else `MOD_PROJECTILE`/`MOD_GRENADE`; on anything but a soldier BO2's vehicle rule for it,
+  `getvehicleprojectilescalar` only for the direct means, see Damage above): a rocket's or launcher grenade's direct hit takes only that, because BO2's
   radius damage skips the struck entity; a Semtex or C4 sticking, or a frag or flashbang bouncing
   off a player, strikes for it before it sticks or bounces (`Projectile::struck`, a hit marker). A
   `bolt` explosion (`projExplosion` 9, the crossbow) becomes its `szSpawnedGrenadeWeaponName`
@@ -1221,7 +1257,9 @@ from anywhere else — modules take `&Tuning` (`MoveTuning::from_tuning`, `Arsen
 instead of their own constants. When the file is absent the built-in defaults keep tests and the
 fallback working; a test asserts the shipped file sets every key to its default. Adding a knob:
 one line in `tuning.rs`'s field table (field, ini key, default, cited doc) and the same key in
-`data/ConquerOps/tuning.ini`.
+`data/ConquerOps/tuning.ini`. The one section that is not numbers is `[MeansOfDeath]`
+(`MOD_* = <Zero Hour DamageType>`, `damage::MeansOfDeathTable`; its defaults in `damage.rs`, held
+equal to the file and hashed into the content fingerprint like the numbers).
 
 **Weapons are BO2's patched definitions.** The weapon table converts every `WeaponVariantDef`,
 `WeaponAttachment`, model, clip and effect as BO2's asset pool resolves them over the multiplayer
@@ -1382,6 +1420,15 @@ in each faction body manifest (ids from `torso::BASE`; `.zbc` format unchanged),
 `sound_layers.txt`, the new AudioEvents (`ZHBO_BO2_SndNpc_*`, `ZHBO_NTN_*`, the 18 voice events) and
 the General INI without the Zero Hour death voice. Until the archive is rebuilt the core finds no
 torso picks and no new events (the engine logs a missing event once).
+
+
+**Pending for the next bump (ABI 32):** `ZhboLogicApi.damage`'s `kind` widens from three codes to
+one per Zero Hour `DamageType`: `ZHBO_DAMAGE_SMALL_ARMS`/`MELEE`/`EXPLOSION` keep 0–2 and
+`ZHBO_DAMAGE_CRUSH` … `ZHBO_DAMAGE_STATUS` are appended as 3–37 (`ZHBO_DAMAGE_COUNT` 38; Zero
+Hour's order after the first three, `damage::ZH_DAMAGE_TYPES`, a core test holding the header and
+the bridge's `s_zhboDamageTypes` map to it, a `static_assert` its size). No struct, table or
+function moves; an older bridge would take every new code as small arms, so core and bridge must
+bump together. `zhbo_logic_shield_damage` still reports only the first three.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

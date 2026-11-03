@@ -934,6 +934,23 @@ mod tests {
             if d.sticky != sticks {
                 fails.push(format!("{}: sticky {}, BO2's stickiness {}", w.name, d.sticky, w.stickiness));
             }
+            // The means of death the sim gives its hits, from BO2's own fields (t6mp
+            // `FUN_00608c10` and the missile handlers): a strike that does not go off on impact
+            // `MOD_IMPACT`, else the handler's direct means; the radius the handler's splash means.
+            use zhbo_core::damage::MeansOfDeath as M;
+            let grenade = w.weap_type == zhbo_formats::weapon::kind::GRENADE;
+            if matches!(w.weap_type, zhbo_formats::weapon::kind::GRENADE | zhbo_formats::weapon::kind::PROJECTILE) {
+                let strike = if !w.projectile_impact_explode { M::Impact } else if grenade { M::Grenade } else { M::Projectile };
+                let splash = if grenade { M::GrenadeSplash } else { M::ProjectileSplash };
+                if zhbo_core::damage::strike(d, false) != strike || zhbo_core::damage::splash(d) != splash {
+                    fails.push(format!("{}: strikes by {} and splashes by {}, BO2's are {} and {}", w.name, zhbo_core::damage::strike(d, false).name(), zhbo_core::damage::splash(d).name(), strike.name(), splash.name()));
+                }
+                // `FUN_00604240` renames a heavy explosive's grenade splash `MOD_EXPLOSIVE`; the
+                // sim has no such case because no multiplayer weapon is one.
+                if w.proj_explosion == proj_explosion::HEAVY {
+                    fails.push(format!("{}: projExplosion heavy explosive splashes by MOD_EXPLOSIVE, which the sim does not model", w.name));
+                }
+            }
         }
         let swept: Vec<&str> = defs.iter().filter(|d| zhbo_core::conformance::projectile::is_projectile(d)).map(|d| d.id.as_str()).collect();
         for d in defs.iter().filter(|d| zhbo_core::conformance::projectile::is_projectile(d)) {
@@ -964,9 +981,17 @@ mod tests {
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
         let defs: &'static [zhbo_core::weapons::WeaponDef] = Box::leak(table.weapons.into_boxed_slice());
         let swept: Vec<&zhbo_core::weapons::WeaponDef> = defs.iter().filter(|d| zhbo_core::conformance::splash::is_explosive(d)).collect();
-        let fails: Vec<String> = swept.iter().flat_map(|d| zhbo_core::conformance::splash::check(d)).collect();
+        let mut fails: Vec<String> = swept.iter().flat_map(|d| zhbo_core::conformance::splash::check(d)).collect();
         let ids: Vec<&str> = swept.iter().map(|d| d.id.as_str()).collect();
         println!("{} explosives swept: {}", ids.len(), ids.join(" "));
+        // Every strike in flight against every class, by BO2's means of death and vehicle rule.
+        let resolve = |id: &str| defs.iter().find(|d| d.id == id);
+        let flown: Vec<&str> = defs.iter().filter(|d| zhbo_core::conformance::splash::strikes(d)).map(|d| d.id.as_str()).collect();
+        println!("{} strikes flown: {}", flown.len(), flown.join(" "));
+        for id in ["smaw_mp", "gl_an94_mp", "frag_grenade_mp", "sticky_grenade_mp", "hatchet_mp", "knife_ballistic_mp", "crossbow_mp"] {
+            assert!(flown.contains(&id), "{id} is flown");
+        }
+        fails.extend(defs.iter().flat_map(|d| zhbo_core::conformance::splash::check_strikes(d, &resolve)));
         for id in ["smaw_mp", "usrpg_mp", "fhj18_mp", "gl_an94_mp", "frag_grenade_mp", "sticky_grenade_mp", "satchel_charge_mp", "claymore_mp", "bouncingbetty_mp", "explosive_bolt_mp", "concussion_grenade_mp", "proximity_grenade_mp"] {
             assert!(ids.contains(&id), "{id} is swept");
         }

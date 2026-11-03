@@ -4,7 +4,8 @@
 //!
 //! Runs inside the lockstep logic: no randomness, fixed step.
 
-use crate::host::{damage_kind, disable_kind, objflags, LogicHost, ObjInfo};
+use crate::damage::MeansOfDeath;
+use crate::host::{disable_kind, objflags, LogicHost, ObjInfo};
 use crate::impacts::Surface;
 use crate::math::Vec3;
 use crate::units::{inches, BO2_TO_ZH_DAMAGE, LOGIC_DT};
@@ -207,18 +208,18 @@ impl Projectile {
                 next = at;
                 self.pos = at;
                 if spawns {
-                    return Some(self.spawn(host, Some(o)));
+                    return Some(self.spawn(host, Some(o), dud));
                 } else if self.def.impact_explode && dud {
                     return Some(self.dud(host, Some(o)));
                 } else if self.def.impact_explode {
                     return Some(self.go_off(host, Some(o), shields));
                 } else if self.def.effect == Effect::Impact {
-                    return Some(self.impact(host, o));
+                    return Some(self.impact(host, o, dud));
                 }
                 // BO2 strikes every entity a missile hits for its `iDamage` before it sticks or
                 // bounces (t6mp `FUN_00608c10`): a Semtex stuck to a player, a frag or
                 // flashbang off his head.
-                self.strike(host, &o);
+                self.strike(host, &o, dud);
                 if self.def.sticky {
                     self.stuck_to = Some(o.id);
                 } else {
@@ -234,7 +235,7 @@ impl Projectile {
             if contact || next.z <= ground {
                 self.pos = Vec3::new(next.x, next.y, ground);
                 if spawns {
-                    return Some(self.spawn(host, None));
+                    return Some(self.spawn(host, None, dud));
                 }
                 if self.def.impact_explode && dud {
                     return Some(self.dud(host, None));
@@ -280,24 +281,24 @@ impl Projectile {
     }
 
     /// The first object the move `from`→`to` meets, and how far along the move (0..1) it does
-    /// (never [`Self::last_struck`]); and whether the move still meets the last one struck.
+    /// (never [`Self::last_struck`]); and whether the move still meets the last one struck. A
+    /// soldier is met within its thin cylinder; anything else by its Zero Hour geometry (a box, a
+    /// cylinder or a sphere, [`crate::hitscan::solid`]), grown by the projectile's own radius.
     fn hit_object(&self, host: &dyn LogicHost, from: Vec3, to: Vec3) -> (Option<(ObjInfo, f32)>, bool) {
         let mid = (from + to) * 0.5;
         let reach = (to - from).length() * 0.5 + HIT_RADIUS + 12.0;
         let mut objs = Vec::new();
         host.query(mid, reach, self.owner, &mut objs);
+        let seg = to - from;
+        let len = seg.length();
+        let dir = if len > 1e-6 { seg * (1.0 / len) } else { Vec3::new(0.0, 0.0, -1.0) };
         let met: Vec<(ObjInfo, f32)> = objs
             .into_iter()
             .filter(|o| o.id != self.owner && o.id != self.object && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
             .filter_map(|o| {
-                // Closest approach of the segment to the object's axis, within its radius and height.
-                let r = if o.has(objflags::INFANTRY) { 1.5 } else { o.major_radius } + HIT_RADIUS * 0.5;
-                let seg = to - from;
-                let len2 = (seg.x * seg.x + seg.y * seg.y).max(1e-6);
-                let t = (((o.pos.x - from.x) * seg.x + (o.pos.y - from.y) * seg.y) / len2).clamp(0.0, 1.0);
-                let p = from + seg * t;
-                let (dx, dy) = (p.x - o.pos.x, p.y - o.pos.y);
-                (dx * dx + dy * dy <= r * r && p.z >= o.pos.z - 1.0 && p.z <= o.pos.z + o.height.max(2.0) + 1.0).then_some((o, t))
+                let solid = struck_solid(&o);
+                let t = crate::hitscan::ray_vs_target(from, dir, len.max(1e-6), &solid)?;
+                Some((o, if len > 1e-6 { t / len } else { 0.0 }))
             })
             .collect();
         let touching = met.iter().any(|(o, _)| Some(o.id) == self.last_struck);
@@ -306,25 +307,28 @@ impl Projectile {
         (first, touching)
     }
 
-    /// The impact damage (`iDamage`) of a strike on `o` that does not end the flight; notes the
-    /// hit for the client ([`Self::struck`]).
-    fn strike(&mut self, host: &dyn LogicHost, o: &ObjInfo) {
-        let amount = impact_damage(self.def, o);
+    /// The impact damage (`iDamage`) of a strike on `o` that does not end the flight (BO2's
+    /// `MOD_IMPACT`: the def does not go off on impact); notes the hit for the client
+    /// ([`Self::struck`]).
+    fn strike(&mut self, host: &dyn LogicHost, o: &ObjInfo, dud: bool) {
+        let how = crate::damage::strike(self.def, dud);
+        let amount = impact_damage(self.def, o, how);
         if amount > 0.0 {
-            self.struck = Some(host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS));
+            self.struck = Some(host.damage(self.owner, o.id, amount, how));
         }
     }
 
     /// Struck `direct` (none: the ground) as a bolt (BO2's `projExplosion` `bolt`, t6mp
     /// `FUN_00608c10`): what it hit takes the def's impact damage (`iDamage`, before the explosion
     /// type is looked at) and the bolt becomes its spawned grenade, stuck to it.
-    fn spawn(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>) -> Outcome {
+    fn spawn(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>, dud: bool) -> Outcome {
         self.remove_object(host);
         let (mut hit_enemy, mut kill) = (false, false);
         if let Some(o) = &direct {
-            let amount = impact_damage(self.def, o);
+            let how = crate::damage::strike(self.def, dud);
+            let amount = impact_damage(self.def, o, how);
             if amount > 0.0 {
-                kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
+                kill = host.damage(self.owner, o.id, amount, how);
                 hit_enemy = true;
             }
         }
@@ -345,10 +349,12 @@ impl Projectile {
         p
     }
 
-    fn impact(&mut self, host: &dyn LogicHost, o: ObjInfo) -> Outcome {
+    /// A thrown or launched blade striking `o` (a ballistic knife, a combat axe): its impact
+    /// damage, BO2's `MOD_IMPACT` (neither goes off on impact).
+    fn impact(&mut self, host: &dyn LogicHost, o: ObjInfo, dud: bool) -> Outcome {
         self.remove_object(host);
-        let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
-        let kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
+        let how = crate::damage::strike(self.def, dud);
+        let kill = host.damage(self.owner, o.id, impact_damage(self.def, &o, how), how);
         Outcome::Hit { at: self.pos, kill }
     }
 
@@ -378,9 +384,10 @@ impl Projectile {
         }
         let (mut hit_enemy, mut kill) = (false, false);
         if let Some(o) = direct {
-            let amount = impact_damage(self.def, &o);
+            let how = crate::damage::strike(self.def, true);
+            let amount = impact_damage(self.def, &o, how);
             if amount > 0.0 {
-                kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
+                kill = host.damage(self.owner, o.id, amount, how);
                 hit_enemy = true;
             }
         }
@@ -390,7 +397,7 @@ impl Projectile {
     /// The blast (or stun, EMP, smoke).
     fn go_off(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>, shields: &[crate::shield::Bearer]) -> Outcome {
         self.remove_object(host);
-        let b = blast(host, self.def, self.owner, self.pos, direct, self.self_blast_scale, self.self_stun_scale, shields);
+        let b = blast(host, self.def, self.owner, self.pos, Hit { direct, stuck_to: self.stuck_to }, self.self_blast_scale, self.self_stun_scale, shields);
         Outcome::Exploded { at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, surface: b.surface }
     }
 
@@ -407,15 +414,35 @@ impl Projectile {
     }
 }
 
-/// What a missile's strike deals the object it struck (t6mp `FUN_00608c10`): the def's impact damage
-/// (`iDamage`), in Zero Hour's damage. A soldier (a General or Zero Hour infantry: BO2's players)
-/// takes all of it; anything else (a vehicle, an aircraft, a structure: BO2's vehicles and
-/// killstreak gear) takes BO2's `getvehicleprojectilescalar` share of it, from the tuning pack
-/// ([`crate::tuning::Tuning::vehicle_projectile_scale`]: a fifth for the SMAW and FHJ-18, whose
-/// 1000 is there to kill any player outright).
-pub fn impact_damage(def: &WeaponDef, o: &ObjInfo) -> f32 {
-    let scale = if o.has(objflags::INFANTRY) { 1.0 } else { crate::tuning::get().vehicle_projectile_scale(&def.id) };
-    def.damage[0] * scale * BO2_TO_ZH_DAMAGE
+/// The solid a flying projectile strikes `o` by: a soldier's thin cylinder (1.5 units: the
+/// projectile meets the body, not Zero Hour's click-sized infantry cylinder), anything else its
+/// Zero Hour geometry ([`crate::hitscan::solid`]: a box of its two radii, a cylinder, a sphere);
+/// each grown by half the projectile's [`HIT_RADIUS`], and a unit above and below.
+fn struck_solid(o: &ObjInfo) -> crate::hitscan::Target {
+    use crate::hitscan::{Shape, Target};
+    let r = HIT_RADIUS * 0.5;
+    let base = crate::hitscan::solid(o);
+    let low = Vec3::new(o.pos.x, o.pos.y, o.pos.z - 1.0);
+    let shape = match base.shape {
+        _ if o.has(objflags::INFANTRY) => Shape::Cylinder { radius: 1.5 + r, height: o.height.max(2.0) + 2.0 },
+        Shape::Box { half_x, half_y, height, yaw } => Shape::Box { half_x: half_x + r, half_y: half_y + r, height: height + 2.0, yaw },
+        Shape::Cylinder { radius, height } => Shape::Cylinder { radius: radius + r, height: height + 2.0 },
+        // The sphere stands on the position (centred a radius up): grown, it stands `r` lower.
+        Shape::Sphere { radius } => return Target { pos: Vec3::new(o.pos.x, o.pos.y, o.pos.z - r), shape: Shape::Sphere { radius: radius + r }, ..base },
+        other => other,
+    };
+    Target { pos: low, shape, ..base }
+}
+
+/// What a missile's strike by means `how` ([`crate::damage::strike`]) deals the object it struck
+/// (t6mp `FUN_00608c10`): the def's impact damage (`iDamage`), in Zero Hour's damage. A soldier (a
+/// General or Zero Hour infantry: BO2's players) takes all of it; anything else (a vehicle, an
+/// aircraft, a structure: BO2's vehicles and killstreak gear) takes BO2's vehicle rule for the
+/// means ([`crate::damage::vehicle_scale`]): a direct hit (`MOD_PROJECTILE`) the weapon's
+/// `getvehicleprojectilescalar` share (a fifth for the SMAW and FHJ-18, whose 1000 is there to kill
+/// any player outright), an impact (`MOD_IMPACT`: a dud, a frag or a bolt striking) all of it.
+pub fn impact_damage(def: &WeaponDef, o: &ObjInfo, how: MeansOfDeath) -> f32 {
+    def.damage[0] * crate::damage::scale_on(&crate::tuning::get(), &def.id, how, o) * BO2_TO_ZH_DAMAGE
 }
 
 /// How far a blast at `at` is from `o`, for its damage: to the object's solid (its Zero Hour
@@ -467,13 +494,34 @@ pub fn dud_fx(def: &WeaponDef, surface: Surface) -> [Option<String>; 2] {
     [table, (!def.dud_fx.is_empty()).then(|| def.dud_fx.clone())]
 }
 
+/// What a blast went off against: the object it struck directly (an impact fuse's), and the one it
+/// was stuck to (a Semtex, C4 or the crossbow's bolt grenade on a tank).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Hit {
+    pub direct: Option<ObjInfo>,
+    pub stuck_to: Option<u32>,
+}
+
+impl Hit {
+    /// Nothing struck, nothing stuck to (a grenade on the ground, placed equipment).
+    pub const NONE: Hit = Hit { direct: None, stuck_to: None };
+
+    /// Struck `o` directly.
+    pub fn direct(o: ObjInfo) -> Hit {
+        Hit { direct: Some(o), stuck_to: None }
+    }
+}
+
 /// `def` going off at `at` for `owner` (a General's id): explosion damage, stun, EMP or smoke over
-/// its radius, and its effects. `direct` took a direct hit. A General with a shield keeps
-/// `1 − protection` of the damage ([`crate::shield::Bearer::blast_protection`]).
+/// its radius, and its effects. `hit.direct` took a direct hit; a sticky def stuck to a vehicle
+/// (`hit.stuck_to`) strikes it for its inner damage instead of the radius (t6mp `FUN_0060a480`). A
+/// General with a shield keeps `1 − protection` of the damage
+/// ([`crate::shield::Bearer::blast_protection`]).
 #[allow(clippy::too_many_arguments)]
-pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, self_blast_scale: f32, self_stun_scale: f32, shields: &[crate::shield::Bearer]) -> Blast {
+pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, hit: Hit, self_blast_scale: f32, self_stun_scale: f32, shields: &[crate::shield::Bearer]) -> Blast {
     let tuning = crate::tuning::get();
     let d = def;
+    let direct = hit.direct;
     let surface = blast_surface(host, at, direct.as_ref());
     if d.effect != Effect::None {
         let (table, own) = blast_fx(d, surface);
@@ -504,7 +552,11 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
         }
         let dist = blast_distance(o, at);
         let direct_hit = direct.is_some_and(|x| x.id == o.id);
-        if dist > d.explosion_radius && !direct_hit {
+        // A sticky grenade stuck to a vehicle (BO2: `stickiness` all or all_orient and its ground
+        // entity a vehicle, `FUN_0060a480`) strikes it for its inner damage by its handler's direct
+        // means and spares it the radius; a soldier it is stuck to takes the radius as any other.
+        let stuck_hit = d.sticky && hit.stuck_to == Some(o.id) && !o.has(objflags::INFANTRY) && !direct_hit;
+        if dist > d.explosion_radius && !direct_hit && !stuck_hit {
             continue;
         }
         let own = o.id == owner;
@@ -512,8 +564,18 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
             Effect::Explode => {
                 // What it struck takes the impact damage (`iDamage`) and is spared the radius: t6mp
                 // `FUN_00608c10` damages the struck entity first, then passes it to the radius
-                // damage (`FUN_005f2130`) as the one to skip.
-                let mut amount = if direct_hit { impact_damage(d, o) } else { d.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE };
+                // damage (`FUN_005f2130`) as the one to skip. Each by its means of death, under
+                // BO2's vehicle rule for it on anything but a soldier.
+                let (how, mut amount) = if direct_hit {
+                    let how = crate::damage::strike(d, false);
+                    (how, impact_damage(d, o, how))
+                } else if stuck_hit {
+                    let how = crate::damage::direct(d);
+                    (how, d.explosion_inner_damage * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE)
+                } else {
+                    let how = crate::damage::splash(d);
+                    (how, d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE)
+                };
                 if own {
                     amount *= self_blast_scale;
                 }
@@ -521,7 +583,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                     amount *= 1.0 - b.blast_protection(at, &tuning);
                 }
                 if amount > 0.0 {
-                    let k = host.damage(owner, o.id, amount, damage_kind::EXPLOSION);
+                    let k = host.damage(owner, o.id, amount, how);
                     if !own {
                         hit_enemy = true;
                         kill |= k;
@@ -547,9 +609,10 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 if !own {
                     host.disable(o.id, disable_kind::PARALYZED, secs);
                     // The Shock Charge also hurts.
-                    let amount = d.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE;
+                    let how = crate::damage::splash(d);
+                    let amount = d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE;
                     if amount > 0.0 && d.explosion_inner_damage > 10.0 {
-                        kill |= host.damage(owner, o.id, amount, damage_kind::EXPLOSION);
+                        kill |= host.damage(owner, o.id, amount, how);
                     }
                     hit_enemy = true;
                 }
@@ -744,13 +807,13 @@ mod tests {
             height: 15.0,
             health: 1100.0,
             max_health: 1100.0,
-            pos: Vec3::new(22.0, 20.0, 0.0),
+            // Its rear face (grown by the grenade's half radius) across the path at x = 22.
+            pos: Vec3::new(22.0 + 26.0 + HIT_RADIUS * 0.5, 0.0, 0.0),
             ..Default::default()
         });
         let def = weapon("frag_grenade_mp");
         let mut p = Projectile::launch(def, 1, Vec3::new(20.0, 0.0, 1.0), Vec3::ZERO, 10.0, &host, 0.0);
-        // 10 units on and 2 down this step: the ground is met halfway, the hull (its axis beside
-        // the path at x = 22) at two-fifths.
+        // 10 units on and 2 down this step: the ground is met halfway, the hull at a fifth.
         p.vel = Vec3::new(10.0, 0.0, -2.0) * (1.0 / LOGIC_DT);
         p.step(&host);
         assert_eq!(p.last_struck, Some(5));

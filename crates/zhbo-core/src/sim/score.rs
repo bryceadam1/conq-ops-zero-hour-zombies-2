@@ -225,8 +225,8 @@ impl LogicHost for Tally<'_> {
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3) {
         self.host.fire_fx(shooter, fx_weapon, target, pos)
     }
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool {
-        let kill = self.host.damage(shooter, victim, amount, kind);
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: crate::damage::MeansOfDeath) -> bool {
+        let kill = self.host.damage(shooter, victim, amount, how);
         self.hits.borrow_mut().push(Hit { shooter, victim, amount, kill });
         kill
     }
@@ -289,7 +289,7 @@ mod tests {
 
     fn hit(sim: &mut Sim, host: &FakeHost, shooter: u32, victim: u32, bo2_damage: f32) {
         let amount = bo2_damage * crate::units::BO2_TO_ZH_DAMAGE;
-        let kill = host.damage(shooter, victim, amount, crate::host::damage_kind::SMALL_ARMS);
+        let kill = host.damage(shooter, victim, amount, crate::damage::MeansOfDeath::RifleBullet);
         sim.score_hits(host, &[Hit { shooter, victim, amount, kill }]);
     }
 
@@ -361,8 +361,8 @@ mod tests {
     fn the_steps_damage_calls_are_scored() {
         let (mut sim, host) = match_of_four();
         sim.scored(&host, |_, h| {
-            h.damage(101, 102, 40.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::host::damage_kind::SMALL_ARMS);
-            h.damage(100, 102, 1000.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::host::damage_kind::EXPLOSION);
+            h.damage(101, 102, 40.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::MeansOfDeath::RifleBullet);
+            h.damage(100, 102, 1000.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::MeansOfDeath::GrenadeSplash);
         });
         assert_eq!(assists(&sim), [(1, 2)]);
     }

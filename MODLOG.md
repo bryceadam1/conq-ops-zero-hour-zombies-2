@@ -11722,3 +11722,79 @@ the game's own body pass: `render_world_weapons --torso <id>` (new) draws the Ge
 mid-reload, -knife, -shot, -raise and -throw (`~/.opencode/plan/remote-presentation/render/`).
 **Open:** in the throw, the weapon in hand follows `tag_weapon_right` where the throw clip puts it
 (the pistol hangs off the hand); BO2 may draw the offhand there instead.
+
+
+## Damage rules: every hit carries BO2's means of death (round 4, damage-rules)
+
+The splash item left four BO2 damage-rule gaps; all come from one root cause: the sim had no notion
+of BO2's **means of death** (`MOD_*`) and the ABI only three Zero Hour kinds, so every non-blast hit
+(a dud, a frag or Semtex striking, the crossbow's bolt, a ballistic knife, a combat axe) went to
+Zero Hour as `SMALL_ARMS` and met `TankArmor`'s 25 %, and BO2's per-means vehicle rules
+(`_globallogic_vehicle.gsc`) could not be told apart.
+
+**BO2 (t6mp Ghidra, plan dir `damage-rules/g/`).**
+* `meansOfDeath_t`: `FUN_00678440` registers the 21 names in order (0 UNKNOWN … 5 PROJECTILE …
+  16 IMPACT … 20 GAS); `FUN_0063a1a0`/`FUN_00639ff0` push `badMOD` past 0x15.
+* Missile handlers: table `0x00c8c0e4 + type*0x30`, `+0x14` direct / `+0x18` splash means; type 10
+  (set by `FUN_00607730`, the grenade spawner) 3/4, type 12 (`FUN_0060d330`, the rocket's) 5/6.
+  `FUN_00604240` renames a grenade splash of `projExplosion` heavy (6) `MOD_EXPLOSIVE`; no MP player
+  weapon has it (the install test holds that).
+* Strike (`FUN_00608c10`): a dud (`FUN_00604280`) or `!bProjImpactExplode` (WeaponDef `+0x72c`) →
+  `MOD_IMPACT` with the trace's hit location; else the handler's direct means (`customBool0` +0x984
+  forces PROJECTILE).
+* Explode (`FUN_0060a480`): `stickiness` all/all_orient (+0x730 1|2) and the ground entity a
+  vehicle → `G_Damage(vehicle, iExplosionInnerDamage, handler direct means)`, and that vehicle is the
+  radius damage's skip entity.
+* Radius on a vehicle goes `callback_vehicleradiusdamage` → `finishvehicleradiusdamage`
+  (`FUN_0066a3e0`) → `G_Damage` (`FUN_005f0a30`) → `G_VehicleDamage` (`FUN_005f0810`) →
+  `callback_vehicledamage`. So C4's `MOD_GRENADE_SPLASH` gets `getvehicleunderneathsplashscalar`'s
+  ×30 on **any** vehicle it reaches, despite the name (`damagefromunderneath`, computed by
+  `FUN_00664ef0`, is passed but the script never reads it). C4 *stuck* to the vehicle strikes it
+  by `MOD_GRENADE` instead and gets no ×30.
+* `FUN_0079b2d0`/`FUN_0079ab10` (per-piece bullet/explosive/melee/impact scales, the
+  `*DamageScaleN` strings) are **destructibles**, not vehicles: not ported.
+* Player side: Flak Jacket is `isexplosivedamage` (EXPLOSIVE, GRENADE, GRENADE_SPLASH,
+  PROJECTILE_SPLASH: not a rocket's direct hit, not an impact); the blast shellshock
+  `_shellshock.gsc:19` (those plus PROJECTILE); `isheadshot` head/helmet.
+* `level.vehicledamagescalar` is set in the base `_globallogic.gsc`, which the dump lacks: tuning
+  `vehicledamagescalar = 1` (unverified, the series' default).
+
+**Fix.** `zhbo_core::damage`: `MeansOfDeath` (BO2's order), the strike/splash/direct/bullet means
+of a def, `vehicle_scale` (projectile-splash, projectile, underneath scalars and
+`vehicledamagescalar`, all tuning keys by weapon name, `Tuning::per_weapon`), and the tuning
+pack's `[MeansOfDeath]` table (MOD → Zero Hour `DamageType` name; in the content fingerprint's
+tuning part). `LogicHost::damage` takes the means; the FFI host sends the table's code. The ABI's
+kind is now one code per Zero Hour `DamageType` (`ZHBO_DAMAGE_*` 0–37, the old three first;
+`ZhboLogicApi.cpp`'s `s_zhboDamageTypes`; a core test reads the header and the bridge) — pending
+ABI 32. Every damage site picks the means: bullets RIFLE/PISTOL/HEAD_SHOT, the knife MELEE,
+strikes/duds/blades IMPACT, direct hits PROJECTILE/GRENADE, blasts the splash means, a sticky
+grenade stuck to a vehicle its inner damage by the direct means without the radius
+(`projectiles::Hit`). `sim::guard`'s Flak Jacket and shellshock go by the means. A flying
+projectile strikes an object's real solid (`projectiles::struck_solid`: box/cylinder/sphere, grown
+by half its radius; soldiers keep the thin cylinder), and the knife reaches a vehicle's footprint
+(`MeleeReach::reaches`). The built-in table got `WeapType` lines (it defaulted grenades to bullet).
+
+**Decision: the armour row per means.** Zero Hour's armour stands in for BO2's per-killstreak
+rules. Bullets → `SMALL_ARMS` (BO2 vehicles cut them: AI tank ×0.3 ≈ TankArmor 25 %); grenades,
+rockets, splash **and impacts** → `EXPLOSION` (callback_vehicledamage has no rule for MOD_IMPACT,
+every killstreak's default branch takes it whole; EXPLOSION is 100 % on tank/truck armour);
+MELEE → `MELEE` (BO2 turrets ignore knives; Zero Hour vehicles 0 %). Not ported: the AI tank's
+`hatchet_mp`-as-bullet and the helicopters'/spy plane's one-shot rocket rules — they belong to
+BO2 entities with their own damage pools. So an axe now deals 187.5 to a tank (BO2's generic
+vehicle: 125 whole), a ballistic knife 375, a GL dud 202.5, a frag's strike 22.5 (was 5.6).
+
+**Gotcha: `cargo xtask build` without `--dist`/`ZHBO_WORK_DIR` stages into the shared per-user
+`~/Library/Application Support/ConquerOps/{work,dist}`.** An item agent's build there overwrites
+the player's staged game; pass `--dist <worktree>/target/dist` and set `ZHBO_WORK_DIR`.
+
+**Verification.** `cargo test --workspace` green (zhbo-core 817 passed); clippy `--workspace
+--all-targets` and zhbo-core `--features harness` clean; real install (`--ignored --skip
+conformance`) 71 passed, the roster lockstep gate, the splash sweep (now with `check_strikes`
+over every flown def) and the per-def means-of-death check included; conformance byte-identical
+to integration8 (1,979 weapon cells / 11 clusters; cac 0, 4 BO2-only rows; 12 gap clusters). In
+game: `--splash` 5/5 — the SMAW's strike on the Overlord 300, each Crusader beside it 132.9 (was
+136.1: the rocket now meets the Overlord's box face), the rebels killed; the frag's strike on the
+Overlord **22.5** (was 5.6, `MOD_IMPACT` as `EXPLOSION`), its blast then 249.3 on the Overlord and
+148.8 on each Crusader (it now bounces off the real box and comes to rest elsewhere); default 16/16;
+`mptest-mac.sh` (short) 25/25, the state hash equal on all 2,918 common frames, no CRC mismatch,
+content CRC D6FEF2AC on both.
