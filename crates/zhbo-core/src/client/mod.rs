@@ -898,9 +898,20 @@ impl Client {
             ap.mp_fight = None;
             ap.mp_fight_alone = false;
             ap.mp_leave_at = None;
+            ap.eq_lethal_at = None;
+            ap.eq_tactical_from = None;
             if ap.mp {
                 let class = sim.player(inp.local_player).and_then(|p| p.class.clone()).unwrap_or_else(|| "none".into());
                 ap.log.push(format!("autopilot mp: first-person session {} (class {class})", ap.session));
+            }
+        }
+        if ap.equipment {
+            if let Some(p) = sim.player(inp.local_player).filter(|p| p.class.is_some()) {
+                let a = &p.arsenal;
+                ap.eq_idle = a.offhand.is_none() && a.raise_left <= 0.0 && a.drop_left <= 0.0;
+                ap.eq_lethal_left = a.lethal.count;
+            } else {
+                ap.eq_idle = false;
             }
         }
         if ap.mp {

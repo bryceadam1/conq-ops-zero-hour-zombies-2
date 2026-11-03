@@ -197,7 +197,7 @@ impl Sim {
         proj.vel = vel;
         (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
         self.projectiles.push((idx, proj));
-        self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
+        self.emit(idx, EventKind::Thrown { lethal: std::ptr::eq(def, p.arsenal.lethal.def) || def.id == p.arsenal.lethal.def.id });
     }
 
     /// Under RTS control: what the third slot's next shot does — `choice` is [`Third`]'s wire value

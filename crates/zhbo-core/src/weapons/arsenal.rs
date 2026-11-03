@@ -40,7 +40,9 @@ pub enum WeaponAction {
     /// a stacked pull by the rounds loaded before each, minus one (the tri-bolt's 2, 1, 0).
     Launch { def: &'static WeaponDef, pellet: u16 },
     /// Throw an offhand item; `fuse_left` is what remains after cooking.
-    Throw { def: &'static WeaponDef, fuse_left: f32 },
+    /// `lethal`: thrown from the lethal slot (whatever the item's class: C4 is equipment, and
+    /// Tactician puts a tactical there).
+    Throw { def: &'static WeaponDef, fuse_left: f32, lethal: bool },
     /// Cooked too long: it goes off in hand.
     CookedOff { def: &'static WeaponDef },
     /// Pin pulled (the throw animation's wind-up starts).
@@ -1256,7 +1258,7 @@ impl Arsenal {
             let fuse_left = if def.cook { def.fuse_time - self.cooked } else { def.fuse_time };
             out.push(match def.place {
                 Place::Plant => WeaponAction::Plant { def },
-                _ => WeaponAction::Throw { def, fuse_left },
+                _ => WeaponAction::Throw { def, fuse_left, lethal },
             });
         } else if !fired && def.cook {
             // Still in the hand: the fuse burns on.

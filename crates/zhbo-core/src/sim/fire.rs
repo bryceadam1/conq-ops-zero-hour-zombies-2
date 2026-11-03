@@ -38,7 +38,7 @@ impl Sim {
                     self.emit(idx, EventKind::Launched);
                 }
             }
-            WeaponAction::Throw { def, fuse_left } => {
+            WeaponAction::Throw { def, fuse_left, lethal } => {
                 let eye = p.body.eye();
                 // BO2 throws a little above the crosshair.
                 let dir = dir_from_angles(p.yaw, (p.pitch + 0.12).min(1.4));
@@ -46,7 +46,8 @@ impl Sim {
                 proj.vel += p.body.vel * 0.5;
                 (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
                 self.projectiles.push((idx, proj));
-                self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
+                // The slot it left (the client plays that slot's item's throw).
+                self.emit(idx, EventKind::Thrown { lethal });
             }
             WeaponAction::CookedOff { def } => {
                 let mut proj = Projectile::launch(def, p.general, p.body.eye(), Vec3::ZERO, 0.0, host, p.yaw);
@@ -640,6 +641,21 @@ mod tests {
             thrown.extend(sim.projectiles.iter().skip(before).map(|(_, p)| p.def.id.clone()));
         }
         thrown
+    }
+
+    /// The thrown event names the slot the item left, whatever its class: the C4 (BO2's
+    /// `weapClass` equipment, in the lethal slot) is a lethal throw, so the client plays the lethal
+    /// slot's throw sound for it (it played the tactical's: the slot was read off the class).
+    #[test]
+    fn a_thrown_c4_is_the_lethal_slots_throw() {
+        let host = FakeHost::default();
+        let draft = Draft { lethal: "satchel_charge_mp".into(), ..Draft::test_kit() };
+        let mut sim = with_class(&host, &draft);
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.def.class, crate::weapons::Class::Equipment);
+        sim.events.clear();
+        assert_eq!(throw_lethal(&mut sim, &host), vec!["satchel_charge_mp".to_string()]);
+        let thrown: Vec<bool> = sim.events.iter().filter_map(|e| if let EventKind::Thrown { lethal } = e.kind { Some(lethal) } else { None }).collect();
+        assert_eq!(thrown, [true]);
     }
 
     /// Danger Close with its second box filled: the class carries two lethals (`primarygrenadecount`

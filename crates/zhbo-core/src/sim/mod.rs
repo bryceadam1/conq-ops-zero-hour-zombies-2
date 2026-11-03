@@ -58,7 +58,9 @@ use crate::units::inches;
 use crate::building::{self, Hammer, Site};
 use crate::weapons::idle_sway::{BreathIn, IdleSway};
 use crate::weapons::view_kick::{self, ViewKick};
-use crate::weapons::{Arsenal, Class, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
+use crate::weapons::{Arsenal, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
+#[cfg(test)]
+use crate::weapons::Class;
 
 pub const MAX_PLAYERS: usize = 16;
 // `Sim::combat_seen` keeps a bit per seat.
