@@ -816,14 +816,14 @@ fn scavenger_refills_the_gun_not_its_launcher_whichever_mode_is_up() {
     let gl_reserve = a.current().alt_reserve;
     a.toggle_alt();
     assert!(a.current().alt_up(), "the launcher is up");
-    a.scavenge();
+    a.scavenge(false);
     let w = a.current();
     assert_eq!(w.main_rounds().1, gun.clip.min(gun.max_reserve), "the rifle's stock got a magazine");
     assert_eq!(w.reserve, gl_reserve, "the launcher's grenades are not refilled");
     // And the same with the rifle up.
     let mut b = Arsenal::with_loadout(Loadout::test_kit());
     b.current_mut().reserve = 0;
-    b.scavenge();
+    b.scavenge(false);
     assert_eq!((b.current().reserve, b.current().alt_reserve), (w.main_rounds().1, gl_reserve));
 }
 

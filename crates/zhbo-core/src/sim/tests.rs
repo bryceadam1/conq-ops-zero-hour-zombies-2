@@ -1204,6 +1204,8 @@ fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
     spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
+    // Past the grace period (BO2 drops no pack in it).
+    sim.frame = frames(crate::tuning::get().class_change_grace_period);
     let p = sim.players[0].as_mut().unwrap();
     p.arsenal.loadout.perks.push(crate::weapons::Perk::SCAVENGER);
     let w = p.arsenal.current_mut();
@@ -1216,6 +1218,43 @@ fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
     let a = &sim.player(0).unwrap().arsenal;
     assert_eq!(a.current().reserve, 240, "topped up to the stock cap, not past it");
     assert!(a.current().ammo > 0 && a.current().ammo < 30, "the magazine is the one being fired");
+}
+
+/// BO2's Scavenger pack is a player's death outside the grace period: a kill in the grace period,
+/// or of anything but a soldier, refills nothing; and a C4 is not refilled while one of the
+/// killer's is down (`_weapons.gsc` `scavenger_think`'s `satchel_charge_mp` case).
+#[test]
+fn scavenger_follows_bo2s_drop_rules() {
+    let c4: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { id: "satchel_charge_mp".into(), equipment_kind: crate::equipment::Kind::C4, ..Default::default() }));
+    let mut sim = Sim::new();
+    let kit = || {
+        let mut a = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
+        a.loadout.perks.push(crate::weapons::Perk::SCAVENGER);
+        a.current_mut().reserve = 0;
+        a
+    };
+    let mut a = kit();
+    assert!(sim.in_grace_period());
+    sim.scavenger_kill(0, &mut a, true);
+    assert_eq!(a.current().reserve, 0, "no pack in the grace period");
+    sim.frame = frames(crate::tuning::get().class_change_grace_period);
+    sim.scavenger_kill(0, &mut a, false);
+    assert_eq!(a.current().reserve, 0, "no pack from a vehicle or a building");
+    sim.scavenger_kill(0, &mut a, true);
+    assert!(a.current().reserve > 0, "a soldier's pack");
+    // C4 in hand, one of his down: the guns refill, the C4 does not; none down, it does.
+    let mut a = kit();
+    a.lethal.def = c4;
+    a.loadout.lethal = c4.id.clone();
+    a.loadout.lethal_count = Some(1);
+    a.lethal.count = 0;
+    sim.equipment.placed.push(crate::equipment::Placed::new(c4, 0, 1, 0, Vec3::ZERO, 0.0, None));
+    sim.scavenger_kill(0, &mut a, true);
+    assert_eq!(a.lethal.count, 0, "no C4 while one is down");
+    assert!(a.current().reserve > 0);
+    sim.equipment.placed.clear();
+    sim.scavenger_kill(0, &mut a, true);
+    assert_eq!(a.lethal.count, 1, "the C4 back once none is down");
 }
 
 /// BO2 traces a non-spread round `bulletrange` (8192 in, `Bullet_Fire`), whatever the def's

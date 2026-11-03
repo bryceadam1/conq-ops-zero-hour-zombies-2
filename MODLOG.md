@@ -11707,3 +11707,14 @@ of full per second. The tuning pack's `RegenFullTime` is gone; `healthoverlaycut
 changes (Zero Hour units do not regenerate). Test: `health_comes_back_as_bo2s_regen_gives_it`
 (light hurt whole at once; very hurt at 10% a step; a hit on the way up restarts the wait and keeps
 him very hurt).
+
+## Bug sweep 4: Scavenger follows BO2's drop rules (2026-11-03, branch `v1/bug-sweep-4`)
+
+BO2 drops a Scavenger pack only from a **player's** death (`dropscavengerfordeath`, called from
+`_globallogic_player.gsc:1911-1914`), only **outside the grace period** (`if ( !level.ingraceperiod )`)
+and not for a blast (`MOD_GRENADE*`/`MOD_EXPLOSIVE*`/`MOD_PROJECTILE_SPLASH`); picking it up refills
+C4 only when none of the player's is down (`scavenger_think`'s `satchel_charge_mp` case,
+`_weaponobjects.gsc` `anyobjectsinworld`). The mod refilled on any kill: a vehicle or building, in the
+grace period, the C4 with one already down. `Sim::scavenger_kill` gates the bullet, knife and
+projectile-impact kills (the blast kills were already excluded) on all three; a projectile's struck
+victim is not known and counts as a soldier. Test: `scavenger_follows_bo2s_drop_rules`.

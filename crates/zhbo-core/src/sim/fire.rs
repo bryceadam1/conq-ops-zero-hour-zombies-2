@@ -152,8 +152,8 @@ impl Sim {
             self.emit(idx, EventKind::Impact { at: point, dir, surface, head: headshot, fatal: kill, impact_type: def.impact_type, exit: false });
         }
         self.emit(idx, EventKind::HitMarker { headshot, kill });
-        if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
-            p.arsenal.scavenge();
+        if kill {
+            self.scavenger_kill(idx, &mut p.arsenal, infantry);
         }
         BulletHit { id, surface, head: headshot, kill }
     }
@@ -310,8 +310,8 @@ impl Sim {
             self.emit(idx, EventKind::MeleeHit);
             let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-            if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
-                p.arsenal.scavenge();
+            if kill {
+                self.scavenger_kill(idx, &mut p.arsenal, v.has(objflags::INFANTRY));
             }
         }
     }
@@ -656,9 +656,9 @@ mod tests {
         assert_eq!(throw_lethal(&mut sim, &host), vec!["frag_grenade_mp".to_string()], "the second lethal");
         assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 0);
         let a = &mut sim.players[0].as_mut().unwrap().arsenal;
-        a.scavenge();
-        a.scavenge();
-        a.scavenge();
+        a.scavenge(false);
+        a.scavenge(false);
+        a.scavenge(false);
         assert_eq!(a.lethal.count, 2, "scavenged back to the class's two, not past it");
         // Without the card: one.
         let plain = with_class(&FakeHost::default(), &Draft::test_kit());

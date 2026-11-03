@@ -747,15 +747,18 @@ impl Arsenal {
     /// `primarygrenadecount`/`specialgrenadecount` — Danger Close's two lethals refill to two).
     /// The guns are `getweaponslistprimaries()` (`_weapons.gsc:1795`): the weapon's own clip into
     /// its own stock, never an alt mode's (an under-barrel launcher is in the alts list, which
-    /// only refills the named offhands), whichever mode is up.
-    pub fn scavenge(&mut self) {
+    /// only refills the named offhands), whichever mode is up. `c4_down`: a C4 of the player's is
+    /// in the world, so his C4 gets none (`satchel_charge_mp`'s `anyobjectsinworld` case).
+    pub fn scavenge(&mut self, c4_down: bool) {
         for w in &mut self.weapons {
             let (clip, max) = (w.main.clip, w.main.max_reserve);
             let (_, reserve) = w.main_rounds_mut();
             *reserve = reserve.saturating_add(clip).min(max);
         }
         let (lethal, tactical) = (self.class_count(true), self.class_count(false));
-        self.lethal.count = (self.lethal.count + 1).min(lethal.max(self.lethal.count));
+        if !(c4_down && self.lethal.def.equipment_kind == crate::weapons::Kind::C4) {
+            self.lethal.count = (self.lethal.count + 1).min(lethal.max(self.lethal.count));
+        }
         self.tactical.count = (self.tactical.count + 1).min(tactical.max(self.tactical.count));
     }
 

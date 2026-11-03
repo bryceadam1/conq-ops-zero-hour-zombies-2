@@ -812,13 +812,25 @@ impl Sim {
         }
     }
 
-    /// Scavenger: a kill with a non-explosive weapon refills ammo.
+    /// Scavenger: a kill by a projectile's impact (not its blast) refills ammo. The victim's kind
+    /// is not known here (a struck object): it counts as a soldier.
     fn scavenge(&mut self, idx: usize) {
-        if let Some(Some(p)) = self.players.get_mut(idx) {
-            if p.arsenal.has_specialty(Specialty::Scavenger) {
-                p.arsenal.scavenge();
-            }
+        let Some(Some(mut p)) = self.players.get_mut(idx).map(Option::take) else { return };
+        self.scavenger_kill(idx, &mut p.arsenal, true);
+        self.players[idx] = Some(p);
+    }
+
+    /// BO2's Scavenger pack (`_weapons.gsc` `dropscavengerfordeath`, `scavenger_think`): a kill
+    /// refills the killer's ammo when he has the perk, the victim was a soldier (BO2 drops it only
+    /// for a player), outside the grace period (`_globallogic_player.gsc:1911`, `if (
+    /// !level.ingraceperiod )`), and not by a blast (the callers: a bullet, a knife or a
+    /// projectile's impact). His C4 gets none while one of his is down.
+    pub(super) fn scavenger_kill(&self, idx: usize, arsenal: &mut crate::weapons::Arsenal, soldier: bool) {
+        if !soldier || self.in_grace_period() || !arsenal.has_specialty(Specialty::Scavenger) {
+            return;
         }
+        let c4_down = self.equipment.placed.iter().any(|q| q.owner == idx && q.kind == crate::equipment::Kind::C4);
+        arsenal.scavenge(c4_down);
     }
 
     /// Hand a first-person General back to RTS control where he stands.
