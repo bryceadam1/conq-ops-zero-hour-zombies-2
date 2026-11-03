@@ -305,9 +305,16 @@ pub fn root_from_tag(tag: &[[f32; 4]; 3]) -> Mat4 {
 }
 
 /// The body's world matrix: its feet at `pos`, yawed about +Z (the engine's orientation: 0 = +X,
-/// counter-clockwise), then the art scale.
+/// counter-clockwise), then the art scale at the General's drawn size
+/// ([`crate::units::GENERAL_SCALE`]: the W3D General's `Scale`, the first-person eye and every
+/// prop share it, so the native body stands as tall as the W3D one it replaces and its eye is on
+/// the first-person eye line).
 pub fn root_from_object(pos: [f32; 3], yaw: f32) -> Mat4 {
-    mat4_mul(&mat4((qnorm(axis_angle([0.0, 0.0, 1.0], yaw)), pos)), &scale())
+    let mut s = scale();
+    for k in [0, 5, 10] {
+        s[k] *= crate::units::GENERAL_SCALE;
+    }
+    mat4_mul(&mat4((qnorm(axis_angle([0.0, 0.0, 1.0], yaw)), pos)), &s)
 }
 
 fn scale() -> Mat4 {

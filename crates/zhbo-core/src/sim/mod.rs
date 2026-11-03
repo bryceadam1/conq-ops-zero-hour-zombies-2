@@ -1056,9 +1056,12 @@ impl Sim {
             .map(|p| {
                 let a = &p.arsenal;
                 let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();
+                // The field computer's tablet is the W3D body's (`world_poses`): no native weapon
+                // or body meanwhile, so the W3D one shows it.
+                let tablet = matches!(p.mode, Mode::FieldComputer { .. }) || (matches!(p.mode, Mode::Fps) && a.raise_left > a.raise_total + 1e-4);
                 NativePose {
                     general: p.general,
-                    weapon: a.current().def.viewmodel, // content: presentation (native_poses: the third-person draw)
+                    weapon: if tablet { -1 } else { a.current().def.viewmodel }, // content: presentation (native_poses: the third-person draw)
                     stance: p.stance_index(),
                     state: p.body_state(engine_moving, run_speed),
                     time,

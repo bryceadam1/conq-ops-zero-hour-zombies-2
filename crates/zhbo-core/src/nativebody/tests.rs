@@ -203,14 +203,14 @@ fn the_body_clip_follows_the_stance_gait_and_sights() {
 
 #[test]
 fn the_body_root_is_the_object_yawed_about_z() {
-    // Feet at (1, 2, 3), yawed +90° about Z: the head stays 12 units up and the body's +X (its
-    // right side in the model's frame) runs along +Y.
+    // Feet at (1, 2, 3), yawed +90° about Z: the head stands at the General's drawn size (the W3D
+    // body's `Scale`, `units::DRAWN_ZH_PER_INCH`) and the body's +X runs along +Y.
     let root = root_from_object([1.0, 2.0, 3.0], std::f32::consts::FRAC_PI_2);
     let head = zhbo_native::math::mat4_point(&root, [0.0, 0.0, 72.0]);
-    let want = [1.0, 2.0, 3.0 + 72.0 * ART_SCALE];
+    let want = [1.0, 2.0, 3.0 + crate::units::drawn_inches(72.0)];
     assert!((0..3).all(|k| (head[k] - want[k]).abs() < 1e-4), "{head:?} vs {want:?}");
     let side = zhbo_native::math::mat4_point(&root, [72.0, 0.0, 0.0]);
-    let want = [1.0, 2.0 + 72.0 * ART_SCALE, 3.0];
+    let want = [1.0, 2.0 + crate::units::drawn_inches(72.0), 3.0];
     assert!((0..3).all(|k| (side[k] - want[k]).abs() < 1e-4), "{side:?} vs {want:?}");
 }
 
@@ -355,7 +355,7 @@ fn the_shield_rides_the_left_hand_and_the_back() {
         let m = s.loaded().unwrap().bone_world(&s.posed, bone).unwrap_or_else(|| panic!("no {bone}"));
         [m[0][3], m[1][3], m[2][3]]
     };
-    let close = |a: [f32; 3], inches: [f32; 3]| (0..3).all(|k| (a[k] - inches[k] * ART_SCALE).abs() < 1e-3);
+    let close = |a: [f32; 3], inches: [f32; 3]| (0..3).all(|k| (a[k] - crate::units::drawn_inches(inches[k])).abs() < 1e-3);
     let compose = |s: &mut ffi::State, vm: i32| {
         for _ in 0..20 {
             s.frame(&body_input(vm), 2, None);
