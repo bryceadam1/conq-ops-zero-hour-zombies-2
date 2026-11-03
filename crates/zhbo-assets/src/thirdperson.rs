@@ -534,6 +534,85 @@ mod tests {
         assert!(combos > 100, "{combos} combinations");
     }
 
+    /// Every weapon's torso actions are the clips BO2's script gives its key, through its def's
+    /// `torso_anims` and the table the client reads; every torso clip tracks only the upper body
+    /// (so it layers over the legs' clip); every combination keeps its base's set; and the reloads
+    /// carry their third-person sound notetracks. `--nocapture` prints the sweep.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_weapon_action_plays_the_torso_bo2_gives_it() {
+        use zhbo_native::thirdperson::torso;
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let types = anim_types(&mp.common);
+        let roster = crate::weapons::Roster::read(&mp.patch);
+        let mut table = crate::weapons::table(&bo2, &atts, None, &Default::default(), &roster);
+        let sets = assign_torso_sets(&mp.common, &bo2, &mut table.weapons);
+        let (rows, clips, aliases) = torso_table(&mp.common, &sets);
+        let t = zhbo_core::torso::parse(&rows);
+        assert_eq!(clips.len(), sets.clips.len(), "every torso clip converts");
+        // The script, asked again for each weapon's own key.
+        let script = crate::playeranim::Script::parse(&String::from_utf8_lossy(&zhbo_formats::havok_lua::rawfile(&mp.common, crate::playeranim::PATH).unwrap()));
+        let names = anim_names(&mp.common);
+        let mut weapons = 0;
+        for d in &table.weapons {
+            let Some(w) = bo2.iter().find(|w| w.name == d.id) else { continue };
+            let want = torso_picks(&script, &names, &Key::of(w, &types), w.weap_type == zhbo_formats::weapon::kind::RIOTSHIELD);
+            for a in 0..torso::ACTIONS {
+                for c in 0..torso::CONTEXTS {
+                    let got = t.pick(d.torso_anims, a, c).and_then(|id| t.clip(id)).map(|c| c.name.clone());
+                    assert_eq!(got, want[(a * torso::CONTEXTS + c) as usize], "{} action {a} context {c}", d.id);
+                }
+            }
+            weapons += 1;
+        }
+        assert!(weapons >= 100, "{weapons} weapons");
+        let at = |id: &str, action: u8, stance: u8| {
+            let d = table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+            t.pick(d.torso_anims, action, torso::context(stance, false, false)).and_then(|c| t.clip(c)).map(|c| c.name.clone()).unwrap_or_default()
+        };
+        // BO2's own picks (`mp/playeranim.script` EVENTS), the playtest's weapons.
+        for (id, action, stance, want) in [
+            ("an94_mp", torso::RELOAD, 0, "pt_reload_stand_rifle"),
+            ("an94_mp", torso::RELOAD, 2, "pt_reload_prone_auto"),
+            ("an94_mp", torso::MELEE, 0, "p_knife_stand_rifle_swipe"),
+            ("an94_mp", torso::MELEE_CHARGE, 0, "p_knife_stand_rifle"),
+            ("an94_mp", torso::FIRE, 0, "pt_stand_shoot"),
+            ("mp7_mp", torso::FIRE, 0, "pt_stand_shoot_auto"),
+            ("an94_mp", torso::RAISE, 0, "pt_rifle_stand_raise"),
+            ("an94_mp", torso::DROP, 1, "pt_rifle_crouch_putaway"),
+            ("fnp45_mp", torso::RELOAD, 0, "pt_reload_stand_pistol"),
+            ("fnp45_mp", torso::MELEE, 0, "p_knife_stand_pistol_swipe"),
+            ("smaw_mp", torso::RELOAD, 0, "pt_reload_stand_rpg"),
+            ("smaw_mp", torso::MELEE, 0, "p_knife_stand_bazooka_swipe"),
+            ("riotshield_mp", torso::MELEE, 0, "pt_riotshield_melee"),
+            ("knife_held_mp", torso::MELEE, 0, "pt_knife_stand_melee_swipe"),
+            ("frag_grenade_mp", torso::THROW, 0, "pt_grenade_stand_throw"),
+            ("frag_grenade_mp", torso::PRIME, 0, "pt_grenade_stand_prime"),
+        ] {
+            assert_eq!(at(id, action, stance), want, "{id} action {action} stance {stance}");
+        }
+        // A torso clip moves the upper body only.
+        for c in &clips {
+            let legs: Vec<&str> = c.anim.bones.iter().map(|b| b.name.as_str()).filter(|b| ["j_hip", "j_knee", "j_ankle", "j_ball", "j_mainroot", "pelvis"].iter().any(|l| b.starts_with(l))).collect();
+            assert!(legs.is_empty(), "{} tracks the legs: {legs:?}", c.anim.name);
+        }
+        // The rifle reload is heard: BO2's third-person reload foley rides its notetracks.
+        let reload = t.clip(t.pick(table.weapons.iter().find(|d| d.id == "an94_mp").unwrap().torso_anims, torso::RELOAD, 0).unwrap()).unwrap();
+        let notes: Vec<&str> = reload.notes.iter().map(|n| n.1).collect();
+        assert_eq!(notes, ["ZHBO_NTN_fly_assault_reload_npc_mag_out", "ZHBO_NTN_fly_assault_reload_npc_mag_in", "ZHBO_NTN_fly_assault_reload_npc_charge"]);
+        assert!(aliases.len() > 10, "{aliases:?}");
+        eprintln!("{} torso sets, {} clips, note aliases {aliases:?}", sets.sets.len(), clips.len());
+        // A combination copies its base's set.
+        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&mp.patch, &bo2), &bo2);
+        for d in table.weapons.iter().filter(|d| d.id.contains('+') && !d.id.contains('~')) {
+            let base = zhbo_core::attachments::split_id(&d.id).0;
+            let b = table.weapons.iter().find(|x| x.id == base).unwrap();
+            assert_eq!(d.torso_anims, b.torso_anims, "{} vs its base", d.id);
+        }
+    }
+
     #[test]
     fn every_state_has_a_candidate_and_a_scan_rule() {
         for st in 1..=state::COUNT {

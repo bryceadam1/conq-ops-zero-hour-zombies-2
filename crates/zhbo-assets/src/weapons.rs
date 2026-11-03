@@ -2193,6 +2193,39 @@ mod tests {
         assert_eq!(defs[1].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_com_knife_whoosh_plr"), "a melee weapon swings itself");
     }
 
+    /// Others hear the third-person fields (BO2's without `Player`): a weapon's raise, putaway
+    /// and pin are its own, a gun swings and lands with the class knife's third-person swing and
+    /// hit, and each is a positional event of its own even when BO2 names one alias for both (the
+    /// shield's swing).
+    #[test]
+    fn others_hear_the_third_person_def_sounds() {
+        use zhbo_core::weapons::NpcSound;
+        let npc = zhbo_core::names::npc_def_sound_event;
+        let knife = Weapon { name: CLASS_MELEE.into(), weap_type: bo2::kind::MELEE, melee_swipe_sound: Some("wpn_melee_whoosh_npc".into()), melee_hit_sound: Some("wpn_melee_knife_hit_body".into()), ..Default::default() };
+        let gun = Weapon { name: "an94_mp".into(), class: bo2::class::RIFLE, raise_sound: Some("fly_generic_raise_npc".into()), first_raise_sound: Some("fly_generic_first_raise_npc".into()), putaway_sound: Some("fly_generic_down_npc".into()), melee_swipe_sound: Some("wpn_tac_knife_whoosh_npc".into()), ..Default::default() };
+        let shield = Weapon { name: "riotshield_mp".into(), weap_type: bo2::kind::RIOTSHIELD, melee_swipe_sound: Some("fly_riotshield_melee_swing".into()), melee_swipe_sound_player: Some("fly_riotshield_melee_swing".into()), ..Default::default() };
+        let semtex = Weapon { name: "sticky_grenade_mp".into(), pullback_sound: Some("wpn_semtex_charge".into()), ..Default::default() };
+        let mut defs: Vec<WeaponDef> = [&gun, &shield, &semtex].iter().map(|w| to_def(w, &HashMap::new())).collect();
+        let (events, _) = sounds_and_fx(&[knife, gun, shield, semtex], &[], &mut defs, &[]);
+        let (g, sh, se) = (&defs[0], &defs[1], &defs[2]);
+        assert_eq!(g.npc_sound(NpcSound::Raise), npc("fly_generic_raise_npc"));
+        assert_eq!(g.npc_sound(NpcSound::FirstRaise), npc("fly_generic_first_raise_npc"));
+        assert_eq!(g.npc_sound(NpcSound::Putaway), npc("fly_generic_down_npc"));
+        assert_eq!(g.npc_sound(NpcSound::MeleeSwipe), npc("wpn_melee_whoosh_npc"), "the class knife's, not the gun's own field");
+        assert_eq!(g.npc_sound(NpcSound::MeleeHit), npc("wpn_melee_knife_hit_body"));
+        assert_eq!(sh.npc_sound(NpcSound::MeleeSwipe), npc("fly_riotshield_melee_swing"), "the shield swings itself");
+        assert_ne!(sh.npc_sound(NpcSound::MeleeSwipe), sh.melee_swipe_sound, "apart from its owner's 2D event");
+        assert_eq!(se.npc_sound(NpcSound::Pullback), npc("wpn_semtex_charge"));
+        assert_eq!(se.npc_sound(NpcSound::Raise), "", "no field, no sound");
+        // Each converts once, positional.
+        for e in [npc("fly_generic_raise_npc"), npc("fly_riotshield_melee_swing"), npc("wpn_semtex_charge"), npc("wpn_melee_whoosh_npc")] {
+            let made: Vec<_> = events.iter().filter(|x| x.event == e).collect();
+            assert_eq!(made.len(), 1, "{e}");
+            assert_eq!(made[0].kind, crate::sfx::Kind::World, "{e}");
+        }
+        assert!(events.iter().any(|x| x.event == zhbo_core::names::def_sound_event("fly_riotshield_melee_swing") && x.kind == crate::sfx::Kind::Player), "the owner's own stays 2D");
+    }
+
     /// The launcher alt mode carries its `altSwitchSoundPlayer` (EV_WEAPON_ALT); a rifle has none.
     #[test]
     fn an_alt_mode_carries_its_alt_switch_sound() {

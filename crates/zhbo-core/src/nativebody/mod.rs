@@ -168,7 +168,9 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
         let mut clips = Vec::with_capacity(bmanifest.clips.len());
         let mut waiting = false;
         for (state, cpath) in &bmanifest.clips {
-            if files.is_missing(cpath) {
+            // The torso clips load when one is first played (`ffi::State::torso`), once for every
+            // General.
+            if files.is_missing(cpath) || *state >= zhbo_native::thirdperson::torso::BASE {
                 continue;
             }
             match files.get(cpath) {
@@ -179,8 +181,10 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
         if waiting {
             return Ok(None);
         }
-        for (_, cpath) in &bmanifest.clips {
-            files.forget(cpath);
+        for (state, cpath) in &bmanifest.clips {
+            if *state < zhbo_native::thirdperson::torso::BASE {
+                files.forget(cpath);
+            }
         }
         files.forget(&bmanifest.model);
         files.forget(&bpath);
@@ -326,10 +330,10 @@ pub fn torso_weight(t: f32, length: f32) -> f32 {
 }
 
 impl Loaded {
-    /// Torso clip `id` ([`zhbo_native::thirdperson::torso::BASE`] on), if the body loaded it.
-    pub fn torso_clip(&self, id: u16) -> Option<&AnimClip> {
-        let body = self.body.as_ref()?;
-        (id >= zhbo_native::thirdperson::torso::BASE).then(|| body.clips.iter().find(|c| c.0 == id).map(|c| &c.1)).flatten()
+    /// Torso clip `id`'s blob ([`zhbo_native::thirdperson::torso::BASE`] on) in the body's
+    /// manifest.
+    pub fn torso_path(&self, id: u16) -> Option<&str> {
+        self.body.as_ref()?.manifest.torso_clip(id)
     }
 
     /// Pose this frame and compute the palette: the movement clip, and over it `torso` (a torso

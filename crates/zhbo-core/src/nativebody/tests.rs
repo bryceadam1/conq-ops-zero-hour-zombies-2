@@ -378,3 +378,60 @@ fn the_shield_rides_the_left_hand_and_the_back() {
         ffi::publish_stowed(&[]);
     });
 }
+
+/// The torso layer (`Loaded::pose`): a torso clip replaces the bones it tracks (the spine and
+/// up) over the movement clip, fading in and out over `TORSO_BLEND`, and leaves the legs on the
+/// movement clip; the weapon-only mode ignores it.
+#[test]
+fn a_torso_clip_moves_the_upper_body_over_the_legs() {
+    use zhbo_native::anim::{Anim, BoneTrack};
+    use zhbo_native::math::axis_angle;
+    let body = model("body", vec![bone("tag_origin", None, [0.0; 3]), bone("j_hip_le", Some(0), [0.0, 4.0, 36.0]), bone("j_spinelower", Some(0), [0.0, 0.0, 40.0]), bone("tag_weapon_right", Some(2), [10.0, -8.0, 10.0])]);
+    let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3])]);
+    let manifest = Weapon { id: "test_mp".into(), parts: vec![ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: None, ads_swap: None }], hide: vec![] };
+    let body_manifest = zhbo_native::thirdperson::Body { faction: b'U', model: zhbo_native::model_path("body"), weapon_tag: "tag_weapon_right".into(), clips: vec![] };
+    let files_in = [
+        (zhbo_native::world_weapon_path(7), manifest.to_bytes()),
+        (zhbo_native::model_path("gun"), gun.to_bytes()),
+        (zhbo_native::body_path('U'), body_manifest.to_bytes()),
+        (zhbo_native::model_path("body"), body.to_bytes()),
+    ];
+    let req = Request { vm: 7, faction: b'U', mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
+    let mut files = Files::default();
+    let mut loaded = None;
+    for _ in 0..8 {
+        if let Some(l) = load(&mut files, &req, None).unwrap() {
+            loaded = Some(l);
+            break;
+        }
+        let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+        for w in &wanted {
+            files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+        }
+    }
+    let l = loaded.expect("the body rig loads");
+    // The legs' clip bends the hip; the torso clip (one second) turns the lower spine a quarter
+    // turn and also names... nothing of the legs.
+    let turn = axis_angle([0.0, 0.0, 1.0], std::f32::consts::FRAC_PI_2);
+    let hip = axis_angle([1.0, 0.0, 0.0], 0.5);
+    let track = |name: &str, q| BoneTrack { name: name.into(), rotation: Some(vec![(0, q), (30, q)]), translation: None };
+    let legs = Anim { name: "pb_walk".into(), num_frames: 30, frame_rate: 30.0, looping: true, delta: false, asset_type: 0, bones: vec![track("j_hip_le", hip)], notes: vec![] };
+    let torso = Anim { name: "pt_reload".into(), num_frames: 30, frame_rate: 30.0, looping: false, delta: false, asset_type: 0, bones: vec![track("j_spinelower", turn)], notes: vec![] };
+    let (spine, hip_bone) = (l.skeleton.bone("j_spinelower").unwrap(), l.skeleton.bone("j_hip_le").unwrap());
+    let mut out = Posed::default();
+    let close = |a: [f32; 4], b: [f32; 4]| (0..4).all(|k| (a[k] - b[k]).abs() < 1e-4) || (0..4).all(|k| (a[k] + b[k]).abs() < 1e-4);
+    // Mid-clip: the spine is the torso's, the hip the legs'.
+    l.pose(&req, Some(&legs), Some((&torso, 0.5)), &mut out);
+    assert!(close(out.local[spine].0, turn), "the torso turns the spine: {:?}", out.local[spine].0);
+    assert!(close(out.local[hip_bone].0, hip), "the legs keep walking: {:?}", out.local[hip_bone].0);
+    // At its very start and end it is the movement clip's (it fades in and out).
+    l.pose(&req, Some(&legs), Some((&torso, 0.0)), &mut out);
+    assert!(close(out.local[spine].0, QUAT_IDENTITY), "no torso at its first frame");
+    l.pose(&req, Some(&legs), Some((&torso, 1.0)), &mut out);
+    assert!(close(out.local[spine].0, QUAT_IDENTITY), "nor at its end");
+    assert_eq!(torso_weight(TORSO_BLEND * 0.5, 1.0), 0.5);
+    // Weapon-only mode is rigid: no torso.
+    let rigid = Request { mode: Mode::Weapon, ..req };
+    l.pose(&rigid, None, Some((&torso, 0.5)), &mut out);
+    assert!(out.local.iter().all(|x| x.0 != turn));
+}

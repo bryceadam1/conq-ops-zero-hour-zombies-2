@@ -99,6 +99,9 @@ pub(crate) struct State {
     last: Option<u32>,
     failed: HashSet<super::RigKey>,
     pub(crate) posed: Posed,
+    /// The torso clips played so far, shared by every General's rig (the body manifests name the
+    /// same blobs).
+    torso: HashMap<u16, super::AnimClip>,
     pub(crate) log: VecDeque<String>,
     logged: HashSet<String>,
 }
@@ -127,6 +130,26 @@ impl State {
     #[cfg(test)]
     pub(crate) fn logged(&self) -> impl Iterator<Item = &str> {
         self.logged.iter().map(String::as_str)
+    }
+
+    /// Ask for torso clip `id` (`rig`'s body names its blob) until it has loaded.
+    fn want_torso(&mut self, rig: &Loaded, id: u16) {
+        if self.torso.contains_key(&id) {
+            return;
+        }
+        let Some(path) = rig.torso_path(id).map(str::to_string) else { return };
+        if self.files.is_missing(&path) {
+            return;
+        }
+        if let Some(bytes) = self.files.get(&path) {
+            match super::AnimClip::from_bytes(&bytes) {
+                Ok(a) => {
+                    self.torso.insert(id, a);
+                }
+                Err(e) => self.log_once(format!("{path}: {e}")),
+            }
+            self.files.forget(&path);
+        }
     }
 
     pub(crate) fn log_once(&mut self, msg: String) {
@@ -197,7 +220,12 @@ impl State {
         // body with no clip) is drawing.
         let clip = rig.loaded.clip_for(inp.state as u16);
         // The upper body's action over it, while the client times one for him (`client::remote`).
-        let torso = torso_of(general).and_then(|(id, t)| rig.loaded.torso_clip(id).map(|c| (c, t)));
+        // Its clip loads the first time anyone plays it; until then the body runs without it.
+        let torso_id = torso_of(general).filter(|_| mode == Mode::Body);
+        if let Some((id, _)) = torso_id {
+            self.want_torso(&rig.loaded, id);
+        }
+        let torso = torso_id.and_then(|(id, t)| self.torso.get(&id).map(|c| (c, t)));
         rig.loaded.pose(&req, clip, torso, &mut self.posed);
         self.last = Some(general);
         #[cfg(feature = "renderer")]
