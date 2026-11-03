@@ -73,6 +73,42 @@ pub const LAND: &str = "ZHBO_BO2_Land";
 /// `fly_step_sprint_npc_<surface>`), positional for everyone ([`RemoteSteps`]).
 pub const STEP_NPC: &str = "ZHBO_BO2_StepNpc";
 pub const SPRINT_STEP_NPC: &str = "ZHBO_BO2_SprintStepNpc";
+/// A player's voice when he is hurt and when he dies (`_battlechatter_mp.gsc` `painvox`,
+/// `deathvox`: `level.teamprefix[team] + bcvoicenumber + "_pain_small"` / `"_pain_death"`, played
+/// on his `J_Head` for everyone). One event per faction's voice bank (the faction letters of
+/// `zhbo_assets::generals::FACTIONS`) and voice number (`bcVoiceNumber`, `randomintrange(0, 3)`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Voice {
+    Pain,
+    Death,
+}
+
+/// The faction letters whose voices convert, in [`VOICE_EVENTS`] order.
+pub const VOICE_FACTIONS: [u8; 3] = *b"UCG";
+/// BO2's voice numbers per team (`randomintrange(0, 3)`).
+pub const VOICES: usize = 3;
+/// `[voice][faction][number]`: the converted events ([`voice_event`]).
+pub const VOICE_EVENTS: [[[&str; VOICES]; 3]; 2] = [
+    [
+        ["ZHBO_BO2_PainSmall_U0", "ZHBO_BO2_PainSmall_U1", "ZHBO_BO2_PainSmall_U2"],
+        ["ZHBO_BO2_PainSmall_C0", "ZHBO_BO2_PainSmall_C1", "ZHBO_BO2_PainSmall_C2"],
+        ["ZHBO_BO2_PainSmall_G0", "ZHBO_BO2_PainSmall_G1", "ZHBO_BO2_PainSmall_G2"],
+    ],
+    [
+        ["ZHBO_BO2_PainDeath_U0", "ZHBO_BO2_PainDeath_U1", "ZHBO_BO2_PainDeath_U2"],
+        ["ZHBO_BO2_PainDeath_C0", "ZHBO_BO2_PainDeath_C1", "ZHBO_BO2_PainDeath_C2"],
+        ["ZHBO_BO2_PainDeath_G0", "ZHBO_BO2_PainDeath_G1", "ZHBO_BO2_PainDeath_G2"],
+    ],
+];
+
+/// The voice event of seat `seat`'s General of faction `faction` (his letter; the first faction's
+/// when unknown). BO2 draws a player's voice number at random once per team join; here the seat
+/// picks it (`seat % 3`), the same on every machine and for the whole match.
+pub fn voice_event(v: Voice, faction: Option<u8>, seat: usize) -> &'static str {
+    let f = faction.and_then(|f| VOICE_FACTIONS.iter().position(|&x| x == f)).unwrap_or(0);
+    VOICE_EVENTS[v as usize][f][seat % VOICES]
+}
+
 pub const IMPACT: &str = "ZHBO_BO2_Impact";
 pub const IMPACT_FLESH: &str = "ZHBO_BO2_ImpactFlesh";
 /// Hold breath (`FUN_0052e3d0` notifies `playerbreathinsound` / `playerbreathoutsound` /
@@ -309,7 +345,7 @@ impl BreathSounds {
 
 /// The arsenal state the weapon cues compare against, from the last frame.
 #[derive(Clone, Debug, Default)]
-struct WeaponCues {
+pub struct WeaponCues {
     seen: bool,
     raise_left: f32,
     raise_played: bool,
@@ -504,32 +540,68 @@ impl Cues {
         self.weapon_moments(p);
     }
 
-    /// BO2's def-level weapon sounds at their moments, read off the arsenal's state changes: the
-    /// putaway as a drop begins (the weapon going away), the raise — or the first raise — once
-    /// the drop is done and the raise runs, and the zoom as aiming starts. An alt toggle plays
-    /// `altSwitchSoundPlayer` as it begins and its raise plays nothing: BO2's weapon change sends
-    /// EV_WEAPON_ALT instead of EV_PUTAWAY_WEAPON for an alt pair (`FUN_008db500`) and
+    /// BO2's def-level weapon sounds at their moments ([`WeaponCues::step`]), the player's own
+    /// (`*SoundPlayer`) versions.
+    fn weapon_moments(&mut self, p: &PlayerSim) {
+        use crate::weapons::arsenal::RaiseKind;
+        let mut queue = std::mem::take(&mut self.queue);
+        self.weapon.step(&p.arsenal, |m| {
+            let e = match m {
+                Moment::Putaway(d) => some(d.putaway_sound.as_str()),
+                Moment::AltSwitch(d) => some(d.alt_switch_sound.as_str()),
+                Moment::Raise(d, RaiseKind::First) => some(d.first_raise_sound.as_str()),
+                // An empty raise is a raise with its own time (switch-timing); its sound is the raise.
+                Moment::Raise(d, RaiseKind::Normal | RaiseKind::Quick | RaiseKind::Empty) => some(d.raise_sound.as_str()),
+                Moment::Raise(_, RaiseKind::Alt) => None,
+                Moment::AdsZoom(d) => some(d.ads_zoom_sound.as_str()),
+            };
+            if let Some(e) = e {
+                queue.push(Request { event: e, at: None, gain: 1.0 });
+            }
+        });
+        self.queue = queue;
+    }
+}
+
+/// A weapon moment BO2's client plays a def-level sound at ([`WeaponCues::step`]), with the def
+/// whose field it plays.
+#[derive(Clone, Copy, Debug)]
+pub enum Moment {
+    /// A drop begins: the weapon going away (EV_PUTAWAY_WEAPON).
+    Putaway(&'static crate::weapons::WeaponDef),
+    /// An alt toggle begins (EV_WEAPON_ALT).
+    AltSwitch(&'static crate::weapons::WeaponDef),
+    /// The drop is done and the raise runs (EV_RAISE_WEAPON; the first raise of a life its own kind).
+    Raise(&'static crate::weapons::WeaponDef, crate::weapons::arsenal::RaiseKind),
+    /// Aiming starts.
+    AdsZoom(&'static crate::weapons::WeaponDef),
+}
+
+impl WeaponCues {
+    /// The moments since the last frame, read off the arsenal's state changes: the putaway as a
+    /// drop begins (the weapon going away), the raise — or the first raise — once the drop is
+    /// done and the raise runs, and the zoom as aiming starts. An alt toggle is
+    /// [`Moment::AltSwitch`] as it begins and its raise is [`RaiseKind::Alt`]: BO2's weapon change
+    /// sends EV_WEAPON_ALT instead of EV_PUTAWAY_WEAPON for an alt pair (`FUN_008db500`) and
     /// EV_RAISE_PICKUP_WEAPON instead of EV_RAISE_WEAPON (`FUN_008df320`); the client plays the
     /// held def's `altSwitchSound(Player)` for the first and nothing for the second
     /// (`FUN_004c1590`). The held def is the one up after the toggle's command: with no alt drop
     /// (`iAltDropTime` 0, every launcher pair) the change finishes in that same pmove
     /// (`FUN_008e4da0`), so it is the incoming mode; a toggle with an alt drop (select fire's 500 ms)
-    /// plays it as the drop begins, from the outgoing mode.
-    fn weapon_moments(&mut self, p: &PlayerSim) {
+    /// is the outgoing mode as the drop begins.
+    ///
+    /// [`RaiseKind::Alt`]: crate::weapons::arsenal::RaiseKind::Alt
+    pub fn step(&mut self, a: &crate::weapons::Arsenal, mut on: impl FnMut(Moment)) {
         use crate::weapons::arsenal::RaiseKind;
-        let a = &p.arsenal;
-        let prev = std::mem::take(&mut self.weapon);
+        let prev = std::mem::take(self);
         let mut now = WeaponCues { seen: true, raise_left: a.raise_left, raise_played: prev.raise_played, drop_left: a.drop_left, ads: a.ads };
         if a.drop_left > prev.drop_left + 1e-6 {
             // An alt toggle with a drop (alt-timing's `iAltDropTime`) begins here: BO2 sends
             // EV_WEAPON_ALT, not EV_PUTAWAY_WEAPON, and the held def is still the outgoing mode.
-            let e = if a.alt_pending {
-                some(a.current().def.alt_switch_sound.as_str())
-            } else {
-                a.weapons.get(a.previous).and_then(|w| some(w.def.putaway_sound.as_str()))
-            };
-            if let Some(e) = e {
-                self.play(e);
+            if a.alt_pending {
+                on(Moment::AltSwitch(a.current().def));
+            } else if let Some(w) = a.weapons.get(a.previous) {
+                on(Moment::Putaway(w.def));
             }
         }
         // A new raise (the timer jumped up, or the first frame seen with one running) re-arms it.
@@ -538,30 +610,17 @@ impl Cues {
             // A zero-drop alt toggle (every launcher pair) changes the mode in the same pmove: the
             // sound is the incoming mode's. A toggle with a drop played it as the drop began.
             if a.raise_kind == RaiseKind::Alt && prev.drop_left <= 0.0 {
-                if let Some(e) = some(a.current().def.alt_switch_sound.as_str()) {
-                    self.play(e);
-                }
+                on(Moment::AltSwitch(a.current().def));
             }
         }
         if a.raise_left > 0.0 && a.drop_left <= 0.0 && !now.raise_played {
             now.raise_played = true;
-            let def = a.current().def;
-            let e = match a.raise_kind {
-                RaiseKind::First => some(def.first_raise_sound.as_str()),
-                // An empty raise is a raise with its own time (switch-timing); its sound is the raise.
-                RaiseKind::Normal | RaiseKind::Quick | RaiseKind::Empty => some(def.raise_sound.as_str()),
-                RaiseKind::Alt => None,
-            };
-            if let Some(e) = e {
-                self.play(e);
-            }
+            on(Moment::Raise(a.current().def, a.raise_kind));
         }
         if prev.ads <= 0.0 && a.ads > 0.0 {
-            if let Some(e) = some(a.current().def.ads_zoom_sound.as_str()) {
-                self.play(e);
-            }
+            on(Moment::AdsZoom(a.current().def));
         }
-        self.weapon = now;
+        *self = now;
     }
 }
 

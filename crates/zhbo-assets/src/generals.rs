@@ -375,6 +375,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         let keys: Vec<String> = body_sets.dropped().iter().map(|k| format!("{}/{}", k.class, k.anim_type)).collect();
         summary.push(format!("third-person animation sets past the body's {}: {} keep the rifleman's", zhbo_native::thirdperson::state::MAX_SETS, keys.join(" ")));
     }
+    // The torso clips each weapon's actions play (reload, melee, throw, fire, weapon change), from
+    // the same script; the combinations copy their base's set too.
+    let torso_sets = crate::thirdperson::assign_torso_sets(&common, &bo2, &mut table.weapons);
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2, &roster);
     crate::weapons::add_variants(&mut table, &converted, &bo2);
@@ -434,6 +437,13 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     for c in &body_clips {
         crate::native::put_anim(&mut out, &c.anim);
     }
+    // The torso clips layer over them (`zhbo_core::nativebody`), and their sound notetracks are
+    // what others hear of a reload or a pin (`zhbo_core::torso`).
+    let (torso_rows, torso_clips, torso_aliases) = crate::thirdperson::torso_table(&common, &torso_sets);
+    for c in &torso_clips {
+        crate::native::put_anim(&mut out, &c.anim);
+    }
+    summary.push(format!("third-person torso: {} sets, {} clips, {} sound notetracks", torso_sets.sets.len(), torso_clips.len(), torso_aliases.len()));
     if !body_unresolved.is_empty() {
         summary.push(format!("native body clips missing for states {body_unresolved:?}"));
     }
@@ -489,7 +499,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             faction: f.letter as u8,
             model: native_body_path,
             weapon_tag: character::WEAPON_TAG.to_string(),
-            clips: body_clips.iter().map(|c| (c.state, zhbo_native::anim_path(&c.anim.name))).collect(),
+            clips: body_clips.iter().chain(&torso_clips).map(|c| (c.state, zhbo_native::anim_path(&c.anim.name))).collect(),
         };
         out.insert(zhbo_native::body_path(f.letter), body_manifest.to_bytes());
         let mut meshes = character::skin(&rig, &body, "B", &body_tex);
@@ -583,8 +593,20 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     loops.sort_unstable();
     loops.dedup();
     extra.extend(loops.into_iter().map(|a| crate::sfx::DynSfx { event: zhbo_core::shellshock::loop_event(a).to_string(), layers: vec![a.to_string()], kind: crate::sfx::Kind::PlayerLoop, limit: 1 }));
-    let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
+    // The torso clips' sound notetracks: heard at the General, by everyone.
+    extra.extend(torso_aliases.iter().map(|a| crate::sfx::DynSfx { event: zhbo_core::names::npc_notetrack_event(a), layers: vec![a.clone()], kind: crate::sfx::Kind::World, limit: 2 }));
+    let voices: Vec<(u8, &str)> = FACTIONS.iter().map(|f| (f.letter as u8, f.zone)).collect();
+    let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra, &voices)?;
     out.extend(sound_files);
+    // The torso table rides the third-person sound rows (`zhbo_load_sound_layers`); a notetrack
+    // whose alias no multiplayer bank holds plays nothing, as in BO2.
+    let audio = String::from_utf8_lossy(out.get("Data\\INI\\SoundEffects\\ZHBO_BO2.ini").map_or(&[][..], Vec::as_slice)).into_owned();
+    let torso_rows: String = torso_rows
+        .lines()
+        .filter(|l| !l.starts_with("torso_note ") || l.rsplit(' ').next().is_some_and(|e| audio.contains(&format!("AudioEvent {e}\n"))))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    out.entry(zhbo_core::names::SOUND_LAYERS_PATH.to_string()).or_default().extend_from_slice(torso_rows.as_bytes());
     summary.push(sound_summary);
 
     // BO2's own explosions for the converted weapons (and equipment breaking), as Zero Hour

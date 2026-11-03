@@ -424,7 +424,7 @@ mod tests {
         "client/", "hud/", "classui/", "lui/", "nativevm/", "nativebody/", "conformance/",
         "classmenu/apply.rs", "classmenu/editor.rs", "classmenu/grid.rs", "classmenu/keys.rs", "classmenu/nav.rs",
         "classmenu/offer.rs", "classmenu/options.rs", "classmenu/personalize.rs", "classmenu/slot.rs", "classmenu/step.rs",
-        "menu.rs", "ffi.rs", "sounds.rs", "soundlayers.rs", "viewmodel.rs", "weapons/gunpos.rs",
+        "menu.rs", "ffi.rs", "sounds.rs", "soundlayers.rs", "torso.rs", "viewmodel.rs", "weapons/gunpos.rs",
         "profile.rs", "classicons.rs", "weapons/def.rs", "weapons/table.rs", "weapons/catalog.rs", "attachments.rs",
         "content.rs",
     ];
@@ -456,6 +456,8 @@ mod tests {
         ("FireStartSound", &["fire_start_sound"]),
         ("FireLastSound", &["fire_last_sound"]),
         ("PullbackSound", &["pullback_sound"]),
+        ("NpcSounds", &["npc_sounds"]),
+        ("TorsoAnims", &["torso_anims"]),
         ("SilencedFireStartSound", &["silenced_fire_start_sound"]),
         ("AttachmentFireSounds", &["attachment_fire_sounds"]),
         ("AttachmentFireStartSounds", &["attachment_fire_start_sounds"]),

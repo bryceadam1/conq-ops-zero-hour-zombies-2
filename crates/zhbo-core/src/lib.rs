@@ -41,6 +41,7 @@ pub mod shield;
 pub mod smoke;
 pub mod statehash;
 pub mod soundlayers;
+pub mod torso;
 pub mod sounds;
 pub mod strings;
 pub mod terrain;

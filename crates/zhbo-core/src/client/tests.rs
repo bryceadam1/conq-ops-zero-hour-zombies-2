@@ -260,7 +260,10 @@
             client.cues.queue.clear();
             sim.events.push(crate::sim::Event { player, kind });
             let out = client.frame(&mut sim, &inp);
-            let mut placed: Vec<(&str, [i32; 3])> = client.cues.queue.iter().filter_map(|c| c.at.map(|a| (c.event, [a.x as i32, a.y as i32, a.z as i32]))).collect();
+            // A voice is its speaker's own (`sounds::voice_event`: his seat's voice number): the
+            // same line, in another player's voice.
+            let voice = |e: &'static str| if e.starts_with("ZHBO_BO2_Pain") { &e[..e.len() - 1] } else { e };
+            let mut placed: Vec<(&str, [i32; 3])> = client.cues.queue.iter().filter_map(|c| c.at.map(|a| (voice(c.event), [a.x as i32, a.y as i32, a.z as i32]))).collect();
             placed.sort();
             let flat: Vec<&str> = client.cues.queue.iter().filter(|c| c.at.is_none() && !c.event.contains("Step")).map(|c| c.event).collect();
             (placed, flat, out.hits[..out.hits_len as usize].to_vec())

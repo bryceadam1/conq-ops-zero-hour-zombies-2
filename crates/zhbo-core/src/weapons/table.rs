@@ -511,6 +511,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("WeapClass", "BO2's weapClass_t: rifle, mg, smg, spread, pistol, grenade, rocketlauncher, …, pistol_spread.", FieldKind::Enum,
         |d: &WeaponDef| d.weap_class.name().into(),
         |d: &mut WeaponDef, v: Values| { d.weap_class = WeapClass::parse(v.text).ok_or("unknown weapClass")?; Ok(()) }),
+    field!(present "TorsoAnims", "The third-person torso set (zhbo_core::torso): the group of weapons whose every reload, melee, throw, fire and weapon-change torso clip in mp/playeranim.script is the same; 0 none.", FieldKind::Num,
+        |d: &WeaponDef| d.torso_anims.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.torso_anims = v.text.parse().map_err(|_| "number")?; Ok(()) }),
     field!("BodyAnims", "The third-person body's animation set: the group of weapons BO2's mp/playeranim.script animates alike (by weapClass and playerAnimType); 0 the rifleman's.", FieldKind::Num,
         |d: &WeaponDef| d.body_anims.to_string(),
         |d: &mut WeaponDef, v: Values| { d.body_anims = v.text.parse().map_err(|_| "number")?; Ok(()) }),
@@ -793,6 +796,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "PullbackSound", "The offhand's pull-back (`pullbackSoundPlayer`).", FieldKind::Str,
         |d: &WeaponDef| d.pullback_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.pullback_sound = v.text.into(); Ok(()) }),
+    field!(present "NpcSounds", "The third-person def-level sounds (`moment=event`: raise, first_raise, putaway, melee_swipe, melee_hit, pullback; BO2's fields without `Player`), heard at another player.", FieldKind::Pairs,
+        |d: &WeaponDef| pairs(&d.npc_sounds),
+        |d: &mut WeaponDef, v: Values| { d.npc_sounds = parse_pairs(v.text); Ok(()) }),
     field!(present "SilencedFireStartSound", "The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).", FieldKind::Str,
         |d: &WeaponDef| d.silenced_fire_start_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_fire_start_sound = v.text.into(); Ok(()) }),
@@ -1288,7 +1294,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 154);
+        assert_eq!(WEAPON_FIELDS.len(), 156);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

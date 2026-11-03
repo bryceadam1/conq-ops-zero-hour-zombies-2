@@ -138,6 +138,9 @@ impl State {
     /// One general's frame. `enabled` is `ZHBO_NATIVE_BODY != 0`; without the renderer it loads and
     /// poses, then answers "not native".
     pub(crate) fn frame(&mut self, inp: &ZhboNativeBodyIn, enabled: i32, camo: Option<&str>) -> i32 {
+        if (1..=255).contains(&inp.faction) {
+            note_faction(inp.general, inp.faction as u8);
+        }
         if enabled <= 0 || inp.vm < 0 || inp.faction <= 0 {
             return NOT_NATIVE;
         }
@@ -193,7 +196,9 @@ impl State {
         // The body clip for this movement state, or the bind pose when the weapon-only mode (or a
         // body with no clip) is drawing.
         let clip = rig.loaded.clip_for(inp.state as u16);
-        rig.loaded.pose(&req, clip, &mut self.posed);
+        // The upper body's action over it, while the client times one for him (`client::remote`).
+        let torso = torso_of(general).and_then(|(id, t)| rig.loaded.torso_clip(id).map(|c| (c, t)));
+        rig.loaded.pose(&req, clip, torso, &mut self.posed);
         self.last = Some(general);
         #[cfg(feature = "renderer")]
         let answer = super::gpu::draw(self, &mut rig, inp);
@@ -236,6 +241,45 @@ pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
 fn stowed_of(general: u32) -> i32 {
     use std::sync::atomic::Ordering;
     STOWED.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or(-1, |v| (v & 0xffff_ffff) as i32 - 1)
+}
+
+/// Each General's faction letter as the bridge names it to [`zhbo_native_body`] (`general << 8 |
+/// letter`): the client's voice for him (`sounds::voice_event`). Presentation only.
+static FACTIONS: [std::sync::atomic::AtomicU64; 64] = [const { std::sync::atomic::AtomicU64::new(0) }; 64];
+
+fn note_faction(general: u32, letter: u8) {
+    use std::sync::atomic::Ordering;
+    if general == 0 || letter == 0 || faction_of(general) == Some(letter) {
+        return;
+    }
+    let slot = &FACTIONS[general as usize % FACTIONS.len()];
+    slot.store(((general as u64) << 8) | letter as u64, Ordering::Relaxed);
+}
+
+/// General `general`'s faction letter, once the bridge has drawn him.
+pub fn faction_of(general: u32) -> Option<u8> {
+    use std::sync::atomic::Ordering;
+    let v = FACTIONS[general as usize % FACTIONS.len()].load(Ordering::Relaxed);
+    ((v >> 8) as u32 == general && v != 0).then_some((v & 0xff) as u8)
+}
+
+/// Each General's torso action this frame (`general << 32 | clip << 16 | milliseconds in`),
+/// published by the client (`client::remote`): the body pass layers it. Presentation only.
+static TORSO: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+pub(crate) fn publish_torso(torsos: impl Iterator<Item = (u32, u16, f32)>) {
+    use std::sync::atomic::Ordering;
+    let mut it = torsos;
+    for slot in TORSO.iter() {
+        let v = it.next().map_or(0, |(g, clip, t)| ((g as u64) << 32) | ((clip as u64) << 16) | (t * 1000.0).clamp(0.0, 65535.0) as u64);
+        slot.store(v, Ordering::Relaxed);
+    }
+}
+
+/// General `general`'s torso clip and seconds into it, if he is in an action.
+pub(crate) fn torso_of(general: u32) -> Option<(u16, f32)> {
+    use std::sync::atomic::Ordering;
+    TORSO.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| (((v >> 16) & 0xffff) as u16, (v & 0xffff) as f32 / 1000.0))
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

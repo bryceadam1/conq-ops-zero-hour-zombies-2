@@ -81,6 +81,47 @@ pub mod state {
     }
 }
 
+/// The upper-body (torso) clips a third-person General plays over his movement clip: BO2's
+/// `mp/playeranim.script` `EVENTS` (`reload`, `knife_melee`, `fireweapon`, ...), each a `pt_*`
+/// animation that tracks only the bones from the lower spine up, so it layers over whatever the
+/// legs are doing. A torso clip's id in the body manifest is [`BASE`] plus its index among the
+/// body's torso clips; which one an action plays is the converter's table (`zhbo_core::torso`).
+pub mod torso {
+    /// The first torso clip id (movement clip ids stay below it: `state::MAX_SETS * SET_STRIDE`).
+    pub const BASE: u16 = 0x1000;
+
+    /// The actions, as the script's events.
+    pub const RELOAD: u8 = 0;
+    /// `knife_melee`: the knife swing with the weapon in hand (`meleeattack` for the shield's bash).
+    pub const MELEE: u8 = 1;
+    /// `knife_melee_charge`: the lunge's strike.
+    pub const MELEE_CHARGE: u8 = 2;
+    /// `fireweapon` with the offhand as the weapon: the throw.
+    pub const THROW: u8 = 3;
+    /// `prime_grenade`: the pin pulled, the grenade held.
+    pub const PRIME: u8 = 4;
+    /// `fireweapon`: a shot's recoil.
+    pub const FIRE: u8 = 5;
+    /// `raiseweapon`, `dropweapon`, `firstraiseweapon`: the weapon change.
+    pub const RAISE: u8 = 6;
+    pub const DROP: u8 = 7;
+    pub const FIRST_RAISE: u8 = 8;
+    pub const ACTIONS: u8 = 9;
+    /// The script's event for each action.
+    pub const EVENTS: [&str; ACTIONS as usize] =
+        ["reload", "knife_melee", "knife_melee_charge", "fireweapon", "prime_grenade", "fireweapon", "raiseweapon", "dropweapon", "firstraiseweapon"];
+
+    /// The contexts an action is asked in: stance (0 stand, 1 crouch, 2 prone) × moving × aimed.
+    pub const CONTEXTS: u8 = 12;
+    pub const fn context(stance: u8, moving: bool, ads: bool) -> u8 {
+        (if stance > 2 { 2 } else { stance }) * 4 + (moving as u8) * 2 + ads as u8
+    }
+    /// A context's `(stance, moving, ads)`.
+    pub const fn split(context: u8) -> (u8, bool, bool) {
+        (context / 4, context & 2 != 0, context & 1 != 0)
+    }
+}
+
 pub const BODY_MAGIC: [u8; 4] = *b"ZBC\0";
 pub const BODY_VERSION: u32 = 1;
 pub const WEAPON_MAGIC: [u8; 4] = *b"ZBW\0";
@@ -100,6 +141,11 @@ pub struct Body {
 }
 
 impl Body {
+    /// Torso clip `id` ([`torso::BASE`] on), exactly: a torso clip has no fallback.
+    pub fn torso_clip(&self, id: u16) -> Option<&str> {
+        (id >= torso::BASE).then(|| self.clips.iter().find(|c| c.0 == id).map(|c| c.1.as_str())).flatten()
+    }
+
     /// The clip for clip id `id`: its own, else the nearest one the body has ([`state::fallbacks`]).
     pub fn clip(&self, id: u16) -> Option<&str> {
         state::fallbacks(id).find_map(|s| self.clips.iter().find(|c| c.0 == s).map(|c| c.1.as_str()))

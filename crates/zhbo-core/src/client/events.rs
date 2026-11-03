@@ -16,6 +16,12 @@ impl Client {
     /// inputs the sim just took in already presented (`predict::Predictor::reconcile` keeps the
     /// rest).
     pub(super) fn consume_events(&mut self, sim: &mut Sim, inp: &ClientIn, me: i32, own: bool, body_pos: Option<Vec3>, owed: Option<Vec<EventKind>>) {
+        // Every General's third-person presentation first: his torso action, its sounds at him,
+        // his voice (`remote`).
+        for e in &sim.events {
+            let Ok(seat) = usize::try_from(e.player) else { continue };
+            self.remote.event(seat, &e.kind, sim.player(e.player), e.player != me, &mut self.cues);
+        }
         let mut mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
         let others: Vec<Event> = sim.events.iter().filter(|e| e.player != me).copied().collect();
         sim.events.clear();
@@ -102,8 +108,9 @@ impl Client {
                     self.cues.play_at(cue, p.body.eye());
                 }
             }
-            // His alone. The swing, the knife's hit and the C4 trigger are BO2's `*Player`
-            // (2D) sounds; their third-person versions are not converted.
+            // His alone, or heard through `remote` (the swing, the knife's hit, the pin, his reload's
+            // notetracks, his voice: the third-person versions). The C4 trigger is his `*Player`
+            // sound.
             EventKind::EnteredFps { .. }
             | EventKind::ClassChosen { .. }
             | EventKind::ClassAtNextSpawn { .. }

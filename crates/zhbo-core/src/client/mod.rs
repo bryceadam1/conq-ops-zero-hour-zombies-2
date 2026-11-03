@@ -377,6 +377,7 @@ pub enum ViewMode {
 pub mod autopilot;
 mod events;
 pub mod predict;
+pub mod remote;
 pub mod spectate;
 pub mod tracers;
 #[cfg(feature = "autopilot")]
@@ -514,6 +515,8 @@ pub struct Client {
     pub hits_len: usize,
     /// Other first-person Generals' footsteps (`sounds::RemoteSteps`).
     remote_steps: sounds::RemoteSteps,
+    /// Every General as a BO2 third-person player: torso actions, their sounds, his voice.
+    pub remote: remote::Remote,
     /// Every seat's match (the scoreboard's other rows), by seat.
     pub seats: [SeatTally; crate::sim::MAX_PLAYERS],
     /// This frame's impacts of other players' rounds (`events::present_remote`): they take the
@@ -602,6 +605,7 @@ impl Client {
             remote_hits: Vec::with_capacity(CLIENT_HITS),
             seats: [SeatTally::default(); crate::sim::MAX_PLAYERS],
             remote_steps: Default::default(),
+            remote: Default::default(),
             class_pick_forced: false,
             class_pick_declined: false,
             class_pick_open: false,
@@ -1044,6 +1048,8 @@ impl Client {
         self.tally_seats(sim, host, inp.local_player);
         self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
         self.remote_steps.update(&sim.players, viewed, &mut self.cues);
+        self.remote.update(&sim.players, viewed, dt, &mut self.cues);
+        crate::nativebody::ffi::publish_torso(self.remote.torsos());
         self.tick_hud(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
         // the sim's record.
