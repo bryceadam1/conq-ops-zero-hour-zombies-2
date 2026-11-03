@@ -283,6 +283,12 @@ impl Converted {
         }
     }
 
+    /// [`Converted::texture`] for the headless preview (`fx_preview`): the BO2 row draws elements
+    /// the conversion may skip.
+    pub fn preview_texture(&mut self, image: &str, key: zhbo_formats::ipak::ImageKey, atlas: (u32, u32), paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) {
+        self.texture(image, key, atlas, paks);
+    }
+
     /// The texture for a BO2 image (the first frame of a flipbook atlas), and whether it has no real
     /// alpha.
     fn texture(&mut self, image: &str, key: zhbo_formats::ipak::ImageKey, atlas: (u32, u32), paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> Option<(String, bool)> {

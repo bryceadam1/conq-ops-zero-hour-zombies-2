@@ -133,6 +133,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "weapons" => cmd_weapons(args),
         "attachments" => cmd_attachments(args),
         "fx" => cmd_fx(args),
+        "fx-sheet" => cmd_fx_sheet(args),
         "strings" => cmd_strings(args),
         "probes" => cmd_probes(args),
         "aliases" => cmd_aliases(args),
@@ -487,6 +488,19 @@ fn cmd_attachments(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `zhbo-assets fx-sheet <out-dir> [--all] [--effects a,b,...]`: the converted effects played
+/// headless next to BO2's (`fx_preview`): `metrics.csv` (every `common_mp` effect with `--all`) and
+/// a contact sheet per named effect (the default explosions, impacts and flashes).
+fn cmd_fx_sheet(args: &[String]) -> Result<(), String> {
+    use zhbo_assets::fx_preview;
+    let out = PathBuf::from(args.get(1).ok_or("fx-sheet <out-dir> [--all] [--effects a,b]")?);
+    let named: Vec<String> = flag(args, "--effects").map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default();
+    let sheets: Vec<&str> = if named.is_empty() { fx_preview::SHEET_EFFECTS.to_vec() } else { named.iter().map(String::as_str).collect() };
+    let csv = fx_preview::sweep_install(&bo2_dir()?, &out, &sheets, args.iter().any(|a| a == "--all"))?;
+    print!("{csv}");
+    Ok(())
+}
+
 /// `zhbo-assets fx`.
 fn cmd_fx(args: &[String]) -> Result<(), String> {
     // fx <weapon>: the BO2 effect a weapon's projectile makes when it goes off.
@@ -497,7 +511,7 @@ fn cmd_fx(args: &[String]) -> Result<(), String> {
         let kind = zhbo_formats::fastfile::asset_type_id("fx").unwrap();
         for a in zone.assets.iter().filter(|a| a.kind == kind) {
             let e = fx::read(&zone, a.addr);
-            println!("{} ({} elems, life {})", e.name, e.elems.len(), e.life_msec);
+            println!("{} ({} elems, life {}, priority {})", e.name, e.elems.len(), e.life_msec, e.priority);
         }
         return Ok(());
     }
@@ -526,7 +540,11 @@ fn cmd_fx(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     if let Some(e) = name.strip_prefix("effect:").and_then(|n| fx::find(&zone, n)) {
-        println!("{e:#?}");
+        if args.iter().any(|a| a == "--raw") {
+            println!("{e:#?}");
+        } else {
+            dump_effect(&e, "");
+        }
         return Ok(());
     }
     let w = weapon::all(&zone).map_err(|e| e.to_string())?.into_iter().find(|w| &w.name == name).ok_or("no such weapon")?;
@@ -552,6 +570,44 @@ fn cmd_fx(args: &[String]) -> Result<(), String> {
         None => println!("{name} (impact type {}) has no explosion effect", w.impact_type),
     }
     Ok(())
+}
+
+/// Every field of a BO2 effect the converter reads, one element per block (`fx effect:<name>`).
+fn dump_effect(e: &zhbo_formats::fx::Effect, indent: &str) {
+    use zhbo_formats::fx;
+    let r = |r: fx::Range| format!("{}+{}", r.base, r.amplitude);
+    println!("{indent}effect {} life {} looping {} elems {} priority {}", e.name, e.life_msec, e.looping_life_msec, e.elems.len(), e.priority);
+    for (i, el) in e.elems.iter().enumerate() {
+        let class = if el.looping { "loop" } else if el.emission { "emit" } else { "once" };
+        println!(
+            "{indent} [{i}] kind {} {class} flags {:#x} count {} every {} delay {} life {} origin [{} {} {}] radius {} height {} grav {} angles [{} {} {}] rot {} sort {} ranges {} {} {}",
+            el.kind, el.flags, r(el.count), el.interval_msec, r(el.delay_msec), r(el.life_msec), r(el.origin[0]), r(el.origin[1]), r(el.origin[2]), r(el.offset_radius), r(el.offset_height), r(el.gravity),
+            r(el.spawn_angles[0]), r(el.spawn_angles[1]), r(el.spawn_angles[2]), r(el.initial_rotation), el.sort_order, r(el.spawn_range), r(el.fade_in_range), r(el.fade_out_range)
+        );
+        for m in &el.materials {
+            let img = m.color_map().map(|i| i.name.clone()).unwrap_or_default();
+            println!("{indent}     material {} techset {} blend {:?} image {img} consts {:?}", m.name, m.techset, m.blend(), m.constants.iter().map(|c| (format!("{:#x}", c.name_hash), c.value)).collect::<Vec<_>>());
+        }
+        if !el.models.is_empty() {
+            println!("{indent}     models {:?}", el.models);
+        }
+        println!("{indent}     atlas {:?} {:?}", el.atlas, el.flipbook);
+        for (k, v) in el.vis.iter().enumerate() {
+            println!("{indent}     vis {k:>2} rgba {:?}+{:?} size {:?}+{:?} scale {} rot {}", v.color, v.color_amplitude, v.size, v.size_amplitude, v.scale, v.rotation_total);
+        }
+        for (k, v) in el.vel.iter().enumerate() {
+            println!("{indent}     vel {k:>2} local v {:?}+{:?} d {:?}+{:?} world v {:?}+{:?} d {:?}+{:?}", v.local_velocity.0, v.local_velocity.1, v.local_delta.0, v.local_delta.1, v.world_velocity.0, v.world_velocity.1, v.world_delta.0, v.world_delta.1);
+        }
+        for (label, c) in [("death", &el.on_death), ("impact", &el.on_impact), ("emitted", &el.emitted)] {
+            if let Some(c) = c {
+                println!("{indent}     on {label} (every {}):", r(el.emit_dist));
+                dump_effect(c, &format!("{indent}       "));
+            }
+        }
+        for c in &el.children {
+            dump_effect(c, &format!("{indent}       "));
+        }
+    }
 }
 
 /// `zhbo-assets strings`.

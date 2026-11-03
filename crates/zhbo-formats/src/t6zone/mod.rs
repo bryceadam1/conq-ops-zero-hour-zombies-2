@@ -531,6 +531,14 @@ impl Zone {
     }
 
     /// The string a `const char*` field points to.
+    /// The NUL-terminated string at `addr` (an already-dereferenced `char*`, e.g. the value of a
+    /// name-only `FxEffectDefRef`).
+    pub fn cstr(&self, addr: u32) -> String {
+        if addr == 0 {
+            return String::new();
+        }
+        cstr_at(&self.mem, addr)
+    }
     pub fn str_ptr(&self, field: u32) -> String {
         match self.u32(field) {
             0 => String::new(),

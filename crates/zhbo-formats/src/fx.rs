@@ -87,11 +87,76 @@ pub struct Elem {
     pub children: Vec<Effect>,
     /// Flipbook atlas: columns and rows of the image (1 x 1 if none).
     pub atlas: (u32, u32),
+    /// How the flipbook plays (`FxElemAtlas`).
+    pub flipbook: Flipbook,
+    /// The velocity graph: `velIntervalCount + 1` evenly spaced samples over the element's life.
+    pub vel: Vec<VelSample>,
+    /// Starting angles (radians) and the sprite's starting roll.
+    pub spawn_angles: [Range; 3],
+    pub initial_rotation: Range,
+    /// Effects started where the element dies, where it hits something, and along its path
+    /// (`effectOnDeath`, `effectOnImpact`, `effectEmitted`; the names, and the parsed effects when
+    /// this zone holds them).
+    pub on_death: Option<Box<Effect>>,
+    pub on_impact: Option<Box<Effect>>,
+    pub emitted: Option<Box<Effect>>,
+    /// Distance between two emitted effects (inches).
+    pub emit_dist: Range,
+    /// Draw order among the effect's elements.
+    pub sort_order: u8,
+    /// Distance culling: the spawn range and the fade-in/out ranges (inches from the camera;
+    /// 0 = none).
+    pub spawn_range: Range,
+    pub fade_in_range: Range,
+    pub fade_out_range: Range,
+    /// The effect class the element belongs to: emission elements are spawned by their effect's
+    /// movement, never on its start.
+    pub emission: bool,
+}
+
+/// `FxElemAtlas`: the flipbook's start frame, play mode, rate and frame count.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Flipbook {
+    /// `behavior`: bits 0-1 the start frame (0 fixed `index`, 1 random, 2 indexed by the spawn
+    /// order), bit 2 play over the element's life, bit 3 loop only `loop_count` times.
+    pub behavior: u8,
+    pub index: u8,
+    /// Frames per second when not played over life.
+    pub fps: u8,
+    pub loop_count: u8,
+    /// Frames in the atlas (the low byte of `entryCountAndIndexRange`).
+    pub frames: u32,
+}
+
+impl Flipbook {
+    pub const START_MASK: u8 = 3;
+    pub const START_RANDOM: u8 = 1;
+    pub const START_INDEXED: u8 = 2;
+    pub const PLAY_OVER_LIFE: u8 = 4;
+    pub const LOOP_N_TIMES: u8 = 8;
+
+    /// Whether the element changes frame while it lives.
+    pub fn animates(&self) -> bool {
+        self.frames > 1 && (self.behavior & Self::PLAY_OVER_LIFE != 0 || self.fps > 0)
+    }
+}
+
+/// One sample of the velocity graph (`FxElemVelStateSample`): velocity (inches per msec) and the
+/// displacement integrated to this point of the life (inches per msec of life: multiply by the
+/// element's life), in the effect's frame and in the world, each a base and a random amplitude.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VelSample {
+    pub local_velocity: ([f32; 3], [f32; 3]),
+    pub local_delta: ([f32; 3], [f32; 3]),
+    pub world_velocity: ([f32; 3], [f32; 3]),
+    pub world_delta: ([f32; 3], [f32; 3]),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Effect {
     pub name: String,
+    /// `efPriority`: how BO2 ranks the effect when its effect budget is full.
+    pub priority: u8,
     pub looping_life_msec: i32,
     pub life_msec: i32,
     pub elems: Vec<Elem>,
@@ -129,18 +194,19 @@ fn read_depth(z: &Zone, addr: u32, depth: u32) -> Effect {
     if elems_at != 0 {
         for i in 0..total {
             let e = elems_at + i * FE::SIZE;
-            elems.push(read_elem(z, e, (i as i32) < looping, depth));
+            elems.push(read_elem(z, e, (i as i32) < looping, (i as i32) >= looping + one_shot, depth));
         }
     }
     Effect {
         name: z.str_ptr(addr + FD::name),
+        priority: z.u8(addr + FD::efPriority),
         looping_life_msec: z.u32(addr + FD::msecLoopingLife) as i32,
         life_msec: z.u32(addr + FD::msecNonLoopingLife) as i32,
         elems,
     }
 }
 
-fn read_elem(z: &Zone, e: u32, looping: bool, depth: u32) -> Elem {
+fn read_elem(z: &Zone, e: u32, looping: bool, emission: bool, depth: u32) -> Elem {
     let kind = z.u8(e + FE::elemType);
     let visual_count = z.u8(e + FE::visualCount) as u32;
     // One visual is stored in place; several are an array of pointers.
@@ -166,6 +232,21 @@ fn read_elem(z: &Zone, e: u32, looping: bool, depth: u32) -> Elem {
         offset_height: range(z, e + FE::spawnOffsetHeight),
         gravity: range(z, e + FE::gravity),
         angular_velocity: [range(z, e + FE::angularVelocity), range(z, e + FE::angularVelocity + 8), range(z, e + FE::angularVelocity + 16)],
+        spawn_angles: [range(z, e + FE::spawnAngles), range(z, e + FE::spawnAngles + 8), range(z, e + FE::spawnAngles + 16)],
+        initial_rotation: range(z, e + FE::initialRotation),
+        emit_dist: range(z, e + FE::emitDist),
+        sort_order: z.u8(e + FE::sortOrder),
+        spawn_range: range(z, e + FE::spawnRange),
+        fade_in_range: range(z, e + FE::fadeInRange),
+        fade_out_range: range(z, e + FE::fadeOutRange),
+        emission,
+        flipbook: Flipbook {
+            behavior: z.u8(e + FE::atlas),
+            index: z.u8(e + FE::atlas + 1),
+            fps: z.u8(e + FE::atlas + 2),
+            loop_count: z.u8(e + FE::atlas + 3),
+            frames: (z.u16(e + FE::atlas + 6) as u32 & 0xff).max(1),
+        },
         ..Default::default()
     };
     if looping {
@@ -178,6 +259,29 @@ fn read_elem(z: &Zone, e: u32, looping: bool, depth: u32) -> Elem {
     if vel != 0 {
         elem.velocity = (vec3(z, vel), vec3(z, vel + 12));
         elem.world_velocity = (vec3(z, vel + 48), vec3(z, vel + 60));
+        let n = z.u8(e + FE::velIntervalCount) as u32 + 1;
+        let pair = |at: u32| (vec3(z, at), vec3(z, at + 12));
+        elem.vel = (0..n.min(64))
+            .map(|i| {
+                let s = vel + i * 96;
+                VelSample { local_velocity: pair(s), local_delta: pair(s + 24), world_velocity: pair(s + 48), world_delta: pair(s + 72) }
+            })
+            .collect();
+    }
+    // The effects an element starts when it dies, hits, or moves.
+    if depth > 0 {
+        let child = |at: u32| -> Option<Box<Effect>> {
+            let p = z.u32(e + at);
+            if p == 0 {
+                return None;
+            }
+            let name = z.cstr(p);
+            let name = name.trim_start_matches(',');
+            name.contains('/').then(|| find_depth(z, name, depth - 1)).flatten().map(Box::new)
+        };
+        elem.on_death = child(FE::effectOnDeath);
+        elem.on_impact = child(FE::effectOnImpact);
+        elem.emitted = child(FE::effectEmitted);
     }
     let vis = z.u32(e + FE::visSamples);
     if vis != 0 {
