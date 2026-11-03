@@ -487,8 +487,11 @@ impl Sim {
         if let Some((i, t)) = self.equipment.shot(host, p.general, eye, dir, reach) {
             let at = eye + dir * t;
             self.round_effects(host, &round, 0, at);
-            let e = self.equipment.destroy(host, i, Some(idx));
-            self.equipment_events(host, vec![e]);
+            // A round breaks it as BO2's script says (`equipment::breaks`): C4, a Claymore or a
+            // Shock Charge goes off as the shooter's.
+            let mut ev = Vec::new();
+            self.equipment.destroy(host, i, Some((idx, p.general)), crate::weapons::Effect::None, &mut ev);
+            self.equipment_events(host, ev);
             // BO2's equipment is metal: a spark at the round, never blood.
             self.emit(idx, EventKind::Impact { at, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type, exit: false });
             self.round_done(idx, &round, at);

@@ -11788,3 +11788,49 @@ only round is the life he leaves four seconds into, before its concussions land,
 none (and agreed). The check now asks for at least one shellshock from N = 3 and only agreement at
 N = 2. The default leg's screenshot `at-default/shot.bmp.000450.png` shows the new warning,
 "[R] Reload" with the key in yellow, at 9/30 rounds. Conformance: byte-identical to integration8.
+
+## Bug sweep 4: the --equipment leg, and every item breaks as its script says (2026-11-03, branch `v1/bug-sweep-4`)
+
+**The legs that exist** (`scripts/autotest-mac.sh`): the default autopilot, `--input`,
+`--equipment`, `--rts`, `--rts-dry`, `--build`, `--classpick`, `--scope`, `--w3d-ads`, `--replay`,
+`--splash`, `--smoke`, `--mp` (= `scripts/mptest-mac.sh`, with `ZHBO_MPTEST_ROUNDS` for the long
+run) and `--showcase` (captures only, no checks); Windows has `autotest.ps1` and `inputtest.ps1`.
+The legs integrations ran left out `--equipment`, `--rts-dry` and `--showcase`.
+
+**`--equipment` failed (Trophy, Black Hat, capture): a test bug, and a game bug found with it.**
+The script's fixed windows pressed the tactical at t = 2 s, while the C4's offhand states still ran:
+the C4 now goes about a second later (behind the spawn's class pick), and BO2 refuses an offhand
+press during another offhand (`FUN_008e2bb0`), so neither the Trophy nor the Black Hat was used in
+the first life. The Black Hat's 4 s hold was also shorter than its lock on a drone
+(`hackertoollockstart` 0.1 + `vehiclehackertooltimems` 4000 ms + the fire delay). The script now
+waits for the state it needs (lethal once armed, tactical once the lethal is down and the hands are
+free, held past the lock; `the_equipment_run_waits_for_the_hands`). Found with it:
+`EventKind::Thrown` took its slot from the item's class, so a C4 (class equipment) was a "tactical"
+throw and played the tactical's throw sound; the throw action now carries its slot
+(`a_thrown_c4_is_the_lethal_slots_throw`).
+
+**Equipment breaking (from conformance-gaps' list, swept over every item).** The mod broke any
+piece that was shot or caught in any blast with one generic effect, and nothing went off. BO2's
+watchers (`_weaponobjects.gsc` `weaponobjectdamage` → `waitanddetonate` → each item's `detonate`):
+* C4 (`satcheldetonate`), the Claymore (`claymoredetonate`, `:347-363`) and the Shock Charge
+  (`proximitydetonate`) go off through `weapondetonate`, **as the breaker's** (`self detonate(
+  attacker )`): the shooter's blast, his credit.
+* The Betty is destroyed without its jump (`bouncingbettydestroyed`: `fx_betty_destroyed`); the
+  Trophy System explodes as equipment (`trophysystemdetonate`: `fx_exp_equipment_lg`); the Sensor
+  Grenade too (`sensorgrenadedestroyed`: `fx_exp_equipment`); the Tactical Insertion fizzles
+  (`fizzle`: `misc/fx_equip_tac_insert_exp`).
+* A concussion, flashbang or Shock Charge only stuns a piece and smoke does nothing (the damage
+  watchers' `continue` cases); an EMP takes it out with `fx_emp_explosion_equip`
+  (`waitanddetonate`), no blast.
+* An explosion breaks the enemy pieces it reaches, which may go off in turn (the chain,
+  `waschained`); the mod's equipment blasts broke nothing.
+* A Trophy System's kill plays `fx_trophy_radius_detonation` and does `radiusdamage( projposition,
+  128, 105, 10, self )` from its owner (`projectileexplode`, `_trophy_system.gsc:228-233`; three new
+  tuning keys); spent, it blows itself apart (`trophysystemdetonate`). The mod played
+  `fx_exp_equipment_lg` at the kill and removed a spent one silently.
+
+`equipment::breaks`/`blast_breaks` hold the per-item rule, `Equipment::destroy` applies it, and
+`BO2_EFFECTS` lists the six effects (all in `common_mp`; the converter already converts the list).
+Tests: `every_item_breaks_as_its_script_says`, `blasts_break_chain_and_spare_by_their_effect`, the
+Trophy test's kill effect, blast and spent effect, and the real-install
+`every_equipment_effect_is_in_the_install`. **Needs `hud::VERSION`** for the four new converted effects.

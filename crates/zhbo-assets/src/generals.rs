@@ -1147,6 +1147,19 @@ mod tests {
         assert_eq!(def("as50_mp+fmj").overlay_material, "scope_overlay_xpr50", "FMJ leaves the base scope");
     }
 
+    /// Every BO2 effect the sim plays for equipment (`zhbo_core::equipment::BO2_EFFECTS`: the
+    /// destroyed Betty, Trophy and Sensor, the Tactical Insertion's fizzle, the EMP's, the Trophy's
+    /// kill) is in `common_mp`, where the conversion reads it.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_equipment_effect_is_in_the_install() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        for name in zhbo_core::equipment::BO2_EFFECTS {
+            assert!(zhbo_formats::fx::find(&common, name).is_some(), "{name} is not in common_mp");
+        }
+    }
+
     /// The third-person tear, across every base weapon: each weapon's world meshes on the soldier
     /// are exactly `W<vm>00 .. W<vm><n-1>` with `n` its `WorldMeshes` (the bridge shows `k < n`, so a
     /// gap hides every surface after it — the MP7 drew two of four), every vertex rides the hand

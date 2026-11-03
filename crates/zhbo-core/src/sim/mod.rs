@@ -741,7 +741,7 @@ impl Sim {
                         self.smokes.push(crate::smoke::Smoke { at, born: self.frame });
                     }
                     let mut ev = Vec::new();
-                    self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, &mut ev);
+                    self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, proj.def.effect, &mut ev);
                     self.equipment_events(host, ev);
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });

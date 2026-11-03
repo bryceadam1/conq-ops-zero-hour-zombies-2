@@ -195,6 +195,9 @@ tuning! {
     proximity_grenade_detection_radius: "scr_proximityGrenadeDetectionRadius" = 150.0, "Shock Charge: trigger radius, inches (`_proximity_grenade.gsc:19`).";
     proximity_grenade_grace_period: "scr_proximityGrenadeGracePeriod" = 0.1, "Shock Charge: seconds from the trip to the shock (`_proximity_grenade.gsc:20`).";
     trophy_system_range: "trophy_system_range" = 512.0, "Trophy System: how near a projectile it shoots down, inches (`_trophy_system.gsc:171`, `distancesquared < 262144`).";
+    trophy_intercept_radius: "trophy_intercept_radius" = 128.0, "Trophy System: the blast where it shoots a projectile down, radius in inches (`projectileexplode`: `radiusdamage( projposition, 128, 105, 10, self )`, `_trophy_system.gsc:228-233`).";
+    trophy_intercept_max_damage: "trophy_intercept_max_damage" = 105.0, "Trophy System: that blast's damage at its centre (BO2's 100-HP scale; `_trophy_system.gsc:233`).";
+    trophy_intercept_min_damage: "trophy_intercept_min_damage" = 10.0, "Trophy System: that blast's damage at its edge (`_trophy_system.gsc:233`).";
     trophy_system_ammo: "trophy_system_ammo" = 2.0, "Trophy System: projectiles it shoots down before it is spent (`_trophy_system.gsc:62`, `self.ammo = 2`).";
     perk_armorpiercing: "perk_armorpiercing" = 40.0, "`armorpiercing` (FMJ): percent extra bullet damage on scorestreaks — Zero Hour's vehicles and structures (`gametypes/_class.gsc:859`, `cac_get_dvar_int( \"perk_armorpiercing\", \"40\" ) / 100`; applied as `damage + int(damage * data)`, `killstreaks/_ai_tank.gsc:292-293`).";
     perk_delay_explosive_time: "perk_delayExplosiveTime" = 0.9, "`delayexplosive` (Engineer): extra seconds a tripped explosive waits (dvar default, `dvars-t6mp.tsv`; `gametypes/_weaponobjects.gsc:1550-1551`).";
