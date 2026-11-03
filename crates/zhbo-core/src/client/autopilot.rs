@@ -121,6 +121,10 @@ pub struct Autopilot {
     /// When the fight started this session: the first moment the other General was there to aim
     /// at (the two machines take control a few seconds apart).
     pub(crate) mp_fight: Option<f32>,
+    /// The long run's round began with nobody to aim at (it starts after 20 s anyway): when the
+    /// other General comes in, the round starts over for him once, so its closing burst is not
+    /// fired into a General just taking the field.
+    pub(crate) mp_fight_alone: bool,
     /// What his own General holds in third person, last logged (general, viewmodel, camo).
     pub(crate) mp_holds: Option<(u32, i32, Option<String>)>,
     /// Log lines for `ConquerOps.log` (drained by the FFI layer after the frame).
@@ -504,9 +508,16 @@ impl Autopilot {
         let t = self.t;
         let mut keys = KeySet::default();
         let fight = match self.mp_fight {
+            Some(_) if self.mp_fight_alone && self.mp_aim.is_some() => {
+                self.mp_fight_alone = false;
+                self.mp_fight = Some(t);
+                self.log.push(format!("autopilot mp: round {life} starts over (the other General came in)"));
+                t
+            }
             Some(start) => start,
             None if t >= 1.0 && (self.mp_aim.is_some() || t >= 20.0) => {
                 self.mp_fight = Some(t);
+                self.mp_fight_alone = self.mp_aim.is_none();
                 self.log.push(format!("autopilot mp: round {life} starts ({})", if self.mp_aim.is_some() { "the other General is in first person" } else { "nobody to aim at" }));
                 t
             }

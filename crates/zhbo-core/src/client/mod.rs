@@ -896,6 +896,7 @@ impl Client {
             ap.in_fps = true;
             ap.session += 1;
             ap.mp_fight = None;
+            ap.mp_fight_alone = false;
             ap.mp_leave_at = None;
             if ap.mp {
                 let class = sim.player(inp.local_player).and_then(|p| p.class.clone()).unwrap_or_else(|| "none".into());

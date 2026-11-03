@@ -115,6 +115,12 @@ pub struct Loaded {
 /// A body clip, decoded (`zhbo_native::anim::Anim`).
 pub type AnimClip = zhbo_native::anim::Anim;
 
+/// The body bone a world weapon's base part names (the Assault Shield's `tag_weapon_left`), when
+/// it is held on one of its own rather than the body's weapon tag: only body mode draws it.
+pub fn held_on_body_bone(manifest: &Weapon) -> Option<&str> {
+    manifest.parts.first().and_then(|p| p.tag.as_deref())
+}
+
 /// Load step: `Ok(None)` while files are coming, `Err` when the rig can't be built (logged once by
 /// the caller; the W3D path keeps drawing).
 ///
@@ -132,7 +138,7 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
     // body bone (the Assault Shield on `tag_weapon_left`) is not in that hand, so the W3D weapon,
     // skinned on its own bone, draws it instead.
     if req.mode == Mode::Weapon {
-        if let Some(tag) = manifest.parts.first().and_then(|p| p.tag.as_deref()) {
+        if let Some(tag) = held_on_body_bone(&manifest) {
             return Err(format!("{path}: held on {tag}, not the right hand the weapon-only mode is placed by (the W3D weapon draws it)"));
         }
     }

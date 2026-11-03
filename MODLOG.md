@@ -11760,3 +11760,19 @@ him, and `shock::emp_hits` skips `immuneemp`. Tests: `the_tactical_mask_stops_a_
 and UI ones the mod has no counterpart for (counter-UAV, air support, sentries, the MMS/thermal and
 target-finder immunities on another General, Ghost's `gpsjammer`, Awareness's `loudenemies`);
 listed in the report, not changed.
+
+## Bug sweep 4: the long run's lone round no longer shoots the next General on arrival (2026-11-03, branch `v1/bug-sweep-4`)
+
+The first `ZHBO_MPTEST_ROUNDS=2` run (`~/.opencode/plan/bug-sweep-4/mp-long2/`) changed class in the
+first fight as scripted and the next General logged "assumed the CQB class" at his record, but he
+was killed taking control: the host's round 2 had started alone (`round 2 starts (nobody to aim
+at)`, its 20 s timeout) and its closing burst (14.5-19 s into the round) fell exactly on the
+joiner's arrival. This is the bug-sweep-3 entry's "his second General was shot entering". A round
+that began with nobody to aim at now starts over, once, when the other General comes in
+(`Autopilot::mp_fight_alone`). The same run's one state-hash "difference" was a log line cut by
+the disk filling up at that moment (the joined line holds two records); every other of 49,624 common
+frames agreed.
+
+Real install: `every_converted_weapon_draws` audited every world manifest in the weapon-only mode,
+which now refuses the shield; a manifest held on its own body bone (`nativebody::held_on_body_bone`)
+is audited in body mode. The UI stand-ins must follow `UI_TEXT_KEYS`' order.
