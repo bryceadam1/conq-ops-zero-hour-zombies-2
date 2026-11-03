@@ -11745,3 +11745,18 @@ the item's rect (`-320 -8 640 100` at the safe area's middle, `textalign 9`). Te
 `the_warning_pulses_between_its_colours`, `low_clip_is_the_weapons_threshold`.
 
 **Needs `hud::VERSION`** (the table's new line; a table without it keeps a third and a counter).
+
+## Bug sweep 4: Tactical Mask stops the Shock Charge, Hard Wired the EMP grenade (2026-11-03, branch `v1/bug-sweep-4`)
+
+A sweep of the perks' specialties against the sim found two protective bits read nowhere:
+`proximityprotection` (Tactical Mask) and `immuneemp` (Hard Wired). BO2: a Shock Charge's zap
+(`proximitygrenadedamageplayer`, `_proximity_grenade.gsc:118-124`: the DOT, its shellshock and the
+HUD blackout) skips a player with `specialty_proximityprotection`; an EMP grenade's effect on a
+player (`monitorempgrenade`, `_empgrenade.gsc:43`) skips one with `specialty_immuneemp`. In the mod
+a masked General was still zapped and a Hard Wired one still flashed. `Guard::proximity_protected`
+drops a placed stun's disable (overhead: Zero Hour's paralysis; first person: the shellshock) for
+him, and `shock::emp_hits` skips `immuneemp`. Tests: `the_tactical_mask_stops_a_shock_charge`,
+`hard_wired_ignores_the_emp_grenade`. The other specialties with no reader are scorestreak, radar
+and UI ones the mod has no counterpart for (counter-UAV, air support, sentries, the MMS/thermal and
+target-finder immunities on another General, Ghost's `gpsjammer`, Awareness's `loudenemies`);
+listed in the report, not changed.

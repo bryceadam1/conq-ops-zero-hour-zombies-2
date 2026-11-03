@@ -18,7 +18,9 @@
 //!   (`:1058-1084`): the grenade, splash and explosive means of death, minus the tacticals — in the
 //!   mod's data, a def whose effect is [`Effect::Explode`].
 //! * **Tactical Mask** (`specialty_stunprotection`, `_weapons.gsc:1375-1376`): a concussion
-//!   grenade's stun on the victim lasts x0.1, whoever threw it.
+//!   grenade's stun on the victim lasts x0.1, whoever threw it; and (`specialty_proximityprotection`,
+//!   `_proximity_grenade.gsc:118-124` `proximitygrenadedamageplayer`) a Shock Charge's zap does not
+//!   reach him at all.
 
 use crate::host::{damage_kind, disable_kind, LogicHost, ObjInfo};
 use crate::impacts::Surface;
@@ -39,6 +41,8 @@ pub struct Guard {
     pub first_person: bool,
     /// `flashprotection` (Tactical Mask): a flashbang's duration x0.1 (`_flashgrenades.gsc:86-90`).
     pub flash_protected: bool,
+    /// `proximityprotection` (Tactical Mask): no Shock Charge zap.
+    pub proximity_protected: bool,
 }
 
 /// What a blast did to a first-person General that the sim turns into a shellshock
@@ -76,6 +80,7 @@ impl Guard {
             stun: if class.has(Specialty::StunProtection) { t.stun_protection_scale } else { 1.0 },
             first_person,
             flash_protected: class.has(Specialty::FlashProtection),
+            proximity_protected: class.has(Specialty::ProximityProtection),
         }
     }
 }
@@ -163,6 +168,10 @@ impl LogicHost for Guarded<'_> {
         self.host.destroy(id)
     }
     fn disable(&self, id: u32, kind: i32, seconds: f32) {
+        // A placed stun (the Shock Charge) skips a General with `proximityprotection`.
+        if kind == disable_kind::PARALYZED && !self.thrown && self.def.effect == Effect::Stun && self.guard(id).is_some_and(|g| g.proximity_protected) {
+            return;
+        }
         let mask = kind == disable_kind::PARALYZED && self.thrown && self.def.effect == Effect::Stun;
         let scale = if mask { self.guard(id).map_or(1.0, |g| g.stun) } else { 1.0 };
         // A first-person General is shellshocked by the sim instead: Zero Hour's paralysis would
@@ -223,7 +232,7 @@ mod tests {
             host.add(general(id, id as i32 - 1));
         }
         let flak = crate::tuning::get().perk_flak_jacket * 0.01;
-        let guards = [Guard { general: 2, blast: flak, stun: 1.0, first_person: false, flash_protected: false }, Guard { general: 3, blast: 1.0, stun: 1.0, first_person: false, flash_protected: false }];
+        let guards = [Guard { general: 2, blast: flak, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false }, Guard { general: 3, blast: 1.0, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false }];
         let frag = def(Effect::Explode);
         let g = |def: &'static WeaponDef, stuck_to: Option<u32>| Guarded { host: &host, guards: &guards, def, stuck_to, thrown: true, owner: 1, at: None, hits: &hits };
         g(frag, None).damage(1, 2, 100.0, damage_kind::EXPLOSION);
@@ -242,12 +251,34 @@ mod tests {
     fn the_tactical_mask_cuts_anothers_concussion() {
         let hits = std::cell::RefCell::new(Vec::new());
         let host = FakeHost::default();
-        let guards = [Guard { general: 2, blast: 1.0, stun: 0.1, first_person: false, flash_protected: false }];
+        let guards = [Guard { general: 2, blast: 1.0, stun: 0.1, first_person: false, flash_protected: false, proximity_protected: false }];
         let conc = def(Effect::Stun);
         Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits }.disable(2, disable_kind::PARALYZED, 4.0);
         Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: false, owner: 1, at: None, hits: &hits }.disable(2, disable_kind::PARALYZED, 4.0);
         let secs: Vec<f32> = host.disabled.borrow().iter().map(|d| d.2).collect();
         assert!((secs[0] - 0.4).abs() < 1e-6 && secs[1] == 4.0, "{secs:?}");
+    }
+
+    /// Tactical Mask's `proximityprotection`: a Shock Charge's zap (placed stun equipment) does not
+    /// reach him at all, overhead or in first person (`_proximity_grenade.gsc:118-124`); without it,
+    /// it does. A thrown concussion still stuns him (that is `stunprotection`'s x0.1).
+    #[test]
+    fn the_tactical_mask_stops_a_shock_charge() {
+        let shock = def(Effect::Stun);
+        for first_person in [false, true] {
+            let hits = std::cell::RefCell::new(Vec::new());
+            let host = FakeHost::default();
+            let guards = [
+                Guard { general: 2, blast: 1.0, stun: 1.0, first_person, flash_protected: false, proximity_protected: true },
+                Guard { general: 3, blast: 1.0, stun: 1.0, first_person, flash_protected: false, proximity_protected: false },
+            ];
+            let placed = Guarded { host: &host, guards: &guards, def: shock, stuck_to: None, thrown: false, owner: 1, at: None, hits: &hits };
+            placed.disable(2, disable_kind::PARALYZED, 1.5);
+            placed.disable(3, disable_kind::PARALYZED, 1.5);
+            Guarded { thrown: true, ..placed }.disable(2, disable_kind::PARALYZED, 4.0);
+            let reached: Vec<u32> = if first_person { hits.borrow().iter().map(|h| h.victim).collect() } else { host.disabled.borrow().iter().map(|d| d.0).collect() };
+            assert_eq!(reached, [3, 2], "first person {first_person}: only the unmasked General is zapped, the masked one still concussed");
+        }
     }
 
     /// BO2 concusses the thrower too, his scale over half the radius (`_weapons.gsc:1364-1365`),
@@ -261,7 +292,7 @@ mod tests {
             let host = FakeHost::default();
             // `dist` from the blast to his origin, his feet (`_weapons.gsc:1366`, `self.origin`).
             host.add(crate::host::ObjInfo { pos: crate::math::Vec3::new(dist, 0.0, 0.0), ..general(1, 0) });
-            let guards = [Guard { general: 1, blast: 1.0, stun: if mask { t.stun_protection_scale } else { 1.0 }, first_person: false, flash_protected: false }];
+            let guards = [Guard { general: 1, blast: 1.0, stun: if mask { t.stun_protection_scale } else { 1.0 }, first_person: false, flash_protected: false, proximity_protected: false }];
             let g = Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits };
             crate::projectiles::blast(&g, conc, 1, crate::math::Vec3::ZERO, None, 1.0, 1.0, &[]);
             let secs: Vec<f32> = host.disabled.borrow().iter().filter(|d| d.0 == 1).map(|d| d.2).collect();
