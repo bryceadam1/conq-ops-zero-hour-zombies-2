@@ -1149,8 +1149,9 @@ mod tests {
 
     /// The third-person tear, across every base weapon: each weapon's world meshes on the soldier
     /// are exactly `W<vm>00 .. W<vm><n-1>` with `n` its `WorldMeshes` (the bridge shows `k < n`, so a
-    /// gap hides every surface after it — the MP7 drew two of four), every vertex rides the hand,
-    /// and every triangle indexes a finite vertex.
+    /// gap hides every surface after it — the MP7 drew two of four), every vertex rides the hand
+    /// the native manifest holds it in (the shield the left), and every triangle indexes a finite
+    /// vertex.
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn every_world_weapon_shows_all_its_meshes() {
@@ -1188,15 +1189,27 @@ mod tests {
             }
             shown += mine.len();
         }
+        // The hand each weapon's meshes ride: the body bone its native manifest hangs it on (the
+        // Assault Shield's `tag_weapon_left`, BO2's `refreshshieldattachment`), else the right
+        // hand. The W3D fallback and the native pass must hold it in the same hand.
+        let hand_of = |vm: usize| {
+            let manifest = out.get(&zhbo_native::world_weapon_path(vm as i32)).and_then(|b| zhbo_native::thirdperson::Weapon::from_bytes(b).ok());
+            manifest.and_then(|w| w.parts.first().and_then(|p| p.tag.clone())).map_or(hand, |t| rig.pivot(&t).unwrap_or_else(|| panic!("the soldier rig has no {t}")) as u16)
+        };
+        let mut left = 0;
         for m in &held {
-            if m.bones.iter().any(|&b| b != hand) {
-                fails.push(format!("{}: a vertex off the hand", m.name));
+            let vm: usize = m.name[1..3].parse().unwrap_or(usize::MAX);
+            let want = hand_of(vm);
+            left += (want != hand) as usize;
+            if m.bones.iter().any(|&b| b != want) {
+                fails.push(format!("{} ({}): a vertex off the hand it is held in", m.name, ids.get(vm).map_or("?", |s| s.as_str())));
             }
             if m.positions.iter().flatten().any(|c| !c.is_finite()) || m.triangles.iter().flatten().any(|&i| i as usize >= m.positions.len()) {
                 fails.push(format!("{}: a bad vertex or index", m.name));
             }
         }
-        println!("{} base weapons, {shown} world meshes", ids.len());
+        println!("{} base weapons, {shown} world meshes, {left} on the left hand", ids.len());
+        assert!(left > 0, "the Assault Shield's meshes are on its own tag_weapon_left");
         assert_eq!(shown, held.len(), "every world mesh belongs to its weapon's shown range");
         assert!(fails.is_empty(), "{} problems:\n{}", fails.len(), fails.join("\n"));
     }

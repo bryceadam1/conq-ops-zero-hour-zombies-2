@@ -149,7 +149,7 @@ pub fn weapon_ini(base: &str, sounds: &[(&str, &str)]) -> Result<String, String>
 /// The language zone whose `mpl_common.<language>` bank holds the player's voice (breathing).
 pub const VOICE_ZONE: &str = "common_mp";
 
-/// A language zone (`zone/english/en_<name>.ff`).
+/// A language zone (`zone/<language>/<prefix><name>.ff`, `zhbo_formats::t6zone::language`).
 fn load_language_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
     zhbo_formats::t6zone::load_file(&zhbo_formats::t6zone::language_path(bo2_dir, name))
 }

@@ -172,6 +172,37 @@ fn a_planted_shield_blocks_where_its_model_is_drawn() {
     assert!(shot(top - 1.0, half_width - eps).is_some() && shot(top - 1.0, half_width + eps).is_none(), "side edge at {half_width}");
 }
 
+/// Zero Hour's object for the planted shield covers what blocks: its `Box` geometry (the
+/// converter's half extents of the deployed box, centred on the object in x and y and rising from
+/// it, with no offset) stands where the sim's deployed box is. Before, the object stood at the
+/// model's origin, 26" up, so Zero Hour's box floated that far over the ground (and 2.7" behind
+/// the panel's middle).
+#[test]
+fn the_planted_shields_object_stands_where_its_box_blocks() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    deploy(&mut sim, &host);
+    let d = &sim.deployed[0];
+    let g = d.def.shield.unwrap().deployed;
+    let k = crate::units::DRAWN_ZH_PER_INCH;
+    // Where deploy spawns the object (the test table's shield names no object, so nothing is).
+    let at = super::deploy::planted_object_at(&d.bearer, &g, &crate::tuning::Tuning::default());
+    let (half_x, half_y, height) = ((g.maxs[0] - g.mins[0]) * 0.5 * k, (g.maxs[1] - g.mins[1]) * 0.5 * k, (g.maxs[2] - g.mins[2]) * k);
+    assert!((at.z - d.bearer.pos.z).abs() < 0.05, "the object is on the ground: {} vs {}", at.z, d.bearer.pos.z);
+    // Rays along x (the shield faces the shooter on the x axis): through the object's box, just
+    // inside each face, they stop; just outside, they pass.
+    let shot = |y: f32, z: f32| d.bearer.ray(Vec3::new(at.x - 30.0, y, z), Vec3::new(1.0, 0.0, 0.0), 60.0).is_some();
+    let eps = 0.05;
+    let mid = at.z + height * 0.5;
+    assert!(shot(at.y, at.z + eps) && !shot(at.y, at.z - eps), "the box's bottom is the object's feet");
+    assert!(shot(at.y, at.z + height - eps) && !shot(at.y, at.z + height + eps), "the box's top is {height} over them");
+    assert!(shot(at.y + half_y - eps, mid) && !shot(at.y + half_y + eps, mid), "the left face is {half_y} beside the object");
+    assert!(shot(at.y - half_y + eps, mid) && !shot(at.y - half_y - eps, mid), "the right face is {half_y} beside it");
+    // Along the facing: a ray across the shield's depth meets it only within half_x of the object.
+    let across = |x: f32| d.bearer.ray(Vec3::new(x, at.y - 30.0, mid), Vec3::new(0.0, 1.0, 0.0), 60.0).is_some();
+    assert!(across(at.x + half_x - eps) && !across(at.x + half_x + eps), "the front face is {half_x} ahead of the object");
+    assert!(across(at.x - half_x + eps) && !across(at.x - half_x - eps), "the back face is {half_x} behind it");
+}
+
 #[test]
 fn the_use_key_beside_it_gives_the_shield_back_and_brings_it_up() {
     let (host, mut sim) = duel(true, FACING_SHOOTER);

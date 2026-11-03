@@ -11619,3 +11619,71 @@ no `zhbo_native` blob format changed.
   his second General was also shot entering before his round began, so his log had one round and
   no shellshock. The same run with 5 passes 34/34 (8,365 common frames, 5 shellshocks on both
   machines, CQB worn). TESTING.md and the script's header now say so.
+
+## Bug sweep 4: round 3's leftovers (2026-11-03, branch `v1/bug-sweep-4`)
+
+**The shield in the wrong hand (third person).** By default (`ZHBO_NATIVE_BODY` 1) the W3D body
+draws and the native pass draws only the weapon, placed by the engine's `tag_weapon_right`: the
+Assault Shield, whose manifest names `tag_weapon_left`, was drawn in the right hand. The W3D
+fallback (`viewmodels::world_weapons`) skinned every weapon's `W<vm><k>` meshes on the right-hand
+pivot too. Cause: one hand for every weapon. Fix: the W3D meshes ride the body bone the native
+manifest names (the shield's `tag_weapon_left`, else the right hand), and the weapon-only mode
+refuses a manifest whose base part names a body bone ("held on tag_weapon_left, not the right hand
+…", logged once), so the W3D shield draws in the left hand. Body mode (2) already used the tag.
+Tests: `every_world_weapon_shows_all_its_meshes` (real install) now checks every weapon's meshes
+ride the hand its manifest names and that the shield's are on the left;
+`the_shield_rides_the_left_hand_and_the_back` checks the weapon-only refusal.
+
+**The planted shield's Zero Hour box floated.** Zero Hour's `Box` geometry has no offset: centred on
+its object in x and y, rising from it in z. The object stood at the model's origin, 26" up
+(`riotshield_placement_zoffset` × the drawn scale ≈ 5 units) and 2.7" behind the panel's middle.
+Fix: `ShieldBox::footing` (the deployed box's bottom middle); the sim spawns the object there
+(`deploy::planted_object_at`, turned with the shield) and the converter draws the posed model from
+the same point (`Rig::placed`). The sim's own blocking box is unchanged.
+`the_planted_shields_object_stands_where_its_box_blocks` rays the sim's box against the Zero Hour
+box from the object; `every_prop_is_drawn_at_the_bodys_scale` checks the drawn box rises from the
+object, centred.
+
+**A class that waited for the next spawn came in silently.** `ClassAtNextSpawn` changed the chosen
+class, and the next General's record wore it, but nothing said so (no `ClassChosen`, no "assumed the
+… class" line). `Sim::class_waits` (per seat, hashed with the seat) marks a waiting class;
+`Sim::fresh_record` (take-control and the RTS report) emits `ClassChosen` as the next General wears
+it. Picking back the worn class clears it (BO2 still prints `change_class`, `menuclass`).
+
+**A leaver's equipment stayed his seat's.** When Zero Hour passed his General to an ally, the sim let
+go of the record but kept his Claymores, C4 and Tactical Insertion under his seat (their kills were
+credited to a seat gone; his C4 waited for a detonator nobody holds). BO2 deletes a disconnecting
+player's weapon objects (`_weaponobjects.gsc` `deleteweaponobjectson` on `disconnect`), his
+insertion (`_tacticalinsertion.gsc` `watchdisconnect`) and his planted shield
+(`_riotshield.gsc` `deleteshieldonplayerdeathordisconnect`, already: it falls with the record).
+`Equipment::clear_leaver` now runs on the hand-over. Note: BO2 keeps equipment through a death until
+the respawn (`deleteweaponobjectson` skips `death`; `scr_deleteexplosivesonspawn` 1 clears it in
+`resetweaponobjectwatcher`); the mod clears it at the death, since a Zero Hour General's
+replacement can be minutes away. Left as is.
+
+**The long multiplayer run for any N ≥ 2.** The class change was scripted in the joiner's third
+life, so it needed a fourth to be worn and N ≥ 5 overall. `Autopilot::mp_change_life` puts it in
+his third life, or his next-to-last when he has fewer than four (the first fight at N = 2, after
+the lethal throw). The round check asks min(2, N − 1). `the_long_run_changes_class_in_a_life_with_a_next_one`
+runs the script headless at two and three lives.
+
+**ClassChangeGracePeriod (15 s) is not in the install.** BO2 sets `level.graceperiod` in the base
+`maps/mp/gametypes/_globallogic.gsc`. Every gametype includes it (patch_mp holds the include's name
+string) but no fastfile of the install carries the script: `zhbo-assets find` over every zone in
+`zone/all` and `zone/english` finds neither `_globallogic.gsc` nor its `grace_period_ending` notify;
+`mp/gamesettings_default.cfg` has `prematchperiod 15` and `flagCaptureGracePeriod` but no grace
+period setting, and t6mp.exe has no such dvar or string. The 15 stays, its comment says what was
+checked. A definitive value needs the BO2-reference session (the base script from another source).
+
+**Non-English installs.** The converter read `zone/english/en_*.ff` only. BO2 reads its language
+from `localization.txt` (t6mp.exe's `"localization.txt"`, dvar `loc_language`) and opens a
+localized zone as `"%s\zone\%s\%s%s"` (install, language, prefix, zone); the exe's prefix table is
+`en_ fr_ fc_ ge_ as_ it_ sp_ br_ ru_ po_ ko_ ja_ cz_ fj_ bp_ ms_`. A French install has
+`zone/french/fr_*.ff`: no fonts, no names, no UI strings. Fix: `t6zone::language` takes the folder
+`localization.txt` names if it holds the localized zones, else the first one that does, and reads
+the prefix off the folder's own `*code_post_gfx_mp.ff` (no table copied); `language_path`, the
+fonts' zone and `*_base.ipak`, and `zhbo-assets strings` use it. The sound banks were already
+read by id from every bank. `the_localized_zones_are_the_installs_own_language` covers English,
+French, two languages, a stale `localization.txt`, other case and none; the real-install
+`install_variants_convert_the_same_sim_content` lays the English zones out as French ones and gets
+every name back, the content fingerprint unmoved.

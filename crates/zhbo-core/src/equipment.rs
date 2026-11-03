@@ -447,10 +447,22 @@ impl Equipment {
         self.placed.iter().any(|p| p.owner == owner && p.kind == Kind::Sensor && p.is_armed(&self.tuning) && (p.pos - pos).length_xy() <= SENSOR_RANGE)
     }
 
-    /// Remove everything a player put down (their General left the game).
+    /// Remove everything a player put down but his Tactical Insertion (his General died: the next
+    /// one comes in at it).
     pub fn clear_owner(&mut self, host: &dyn LogicHost, owner: usize) {
+        self.clear(host, owner, true);
+    }
+
+    /// Remove everything a player put down, his Tactical Insertion too: he left the game (BO2's
+    /// `deleteweaponobjectson` on `disconnect` deletes every weapon object of his, and
+    /// `_tacticalinsertion.gsc` `watchdisconnect` destroys his insertion).
+    pub fn clear_leaver(&mut self, host: &dyn LogicHost, owner: usize) {
+        self.clear(host, owner, false);
+    }
+
+    fn clear(&mut self, host: &dyn LogicHost, owner: usize, keep_insertion: bool) {
         self.placed.retain_mut(|p| {
-            if p.owner == owner && p.kind != Kind::Insertion {
+            if p.owner == owner && !(keep_insertion && p.kind == Kind::Insertion) {
                 p.remove(host);
                 false
             } else {

@@ -17,11 +17,11 @@ pub struct Install {
     pub common_patch: Zone,
     pub patch: Zone,
     pub patch_ui: Zone,
-    /// The english localized strings of the multiplayer zones, later zones over earlier ones.
+    /// The localized strings of the multiplayer zones (the install's language), later zones over earlier ones.
     pub strings: HashMap<String, String>,
 }
 
-/// The english string zones a multiplayer session loads, in load order.
+/// The localized string zones a multiplayer session loads, in load order.
 const STRING_ZONES: &[&str] = &["code_pre_gfx_mp", "code_post_gfx_mp", "ui_mp", "common_mp", "patch_mp", "patch_ui_mp"];
 
 fn strings(dir: &Path) -> HashMap<String, String> {

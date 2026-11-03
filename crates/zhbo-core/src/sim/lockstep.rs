@@ -7,7 +7,8 @@
 //! (`lockstep_tests.rs`) compares.
 //!
 //! What is hashed is the deterministic state only, streamed field by field
-//! ([`crate::statehash`]): each seat's player record and chosen class, the projectiles, the
+//! ([`crate::statehash`]): each seat's player record and chosen class (and whether it waits for
+//! his next General), the projectiles, the
 //! equipment that is down, the smoke screens, the deployed shields and the antilag history (the
 //! first-person Generals and shields of the last frames, which decide what a shot hits), plus the
 //! frame. What is
@@ -67,6 +68,7 @@ impl Sim {
             smoke: _,
             frame,
             chosen,
+            class_waits,
             deployed,
             history,
             tuning: _,
@@ -88,6 +90,7 @@ impl Sim {
                 let mut h = Hasher::new();
                 p.hash(&mut h);
                 c.hash(&mut h);
+                class_waits.get(i).copied().unwrap_or(false).hash(&mut h);
                 *seat = Some(h.finish());
             }
         }

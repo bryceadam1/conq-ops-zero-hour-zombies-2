@@ -452,6 +452,9 @@ impl Autopilot {
         } else if (5.0..5.3).contains(&c) {
             keys.set_down(b.fire, true);
         }
+        // A long run of two lives changes class here, in the first fight, after the target's throw
+        // (before his burst; he stays in the fight until he is down, so his next General wears it).
+        let (pick_force, change_pick) = if long { self.mp_class_change(life, c, 4.2) } else { (0, None) };
         // Out by the field computer once the fight is over: the shooter when the target is down
         // (or the time is up), the target only if he outlived it.
         let done = (self.mp_shooter && !target_up && c >= 15.0) || c >= MP_KILL_TIME + 2.0;
@@ -462,14 +465,39 @@ impl Autopilot {
                 keys.set_down(b.field_computer, true);
             }
         }
-        Scripted { keys, class_pick: pick, look, ..Default::default() }
+        Scripted { keys, class_pick: change_pick.or(pick), pick_force, look, ..Default::default() }
+    }
+
+    /// The target's life in which the long run changes class mid-life: his third (the second round)
+    /// when he plays four or more, else his next-to-last, so every run of two lives or more has a
+    /// next General to wear it (two lives: the first fight).
+    pub fn mp_change_life(&self) -> u32 {
+        self.mp_rounds.saturating_sub(1).clamp(1, 3)
+    }
+
+    /// The mid-life class change (the long run's target, in [`Self::mp_change_life`]), once the
+    /// throw has made him a combatant: the screen forced open at `force` seconds into the fight,
+    /// the second default class picked half a second on. `(pick_force, class_pick)`.
+    fn mp_class_change(&mut self, life: u32, c: f32, force: f32) -> (i32, Option<Key>) {
+        if self.mp_shooter || self.mp_rounds < 2 || life != self.mp_change_life() || self.mp_changed_class {
+            return (0, None);
+        }
+        if (force..force + 0.1).contains(&c) {
+            return (1, None);
+        }
+        if (force + 0.5..force + 0.6).contains(&c) {
+            self.mp_changed_class = true;
+            self.log.push("autopilot mp: changing class mid-life after combat".to_string());
+            return (0, Some(second_preset_key()));
+        }
+        (0, None)
     }
 
     /// A life of the long multiplayer run after the first fight: at the meeting point again (the
     /// bridge walks every General there), each throws his tactical at the other (the concussion:
     /// a shellshock on both machines' sims), fires a hip burst and an aimed one at him, reloads,
     /// knifes, and leaves by the field computer, or dies; the shooter ends with a long aimed burst.
-    /// On his second such life the target changes class mid-life once his throw has made him a
+    /// In [`Self::mp_change_life`] the target changes class mid-life once his throw has made him a
     /// combatant (BO2's `MP_CHANGE_CLASS_NEXT_SPAWN`) and stays for the bursts, so his next
     /// General wears it.
     pub fn mp_round(&mut self, b: &Bindings, life: u32) -> Scripted {
@@ -510,21 +538,17 @@ impl Autopilot {
         if (9.5..9.6).contains(&c) {
             keys.set_down(b.melee, true);
         }
-        // The mid-life class change, once the throw has made him a combatant: the screen forced
-        // open, the next default class picked.
-        if !self.mp_shooter && life == 3 && !self.mp_changed_class {
-            if (1.3..1.4).contains(&c) {
-                pick_force = 1;
-            }
-            if (1.8..1.9).contains(&c) {
-                class_pick = Some(second_preset_key());
-                self.mp_changed_class = true;
-                self.log.push("autopilot mp: changing class mid-life after combat".to_string());
-            }
+        // The mid-life class change, once the throw has made him a combatant.
+        let (force, pick) = self.mp_class_change(life, c, 1.3);
+        if force != 0 {
+            pick_force = force;
+        }
+        if pick.is_some() {
+            class_pick = pick;
         }
         // The shooter ends each round with a long aimed burst at him; the target stays for it in
         // the life he changed class in (the new class comes in with his next General).
-        let changing = !self.mp_shooter && life == 3;
+        let changing = !self.mp_shooter && life == self.mp_change_life();
         if self.mp_shooter && (14.0..19.0).contains(&c) {
             keys.set_down(b.ads, true);
             if c >= 14.5 {

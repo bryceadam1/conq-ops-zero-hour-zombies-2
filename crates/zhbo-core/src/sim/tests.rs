@@ -733,13 +733,42 @@ fn a_mid_life_pick_applies_in_the_grace_period_before_combat_else_at_the_next_sp
     let e = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).expect("told it waits");
     assert_eq!(event_hint(&e.kind), Some("MP_CHANGE_CLASS_NEXT_SPAWN"));
     assert!(describe_event(e).unwrap().contains("next spawn"));
-    // His next General comes in with it.
+    // His next General comes in with it, and says so (the log's "assumed the ... class").
     host.objects.borrow_mut()[0].flags |= objflags::DEAD;
     run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
     host.add(general(2, 0));
+    sim.events.clear();
     sim.take_control(&host, 0, 2);
     assert_eq!(id(&sim), preset(2), "the next spawn wears the new class");
     assert!(!sim.player(0).unwrap().combat, "a new life has not fought");
+    let worn = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassChosen { general: 2, .. })).expect("the waiting class comes in with a ClassChosen");
+    let want = crate::classes::at(2).unwrap().name;
+    assert!(describe_event(worn).unwrap().contains(&format!("General 2 assumed the {want} class")), "{:?}", describe_event(worn));
+    // A later General, the class unchanged: no second ClassChosen (it is the same pick).
+    host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2).for_each(|o| o.flags |= objflags::DEAD);
+    run(&mut sim, &host, 0, 2, FpsInput::default(), 1);
+    host.add(general(3, 0));
+    sim.events.clear();
+    sim.take_control(&host, 0, 3);
+    assert_eq!(id(&sim), preset(2));
+    assert!(!events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { .. })), "{:?}", events(&sim));
+    // A next General brought in overhead (the RTS report makes his record) says it too; picking
+    // back the class he wears leaves nothing waiting.
+    wait_until_ready(&mut sim, &host);
+    run(&mut sim, &host, 0, 3, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+    sim.choose_class(0, 3, 0, &[]);
+    assert!(sim.class_waits[0]);
+    sim.choose_class(0, 3, 2, &[]);
+    assert!(!sim.class_waits[0], "back to the class he wears: nothing waits");
+    sim.choose_class(0, 3, 1, &[]);
+    host.objects.borrow_mut().iter_mut().filter(|o| o.id == 3).for_each(|o| o.flags |= objflags::DEAD);
+    run(&mut sim, &host, 0, 3, FpsInput::default(), 1);
+    host.add(general(4, 0));
+    sim.events.clear();
+    sim.rts_update(&host, 0, 4, 0, [0, 0, 0], None);
+    assert_eq!(id(&sim), preset(1));
+    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { general: 4, .. })), "{:?}", events(&sim));
+    assert!(!sim.class_waits[0]);
 
     // Past the grace period, no combat: the next spawn too.
     let host = FakeHost::default();

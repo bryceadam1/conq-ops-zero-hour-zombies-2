@@ -638,6 +638,14 @@ impl ShieldBox {
         let a = |i: usize| [n[i], n[i + 1], n[i + 2]];
         ShieldBox { rot: [n[0], n[1], n[2], n[3]], pos: a(4), mins: a(7), maxs: a(10) }
     }
+
+    /// The middle of the box's bottom face, in its own frame (inches): where a Zero Hour `Box`
+    /// geometry, which has no offset of its own (centred on its object in x and y, rising from it in
+    /// z), must have its object for the two to cover the same space. The planted shield's object
+    /// stands there and the converter draws its model from there (`zhbo-assets` `props`).
+    pub fn footing(&self) -> [f32; 3] {
+        [(self.mins[0] + self.maxs[0]) * 0.5, (self.mins[1] + self.maxs[1]) * 0.5, self.mins[2]]
+    }
 }
 
 /// The Assault Shield's three collision boxes (`_riotshield.gsc`), each the bounds of the model's

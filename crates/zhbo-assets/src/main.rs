@@ -628,8 +628,15 @@ fn dump_effect(e: &zhbo_formats::fx::Effect, indent: &str) {
 
 /// `zhbo-assets strings`.
 fn cmd_strings(args: &[String]) -> Result<(), String> {
-    // strings <language zone, e.g. en_common_mp.ff> [filter]: localized strings.
-    let path = resolve(args.get(1).ok_or("strings <zone> [filter]")?, &["zone", "english"])?;
+    // strings <language zone, e.g. en_common_mp.ff, or a file path> [filter]: localized strings,
+    // from the install's own language folder (`zone/english`, `zone/french`, ...).
+    let name = args.get(1).ok_or("strings <zone> [filter]")?;
+    let path = if Path::new(name).is_file() {
+        PathBuf::from(name)
+    } else {
+        let folder = zhbo_formats::t6zone::language(&bo2_dir()?).map_or_else(|| "english".to_string(), |l| l.folder);
+        resolve(name, &["zone", &folder])?
+    };
     let file = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let zone = zhbo_formats::t6zone::load(&fastfile::read(&file).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let mut all: Vec<_> = zhbo_formats::localize::entries(&zone).map_err(|e| e.to_string())?.into_iter().collect();

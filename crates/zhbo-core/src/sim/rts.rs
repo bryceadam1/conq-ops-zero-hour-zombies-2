@@ -103,7 +103,7 @@ impl Sim {
             // A new General wears the player's chosen class (BO2's `pers["class"]`, `spawn.rs`);
             // without one he has no guns to fire: the report marks nothing usable until a class
             // lands (the bridge's empty-weapon veto stops Zero Hour's own firing).
-            self.players[idx] = Some(self.new_record(idx, general, Mode::Rts, Some(&info)));
+            self.players[idx] = Some(self.fresh_record(idx, general, Mode::Rts, Some(&info)));
         }
         let Some(mut p) = self.players[idx].take() else { return RtsWeapons::default() };
         if p.general != general {

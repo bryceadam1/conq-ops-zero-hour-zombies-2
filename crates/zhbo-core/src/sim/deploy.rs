@@ -58,6 +58,15 @@ impl Deployed {
     }
 }
 
+/// Where the planted shield's Zero Hour object stands: the deployed box's [`ShieldBox::footing`]
+/// on the model, its origin `riotshield_placement_zoffset` over `bearer`'s ground point, turned
+/// with the shield (box x is its facing, y its left), at the General's drawn scale.
+pub(super) fn planted_object_at(bearer: &Bearer, deployed: &ShieldBox, t: &crate::tuning::Tuning) -> Vec3 {
+    let [x, y, z] = deployed.footing();
+    let (fwd, right) = basis_xy(bearer.yaw);
+    bearer.pos + fwd * drawn_inches(x) - right * drawn_inches(y) + Vec3::new(0.0, 0.0, drawn_inches(t.riotshield_placement_zoffset + z))
+}
+
 impl Sim {
     /// The standing deployed shields as blockers (appended to the frame's [`Sim::shields`]).
     pub(super) fn deployed_bearers(&self) -> impl Iterator<Item = Bearer> + '_ {
@@ -73,9 +82,11 @@ impl Sim {
             Some(bearer) => {
                 let Some(weapon) = p.arsenal.take_shield() else { return };
                 // The model's origin stands `riotshield_placement_zoffset` over the ground on the
-                // drawn model (its feet reach the ground at the General's drawn scale).
-                let origin = bearer.pos + Vec3::new(0.0, 0.0, drawn_inches(t.riotshield_placement_zoffset));
-                let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, origin, p.yaw) };
+                // drawn model (its feet reach the ground at the General's drawn scale). Zero Hour's
+                // object stands at the deployed box's footing instead: its `Box` geometry has no
+                // offset (centred on the object, rising from it), so the object goes where the
+                // box's bottom middle is, and the converter draws the model from that point.
+                let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, planted_object_at(&bearer, &def.shield.unwrap_or_default().deployed, &t), p.yaw) };
                 let bearer = Bearer { object, ..bearer };
                 self.deployed.push(Deployed { owner: idx, general: p.general, def, object, bearer, damage_taken: 0.0, destroyed: None, weapon });
                 self.emit(idx, EventKind::ShieldDeployed { at: bearer.pos });

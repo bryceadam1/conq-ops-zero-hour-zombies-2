@@ -128,6 +128,14 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
     }
     let Some(bytes) = files.get(&path) else { return Ok(None) };
     let manifest = Weapon::from_bytes(&bytes).map_err(|e| format!("{path}: {e}"))?;
+    // The weapon-only mode is placed by the engine's `tag_weapon_right`: a weapon held on another
+    // body bone (the Assault Shield on `tag_weapon_left`) is not in that hand, so the W3D weapon,
+    // skinned on its own bone, draws it instead.
+    if req.mode == Mode::Weapon {
+        if let Some(tag) = manifest.parts.first().and_then(|p| p.tag.as_deref()) {
+            return Err(format!("{path}: held on {tag}, not the right hand the weapon-only mode is placed by (the W3D weapon draws it)"));
+        }
+    }
     let mut models = Vec::with_capacity(manifest.parts.len());
     let mut waiting = false;
     for p in &manifest.parts {

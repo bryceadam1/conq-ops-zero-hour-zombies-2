@@ -503,6 +503,9 @@ pub struct Sim {
     /// Each player seat's chosen class (BO2's `pers["class"]`, `spawn.rs`): it outlives his
     /// Generals, and the next one spawns with it.
     pub chosen: Vec<Option<ChosenClass>>,
+    /// Each player seat: the chosen class was picked mid-life and waits for his next General
+    /// (`ClassAtNextSpawn`); the record made for that General wears it and says so (`ClassChosen`).
+    pub class_waits: Vec<bool>,
     pub events: Vec<Event>,
     /// This step's tracer bullets, for the host layer to draw per viewer and clear.
     pub tracers: Vec<ShotTracer>,
@@ -552,6 +555,7 @@ impl Sim {
             hit_body: None,
             frame: 0,
             chosen: vec![None; MAX_PLAYERS],
+            class_waits: vec![false; MAX_PLAYERS],
             events: Vec::new(),
             tracers: Vec::new(),
             shields: Vec::new(),
@@ -841,11 +845,17 @@ impl Sim {
         // a living ally (`onSelfDestruct` with `transferAssets`). This seat no longer commands
         // him; his new owner's own seat takes him over on its next report or take-control. Kept,
         // the old record would drive the General with the leaver's last input forever (or fight
-        // the new owner's record for his pose).
+        // the new owner's record for his pose). The leaver's equipment goes with him, as BO2
+        // deletes a disconnecting player's weapon objects (`_weaponobjects.gsc`
+        // `deleteweaponobjectson`, his insertion by `_tacticalinsertion.gsc` `watchdisconnect`);
+        // his planted shield falls with the record (`step_deployed`, `_riotshield.gsc`
+        // `deleteshieldonplayerdeathordisconnect`). Kept, it stayed his seat's: his C4 waited for a
+        // detonator nobody holds, and its kills and his Claymores' were credited to a seat gone.
         if info.owner_player != idx as i32 {
             if p.is_first_person() {
                 self.return_to_rts(host, idx, p);
             }
+            self.equipment.clear_leaver(host, idx);
             return false;
         }
         p.shock.step();
