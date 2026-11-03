@@ -590,8 +590,8 @@ int32_t zhbo_native_bone(const char *name, float *out12); /* world 3x4 rows of t
 void zhbo_native_reset(void);
 
 /* The native third person (Track R7; nativebody/ffi.rs, CONTRACT.md "The native third person").
-   ZHBO_NATIVE_BODY=1 draws the weapon in the General's hand while the W3D body stays; 2 draws the
-   body too. Each frame: zhbo_client_native_poses, then zhbo_native_body for each General, then
+   ZHBO_NATIVE_BODY=2 (the default) draws the body and the weapon; 1 the weapon in the General's
+   hand while the W3D body stays. Each frame: zhbo_client_native_poses, then zhbo_native_body for each General, then
    answer every zhbo_native_body_wanted path with zhbo_native_body_provide (len < 0: not in the
    archive) and log each zhbo_native_body_take_log line. */
 typedef struct ZhboNativePose

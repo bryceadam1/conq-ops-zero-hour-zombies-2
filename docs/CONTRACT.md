@@ -785,8 +785,11 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   `zhbo_native_body`. `DRAWN` (1): the bridge hides the W3D `W<vm><k>` sub-objects. Anything else
   (0 not native, 2 still loading) leaves the W3D weapon showing — and the `s_worldLooks` cache
   remembers the native flag, so a failed native draw brings the W3D weapon back instead of leaving
-  nothing. `ZHBO_NATIVE_BODY=1` (the default) draws the weapon while the W3D body stays; `=2` draws
-  the body and the weapon and hides the W3D body (see *The two modes* below); `=0` opts out.
+  nothing. `ZHBO_NATIVE_BODY=2` (the default) draws the body and the weapon and hides the W3D body
+  (see *The two modes* below); `=1` draws the weapon while the W3D body stays; `=0` opts out. The
+  W3D body still draws whenever the native pass does not answer `DRAWN` (no native pass on DX8, a
+  rig still loading or refused), while the tablet is up (`native_poses` reports no weapon then) and
+  once the General is dead (the sim drops his record, so his W3D death animation plays).
   Each General keeps his own composed rig and GPU upload (keyed by `ZhboNativeBodyIn.general`;
   replaced when his weapon, mode or camo changes, all dropped by `zhbo_native_body_reset`), so
   several on screen do not reload one another's every frame. `zhbo_native_body_enabled`

@@ -13,7 +13,7 @@
 //! (`zhbo_core::torso`: reload, knife, shot, raise, and the frag's throw), into `<outdir>/torso_<id>.png`.
 //!
 //! **What it draws.** The pipeline the game draws the overhead weapon with: `zhbo_native_body` in
-//! weapon mode (`ZHBO_NATIVE_BODY=1`, the default) with the engine's `tag_weapon_right` transform
+//! weapon mode (`ZHBO_NATIVE_BODY=1`) with the engine's `tag_weapon_right` transform
 //! at the origin, fed over the same file protocol the bridge serves (`zhbo_native_body_wanted` /
 //! `_provide`). The core composes the manifest's parts (the world model, its base parts and the
 //! attachments on their tags) and `nativebody::gpu` uploads and submits it to a headless `zhbo-gfx`
@@ -278,6 +278,55 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
         tiles.push(to_rgb(&px));
     }
     write_sheet_cols(&out.join(format!("torso_{}.png", id.replace(['+', '~'], "_"))), &tiles, tiles.len() as u32)?;
+    // The cost of several Generals at once: `n` bodies (each his own rig, half of them reloading),
+    // drawn and presented `FRAMES` times; the core's pose and submit per General, and the frame.
+    for n in [1u32, 4, 8, 16] {
+        const FRAMES: u32 = 60;
+        let generals: Vec<u32> = (0..n).map(|k| 2000 + k).collect();
+        let reload = poses.iter().find(|p| p.0 == "reload").and_then(|p| p.1);
+        let input = |g: u32, k: u32| ZhboNativeBodyIn {
+            general: g,
+            mode: 2,
+            vm: def.viewmodel,
+            faction: FACTION as i32,
+            state: zhbo_native::thirdperson::state::id(def.body_anims, zhbo_native::thirdperson::state::STAND_RUN) as i32,
+            time: k as f32 / 30.0,
+            rate: 1.0,
+            pos: [(g % 4) as f32 * 3.0, (g / 4 % 4) as f32 * 3.0, 0.0],
+            target_view: VIEW,
+            before_view: BEFORE_VIEW,
+            light_count: 1,
+            lights: [ZhboNativeLight { dir: norm([-0.4, 0.3, -1.0]), color: [1.0; 3] }, ZhboNativeLight::default(), ZhboNativeLight::default()],
+            ..Default::default()
+        };
+        // Load every rig first.
+        for _ in 0..ROUNDS {
+            for &g in &generals {
+                unsafe { ffi::zhbo_native_body(&input(g, 0)) };
+            }
+            let mut sink = Vec::new();
+            serve(archive, &mut sink);
+            zhbo_gfx::ffi::with_renderer((), |r| {
+                r.touch(VIEW);
+                r.frame();
+            });
+        }
+        let (mut core, start, mut drawn) = (std::time::Duration::ZERO, std::time::Instant::now(), 0);
+        for k in 0..FRAMES {
+            ffi::publish_torso(generals.iter().filter(|g| *g % 2 == 0).filter_map(|&g| reload.map(|(action, clip)| ffi::TorsoAction { general: g, action, clip, t: k as f32 / 30.0 })));
+            let c = std::time::Instant::now();
+            for &g in &generals {
+                drawn += (unsafe { ffi::zhbo_native_body(&input(g, k)) } == DRAWN) as u32;
+            }
+            core += c.elapsed();
+            zhbo_gfx::ffi::with_renderer((), |r| {
+                r.touch(VIEW);
+                r.frame();
+            });
+        }
+        let total = start.elapsed();
+        println!("bench {n} Generals ({drawn} of {} drawn): core {:.3} ms/frame, frame with GPU {:.3} ms/frame", n * FRAMES, core.as_secs_f64() * 1000.0 / FRAMES as f64, total.as_secs_f64() * 1000.0 / FRAMES as f64);
+    }
     ffi::zhbo_native_body_reset();
     zhbo_gfx::ffi::zhgfx_shutdown();
     Ok(())
@@ -285,9 +334,10 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
 
 /// One General in body mode, framed whole from the front-right, as a player beside him sees him.
 fn render_body(archive: &Archive, shot: &Shot, vm: i32, body_anims: u8, general: u32) -> Result<Vec<u8>, String> {
-    let k = zhbo_core::nativevm::ART_SCALE;
-    let centre = [0.0, 0.0, 36.0 * k];
-    let dist = 24.0 * k / (FOV / 2.0).tan();
+    // The body is drawn at the General's size (`units::drawn_inches`).
+    let k = zhbo_core::units::DRAWN_ZH_PER_INCH;
+    let centre = [0.0, 0.0, 40.0 * k];
+    let dist = 30.0 * k / (FOV / 2.0).tan();
     let eye = [centre[0] + dist * 0.75, centre[1] - dist * 0.6, centre[2] + dist * 0.15];
     let view = look_at(eye, centre);
     let aspect = W as f32 / H as f32;
