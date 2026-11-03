@@ -292,10 +292,11 @@ pub fn faction_of(general: u32) -> Option<u8> {
 }
 
 /// Each General's torso action this frame (`general << 32 | clip << 16 | milliseconds in`),
-/// published by the client (`client::remote`): the body pass layers it. Presentation only.
+/// published by the client (`client::remote`; the headless third-person render's `--torso` too): the
+/// body pass layers it. Presentation only.
 static TORSO: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
 
-pub(crate) fn publish_torso(torsos: impl Iterator<Item = (u32, u16, f32)>) {
+pub fn publish_torso(torsos: impl Iterator<Item = (u32, u16, f32)>) {
     use std::sync::atomic::Ordering;
     let mut it = torsos;
     for slot in TORSO.iter() {

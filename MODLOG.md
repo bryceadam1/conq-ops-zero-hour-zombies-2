@@ -11710,3 +11710,15 @@ not heard, pain from below full health, death where he fell); `a_torso_clip_move
 `sim::score::tests` (the rule, friendly/suicide/world/free-for-all none, decay, a dead attacker's
 seat, two machines agree, the step's damage reaches it); the lockstep leaf walk covers the score.
 `another_players_world_events_play_here_as_for_their_owner` compares voices by line, not speaker.
+
+**Verified in game** (build of this branch, own dist): `scripts/mptest-mac.sh` (short) 25/25 — the
+state hash agreed on all 2,809 common frames, 22 CRC frames alike, no mismatch; both logs played
+the new events at the other player (`ZHBO_NTN_fly_assault_reload_npc_mag_out`/`_mag_in`,
+`ZHBO_NTN_wpn_grenade_pull_pin`, `ZHBO_BO2_SndNpc_fly_generic_raise_npc`/`_down_npc`/`_first_raise_npc`,
+`ZHBO_BO2_PainSmall_*`, `ZHBO_BO2_PainDeath_*` in the China and GLA voices). The short run has no
+knife and no team, so the swing and the assists are covered by the tests, not the run.
+`autotest-mac.sh --rts` with `ZHBO_NATIVE_BODY=2`: 16/16. The torso was checked headlessly through
+the game's own body pass: `render_world_weapons --torso <id>` (new) draws the General idle, then
+mid-reload, -knife, -shot, -raise and -throw (`~/.opencode/plan/remote-presentation/render/`).
+**Open:** in the throw, the weapon in hand follows `tag_weapon_right` where the throw clip puts it
+(the pistol hangs off the hand); BO2 may draw the offhand there instead.
