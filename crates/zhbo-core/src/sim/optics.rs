@@ -118,7 +118,7 @@ impl Optics {
         let hide_friendlies = t.sonar_hide_friendlies != 0.0;
         let mut seen: Vec<&ObjInfo> = objs
             .iter()
-            .filter(|o| o.id != me && o.has(objflags::INFANTRY) && !o.has(objflags::DEAD))
+            .filter(|o| o.id != me && o.has(objflags::INFANTRY) && !o.has(objflags::DEAD) && o.origin_within(eye, inches(max_dist)))
             .filter(|o| !(hide_friendlies && o.has(objflags::ALLY)))
             .collect();
         seen.sort_by_key(|o| o.id);
@@ -180,7 +180,7 @@ fn marks(host: &dyn LogicHost, me: u32, eye: Vec3, t: &crate::tuning::Tuning) ->
     host.query(eye, inches(t.range_finder_trace_dist), me, &mut objs);
     let mut out: Vec<(f32, Blip)> = objs
         .iter()
-        .filter(|o| o.id != me && o.has(objflags::ENEMY) && o.has(objflags::INFANTRY) && !o.has(objflags::DEAD))
+        .filter(|o| o.id != me && o.has(objflags::ENEMY) && o.has(objflags::INFANTRY) && !o.has(objflags::DEAD) && o.origin_within(eye, inches(t.range_finder_trace_dist)))
         .map(|o| {
             let pos = o.pos + Vec3::new(0.0, 0.0, inches(t.range_finder_mark_height));
             ((pos - eye).length(), Blip { id: o.id, pos, radius: 0.0, height: 0.0, intensity: 1.0 })

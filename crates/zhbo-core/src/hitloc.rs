@@ -164,6 +164,18 @@ impl Body {
             (b.mins.x..=b.maxs.x).contains(&l.x) && (b.mins.y..=b.maxs.y).contains(&l.y) && (b.mins.z..=b.maxs.z).contains(&l.z)
         })
     }
+
+    /// How far `p` (soldier frame) is from the nearest of the boxes (0 inside one).
+    pub fn distance(&self, p: Vec3) -> f32 {
+        self.boxes
+            .iter()
+            .map(|b| {
+                let l = b.local(p);
+                let out = |v: f32, lo: f32, hi: f32| (lo - v).max(v - hi).max(0.0);
+                Vec3::new(out(l.x, b.mins.x, b.maxs.x), out(l.y, b.mins.y, b.maxs.y), out(l.z, b.mins.z, b.maxs.z)).length()
+            })
+            .fold(f32::INFINITY, f32::min)
+    }
 }
 
 /// The soldier's hit boxes in every body state the converter posed. BO2 traces a player's DObj as

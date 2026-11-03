@@ -27,6 +27,10 @@
 #                                      take-control picks the class by its row key, then the script
 #                                      forces the screen open after re-taking control and Escape-closes it;
 #                                      then the General dies and the next one comes in with the class
+#   scripts/autotest-mac.sh --splash   explosive splash on Zero Hour units: an enemy armour group (an
+#                                      Overlord, three Crusaders) and two rebels, held still; one SMAW
+#                                      into the Overlord, then a frag; every health change is logged
+#                                      and the neighbours must take the blast
 #   scripts/autotest-mac.sh --replay   spectating a replay: records a fresh skirmish (started from the
 #                                      main menu by ZHBO_AUTOTEST_SKIRMISH: a loaded save records no
 #                                      replay) with the scripted first-person run, then plays the replay
@@ -70,6 +74,7 @@ mode=autopilot
 [[ "${1:-}" == "--smoke" ]] && mode=smoke
 [[ "${1:-}" == "--w3d-ads" ]] && mode=w3d-ads
 [[ "${1:-}" == "--replay" ]] && mode=replay
+[[ "${1:-}" == "--splash" ]] && mode=splash
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -404,6 +409,40 @@ if [[ $mode == rts ]]; then
     # The native third-person weapon is the default (ZHBO_NATIVE_BODY unset = 1): the overhead
     # General's gun composes through nativebody (ZHBO_NATIVE_BODY=0 opts out, and this fails).
     check "native third-person weapon" "native body: General [0-9]+ weapon [0-9]+ camo [^ ]+ composed \\(ZW[0-9]+[A-Z]\\)"
+    echo "screenshots and log: $out"
+    exit $ok
+fi
+if [[ $mode == splash ]]; then
+    # The SMAW in the secondary slot: seed it in the profile (the autopilot picks the first custom
+    # by its computed row key; see the autopilot mode below for the format).
+    profile="$userdata/ConquerOps.profile"
+    rm -f "$profile"
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+Splash Test
+primary=an94_mp;secondary=smaw_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
+    export ZHBO_AUTOPILOT=splash GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-60}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 70); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    check() { # name, pattern
+        if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-34s PASS\n' "$1"; else printf '%-34s FAIL\n' "$1"; ok=1; fi
+    }
+    grep -E "autopilot splash:" "$out/ConquerOps.log" || true
+    check "SMAW fired" "fired slot 1|SMAW"
+    # BO2's vehicle rule (getvehicleprojectilescalar): the struck tank takes a fifth of the SMAW's
+    # 1000, x1.5 for Zero Hour (300; TankArmor takes EXPLOSION at 100%), and is spared the radius.
+    check "the struck Overlord took 300" "autopilot splash: ChinaTankOverlord [0-9]+ took 300.0 "
+    check "a Crusader beside it took the blast" "autopilot splash: AmericaTankCrusader [0-9]+ took [1-9][0-9.]* .*, 36 from the target"
+    check "a rebel took the blast" "autopilot splash: GLAInfantryRebel [0-9]+ took [1-9]"
     echo "screenshots and log: $out"
     exit $ok
 fi

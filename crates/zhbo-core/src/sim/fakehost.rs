@@ -80,7 +80,7 @@ impl LogicHost for FakeHost {
     }
     fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>) {
         for o in self.objects.borrow().iter() {
-            if (o.pos - center).length() <= radius {
+            if o.in_query(center, radius) {
                 out.push(self.rel(*o, viewer));
             }
         }

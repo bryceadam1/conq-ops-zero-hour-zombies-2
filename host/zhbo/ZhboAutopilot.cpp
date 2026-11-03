@@ -433,6 +433,68 @@ std::map<ObjectID, UnsignedInt> s_generalBuilds;
 
 Autopilot s_autopilot = {};
 
+// ZHBO_AUTOPILOT=splash: an enemy armour group straight ahead, held still (paralysed, so nothing
+// drives off or shoots back): an Overlord in the line of fire (taller than the General's eye, so the
+// script's level SMAW shot strikes it), a Crusader either side of it, one behind, and two rebels in
+// front of its flanks. Every health change is logged with the distance from the struck Overlord, so
+// the run shows what the blast did to each neighbour (the user's "only the tank that was hit takes
+// damage").
+static void splashScene(const Coord3D &general, Real yaw, Team *team)
+{
+	const Real c = Cos(yaw), s = Sin(yaw);
+	struct Placement
+	{
+		const char *what;
+		Real ahead, side;
+	};
+	const Placement placements[] = {
+		{"ChinaTankOverlord", 110.0f, 0.0f},
+		{"AmericaTankCrusader", 110.0f, -36.0f},
+		{"AmericaTankCrusader", 110.0f, 36.0f},
+		{"AmericaTankCrusader", 163.0f, 0.0f},
+		{"GLAInfantryRebel", 84.0f, -20.0f},
+		{"GLAInfantryRebel", 84.0f, 20.0f},
+	};
+	const UnsignedInt held = TheGameLogic->getFrame() + 600 * LOGICFRAMES_PER_SECOND;
+	for (const Placement &p : placements)
+	{
+		Coord3D at;
+		at.set(general.x + c * p.ahead - s * p.side, general.y + s * p.ahead + c * p.side, 0.0f);
+		Object *obj = spawnAt(p.what, team, at, yaw + PI);
+		if (!obj || s_autopilot.splashCount >= (Int)ARRAY_SIZE(s_autopilot.splashIds))
+			continue;
+		obj->setDisabledUntil(DISABLED_PARALYZED, held);
+		s_autopilot.splashIds[s_autopilot.splashCount] = obj->getID();
+		s_autopilot.splashHealth[s_autopilot.splashCount] = obj->getBodyModule() ? obj->getBodyModule()->getHealth() : 0.0f;
+		++s_autopilot.splashCount;
+		logf("autopilot splash: %s %u at %.0f ahead, %.0f to the side", p.what, (unsigned)obj->getID(), p.ahead, p.side);
+	}
+}
+
+// Each scene object's health change, with its distance (centre to centre) from the target.
+static void splashAutopilotFrame()
+{
+	const Object *target = s_autopilot.splashCount > 0 ? TheGameLogic->findObjectByID(s_autopilot.splashIds[0]) : nullptr;
+	for (Int i = 0; i < s_autopilot.splashCount; ++i)
+	{
+		const Object *obj = TheGameLogic->findObjectByID(s_autopilot.splashIds[i]);
+		const Real health = obj && obj->getBodyModule() && !obj->isEffectivelyDead() ? obj->getBodyModule()->getHealth() : 0.0f;
+		if (health == s_autopilot.splashHealth[i])
+			continue;
+		const Real max = obj && obj->getBodyModule() ? obj->getBodyModule()->getMaxHealth() : 0.0f;
+		Real dist = 0.0f;
+		if (obj && target)
+		{
+			Coord3D d = *obj->getPosition();
+			d.sub(*target->getPosition());
+			dist = d.length();
+		}
+		logf("autopilot splash: %s %u took %.1f (health %.1f of %.1f), %.0f from the target", obj ? obj->getTemplate()->getName().str() : "(gone)",
+			(unsigned)s_autopilot.splashIds[i], s_autopilot.splashHealth[i] - health, health, max, dist);
+		s_autopilot.splashHealth[i] = health;
+	}
+}
+
 // The player the test scene is built for. In the recorded game that is the local player; a
 // replay's playback runs the same logic step with the ReplayObserver as the local player, so the
 // scene goes to the first human player instead, the one the recording's local player was in a
@@ -506,7 +568,7 @@ void autopilotSpawn()
 
 	// Three enemy riflemen ahead of the General (inside rifle range, outside the base). The smoke
 	// scene places its own units around the screen once it stands.
-	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke)
+	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash)
 	{
 		for (Int i = -1; i <= 1; ++i)
 		{
@@ -535,6 +597,8 @@ void autopilotSpawn()
 		}
 		logf("autopilot: equipment scene: Sentry Drone %u and two rocket troopers", drone ? (unsigned)drone->getID() : 0u);
 	}
+	if (enemy && s_config.autopilot_splash)
+		splashScene(pos, yaw, enemy->getDefaultTeam());
 	logf("autopilot: spawned General %u at (%.0f, %.0f), enemies: %s", (unsigned)s_autopilot.general, pos.x, pos.y,
 		enemy ? "3 GLA rebels" : "none (no enemy player)");
 	s_autopilot.spawnFrame = TheGameLogic->getFrame();
@@ -921,6 +985,8 @@ void autopilotFrame()
 		rtsAutopilotFrame(frame);
 		return;
 	}
+	if (s_config.autopilot_splash)
+		splashAutopilotFrame();
 	if (s_autopilot.build)
 	{
 		buildAutopilotFrame(frame);

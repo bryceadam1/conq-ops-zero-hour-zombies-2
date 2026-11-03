@@ -64,6 +64,9 @@ pub struct Autopilot {
     /// The smoke-screen run: throw the seeded class's smoke grenade ahead and stand watching while
     /// the bridge's scene tests what Zero Hour's units do about it (`ZHBO_AUTOPILOT=smoke`).
     pub smoke: bool,
+    /// The splash run ([`Autopilot::splash_input`]): the seeded SMAW class fires one rocket into
+    /// the enemy armour group the bridge stands ahead of him.
+    pub splash: bool,
     /// The classpick script's next action and whether the previous key still needs a release frame
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
@@ -115,7 +118,7 @@ pub struct Scripted {
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, mp: self.mp, mp_shooter: self.mp_shooter, ..Default::default() }
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, mp: self.mp, mp_shooter: self.mp_shooter, ..Default::default() }
     }
 
     /// What it does at time `t`.
@@ -128,6 +131,9 @@ impl Autopilot {
         }
         if self.smoke {
             return self.smoke_input(b);
+        }
+        if self.splash {
+            return self.splash_input(b);
         }
         if self.equipment {
             let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
@@ -417,6 +423,28 @@ impl Autopilot {
     /// Hat on the drone the test puts in front; a Trophy System goes down when it is let go),
     /// double-tap reload to set the C4 off, fire a burst and reload, wait while enemy rockets come
     /// in, then open the field computer.
+    /// `ZHBO_AUTOPILOT=splash`: pick the seeded class (the SMAW as its secondary), swap to the
+    /// SMAW, fire it level into the Overlord ahead once it is raised, then throw the frag after it
+    /// and leave by the field computer. The bridge logs every health change in the group.
+    pub fn splash_input(&self, b: &Bindings) -> Scripted {
+        let t = self.t;
+        let mut keys = KeySet::default();
+        let pick = (0.3..0.4).contains(&t).then(custom_class_key);
+        if (1.0..1.1).contains(&t) {
+            keys.set_down(b.swap, true);
+        }
+        if (5.0..5.1).contains(&t) {
+            keys.set_down(b.fire, true);
+        }
+        if (9.0..9.5).contains(&t) {
+            keys.set_down(b.lethal, true);
+        }
+        if (16.0..16.1).contains(&t) {
+            keys.set_down(b.field_computer, true);
+        }
+        Scripted { keys, class_pick: pick, ..Default::default() }
+    }
+
     pub fn equipment_input(&self, b: &Bindings) -> KeySet {
         let t = self.t;
         let mut keys = KeySet::default();

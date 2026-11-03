@@ -7,6 +7,7 @@
 //! player's own BO2 install, and by this crate's tests on the built-in table.
 
 pub mod projectile;
+pub mod splash;
 
 use crate::input::buttons;
 use crate::units::LOGIC_DT;

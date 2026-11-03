@@ -24,7 +24,7 @@ impl Sim {
                 let mut objs = Vec::new();
                 host.query(eye, self.equipment.tuning.hack_range, p.general, &mut objs);
                 objs.into_iter()
-                    .filter(|o| o.has(objflags::DRONE) && o.has(objflags::ENEMY) && !o.has(objflags::DEAD))
+                    .filter(|o| o.has(objflags::DRONE) && o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && o.origin_within(eye, self.equipment.tuning.hack_range))
                     .filter_map(|o| {
                         let to = o.pos + Vec3::new(0.0, 0.0, o.height * 0.5) - eye;
                         let d = to.length();

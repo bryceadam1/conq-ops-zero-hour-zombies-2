@@ -10,7 +10,9 @@
 //! * a `bolt` (`projExplosion`) becomes its `szSpawnedGrenadeWeaponName` where it strikes, stuck
 //!   there, which goes off on that grenade's own fuse with that grenade's blast;
 //! * a sticky grenade sticks and goes off on its fuse;
-//! * a blast hurts by BO2's falloff, inner damage at the centre to outer at the radius.
+//! * a blast hurts by BO2's falloff, inner damage at the centre to outer at the radius, over the
+//!   distance to his bounds (t6mp `FUN_005f1fd0`: the nearest point of the entity's box, not its
+//!   origin or middle).
 //!
 //! Used by zhbo-assets' install test over every projectile weapon the player's BO2 install
 //! converts to, and by this crate's tests on synthetic defs.
@@ -91,7 +93,7 @@ impl LogicHost for Range {
         self.objects.borrow().iter().find(|o| o.id == id).copied()
     }
     fn query(&self, center: Vec3, radius: f32, _viewer: u32, out: &mut Vec<ObjInfo>) {
-        out.extend(self.objects.borrow().iter().filter(|o| (o.pos - center).length() <= radius).copied());
+        out.extend(self.objects.borrow().iter().filter(|o| o.in_query(center, radius)).copied());
     }
     fn set_pose(&self, _id: u32, _pos: Vec3, _yaw: f32, _moving: bool) {}
     fn set_controlled(&self, _id: u32, _controlled: bool) {}
@@ -297,7 +299,8 @@ pub fn check(def: &'static WeaponDef, resolve: &dyn Fn(&str) -> Option<&'static 
             }
         }
         // Into the ground half the blast radius short of him: BO2's falloff over the distance to
-        // his middle.
+        // his bounds (`FUN_005f1fd0`), the side of his soldier-sized cylinder a blast on the
+        // ground beside him meets.
         let Some(b) = blast else { continue };
         let short = b.explosion_radius * 0.5;
         if x - short < 1.0 {
@@ -309,7 +312,7 @@ pub fn check(def: &'static WeaponDef, resolve: &dyn Fn(&str) -> Option<&'static 
             fail(e);
             return fails;
         }
-        let dist = (short * short + MUZZLE_Z * MUZZLE_Z).sqrt();
+        let dist = (short - crate::hitscan::INFANTRY_HIT_RADIUS).max(0.0);
         let dud = def.impact_explode && def.activate_dist > 0.0 && path < def.activate_dist;
         let want = if dud { 0.0 } else { b.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE };
         let got: f32 = host.hits.borrow().iter().filter(|h| h.1 == TARGET).map(|h| h.2).sum();

@@ -259,7 +259,8 @@ mod tests {
         let own_stun = |dist: f32, mask: bool| {
             let hits = std::cell::RefCell::new(Vec::new());
             let host = FakeHost::default();
-            host.add(crate::host::ObjInfo { pos: crate::math::Vec3::new(dist, 0.0, -6.0), ..general(1, 0) });
+            // `dist` from the blast to his origin, his feet (`_weapons.gsc:1366`, `self.origin`).
+            host.add(crate::host::ObjInfo { pos: crate::math::Vec3::new(dist, 0.0, 0.0), ..general(1, 0) });
             let guards = [Guard { general: 1, blast: 1.0, stun: if mask { t.stun_protection_scale } else { 1.0 }, first_person: false, flash_protected: false }];
             let g = Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits };
             crate::projectiles::blast(&g, conc, 1, crate::math::Vec3::ZERO, None, 1.0, 1.0, &[]);

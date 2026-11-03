@@ -34,6 +34,27 @@ pub struct Target {
 pub const INFANTRY_HIT_RADIUS: f32 = inches(16.0);
 pub const INFANTRY_HEAD_FRACTION: f32 = 0.15;
 
+/// An object's solid without hit boxes: infantry as BO2's soldier-sized cylinder (Zero Hour's own
+/// infantry cylinders are click-sized) with its head band, anything else as its Zero Hour geometry
+/// (box, sphere or cylinder).
+pub fn solid(o: &crate::host::ObjInfo) -> Target {
+    use crate::host::{geom, objflags};
+    if o.has(objflags::INFANTRY) {
+        return Target {
+            id: o.id,
+            pos: o.pos,
+            shape: Shape::Cylinder { radius: INFANTRY_HIT_RADIUS.min(o.major_radius.max(1.0)), height: o.height.max(6.0) },
+            head_fraction: INFANTRY_HEAD_FRACTION,
+        };
+    }
+    let shape = match o.geom_type {
+        geom::BOX => Shape::Box { half_x: o.major_radius, half_y: o.minor_radius, height: o.height.max(1.0), yaw: o.yaw },
+        geom::SPHERE => Shape::Sphere { radius: o.major_radius },
+        _ => Shape::Cylinder { radius: o.major_radius, height: o.height.max(1.0) },
+    };
+    Target { id: o.id, pos: o.pos, shape, head_fraction: 0.0 }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum HitResult {
     Nothing { end: Vec3 },
@@ -240,6 +261,29 @@ pub fn contains(target: &Target, point: Vec3) -> bool {
     }
 }
 
+/// How far `point` is from the target's solid: 0 on or inside it, else the distance to its nearest
+/// point. BO2's radius damage measures each entity this way, to its bounds rather than its origin
+/// (t6mp `FUN_005f1fd0`, called by `FUN_005f2130`: the blast's distance to the entity's
+/// `absmin`/`absmax`, clamped per axis), so a blast against a tank's hull is at the hull.
+pub fn distance_to(target: &Target, point: Vec3) -> f32 {
+    let o = point - target.pos;
+    // Outside the interval [lo, hi] by how much (0 within it).
+    let out = |v: f32, lo: f32, hi: f32| (lo - v).max(v - hi).max(0.0);
+    match target.shape {
+        Shape::Sphere { radius } => ((o - Vec3::new(0.0, 0.0, radius)).length() - radius).max(0.0),
+        Shape::Cylinder { radius, height } => {
+            let side = ((o.x * o.x + o.y * o.y).sqrt() - radius).max(0.0);
+            let up = out(o.z, 0.0, height);
+            (side * side + up * up).sqrt()
+        }
+        Shape::Box { half_x, half_y, height, yaw } => {
+            let l = unyaw(o, yaw);
+            Vec3::new(out(l.x, -half_x, half_x), out(l.y, -half_y, half_y), out(l.z, 0.0, height)).length()
+        }
+        Shape::Body { body, yaw, scale, .. } => body.distance(unyaw(o, yaw) * (1.0 / scale)) * scale,
+    }
+}
+
 /// Full trace: nearest of terrain and targets (skipping `ignore`).
 pub fn trace(
     origin: Vec3,
@@ -319,6 +363,27 @@ mod tests {
             HitResult::Terrain { point } => assert!((point.x - 30.0).abs() < 2.6),
             other => panic!("hill should block, got {other:?}"),
         }
+    }
+
+    /// BO2's radius damage measures to the entity's bounds (`FUN_005f1fd0`): 0 on or inside the
+    /// solid, else the distance to its nearest point, for every shape.
+    #[test]
+    fn distance_to_a_solid_is_to_its_nearest_point() {
+        let at = |shape| Target { id: 1, pos: Vec3::new(100.0, 50.0, 0.0), shape, head_fraction: 0.0 };
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        // A box 30 long and 20 wide turned a quarter: its long side runs along y.
+        let tank = at(Shape::Box { half_x: 15.0, half_y: 10.0, height: 10.0, yaw: std::f32::consts::FRAC_PI_2 });
+        assert!(near(distance_to(&tank, Vec3::new(100.0, 50.0, 5.0)), 0.0), "inside");
+        assert!(near(distance_to(&tank, Vec3::new(117.0, 50.0, 5.0)), 7.0), "off its narrow side");
+        assert!(near(distance_to(&tank, Vec3::new(100.0, 70.0, 5.0)), 5.0), "off its long end");
+        assert!(near(distance_to(&tank, Vec3::new(100.0, 50.0, 13.0)), 3.0), "over its roof");
+        assert!(near(distance_to(&tank, Vec3::new(113.0, 69.0, 5.0)), 5.0), "off a corner, diagonally");
+        let cyl = at(Shape::Cylinder { radius: 4.0, height: 12.0 });
+        assert!(near(distance_to(&cyl, Vec3::new(110.0, 50.0, 6.0)), 6.0));
+        assert!(near(distance_to(&cyl, Vec3::new(107.0, 50.0, 16.0)), 5.0), "past the rim: (3, 4) off it");
+        let ball = at(Shape::Sphere { radius: 5.0 });
+        assert!(near(distance_to(&ball, Vec3::new(100.0, 50.0, 15.0)), 5.0));
+        assert!(near(distance_to(&ball, Vec3::new(100.0, 52.0, 5.0)), 0.0));
     }
 
     #[test]

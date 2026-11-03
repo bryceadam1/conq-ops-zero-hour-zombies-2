@@ -268,7 +268,11 @@ int32_t cbQuery(const ZhboVec3 *center, float radius, uint32_t viewerId, ZhboObj
 	const Object *viewer = TheGameLogic->findObjectByID((ObjectID)viewerId);
 	Coord3D c;
 	c.set(center->x, center->y, center->z);
-	SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange(&c, radius, FROM_CENTER_3D);
+	// Every object whose bounding sphere comes within `radius`: Zero Hour's own measure for radius
+	// damage (Weapon.cpp DAMAGE_RANGE_CALC_TYPE). A centre-to-centre query missed a structure or an
+	// Overlord whose hull was in reach but whose centre was not; the core measures each object's
+	// solid itself (docs/CONTRACT.md, "The object query").
+	SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange(&c, radius, FROM_BOUNDINGSPHERE_3D);
 	MemoryPoolObjectHolder hold(iter);
 	int32_t n = 0;
 	for (Object *obj = iter->first(); obj && n < cap; obj = iter->next())

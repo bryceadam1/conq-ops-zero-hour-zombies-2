@@ -229,6 +229,8 @@ tuning! {
     smoke_sight_radius_min: "smoke_blocksight_min" = 10.0, "Smoke grenade: the blocker's radius floor, inches (`_smokegrenade.gsc:62`, `clamp( radius * 1.5, 10, 150 )`).";
     smoke_sight_radius_max: "smoke_blocksight_max" = 150.0, "Smoke grenade: the blocker's radius cap, inches (`_smokegrenade.gsc:62`).";
     smoke_sight_min_distance: "smoke_blocksight_mindist" = 80.0, "Smoke: two points closer than this, inches, always see each other through a blocker (t6mp `FUN_006e2f90`, the constant at `0x00b7d924`); farther, the line between them is blocked when it passes within a blocker's radius of its centre (`FUN_006e2e10`, the segment's closest point).";
+    vehicle_projectile_scale_smaw: "getvehicleprojectilescalar.smaw_mp" = 0.2, "SMAW: share of its impact damage (`iDamage`) a direct hit deals to anything but a soldier (`_globallogic_vehicle.gsc:312-313` `getvehicleprojectilescalar`, applied to `MOD_PROJECTILE` in `callback_vehicledamage`; BO2's turrets take the same 200 of 1000, `_turret_killstreak.gsc:903-904`). Read by weapon name ([`Tuning::vehicle_projectile_scale`]).";
+    vehicle_projectile_scale_fhj18: "getvehicleprojectilescalar.fhj18_mp" = 0.2, "FHJ-18 AA: as the SMAW (`_globallogic_vehicle.gsc:314-315`).";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";
     shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";
@@ -253,6 +255,24 @@ tuning! {
     projectile_bounce_along: "ProjectileBounceAlong" = 0.6, "Grenade bounce: share of the speed along the surface kept, where the def has no `parallelBounce` cell (the mod's value).";
     projectile_rest_speed: "ProjectileRestSpeed" = 3.0, "A bouncing grenade below this speed comes to rest, Zero Hour units/s (the mod's value).";
     equipment_arm_time: "EquipmentArmTime" = 1.0, "Seconds after it is down before equipment does anything (the mod's stand-in for BO2's `waittillnotmoving` plus `activationdelay`).";
+}
+
+/// The key prefix of BO2's per-weapon direct-hit scale against vehicles
+/// (`getvehicleprojectilescalar`, `_globallogic_vehicle.gsc:306-321`): `<prefix><weapon name>`.
+pub const VEHICLE_PROJECTILE_SCALAR: &str = "getvehicleprojectilescalar.";
+
+impl Tuning {
+    /// The share of `weapon`'s impact damage (`iDamage`) a direct hit deals to anything that is
+    /// not a soldier: BO2's `getvehicleprojectilescalar`, keyed in the pack by the weapon's name
+    /// (its base weapon for a combination or alt mode), 1 for every weapon it does not name.
+    pub fn vehicle_projectile_scale(&self, weapon: &str) -> f32 {
+        let base = weapon.split(['+', '~']).next().unwrap_or(weapon);
+        Self::KEYS
+            .iter()
+            .zip(self.values())
+            .find(|(k, _)| k.strip_prefix(VEHICLE_PROJECTILE_SCALAR) == Some(base))
+            .map_or(1.0, |(_, v)| v)
+    }
 }
 
 /// Keys match case-insensitively, ignoring `_` and `.` (`perk_weapSwitchMultiplier`).
@@ -341,5 +361,18 @@ mod tests {
         assert_eq!((t.equipment_hacker_tool_time_ms, t.vehicle_hacker_tool_time_ms, t.hacker_tool_lock_start), (50.0, 4000.0, 0.1));
         assert_eq!((t.smoke_duration, t.smoke_sight_radius_start, t.smoke_sight_radius_growth, t.smoke_sight_radius_interval), (12.0, 64.0, 1.5, 0.75));
         assert_eq!((t.smoke_sight_radius_min, t.smoke_sight_radius_max, t.smoke_sight_min_distance), (10.0, 150.0, 80.0));
+    }
+
+    #[test]
+    fn bo2s_vehicle_projectile_scalars_by_weapon_name() {
+        // `_globallogic_vehicle.gsc` `getvehicleprojectilescalar`: the SMAW and FHJ-18 deal a fifth
+        // of their impact damage to a vehicle; every other weapon all of it.
+        let t = Tuning::default();
+        assert_eq!(t.vehicle_projectile_scale("smaw_mp"), 0.2);
+        assert_eq!(t.vehicle_projectile_scale("fhj18_mp"), 0.2);
+        assert_eq!(t.vehicle_projectile_scale("usrpg_mp"), 1.0);
+        assert_eq!(t.vehicle_projectile_scale("gl_an94_mp~an94_mp+gl"), 1.0);
+        let pack = parse("getvehicleprojectilescalar.smaw_mp = 0.5");
+        assert_eq!(pack.vehicle_projectile_scale("smaw_mp"), 0.5, "the pack's value");
     }
 }
