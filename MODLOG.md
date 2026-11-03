@@ -11178,3 +11178,7 @@ effect sheets") showed why, and swept every `common_mp` effect (371 with somethi
   causes and now draw; `impacts/fx_dud_m203` is one model element (the dud round, 10 s) and Zero
   Hour's FXList draws no models, so it stays empty — as BO2's dud would show only the round.
 ||||||| 3cd2a0a
+* **Verified in game** (`scripts/autotest-mac.sh`, this branch's dist, merge included): 16/16 —
+  lethal, tactical, the grenade going off, the grenade launcher and the impact FX among them; no
+  particle-system or FXList INI error in the log. `impact fx: 19 played, 2 missing` in the first
+  second's batch only (cells with no FX). The look of a blast close up is a playtest item.
