@@ -20,10 +20,15 @@
 //! gait, ADS) in the held weapon's animation set (`WeaponDef::body_anims`, BO2's
 //! `mp/playeranim.script` per `weapClass`/`playerAnimType`): a body's own clip for it, else the
 //! set's nearest, else the rifleman's (`zhbo_native::thirdperson::state::fallbacks`). It deliberately does NOT drive BO2's
-//! full transition graph: no per-state blend times, no upper-body layers (reload/throw/melee), no
-//! additive flinch. The clip plays at the request's `time` and `rate`; the bridge supplies both
-//! from the sim's movement state. Idle/walk/run/sprint/crouch/prone/ADS all loop; a one-shot clip
-//! (none are requested today) would hold at its end.
+//! full transition graph: no per-state blend times and no additive flinch. The clip plays at the
+//! request's `time` and `rate`; the bridge supplies both from the sim's movement state.
+//! Idle/walk/run/sprint/crouch/prone/ADS all loop.
+//!
+//! **The torso.** Over the movement clip the upper body plays the General's action: the script's
+//! torso clip for his reload, knife, throw, pin, shot or weapon change (`crate::torso`, timed by
+//! the client, `client::remote`, and read here through [`ffi::torso_of`]). A torso clip tracks only
+//! the bones from the lower spine up, so it replaces those and the legs keep walking; it fades in
+//! and out over [`TORSO_BLEND`] at its ends, as BO2's animtree blends a torso event in.
 //!
 //! **Placement.** BO2 inches are scaled once, at the root: `root = transform × ART_SCALE`, so a
 //! skinned vertex is `root × pose × inv_bind × vertex`. In weapon mode the transform is the
@@ -163,7 +168,9 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
         let mut clips = Vec::with_capacity(bmanifest.clips.len());
         let mut waiting = false;
         for (state, cpath) in &bmanifest.clips {
-            if files.is_missing(cpath) {
+            // The torso clips load when one is first played (`ffi::State::torso`), once for every
+            // General.
+            if files.is_missing(cpath) || *state >= zhbo_native::thirdperson::torso::BASE {
                 continue;
             }
             match files.get(cpath) {
@@ -174,8 +181,10 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
         if waiting {
             return Ok(None);
         }
-        for (_, cpath) in &bmanifest.clips {
-            files.forget(cpath);
+        for (state, cpath) in &bmanifest.clips {
+            if *state < zhbo_native::thirdperson::torso::BASE {
+                files.forget(cpath);
+            }
         }
         files.forget(&bmanifest.model);
         files.forget(&bpath);
@@ -296,9 +305,16 @@ pub fn root_from_tag(tag: &[[f32; 4]; 3]) -> Mat4 {
 }
 
 /// The body's world matrix: its feet at `pos`, yawed about +Z (the engine's orientation: 0 = +X,
-/// counter-clockwise), then the art scale.
+/// counter-clockwise), then the art scale at the General's drawn size
+/// ([`crate::units::GENERAL_SCALE`]: the W3D General's `Scale`, the first-person eye and every
+/// prop share it, so the native body stands as tall as the W3D one it replaces and its eye is on
+/// the first-person eye line).
 pub fn root_from_object(pos: [f32; 3], yaw: f32) -> Mat4 {
-    mat4_mul(&mat4((qnorm(axis_angle([0.0, 0.0, 1.0], yaw)), pos)), &scale())
+    let mut s = scale();
+    for k in [0, 5, 10] {
+        s[k] *= crate::units::GENERAL_SCALE;
+    }
+    mat4_mul(&mat4((qnorm(axis_angle([0.0, 0.0, 1.0], yaw)), pos)), &s)
 }
 
 fn scale() -> Mat4 {
@@ -309,9 +325,38 @@ fn scale() -> Mat4 {
     s
 }
 
+/// How long a torso action takes to come in, and to go back to the movement clip's upper body
+/// (seconds; BO2's torso events blend in over the animtree's default 0.2 s).
+pub const TORSO_BLEND: f32 = 0.2;
+
+/// The torso layer's weight `t` seconds into a clip `length` long: in over [`TORSO_BLEND`], out over
+/// the same before its end.
+pub fn torso_weight(t: f32, length: f32) -> f32 {
+    let b = TORSO_BLEND.min(length * 0.5).max(1e-3);
+    (t / b).min((length - t) / b).clamp(0.0, 1.0)
+}
+
 impl Loaded {
-    /// Pose this frame and compute the palette.
-    pub fn pose(&self, req: &Request, anim: Option<&AnimClip>, out: &mut Posed) {
+    /// Hide the weapon in hand for this pose (its parts' palette entries collapse): the body and
+    /// a stowed weapon keep drawing.
+    pub fn hide_weapon(&self, out: &mut Posed) {
+        let first = self.body.is_some() as usize;
+        for part in self.skeleton.parts.iter().skip(first).take(self.weapon.manifest.parts.len()) {
+            for p in out.palette.iter_mut().skip(part.first).take(part.count) {
+                *p = [0.0; 16];
+            }
+        }
+    }
+
+    /// Torso clip `id`'s blob ([`zhbo_native::thirdperson::torso::BASE`] on) in the body's
+    /// manifest.
+    pub fn torso_path(&self, id: u16) -> Option<&str> {
+        self.body.as_ref()?.manifest.torso_clip(id)
+    }
+
+    /// Pose this frame and compute the palette: the movement clip, and over it `torso` (a torso
+    /// clip and seconds into it) on the bones it tracks.
+    pub fn pose(&self, req: &Request, anim: Option<&AnimClip>, torso: Option<(&AnimClip, f32)>, out: &mut Posed) {
         match (req.mode, anim) {
             (Mode::Body, Some(a)) => {
                 let frame = a.frame_at(req.time * req.rate.max(0.0), true);
@@ -321,6 +366,11 @@ impl Loaded {
                 out.local.clear();
                 out.local.extend(self.skeleton.bind_pose());
             }
+        }
+        if let (Mode::Body, Some((clip, t))) = (req.mode, torso) {
+            out.under.clone_from(&out.local);
+            self.skeleton.sample_over(clip, clip.frame_at(t, false), &mut out.local);
+            zhbo_native::pose::blend(&out.under, &mut out.local, torso_weight(t, clip.duration()));
         }
         self.skeleton.model_space(&out.local, &mut out.model);
         out.root = self.placement(req, &out.model);

@@ -30,7 +30,8 @@
 #   scripts/autotest-mac.sh --splash   explosive splash on Zero Hour units: an enemy armour group (an
 #                                      Overlord, three Crusaders) and two rebels, held still; one SMAW
 #                                      into the Overlord, then a frag; every health change is logged
-#                                      and the neighbours must take the blast
+#                                      and the neighbours must take the blast, the frag's strike on
+#                                      the Overlord its whole impact damage (MOD_IMPACT)
 #   scripts/autotest-mac.sh --drops    weapon drops (BO2's dropweaponfordeath and pickups): the profile
 #                                      holds two AN-94 customs (grenade launcher, reflex sight); the
 #                                      first General wears the first, picks the second for his next
@@ -413,8 +414,9 @@ if [[ $mode == rts ]]; then
     check "  ...in its own body stance" "third-person animation set [1-9] \(RIDER[1-8]\)"
     check "first person keeps the secondary" "entered first-person control"
     check "  ...holding the SMAW" "SMAW [0-9]+\|"
-    # The native third-person weapon is the default (ZHBO_NATIVE_BODY unset = 1): the overhead
-    # General's gun composes through nativebody (ZHBO_NATIVE_BODY=0 opts out, and this fails).
+    # The native third person is the default (ZHBO_NATIVE_BODY unset = 2, the body; 1 the weapon
+    # only): the overhead General's gun composes through nativebody (ZHBO_NATIVE_BODY=0 opts out,
+    # and this fails).
     check "native third-person weapon" "native body: General [0-9]+ weapon [0-9]+ camo [^ ]+ composed \\(ZW[0-9]+[A-Z]\\)"
     echo "screenshots and log: $out"
     exit $ok
@@ -450,6 +452,10 @@ EOF
     check "the struck Overlord took 300" "autopilot splash: ChinaTankOverlord [0-9]+ took 300.0 "
     check "a Crusader beside it took the blast" "autopilot splash: AmericaTankCrusader [0-9]+ took [1-9][0-9.]* .*, 36 from the target"
     check "a rebel took the blast" "autopilot splash: GLAInfantryRebel [0-9]+ took [1-9]"
+    # The frag thrown after it strikes the Overlord before it goes off: BO2's MOD_IMPACT, its whole
+    # iDamage (15 x 1.5), which the tuning pack's [MeansOfDeath] sends as EXPLOSION (TankArmor
+    # 100 %), not as small arms (25 %: 5.6).
+    check "the frag struck it as an impact" "autopilot splash: ChinaTankOverlord [0-9]+ took 22.5 "
     echo "screenshots and log: $out"
     exit $ok
 fi

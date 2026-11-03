@@ -425,13 +425,16 @@ fn populated_sim() -> Sim {
     sim.kills.push(drops::Kill { victim: 101, friendly: true });
     // A picked-up weapon wears its own options.
     sim.players[0].as_mut().unwrap().arsenal.weapons[1].options = Some(options);
+    sim.score.attacked.push(score::Attacked { victim: 100, attackers: vec![score::Attacker { seat: 1, general: 101, damage: 30.0, tactical: Some(score::Tactical::Flash) }] });
+    sim.score.assists[1] = 2;
+    sim.score.generals[0] = [0, 0, 90, 100];
     sim
 }
 
 /// Change the `n`-th leaf of the hashed state (the parts [`Sim::fingerprint`] streams).
 fn perturb_state(sim: &mut Sim, n: &mut usize) -> bool {
     use crate::statehash::StateHash;
-    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.history.perturb(n)
+    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
 }
 
 /// Sensitivity: every leaf of the state (every scalar, string and definition of every player

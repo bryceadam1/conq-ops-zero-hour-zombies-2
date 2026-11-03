@@ -140,10 +140,12 @@ fn scoreboard_blocks(host: &dyn ClientHost, client: &Client, own_color: u32, loc
     let st = &client.hud.lui;
     let points = crate::client::KILL_POINTS;
     let name = |seat: i32| host.player_name(seat).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| if seat == local_player { "General".to_string() } else { format!("Player {}", seat + 1) });
-    let mut own = scoreboard::Block { color: own_color, rows: vec![scoreboard::Row { name: name(local_player), values: [st.kills * points, st.kills, st.deaths, 0], you: true }] };
+    let mine = usize::try_from(local_player).ok().and_then(|i| client.seats.get(i)).copied().unwrap_or_default();
+    let own_row = scoreboard::Row { name: name(local_player), values: [st.kills * points + mine.assist_points, st.kills, st.deaths, mine.assists], you: true };
+    let mut own = scoreboard::Block { color: own_color, rows: vec![own_row] };
     let mut enemies = scoreboard::Block { color: 0, rows: Vec::new() };
     for (seat, t) in client.seats.iter().enumerate().filter(|(seat, t)| t.seen && *seat as i32 != local_player) {
-        let row = scoreboard::Row { name: name(seat as i32), values: [t.kills * points, t.kills, t.deaths, 0], you: false };
+        let row = scoreboard::Row { name: name(seat as i32), values: [t.kills * points + t.assist_points, t.kills, t.deaths, t.assists], you: false };
         if t.ally {
             own.rows.push(row);
         } else {

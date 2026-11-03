@@ -222,6 +222,113 @@ pub(crate) fn assign_sets(common: &Zone, bo2: &[zhbo_formats::weapon::Weapon], d
     sets
 }
 
+/// The torso clips of the converted weapons (`zhbo_native::thirdperson::torso`): every distinct
+/// clip the script plays for some weapon's action, and the torso sets (weapons whose every action
+/// and context plays the same clip share one; `WeaponDef::torso_anims`).
+pub(crate) struct TorsoSets {
+    /// The clips, sorted; clip `i` is body clip id `torso::BASE + i`.
+    pub clips: Vec<String>,
+    /// Per set, per `action * CONTEXTS + context`, the clip index.
+    pub sets: Vec<Vec<Option<u16>>>,
+}
+
+/// What the torso of a soldier holding a weapon with key `k` plays for each action and context
+/// (`torso::EVENTS` asked of the script with the stance, gait and aim; a clip the zone lacks is
+/// none). The shield's melee is the script's `meleeattack` (its bash: the script's `knife_melee`
+/// has no shield entry, `meleeattack` has `pt_riotshield_melee`); every other weapon's is the
+/// knife's `knife_melee`, as MP's melee is the class knife (`_class.gsc:586`).
+fn torso_picks(script: &crate::playeranim::Script, names: &[String], k: &Key, shield: bool) -> Vec<Option<String>> {
+    use zhbo_native::thirdperson::torso;
+    let have = |c: &str| names.iter().find(|n| n.eq_ignore_ascii_case(c)).map(|n| n.to_ascii_lowercase());
+    let mut out = Vec::with_capacity((torso::ACTIONS * torso::CONTEXTS) as usize);
+    for action in 0..torso::ACTIONS {
+        let ev = if action == torso::MELEE && shield { "meleeattack" } else { torso::EVENTS[action as usize] };
+        for c in 0..torso::CONTEXTS {
+            let (stance, moving, ads) = torso::split(c);
+            let ctx = [
+                ("stance", ["stand", "crouch", "prone"][stance as usize]),
+                ("weapon_position", if ads { "ads" } else { "hip" }),
+                ("weaponclass", k.class.as_str()),
+                ("movestatus", if moving { "run" } else { "stationary" }),
+                ("direction", if moving { "forward" } else { "none" }),
+                ("playeranimtype", k.anim_type.as_str()),
+                // A flinch from the front: the sim's damage carries no direction.
+                ("dmgdirection", "front"),
+            ];
+            out.push(script.event(ev, &ctx).and_then(have));
+        }
+    }
+    out
+}
+
+/// The torso sets of every def in `defs` with a BO2 weapon of its name (held weapons and
+/// offhands: a throw plays the offhand's own), each def's `torso_anims` set to its own. Defs with
+/// no BO2 weapon of their name (combinations, alt modes) copy their base's when they are built.
+/// Without the script there are no torso clips and every def keeps set 0 (empty).
+pub(crate) fn assign_torso_sets(common: &Zone, bo2: &[zhbo_formats::weapon::Weapon], defs: &mut [zhbo_core::weapons::WeaponDef]) -> TorsoSets {
+    let Some(script) = zhbo_formats::havok_lua::rawfile(common, crate::playeranim::PATH).map(|b| crate::playeranim::Script::parse(&String::from_utf8_lossy(&b))) else {
+        return TorsoSets { clips: Vec::new(), sets: vec![Vec::new()] };
+    };
+    let types = anim_types(common);
+    let names = anim_names(common);
+    let picks: Vec<Option<Vec<Option<String>>>> = defs
+        .iter()
+        .map(|d| bo2.iter().find(|w| w.name == d.id).map(|w| torso_picks(&script, &names, &Key::of(w, &types), w.weap_type == zhbo_formats::weapon::kind::RIOTSHIELD)))
+        .collect();
+    let mut clips: Vec<String> = picks.iter().flatten().flatten().flatten().cloned().collect();
+    clips.sort();
+    clips.dedup();
+    let index = |n: &Option<String>| n.as_ref().and_then(|n| clips.binary_search(n).ok()).map(|i| i as u16);
+    // Set 0 is the empty one (a def the script says nothing for).
+    let mut sets: Vec<Vec<Option<u16>>> = vec![vec![None; (zhbo_native::thirdperson::torso::ACTIONS * zhbo_native::thirdperson::torso::CONTEXTS) as usize]];
+    for (d, p) in defs.iter_mut().zip(&picks) {
+        let Some(p) = p else { continue };
+        let row: Vec<Option<u16>> = p.iter().map(index).collect();
+        d.torso_anims = match sets.iter().position(|s| *s == row) {
+            Some(i) => i as u16,
+            None => {
+                sets.push(row);
+                (sets.len() - 1) as u16
+            }
+        };
+    }
+    TorsoSets { clips, sets }
+}
+
+/// The torso table the client reads (`zhbo_core::torso`, rows in `names::SOUND_LAYERS_PATH`):
+/// each set's picks, each clip's length, and its sound notetracks as third-person events
+/// (`names::npc_notetrack_event`). Returns the rows, the clips (body clip id, animation) for the
+/// body manifest, and the note events to convert.
+pub(crate) fn torso_table(common: &Zone, t: &TorsoSets) -> (String, Vec<Clip>, Vec<String>) {
+    use zhbo_native::thirdperson::torso;
+    let mut rows = String::from("; Third-person torso actions (zhbo_core::torso): torso <set> <action> <context> <clip id> | torso_clip <clip id> <seconds> <name> | torso_note <clip id> <seconds> <event>\n");
+    for (set, picks) in t.sets.iter().enumerate() {
+        for (i, clip) in picks.iter().enumerate() {
+            if let Some(c) = clip {
+                let (action, context) = (i / torso::CONTEXTS as usize, i % torso::CONTEXTS as usize);
+                rows.push_str(&format!("torso {set} {action} {context} {}\n", torso::BASE + c));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut aliases = Vec::new();
+    for (i, name) in t.clips.iter().enumerate() {
+        let Ok(anim) = xanim::find(common, name) else { continue };
+        let id = torso::BASE + i as u16;
+        let length = anim.num_frames as f32 / anim.frame_rate.max(1.0);
+        rows.push_str(&format!("torso_clip {id} {length:.4} {name}\n"));
+        for n in &anim.notifies {
+            let Some(alias) = n.name.strip_prefix(crate::sfx::NOTETRACK_PREFIX) else { continue };
+            rows.push_str(&format!("torso_note {id} {:.4} {}\n", n.time * length, zhbo_core::names::npc_notetrack_event(alias)));
+            aliases.push(alias.to_string());
+        }
+        out.push(Clip { state: id, anim });
+    }
+    aliases.sort();
+    aliases.dedup();
+    (rows, out, aliases)
+}
+
 /// Every animation name in `zone`.
 fn anim_names(zone: &Zone) -> Vec<String> {
     zone.assets.iter().filter(|a| a.kind == zhbo_formats::fastfile::ASSET_XANIM).filter_map(|a| zone.asset_name(a)).map(|n| n.trim_start_matches(',').to_string()).collect()
@@ -427,6 +534,93 @@ mod tests {
             combos += 1;
         }
         assert!(combos > 100, "{combos} combinations");
+    }
+
+    /// Every weapon's torso actions are the clips BO2's script gives its key, through its def's
+    /// `torso_anims` and the table the client reads; every torso clip tracks only the upper body
+    /// (so it layers over the legs' clip); every combination keeps its base's set; and the reloads
+    /// carry their third-person sound notetracks. `--nocapture` prints the sweep.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_weapon_action_plays_the_torso_bo2_gives_it() {
+        use zhbo_native::thirdperson::torso;
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let types = anim_types(&mp.common);
+        let roster = crate::weapons::Roster::read(&mp.patch);
+        let mut table = crate::weapons::table(&bo2, &atts, None, &Default::default(), &roster);
+        let sets = assign_torso_sets(&mp.common, &bo2, &mut table.weapons);
+        let (rows, clips, aliases) = torso_table(&mp.common, &sets);
+        let t = zhbo_core::torso::parse(&rows);
+        assert_eq!(clips.len(), sets.clips.len(), "every torso clip converts");
+        // The script, asked again for each weapon's own key.
+        let script = crate::playeranim::Script::parse(&String::from_utf8_lossy(&zhbo_formats::havok_lua::rawfile(&mp.common, crate::playeranim::PATH).unwrap()));
+        let names = anim_names(&mp.common);
+        let mut weapons = 0;
+        for d in &table.weapons {
+            let Some(w) = bo2.iter().find(|w| w.name == d.id) else { continue };
+            let want = torso_picks(&script, &names, &Key::of(w, &types), w.weap_type == zhbo_formats::weapon::kind::RIOTSHIELD);
+            for a in 0..torso::ACTIONS {
+                for c in 0..torso::CONTEXTS {
+                    let got = t.pick(d.torso_anims, a, c).and_then(|id| t.clip(id)).map(|c| c.name.clone());
+                    assert_eq!(got, want[(a * torso::CONTEXTS + c) as usize], "{} action {a} context {c}", d.id);
+                }
+            }
+            weapons += 1;
+        }
+        assert!(weapons >= 100, "{weapons} weapons");
+        let at = |id: &str, action: u8, stance: u8| {
+            let d = table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+            t.pick(d.torso_anims, action, torso::context(stance, false, false)).and_then(|c| t.clip(c)).map(|c| c.name.clone()).unwrap_or_default()
+        };
+        // BO2's own picks (`mp/playeranim.script` EVENTS), the playtest's weapons.
+        for (id, action, stance, want) in [
+            ("an94_mp", torso::RELOAD, 0, "pt_reload_stand_rifle"),
+            ("an94_mp", torso::RELOAD, 2, "pt_reload_prone_auto"),
+            ("an94_mp", torso::MELEE, 0, "p_knife_stand_rifle_swipe"),
+            ("an94_mp", torso::MELEE_CHARGE, 0, "p_knife_stand_rifle"),
+            ("an94_mp", torso::FIRE, 0, "pt_stand_shoot"),
+            ("mp7_mp", torso::FIRE, 0, "pt_stand_shoot_auto"),
+            ("an94_mp", torso::RAISE, 0, "pt_rifle_stand_raise"),
+            ("an94_mp", torso::DROP, 1, "pt_rifle_crouch_putaway"),
+            ("fnp45_mp", torso::RELOAD, 0, "pt_reload_stand_pistol"),
+            ("fnp45_mp", torso::MELEE, 0, "p_knife_stand_pistol_swipe"),
+            ("smaw_mp", torso::RELOAD, 0, "pt_reload_stand_rpg"),
+            ("smaw_mp", torso::MELEE, 0, "p_knife_stand_bazooka_swipe"),
+            ("riotshield_mp", torso::MELEE, 0, "pt_riotshield_melee"),
+            ("knife_held_mp", torso::MELEE, 0, "pt_knife_stand_melee_swipe"),
+            ("frag_grenade_mp", torso::THROW, 0, "pt_grenade_stand_throw"),
+            ("frag_grenade_mp", torso::PRIME, 0, "pt_grenade_stand_prime"),
+            ("an94_mp", torso::FLINCH, 0, "pt_stand_flinch_forward"),
+            ("an94_mp", torso::JUMP, 0, "pb_standjump_takeoff"),
+            ("an94_mp", torso::LAND, 0, "pb_standjump_land"),
+            ("fnp45_mp", torso::LAND, 0, "pb_standjump_land_pistol"),
+        ] {
+            assert_eq!(at(id, action, stance), want, "{id} action {action} stance {stance}");
+        }
+        // A torso clip moves the upper body only (the jump and the landing are whole-body clips).
+        let whole: Vec<u16> = (0..sets.sets.len())
+            .flat_map(|set| (0..torso::CONTEXTS).flat_map(move |c| [torso::JUMP, torso::LAND].map(|a| (set, a, c))))
+            .filter_map(|(set, a, c)| t.pick(set as u16, a, c))
+            .collect();
+        for c in clips.iter().filter(|c| !whole.contains(&c.state)) {
+            let legs: Vec<&str> = c.anim.bones.iter().map(|b| b.name.as_str()).filter(|b| ["j_hip", "j_knee", "j_ankle", "j_ball", "j_mainroot", "pelvis"].iter().any(|l| b.starts_with(l))).collect();
+            assert!(legs.is_empty(), "{} tracks the legs: {legs:?}", c.anim.name);
+        }
+        // The rifle reload is heard: BO2's third-person reload foley rides its notetracks.
+        let reload = t.clip(t.pick(table.weapons.iter().find(|d| d.id == "an94_mp").unwrap().torso_anims, torso::RELOAD, 0).unwrap()).unwrap();
+        let notes: Vec<&str> = reload.notes.iter().map(|n| n.1).collect();
+        assert_eq!(notes, ["ZHBO_NTN_fly_assault_reload_npc_mag_out", "ZHBO_NTN_fly_assault_reload_npc_mag_in", "ZHBO_NTN_fly_assault_reload_npc_charge"]);
+        assert!(aliases.len() > 10, "{aliases:?}");
+        eprintln!("{} torso sets, {} clips, note aliases {aliases:?}", sets.sets.len(), clips.len());
+        // A combination copies its base's set.
+        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&mp.patch, &bo2), &bo2);
+        for d in table.weapons.iter().filter(|d| d.id.contains('+') && !d.id.contains('~')) {
+            let base = zhbo_core::attachments::split_id(&d.id).0;
+            let b = table.weapons.iter().find(|x| x.id == base).unwrap();
+            assert_eq!(d.torso_anims, b.torso_anims, "{} vs its base", d.id);
+        }
     }
 
     #[test]

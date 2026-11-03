@@ -102,6 +102,22 @@ pub const DEATH_BANNER_TIME: f32 = 3.0;
 /// The score popup's `DisplayTime` (`hud/scorepopup.lua:12`).
 pub const SCORE_POPUP_TIME: f32 = crate::hud::center::SCORE_DISPLAY;
 pub const KILL_POINTS: u32 = 100;
+/// BO2's team-deathmatch score for an assist by its level (`sim::score::assist_level`: 1, 2, 3 for
+/// `assist_25`, `assist_50`, `assist_75`): `mp/scoreinfo.csv`'s `tdm score` column (25, 25, 50).
+pub const ASSIST_POINTS: [u32; 3] = [25, 25, 50];
+
+/// BO2's team-deathmatch score for a tactical's assist (`assist_concussion`, `assist_flash`,
+/// `assist_emp`, `assist_proximity`: 50 each in `mp/scoreinfo.csv`'s `tdm score`).
+pub const TACTICAL_ASSIST_POINTS: u32 = 50;
+
+/// The score of an assist at `level`, or of a tactical's ([`ASSIST_POINTS`],
+/// [`TACTICAL_ASSIST_POINTS`]).
+pub fn assist_points(level: u8, tactical: Option<crate::sim::score::Tactical>) -> u32 {
+    if tactical.is_some() {
+        return TACTICAL_ASSIST_POINTS;
+    }
+    ASSIST_POINTS[(level.clamp(1, 3) - 1) as usize]
+}
 
 /// Horizontal FOV for a BO2 `cg_fov` (defined at 4:3) at the given aspect ratio (Hor+).
 pub fn horizontal_fov(cg_fov_deg: f32, aspect: f32) -> f32 {
@@ -197,6 +213,10 @@ pub struct SeatTally {
     /// Kills (`HitMarker { kill }`) and deaths (`GeneralDied`), as the HUD counts its own.
     pub kills: u32,
     pub deaths: u32,
+    /// His assists: the sim's own count (`sim::score::Score::assists`, the same on every machine),
+    /// and the points they scored (`Assist` events, [`assist_points`]).
+    pub assists: u32,
+    pub assist_points: u32,
     /// His army's colour and whether he is on the local player's side (`objflags::ALLY`), last
     /// read off his General while one stood.
     pub color: u32,
@@ -365,6 +385,7 @@ pub enum ViewMode {
 pub mod autopilot;
 mod events;
 pub mod predict;
+pub mod remote;
 pub mod spectate;
 pub mod tracers;
 #[cfg(feature = "autopilot")]
@@ -502,6 +523,8 @@ pub struct Client {
     pub hits_len: usize,
     /// Other first-person Generals' footsteps (`sounds::RemoteSteps`).
     remote_steps: sounds::RemoteSteps,
+    /// Every General as a BO2 third-person player: torso actions, their sounds, his voice.
+    pub remote: remote::Remote,
     /// Every seat's match (the scoreboard's other rows), by seat.
     pub seats: [SeatTally; crate::sim::MAX_PLAYERS],
     /// This frame's impacts of other players' rounds (`events::present_remote`): they take the
@@ -590,6 +613,7 @@ impl Client {
             remote_hits: Vec::with_capacity(CLIENT_HITS),
             seats: [SeatTally::default(); crate::sim::MAX_PLAYERS],
             remote_steps: Default::default(),
+            remote: Default::default(),
             class_pick_forced: false,
             class_pick_declined: false,
             class_pick_open: false,
@@ -1039,6 +1063,8 @@ impl Client {
         self.tally_seats(sim, host, inp.local_player);
         self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
         self.remote_steps.update(&sim.players, viewed, &mut self.cues);
+        self.remote.update(&sim.players, viewed, dt, &mut self.cues);
+        crate::nativebody::ffi::publish_torso(self.remote.torsos());
         self.tick_hud(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
         // the sim's record.

@@ -243,6 +243,10 @@ pub struct WeaponDef {
     /// `playerAnimType` (0, the rifleman's, for every weapon the script gives no clip of its own).
     /// A combination and an alt mode keep their own def's.
     pub body_anims: u8,
+    /// The third-person torso set (`crate::torso`, the converter's group of weapons whose every
+    /// action plays the same `mp/playeranim.script` torso clip): what the upper body plays as he
+    /// reloads, swings, fires, changes weapon — and, for an offhand, throws and primes it. 0: none.
+    pub torso_anims: u16,
     pub fire: FireMode,
     pub fire_time: f32,
     /// Extra wait after a burst before the next one.
@@ -426,6 +430,10 @@ pub struct WeaponDef {
     pub fire_last_sound: String,
     /// The offhand's pull-back (`pullbackSoundPlayer`).
     pub pullback_sound: String,
+    /// The third-person versions of the def-level sounds ([`NpcSound`]: `raiseSound`,
+    /// `meleeSwipeSound`, ...): what everyone hears at another player at the same moments, as
+    /// positional events (`names::npc_def_sound_event`). A moment BO2 gives no sound is absent.
+    pub npc_sounds: Vec<(String, String)>,
     /// The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).
     pub silenced_fire_start_sound: String,
     /// Base weapons: the player's shot another attachment's unique overrides (`short=event`, in
@@ -920,6 +928,7 @@ impl Default for WeaponDef {
             class: Class::Rifle,
             weap_class: WeapClass::Rifle,
             body_anims: 0,
+            torso_anims: 0,
             fire: FireMode::Auto,
             fire_time: 0.1,
             burst_delay: 0.0,
@@ -1015,6 +1024,7 @@ impl Default for WeaponDef {
             fire_start_sound: String::new(),
             fire_last_sound: String::new(),
             pullback_sound: String::new(),
+            npc_sounds: Vec::new(),
             silenced_fire_start_sound: String::new(),
             attachment_fire_sounds: Vec::new(),
             attachment_fire_start_sounds: Vec::new(),
@@ -1177,6 +1187,7 @@ impl WeaponDef {
         self.fire_start_sound.clone_from(&from.fire_start_sound);
         self.fire_last_sound.clone_from(&from.fire_last_sound);
         self.pullback_sound.clone_from(&from.pullback_sound);
+        self.npc_sounds.clone_from(&from.npc_sounds);
         self.silenced_fire_start_sound.clone_from(&from.silenced_fire_start_sound);
         self.attachment_fire_sounds.clone_from(&from.attachment_fire_sounds);
         self.attachment_fire_start_sounds.clone_from(&from.attachment_fire_start_sounds);
@@ -1188,6 +1199,11 @@ impl WeaponDef {
         self.ammo_pickup_sound.clone_from(&from.ammo_pickup_sound);
         self.npc_pickup_sound.clone_from(&from.npc_pickup_sound);
         self.npc_ammo_pickup_sound.clone_from(&from.npc_ammo_pickup_sound);
+    }
+
+    /// The third-person event of moment `m` ([`Self::npc_sounds`]), empty when BO2 gives none.
+    pub fn npc_sound(&self, m: NpcSound) -> &str {
+        self.npc_sounds.iter().find(|(k, _)| k == m.key()).map_or("", |(_, e)| e.as_str())
     }
 
     /// The bounce off `surface` ([`Self::bounce`]): (along, into) kept, if the def has it.
@@ -1227,6 +1243,7 @@ impl WeaponDef {
         .into_iter()
         .map(|(e, world)| (e.as_str(), world))
         .chain(self.attachment_fire_start_sounds.iter().map(|(_, e)| (e.as_str(), false)))
+        .chain(self.npc_sounds.iter().map(|(_, e)| (e.as_str(), true)))
         .chain(self.bounce_sounds.iter().map(|(_, e)| (e.as_str(), true)))
     }
 
@@ -1288,5 +1305,40 @@ impl WeaponDef {
 
     pub fn has_anim(&self, slot: usize) -> bool {
         slot < 128 && self.anims & (1u128 << slot) != 0
+    }
+}
+
+/// A def-level sound moment BO2 plays for another player from the weapon def's third-person field
+/// (`CG_EntityEvent`, t6mp `FUN_004c1590`: the field without `Player` when the event's entity is not
+/// the local player): [`WeaponDef::npc_sounds`]'s keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NpcSound {
+    /// `raiseSound`, `firstRaiseSound`, `putawaySound`: the weapon change.
+    Raise,
+    FirstRaise,
+    Putaway,
+    /// `meleeSwipeSound`: the swing; `meleeHitSound`: the strike landing (one alias for everyone,
+    /// played on the entity: event 0x35).
+    MeleeSwipe,
+    MeleeHit,
+    /// `pullbackSound`: an offhand's pin or charge.
+    Pullback,
+    /// `emptyFireSound`: the trigger pulled on an empty magazine.
+    EmptyFire,
+}
+
+impl NpcSound {
+    pub const ALL: [NpcSound; 7] = [NpcSound::Raise, NpcSound::FirstRaise, NpcSound::Putaway, NpcSound::MeleeSwipe, NpcSound::MeleeHit, NpcSound::Pullback, NpcSound::EmptyFire];
+
+    pub const fn key(self) -> &'static str {
+        match self {
+            NpcSound::Raise => "raise",
+            NpcSound::FirstRaise => "first_raise",
+            NpcSound::Putaway => "putaway",
+            NpcSound::MeleeSwipe => "melee_swipe",
+            NpcSound::MeleeHit => "melee_hit",
+            NpcSound::Pullback => "pullback",
+            NpcSound::EmptyFire => "empty_fire",
+        }
     }
 }

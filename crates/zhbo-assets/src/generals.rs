@@ -375,6 +375,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         let keys: Vec<String> = body_sets.dropped().iter().map(|k| format!("{}/{}", k.class, k.anim_type)).collect();
         summary.push(format!("third-person animation sets past the body's {}: {} keep the rifleman's", zhbo_native::thirdperson::state::MAX_SETS, keys.join(" ")));
     }
+    // The torso clips each weapon's actions play (reload, melee, throw, fire, weapon change), from
+    // the same script; the combinations copy their base's set too.
+    let torso_sets = crate::thirdperson::assign_torso_sets(&common, &bo2, &mut table.weapons);
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2, &roster);
     crate::weapons::add_variants(&mut table, &converted, &bo2);
@@ -434,6 +437,13 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     for c in &body_clips {
         crate::native::put_anim(&mut out, &c.anim);
     }
+    // The torso clips layer over them (`zhbo_core::nativebody`), and their sound notetracks are
+    // what others hear of a reload or a pin (`zhbo_core::torso`).
+    let (torso_rows, torso_clips, torso_aliases) = crate::thirdperson::torso_table(&common, &torso_sets);
+    for c in &torso_clips {
+        crate::native::put_anim(&mut out, &c.anim);
+    }
+    summary.push(format!("third-person torso: {} sets, {} clips, {} sound notetracks", torso_sets.sets.len(), torso_clips.len(), torso_aliases.len()));
     if !body_unresolved.is_empty() {
         summary.push(format!("native body clips missing for states {body_unresolved:?}"));
     }
@@ -489,7 +499,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             faction: f.letter as u8,
             model: native_body_path,
             weapon_tag: character::WEAPON_TAG.to_string(),
-            clips: body_clips.iter().map(|c| (c.state, zhbo_native::anim_path(&c.anim.name))).collect(),
+            clips: body_clips.iter().chain(&torso_clips).map(|c| (c.state, zhbo_native::anim_path(&c.anim.name))).collect(),
         };
         out.insert(zhbo_native::body_path(f.letter), body_manifest.to_bytes());
         let mut meshes = character::skin(&rig, &body, "B", &body_tex);
@@ -584,8 +594,20 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     loops.sort_unstable();
     loops.dedup();
     extra.extend(loops.into_iter().map(|a| crate::sfx::DynSfx { event: zhbo_core::shellshock::loop_event(a).to_string(), layers: vec![a.to_string()], kind: crate::sfx::Kind::PlayerLoop, limit: 1 }));
-    let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
+    // The torso clips' sound notetracks: heard at the General, by everyone.
+    extra.extend(torso_aliases.iter().map(|a| crate::sfx::DynSfx { event: zhbo_core::names::npc_notetrack_event(a), layers: vec![a.clone()], kind: crate::sfx::Kind::World, limit: 2 }));
+    let voices: Vec<(u8, &str)> = FACTIONS.iter().map(|f| (f.letter as u8, f.zone)).collect();
+    let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra, &voices)?;
     out.extend(sound_files);
+    // The torso table rides the third-person sound rows (`zhbo_load_sound_layers`); a notetrack
+    // whose alias no multiplayer bank holds plays nothing, as in BO2.
+    let audio = String::from_utf8_lossy(out.get("Data\\INI\\SoundEffects\\ZHBO_BO2.ini").map_or(&[][..], Vec::as_slice)).into_owned();
+    let torso_rows: String = torso_rows
+        .lines()
+        .filter(|l| !l.starts_with("torso_note ") || l.rsplit(' ').next().is_some_and(|e| audio.contains(&format!("AudioEvent {e}\n"))))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    out.entry(zhbo_core::names::SOUND_LAYERS_PATH.to_string()).or_default().extend_from_slice(torso_rows.as_bytes());
     summary.push(sound_summary);
 
     // BO2's own explosions for the converted weapons (and equipment breaking), as Zero Hour
@@ -913,6 +935,23 @@ mod tests {
             if d.sticky != sticks {
                 fails.push(format!("{}: sticky {}, BO2's stickiness {}", w.name, d.sticky, w.stickiness));
             }
+            // The means of death the sim gives its hits, from BO2's own fields (t6mp
+            // `FUN_00608c10` and the missile handlers): a strike that does not go off on impact
+            // `MOD_IMPACT`, else the handler's direct means; the radius the handler's splash means.
+            use zhbo_core::damage::MeansOfDeath as M;
+            let grenade = w.weap_type == zhbo_formats::weapon::kind::GRENADE;
+            if matches!(w.weap_type, zhbo_formats::weapon::kind::GRENADE | zhbo_formats::weapon::kind::PROJECTILE) {
+                let strike = if !w.projectile_impact_explode { M::Impact } else if grenade { M::Grenade } else { M::Projectile };
+                let splash = if grenade { M::GrenadeSplash } else { M::ProjectileSplash };
+                if zhbo_core::damage::strike(d, false) != strike || zhbo_core::damage::splash(d) != splash {
+                    fails.push(format!("{}: strikes by {} and splashes by {}, BO2's are {} and {}", w.name, zhbo_core::damage::strike(d, false).name(), zhbo_core::damage::splash(d).name(), strike.name(), splash.name()));
+                }
+                // `FUN_00604240` renames a heavy explosive's grenade splash `MOD_EXPLOSIVE`; the
+                // sim has no such case because no multiplayer weapon is one.
+                if w.proj_explosion == proj_explosion::HEAVY {
+                    fails.push(format!("{}: projExplosion heavy explosive splashes by MOD_EXPLOSIVE, which the sim does not model", w.name));
+                }
+            }
         }
         let swept: Vec<&str> = defs.iter().filter(|d| zhbo_core::conformance::projectile::is_projectile(d)).map(|d| d.id.as_str()).collect();
         for d in defs.iter().filter(|d| zhbo_core::conformance::projectile::is_projectile(d)) {
@@ -943,9 +982,17 @@ mod tests {
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
         let defs: &'static [zhbo_core::weapons::WeaponDef] = Box::leak(table.weapons.into_boxed_slice());
         let swept: Vec<&zhbo_core::weapons::WeaponDef> = defs.iter().filter(|d| zhbo_core::conformance::splash::is_explosive(d)).collect();
-        let fails: Vec<String> = swept.iter().flat_map(|d| zhbo_core::conformance::splash::check(d)).collect();
+        let mut fails: Vec<String> = swept.iter().flat_map(|d| zhbo_core::conformance::splash::check(d)).collect();
         let ids: Vec<&str> = swept.iter().map(|d| d.id.as_str()).collect();
         println!("{} explosives swept: {}", ids.len(), ids.join(" "));
+        // Every strike in flight against every class, by BO2's means of death and vehicle rule.
+        let resolve = |id: &str| defs.iter().find(|d| d.id == id);
+        let flown: Vec<&str> = defs.iter().filter(|d| zhbo_core::conformance::splash::strikes(d)).map(|d| d.id.as_str()).collect();
+        println!("{} strikes flown: {}", flown.len(), flown.join(" "));
+        for id in ["smaw_mp", "gl_an94_mp", "frag_grenade_mp", "sticky_grenade_mp", "hatchet_mp", "knife_ballistic_mp", "crossbow_mp"] {
+            assert!(flown.contains(&id), "{id} is flown");
+        }
+        fails.extend(defs.iter().flat_map(|d| zhbo_core::conformance::splash::check_strikes(d, &resolve)));
         for id in ["smaw_mp", "usrpg_mp", "fhj18_mp", "gl_an94_mp", "frag_grenade_mp", "sticky_grenade_mp", "satchel_charge_mp", "claymore_mp", "bouncingbetty_mp", "explosive_bolt_mp", "concussion_grenade_mp", "proximity_grenade_mp"] {
             assert!(ids.contains(&id), "{id} is swept");
         }

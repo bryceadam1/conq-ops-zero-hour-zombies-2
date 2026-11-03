@@ -890,6 +890,8 @@ pub fn eye_frame(eye: [f32; 3], dir: [f32; 3]) -> Mat4 {
 #[derive(Default)]
 pub struct Posed {
     pub local: Vec<Xf>,
+    /// A second local pose: what a layer blends from (the third person's torso, `nativebody`).
+    pub under: Vec<Xf>,
     pub model: Vec<Xf>,
     pub palette: Vec<Mat4>,
     /// Model to world: the eye's frame, the gun's pose, the art's scale — and the ADS slide only

@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapClass, WeapType, WeaponDef, Zoom, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, NpcSound, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapClass, WeapType, WeaponDef, Zoom, MELEE_DAMAGE};
 #[cfg(debug_assertions)]
 use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
@@ -757,6 +757,9 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             if let Some(m) = class_melee.filter(|_| !matches!(w.weap_type, bo2::kind::MELEE | bo2::kind::RIOTSHIELD)) {
                 d.melee_swipe_sound = def_sound(&m.melee_swipe_sound_player);
                 d.melee_hit_sound = def_sound(&m.melee_hit_sound);
+                // Others hear the knife's own third-person swing and hit.
+                set_npc_sound(d, NpcSound::MeleeSwipe, &m.melee_swipe_sound);
+                set_npc_sound(d, NpcSound::MeleeHit, &m.melee_hit_sound);
             }
         }
     }
@@ -1151,6 +1154,36 @@ fn def_sound(alias: &Option<String>) -> String {
     alias.as_deref().map(zhbo_core::names::def_sound_event).unwrap_or_default()
 }
 
+/// BO2 weapon `w`'s third-person def-level sounds (`WeaponDef::npc_sounds`): each moment's field
+/// without `Player` (`raiseSound`, `meleeSwipeSound`, ...; `meleeHitSound` has one alias for
+/// everyone), as positional events.
+fn npc_sounds(w: &Weapon) -> Vec<(String, String)> {
+    use zhbo_core::weapons::NpcSound;
+    NpcSound::ALL
+        .into_iter()
+        .filter_map(|m| {
+            let alias = match m {
+                NpcSound::Raise => &w.raise_sound,
+                NpcSound::FirstRaise => &w.first_raise_sound,
+                NpcSound::Putaway => &w.putaway_sound,
+                NpcSound::MeleeSwipe => &w.melee_swipe_sound,
+                NpcSound::MeleeHit => &w.melee_hit_sound,
+                NpcSound::Pullback => &w.pullback_sound,
+                NpcSound::EmptyFire => &w.empty_fire_sound,
+            };
+            alias.as_deref().map(|a| (m.key().to_string(), zhbo_core::names::npc_def_sound_event(a)))
+        })
+        .collect()
+}
+
+/// Set (or clear, for no alias) one moment of `d.npc_sounds`.
+fn set_npc_sound(d: &mut WeaponDef, m: zhbo_core::weapons::NpcSound, alias: &Option<String>) {
+    d.npc_sounds.retain(|(k, _)| k != m.key());
+    if let Some(a) = alias {
+        d.npc_sounds.push((m.key().to_string(), zhbo_core::names::npc_def_sound_event(a)));
+    }
+}
+
 pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let class = class_of(w);
     let clip = w.clip_size.max(0) as u16;
@@ -1197,6 +1230,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         weap_class: WeapClass::from_bo2(w.class),
         // The third-person animation set needs the player animation script: `thirdperson::assign_sets`.
         body_anims: 0,
+        torso_anims: 0,
         fire: fire_mode(w),
         // BO2's own times, unclamped: the knife's `iFireTime` and the offhands' ADS times are 0 (they
         // never fire a cycle or aim; the sim's divisions guard their zero).
@@ -1326,6 +1360,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         fire_start_sound: def_sound(&w.fire_start_sound_player),
         fire_last_sound: def_sound(&w.fire_last_sound_player),
         pullback_sound: def_sound(&w.pullback_sound_player),
+        npc_sounds: npc_sounds(w),
         silenced_fire_start_sound: String::new(),
         attachment_fire_sounds: Vec::new(),
         attachment_fire_start_sounds: Vec::new(),
@@ -2165,6 +2200,39 @@ mod tests {
         assert_eq!(defs[0].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_melee_whoosh_plr"));
         assert_eq!(defs[0].melee_hit_sound, zhbo_core::names::def_sound_event("wpn_melee_knife_hit_body"));
         assert_eq!(defs[1].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_com_knife_whoosh_plr"), "a melee weapon swings itself");
+    }
+
+    /// Others hear the third-person fields (BO2's without `Player`): a weapon's raise, putaway
+    /// and pin are its own, a gun swings and lands with the class knife's third-person swing and
+    /// hit, and each is a positional event of its own even when BO2 names one alias for both (the
+    /// shield's swing).
+    #[test]
+    fn others_hear_the_third_person_def_sounds() {
+        use zhbo_core::weapons::NpcSound;
+        let npc = zhbo_core::names::npc_def_sound_event;
+        let knife = Weapon { name: CLASS_MELEE.into(), weap_type: bo2::kind::MELEE, melee_swipe_sound: Some("wpn_melee_whoosh_npc".into()), melee_hit_sound: Some("wpn_melee_knife_hit_body".into()), ..Default::default() };
+        let gun = Weapon { name: "an94_mp".into(), class: bo2::class::RIFLE, raise_sound: Some("fly_generic_raise_npc".into()), first_raise_sound: Some("fly_generic_first_raise_npc".into()), putaway_sound: Some("fly_generic_down_npc".into()), melee_swipe_sound: Some("wpn_tac_knife_whoosh_npc".into()), ..Default::default() };
+        let shield = Weapon { name: "riotshield_mp".into(), weap_type: bo2::kind::RIOTSHIELD, melee_swipe_sound: Some("fly_riotshield_melee_swing".into()), melee_swipe_sound_player: Some("fly_riotshield_melee_swing".into()), ..Default::default() };
+        let semtex = Weapon { name: "sticky_grenade_mp".into(), pullback_sound: Some("wpn_semtex_charge".into()), ..Default::default() };
+        let mut defs: Vec<WeaponDef> = [&gun, &shield, &semtex].iter().map(|w| to_def(w, &HashMap::new())).collect();
+        let (events, _) = sounds_and_fx(&[knife, gun, shield, semtex], &[], &mut defs, &[]);
+        let (g, sh, se) = (&defs[0], &defs[1], &defs[2]);
+        assert_eq!(g.npc_sound(NpcSound::Raise), npc("fly_generic_raise_npc"));
+        assert_eq!(g.npc_sound(NpcSound::FirstRaise), npc("fly_generic_first_raise_npc"));
+        assert_eq!(g.npc_sound(NpcSound::Putaway), npc("fly_generic_down_npc"));
+        assert_eq!(g.npc_sound(NpcSound::MeleeSwipe), npc("wpn_melee_whoosh_npc"), "the class knife's, not the gun's own field");
+        assert_eq!(g.npc_sound(NpcSound::MeleeHit), npc("wpn_melee_knife_hit_body"));
+        assert_eq!(sh.npc_sound(NpcSound::MeleeSwipe), npc("fly_riotshield_melee_swing"), "the shield swings itself");
+        assert_ne!(sh.npc_sound(NpcSound::MeleeSwipe), sh.melee_swipe_sound, "apart from its owner's 2D event");
+        assert_eq!(se.npc_sound(NpcSound::Pullback), npc("wpn_semtex_charge"));
+        assert_eq!(se.npc_sound(NpcSound::Raise), "", "no field, no sound");
+        // Each converts once, positional.
+        for e in [npc("fly_generic_raise_npc"), npc("fly_riotshield_melee_swing"), npc("wpn_semtex_charge"), npc("wpn_melee_whoosh_npc")] {
+            let made: Vec<_> = events.iter().filter(|x| x.event == e).collect();
+            assert_eq!(made.len(), 1, "{e}");
+            assert_eq!(made[0].kind, crate::sfx::Kind::World, "{e}");
+        }
+        assert!(events.iter().any(|x| x.event == zhbo_core::names::def_sound_event("fly_riotshield_melee_swing") && x.kind == crate::sfx::Kind::Player), "the owner's own stays 2D");
     }
 
     /// The launcher alt mode carries its `altSwitchSoundPlayer` (EV_WEAPON_ALT); a rifle has none.

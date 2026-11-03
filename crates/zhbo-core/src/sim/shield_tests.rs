@@ -98,7 +98,7 @@ fn a_blast_in_front_of_a_held_shield_is_cut_by_its_protection() {
         // he faces the shooter: squarely in its 30-degree arc.
         let held = crate::weapons::catalog().get("riotshield_mp").unwrap().shield.unwrap().held;
         let at = Vec3::new(60.0 - crate::units::drawn_inches(held.pos[0]) - 1.0, 0.0, crate::units::drawn_inches(held.pos[2]));
-        crate::projectiles::blast(&host, def, 1, at, None, 1.0, 1.0, &sim.shields);
+        crate::projectiles::blast(&host, def, 1, at, crate::projectiles::Hit::NONE, 1.0, 1.0, &sim.shields);
         let sum = host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| d.2).sum::<f32>();
         sum
     };

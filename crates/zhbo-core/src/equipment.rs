@@ -208,7 +208,7 @@ impl Placed {
     fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer], guards: &[crate::sim::guard::Guard], hits: &std::cell::RefCell<Vec<crate::sim::guard::ShockHit>>) -> EquipEvent {
         self.remove(host);
         let guarded = crate::sim::guard::Guarded { host, guards, def: self.def, stuck_to: self.stuck_to, thrown: false, owner: self.general, at: Some(self.pos), hits };
-        let b = blast(&guarded, self.def, self.general, self.pos, None, 1.0, 1.0, shields);
+        let b = blast(&guarded, self.def, self.general, self.pos, crate::projectiles::Hit { direct: None, stuck_to: self.stuck_to }, 1.0, 1.0, shields);
         let d = self.def;
         EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, def: d, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface: b.surface }
     }

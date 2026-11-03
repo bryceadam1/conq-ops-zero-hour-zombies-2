@@ -853,6 +853,18 @@ pub struct Weapon {
     pub ads_zoom_sound: Option<String>,
     /// The start of a fire string (a burst's opening): overridable by attachment (`soundOverrides`).
     pub fire_start_sound_player: Option<String>,
+    /// The third-person versions of the def-level sounds (`meleeSwipeSound`, `raiseSound`, ...):
+    /// what BO2 plays at another player (the `*Player` field is the owner's own 2D sound).
+    pub melee_swipe_sound: Option<String>,
+    pub pullback_sound: Option<String>,
+    pub raise_sound: Option<String>,
+    pub first_raise_sound: Option<String>,
+    pub putaway_sound: Option<String>,
+    pub alt_switch_sound: Option<String>,
+    pub reload_sound: Option<String>,
+    pub reload_sound_player: Option<String>,
+    pub melee_miss_sound: Option<String>,
+    pub empty_fire_sound: Option<String>,
     /// HUD art (material names).
     pub hud_icon: Option<String>,
     /// `hudIconRatio` (`weaponIconRatioType_t`: 0 1:1, 1 2:1, 2 4:1): the pickup hint draws the
@@ -1416,6 +1428,16 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.putaway_sound_player = opt_str(z, d + WD::putawaySoundPlayer);
     w.ads_zoom_sound = opt_str(z, d + WD::adsZoomSound);
     w.fire_start_sound_player = opt_str(z, d + WD::fireStartSoundPlayer);
+    w.melee_swipe_sound = opt_str(z, d + WD::meleeSwipeSound);
+    w.pullback_sound = opt_str(z, d + WD::pullbackSound);
+    w.raise_sound = opt_str(z, d + WD::raiseSound);
+    w.first_raise_sound = opt_str(z, d + WD::firstRaiseSound);
+    w.putaway_sound = opt_str(z, d + WD::putawaySound);
+    w.alt_switch_sound = opt_str(z, d + WD::altSwitchSound);
+    w.reload_sound = opt_str(z, d + WD::reloadSound);
+    w.reload_sound_player = opt_str(z, d + WD::reloadSoundPlayer);
+    w.melee_miss_sound = opt_str(z, d + WD::meleeMissSound);
+    w.empty_fire_sound = opt_str(z, d + WD::emptyFireSound);
     w.impact_type = z.u32(d + WD::impactType);
     w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
     let bounce = z.u32(d + WD::bounceSound);

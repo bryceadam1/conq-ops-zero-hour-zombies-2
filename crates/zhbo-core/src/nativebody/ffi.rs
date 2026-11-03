@@ -99,6 +99,9 @@ pub(crate) struct State {
     last: Option<u32>,
     failed: HashSet<super::RigKey>,
     pub(crate) posed: Posed,
+    /// The torso clips played so far, shared by every General's rig (the body manifests name the
+    /// same blobs).
+    torso: HashMap<u16, super::AnimClip>,
     pub(crate) log: VecDeque<String>,
     logged: HashSet<String>,
 }
@@ -129,6 +132,26 @@ impl State {
         self.logged.iter().map(String::as_str)
     }
 
+    /// Ask for torso clip `id` (`rig`'s body names its blob) until it has loaded.
+    fn want_torso(&mut self, rig: &Loaded, id: u16) {
+        if self.torso.contains_key(&id) {
+            return;
+        }
+        let Some(path) = rig.torso_path(id).map(str::to_string) else { return };
+        if self.files.is_missing(&path) {
+            return;
+        }
+        if let Some(bytes) = self.files.get(&path) {
+            match super::AnimClip::from_bytes(&bytes) {
+                Ok(a) => {
+                    self.torso.insert(id, a);
+                }
+                Err(e) => self.log_once(format!("{path}: {e}")),
+            }
+            self.files.forget(&path);
+        }
+    }
+
     pub(crate) fn log_once(&mut self, msg: String) {
         if self.logged.len() < 256 && self.logged.insert(msg.clone()) {
             self.log.push_back(format!("native body: {msg}"));
@@ -138,6 +161,9 @@ impl State {
     /// One general's frame. `enabled` is `ZHBO_NATIVE_BODY != 0`; without the renderer it loads and
     /// poses, then answers "not native".
     pub(crate) fn frame(&mut self, inp: &ZhboNativeBodyIn, enabled: i32, camo: Option<&str>) -> i32 {
+        if (1..=255).contains(&inp.faction) {
+            note_faction(inp.general, inp.faction as u8);
+        }
         if enabled <= 0 || inp.vm < 0 || inp.faction <= 0 {
             return NOT_NATIVE;
         }
@@ -193,7 +219,20 @@ impl State {
         // The body clip for this movement state, or the bind pose when the weapon-only mode (or a
         // body with no clip) is drawing.
         let clip = rig.loaded.clip_for(inp.state as u16);
-        rig.loaded.pose(&req, clip, &mut self.posed);
+        // The upper body's action over it, while the client times one for him (`client::remote`).
+        // Its clip loads the first time anyone plays it; until then the body runs without it.
+        let action = torso_of(general).filter(|_| mode == Mode::Body);
+        if let Some(a) = action {
+            self.want_torso(&rig.loaded, a.clip);
+        }
+        let torso = action.and_then(|a| self.torso.get(&a.clip).map(|c| (c, a.t)));
+        rig.loaded.pose(&req, clip, torso, &mut self.posed);
+        // A grenade's pin and throw: BO2 draws the offhand on `tag_inhand` as the entity's one
+        // weapon (t6mp `FUN_0052a4c0` attaches only the entity's current weapon; `FUN_0052a470`
+        // puts a grenade on `tag_inhand`), so the gun in hand is not drawn meanwhile.
+        if action.is_some_and(|a| matches!(a.action, zhbo_native::thirdperson::torso::THROW | zhbo_native::thirdperson::torso::PRIME)) {
+            rig.loaded.hide_weapon(&mut self.posed);
+        }
         self.last = Some(general);
         #[cfg(feature = "renderer")]
         let answer = super::gpu::draw(self, &mut rig, inp);
@@ -236,6 +275,64 @@ pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
 fn stowed_of(general: u32) -> i32 {
     use std::sync::atomic::Ordering;
     STOWED.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or(-1, |v| (v & 0xffff_ffff) as i32 - 1)
+}
+
+/// Each General's faction letter as the bridge names it to [`zhbo_native_body`] (`general << 8 |
+/// letter`): the client's voice for him (`sounds::voice_event`). Presentation only.
+static FACTIONS: [std::sync::atomic::AtomicU64; 64] = [const { std::sync::atomic::AtomicU64::new(0) }; 64];
+
+fn note_faction(general: u32, letter: u8) {
+    use std::sync::atomic::Ordering;
+    if general == 0 || letter == 0 || faction_of(general) == Some(letter) {
+        return;
+    }
+    let slot = &FACTIONS[general as usize % FACTIONS.len()];
+    slot.store(((general as u64) << 8) | letter as u64, Ordering::Relaxed);
+}
+
+/// General `general`'s faction letter, once the bridge has drawn him.
+pub fn faction_of(general: u32) -> Option<u8> {
+    use std::sync::atomic::Ordering;
+    let v = FACTIONS[general as usize % FACTIONS.len()].load(Ordering::Relaxed);
+    ((v >> 8) as u32 == general && v != 0).then_some((v & 0xff) as u8)
+}
+
+/// Each General's torso action this frame (`general << 32 | action << 28 | clip << 15 |
+/// milliseconds in`), published by the client (`client::remote`; the headless third-person
+/// render's `--torso` too): the body pass layers it. Presentation only.
+static TORSO: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+/// One General's torso action as the body pass takes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TorsoAction {
+    pub general: u32,
+    /// `zhbo_native::thirdperson::torso`'s action (`RELOAD`, `THROW`, ...).
+    pub action: u8,
+    /// The body manifest's clip id and seconds into it.
+    pub clip: u16,
+    pub t: f32,
+}
+
+pub fn publish_torso(torsos: impl Iterator<Item = TorsoAction>) {
+    use std::sync::atomic::Ordering;
+    let mut it = torsos;
+    for slot in TORSO.iter() {
+        let v = it.next().map_or(0, |a| {
+            ((a.general as u64) << 32) | (((a.action & 0xf) as u64) << 28) | (((a.clip & 0x1fff) as u64) << 15) | (a.t * 1000.0).clamp(0.0, 32767.0) as u64
+        });
+        slot.store(v, Ordering::Relaxed);
+    }
+}
+
+/// General `general`'s torso action, if he is in one.
+pub(crate) fn torso_of(general: u32) -> Option<TorsoAction> {
+    use std::sync::atomic::Ordering;
+    TORSO.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| TorsoAction {
+        general,
+        action: ((v >> 28) & 0xf) as u8,
+        clip: ((v >> 15) & 0x1fff) as u16,
+        t: (v & 0x7fff) as f32 / 1000.0,
+    })
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

@@ -27,11 +27,14 @@ macro_rules! tuning {
         #[derive(Clone, Debug, PartialEq)]
         pub struct Tuning {
             $(#[doc = $doc] pub $field: f32,)*
+            /// The `[MeansOfDeath]` table: the Zero Hour damage type each BO2 means of death
+            /// reaches the engine as (`MOD_IMPACT = EXPLOSION`; [`crate::damage`]).
+            pub means_of_death: crate::damage::MeansOfDeathTable,
         }
 
         impl Default for Tuning {
             fn default() -> Self {
-                Tuning { $($field: $default,)* }
+                Tuning { $($field: $default,)* means_of_death: Default::default() }
             }
         }
 
@@ -231,6 +234,13 @@ tuning! {
     smoke_sight_min_distance: "smoke_blocksight_mindist" = 80.0, "Smoke: two points closer than this, inches, always see each other through a blocker (t6mp `FUN_006e2f90`, the constant at `0x00b7d924`); farther, the line between them is blocked when it passes within a blocker's radius of its centre (`FUN_006e2e10`, the segment's closest point).";
     vehicle_projectile_scale_smaw: "getvehicleprojectilescalar.smaw_mp" = 0.2, "SMAW: share of its impact damage (`iDamage`) a direct hit deals to anything but a soldier (`_globallogic_vehicle.gsc:312-313` `getvehicleprojectilescalar`, applied to `MOD_PROJECTILE` in `callback_vehicledamage`; BO2's turrets take the same 200 of 1000, `_turret_killstreak.gsc:903-904`). Read by weapon name ([`Tuning::vehicle_projectile_scale`]).";
     vehicle_projectile_scale_fhj18: "getvehicleprojectilescalar.fhj18_mp" = 0.2, "FHJ-18 AA: as the SMAW (`_globallogic_vehicle.gsc:314-315`).";
+    vehicle_projectile_scale_remote_missile: "getvehicleprojectilescalar.remote_missile_missile_mp" = 10.0, "The Hellstorm's missile: x10 (`_globallogic_vehicle.gsc:308-309`; no player weapon, the function's whole table).";
+    vehicle_projectile_scale_remote_mortar: "getvehicleprojectilescalar.remote_mortar_missile_mp" = 10.0, "The Lodestar's missile: x10 (`_globallogic_vehicle.gsc:310-311`).";
+    vehicle_projectile_splash_scale_remote_missile: "getvehicleprojectilesplashscalar.remote_missile_missile_mp" = 10.0, "Radius damage on a vehicle (`MOD_PROJECTILE_SPLASH`, `MOD_GRENADE_SPLASH`, `MOD_EXPLOSIVE` in `callback_vehicleradiusdamage`, `_globallogic_vehicle.gsc:224-228`), the Hellstorm's: x10 (`getvehicleprojectilesplashscalar`, `:325-326`). Read by weapon name ([`Tuning::per_weapon`]); 1 for any weapon not listed.";
+    vehicle_projectile_splash_scale_remote_mortar: "getvehicleprojectilesplashscalar.remote_mortar_missile_mp" = 4.0, "As above, the Lodestar's: x4 (`:327-328`).";
+    vehicle_projectile_splash_scale_chopper_minigun: "getvehicleprojectilesplashscalar.chopper_minigun_mp" = 0.5, "As above, the chopper gunner's minigun: x0.5 (`:329-330`).";
+    vehicle_underneath_splash_scale_satchel: "getvehicleunderneathsplashscalar.satchel_charge_mp" = 30.0, "C4: its radius damage (`MOD_GRENADE_SPLASH`) on a vehicle x `10 * 3` (`getvehicleunderneathsplashscalar`, `_globallogic_vehicle.gsc:336-347`, applied in `callback_vehicledamage` `:63-68`, which the radius damage reaches through `finishvehicleradiusdamage`, t6mp `FUN_0066a3e0` -> `G_Damage`). C4 stuck to the vehicle strikes it for `MOD_GRENADE` instead (`FUN_0060a480`), which this leaves alone. Read by weapon name; 1 for any weapon not listed.";
+    vehicle_damage_scalar: "vehicledamagescalar" = 1.0, "`level.vehicledamagescalar`: every hit on a vehicle (`_globallogic_vehicle.gsc:70`). It is set in the base `_globallogic.gsc`, which the dump lacks; 1, the series' default.";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";
     shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";
@@ -272,18 +282,26 @@ tuning! {
 /// The key prefix of BO2's per-weapon direct-hit scale against vehicles
 /// (`getvehicleprojectilescalar`, `_globallogic_vehicle.gsc:306-321`): `<prefix><weapon name>`.
 pub const VEHICLE_PROJECTILE_SCALAR: &str = "getvehicleprojectilescalar.";
+/// The key prefix of BO2's per-weapon radius damage scale against vehicles
+/// (`getvehicleprojectilesplashscalar`, `_globallogic_vehicle.gsc:323-334`).
+pub const VEHICLE_PROJECTILE_SPLASH_SCALAR: &str = "getvehicleprojectilesplashscalar.";
+/// The key prefix of BO2's per-weapon grenade-splash scale against vehicles
+/// (`getvehicleunderneathsplashscalar`, `_globallogic_vehicle.gsc:336-347`).
+pub const VEHICLE_UNDERNEATH_SPLASH_SCALAR: &str = "getvehicleunderneathsplashscalar.";
 
 impl Tuning {
-    /// The share of `weapon`'s impact damage (`iDamage`) a direct hit deals to anything that is
-    /// not a soldier: BO2's `getvehicleprojectilescalar`, keyed in the pack by the weapon's name
-    /// (its base weapon for a combination or alt mode), 1 for every weapon it does not name.
-    pub fn vehicle_projectile_scale(&self, weapon: &str) -> f32 {
+    /// One of BO2's per-weapon functions keyed in the pack as `<prefix><weapon name>`: the value
+    /// for `weapon` (its base weapon for a combination or alt mode), 1 for every weapon the pack
+    /// does not name (each function's `else scale = 1`).
+    pub fn per_weapon(&self, prefix: &str, weapon: &str) -> f32 {
         let base = weapon.split(['+', '~']).next().unwrap_or(weapon);
-        Self::KEYS
-            .iter()
-            .zip(self.values())
-            .find(|(k, _)| k.strip_prefix(VEHICLE_PROJECTILE_SCALAR) == Some(base))
-            .map_or(1.0, |(_, v)| v)
+        Self::KEYS.iter().zip(self.values()).find(|(k, _)| k.strip_prefix(prefix) == Some(base)).map_or(1.0, |(_, v)| v)
+    }
+
+    /// The share of `weapon`'s impact damage (`iDamage`) a direct hit (`MOD_PROJECTILE`) deals to
+    /// anything that is not a soldier: BO2's `getvehicleprojectilescalar`.
+    pub fn vehicle_projectile_scale(&self, weapon: &str) -> f32 {
+        self.per_weapon(VEHICLE_PROJECTILE_SCALAR, weapon)
     }
 }
 
@@ -306,6 +324,7 @@ pub fn parse(text: &str) -> Tuning {
     for (k, v) in nums {
         t.set(&k, v);
     }
+    t.means_of_death.parse_over(text);
     t
 }
 
@@ -349,6 +368,9 @@ mod tests {
             SHIPPED.lines().filter_map(|l| l.split(';').next()?.split_once('=')).map(|(k, _)| normalize(k.trim())).collect();
         for key in Tuning::KEYS {
             assert!(present.contains(&normalize(key)), "{key} is in tuning.ini");
+        }
+        for m in crate::damage::MeansOfDeath::ALL {
+            assert!(present.contains(&normalize(m.name())), "{} is in tuning.ini's [MeansOfDeath]", m.name());
         }
     }
 

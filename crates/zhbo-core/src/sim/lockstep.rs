@@ -9,7 +9,8 @@
 //! What is hashed is the deterministic state only, streamed field by field
 //! ([`crate::statehash`]): each seat's player record and chosen class, the projectiles, the
 //! equipment that is down, the smoke screens, the deployed shields, the dropped weapons and the
-//! kills not yet read by a death, and the antilag history (the
+//! kills not yet read by a death, the assist bookkeeping
+//! (`score`: every General's attackers and each seat's assists) and the antilag history (the
 //! first-person Generals and shields of the last frames, which decide what a shot hits), plus the
 //! frame. What is
 //! **not** hashed, each named in its `skip` list:
@@ -72,6 +73,7 @@ impl Sim {
             drops,
             kills,
             history,
+            score,
             tuning: _,
             bullet_range: _,
             penetration: _,
@@ -94,7 +96,7 @@ impl Sim {
                 *seat = Some(h.finish());
             }
         }
-        let things = world_hash(projectiles, equipment, smokes, deployed, drops, kills);
+        let things = world_hash(projectiles, equipment, smokes, deployed, drops, kills, score);
         // The antilag history joins the world's part, but not the idle test: every step records
         // a frame, an empty one when nobody is in first person.
         let world = {
@@ -119,6 +121,7 @@ fn world_hash(
     deployed: &[super::deploy::Deployed],
     drops: &[super::drops::Dropped],
     kills: &[super::drops::Kill],
+    score: &super::score::Score,
 ) -> u64 {
     let mut h = Hasher::new();
     projectiles.hash(&mut h);
@@ -127,11 +130,12 @@ fn world_hash(
     deployed.hash(&mut h);
     drops.hash(&mut h);
     kills.hash(&mut h);
+    score.hash(&mut h);
     h.finish()
 }
 
 /// The world's hash with nothing in it.
 fn empty_world() -> u64 {
     static EMPTY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *EMPTY.get_or_init(|| world_hash(&[], &crate::equipment::Equipment::default(), &[], &[], &[], &[]))
+    *EMPTY.get_or_init(|| world_hash(&[], &crate::equipment::Equipment::default(), &[], &[], &[], &[], &super::score::Score::default()))
 }

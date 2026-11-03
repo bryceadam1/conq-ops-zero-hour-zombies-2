@@ -342,6 +342,8 @@ pub unsafe extern "C" fn zhbo_load_sound_layers(text: *const c_char) -> i32 {
         return -1;
     }
     let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    // The same file carries the third-person torso table (`torso`).
+    crate::torso::install(&text);
     crate::soundlayers::install(&text) as i32
 }
 

@@ -73,6 +73,132 @@ pub const LAND: &str = "ZHBO_BO2_Land";
 /// `fly_step_sprint_npc_<surface>`), positional for everyone ([`RemoteSteps`]).
 pub const STEP_NPC: &str = "ZHBO_BO2_StepNpc";
 pub const SPRINT_STEP_NPC: &str = "ZHBO_BO2_SprintStepNpc";
+/// Another player's landing (`_footsteps.csc` `playerland`: `fly_land_npc_<surface>`).
+pub const LAND_NPC: &str = "ZHBO_BO2_LandNpc";
+/// A player's voice when he is hurt and when he dies (`_battlechatter_mp.gsc` `painvox`,
+/// `deathvox`: `level.teamprefix[team] + bcvoicenumber + "_pain_small"` / `"_pain_death"`, played
+/// on his `J_Head` for everyone). One event per faction's voice bank (the faction letters of
+/// `zhbo_assets::generals::FACTIONS`) and voice number (`bcVoiceNumber`, `randomintrange(0, 3)`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Voice {
+    Pain,
+    Death,
+}
+
+/// The faction letters whose voices convert, in [`VOICE_EVENTS`] order.
+pub const VOICE_FACTIONS: [u8; 3] = *b"UCG";
+/// BO2's voice numbers per team (`randomintrange(0, 3)`).
+pub const VOICES: usize = 3;
+/// `[voice][faction][number]`: the converted events ([`voice_event`]).
+pub const VOICE_EVENTS: [[[&str; VOICES]; 3]; 2] = [
+    [
+        ["ZHBO_BO2_PainSmall_U0", "ZHBO_BO2_PainSmall_U1", "ZHBO_BO2_PainSmall_U2"],
+        ["ZHBO_BO2_PainSmall_C0", "ZHBO_BO2_PainSmall_C1", "ZHBO_BO2_PainSmall_C2"],
+        ["ZHBO_BO2_PainSmall_G0", "ZHBO_BO2_PainSmall_G1", "ZHBO_BO2_PainSmall_G2"],
+    ],
+    [
+        ["ZHBO_BO2_PainDeath_U0", "ZHBO_BO2_PainDeath_U1", "ZHBO_BO2_PainDeath_U2"],
+        ["ZHBO_BO2_PainDeath_C0", "ZHBO_BO2_PainDeath_C1", "ZHBO_BO2_PainDeath_C2"],
+        ["ZHBO_BO2_PainDeath_G0", "ZHBO_BO2_PainDeath_G1", "ZHBO_BO2_PainDeath_G2"],
+    ],
+];
+
+/// The voice event of seat `seat`'s General of faction `faction` (his letter; the first faction's
+/// when unknown). BO2 draws a player's voice number at random once per team join; here the seat
+/// picks it (`seat % 3`), the same on every machine and for the whole match.
+pub fn voice_event(v: Voice, faction: Option<u8>, seat: usize) -> &'static str {
+    let f = faction.and_then(|f| VOICE_FACTIONS.iter().position(|&x| x == f)).unwrap_or(0);
+    VOICE_EVENTS[v as usize][f][seat % VOICES]
+}
+
+/// BO2's battle chatter lines the mod plays (`_battlechatter_mp.gsc`): the alias after
+/// `<teamprefix><n>_` (`level.bcsounds[partone] + "_" + parttwo`). `reloadtracking` says
+/// `reloading_gen`; `grenadetracking` an offhand's own line.
+pub const CHATTER_LINES: [&str; 13] = [
+    "reloading_gen",
+    "attack_grenade",
+    "attack_c4",
+    "attack_emp",
+    "attack_claymore",
+    "attack_flash",
+    "attack_sticky",
+    "attack_gas",
+    "attack_smoke",
+    "attack_hatchet",
+    "attack_concussion",
+    "attack_scrambler",
+    "attack_tactical",
+];
+
+/// `grenadetracking`'s `weaponname` → line (`_battlechatter_mp.gsc:589-700`), and whether its odds
+/// are the trophy dvar's (the Bouncing Betty) rather than the toss dvar's.
+pub const THROW_CHATTER: &[(&str, &str, bool)] = &[
+    ("frag_grenade_mp", "attack_grenade", false),
+    ("satchel_charge_mp", "attack_c4", false),
+    ("emp_grenade_mp", "attack_emp", false),
+    ("claymore_mp", "attack_claymore", false),
+    ("flash_grenade_mp", "attack_flash", false),
+    ("sticky_grenade_mp", "attack_sticky", false),
+    ("tabun_gas_mp", "attack_gas", false),
+    ("willy_pete_mp", "attack_smoke", false),
+    ("hatchet_mp", "attack_hatchet", false),
+    ("proximity_grenade_mp", "attack_hatchet", false),
+    ("concussion_grenade_mp", "attack_concussion", false),
+    ("scrambler_mp", "attack_scrambler", false),
+    ("tactical_insertion_mp", "attack_tactical", false),
+    ("bouncingbetty_mp", "attack_c4", true),
+    ("sensor_grenade_mp", "attack_hatchet", false),
+];
+/// `checkweaponreload`: the weapons whose reload says nothing.
+pub const RELOAD_SILENT: [&str; 5] = ["crossbow_mp", "fhj18_mp", "judge_mp", "smaw_mp", "usrpg_mp"];
+/// The odds dvars (`_battlechatter_mp.gsc:64-73`): a line plays when `randomintrange(0, 100)` is
+/// at least the dvar — `bcmp_weapon_reload_probability` 60, `bcmp_toss_grenade_probability` 20,
+/// `bcmp_toss_trophy_probability` 80.
+pub const CHATTER_RELOAD: u32 = 60;
+pub const CHATTER_TOSS: u32 = 20;
+pub const CHATTER_TROPHY: u32 = 80;
+
+/// The line `kind` (a reload, a throw, a set-down) with `def` says, and the threshold its roll
+/// must reach.
+pub fn chatter_for(kind: &crate::sim::EventKind, def: &crate::weapons::WeaponDef) -> Option<(&'static str, u32)> {
+    use crate::sim::EventKind;
+    let base = def.id.split(['+', '~']).next().unwrap_or("");
+    match kind {
+        EventKind::ReloadStarted => (!RELOAD_SILENT.contains(&base)).then_some(("reloading_gen", CHATTER_RELOAD)),
+        EventKind::Thrown { .. } | EventKind::Planted { .. } => THROW_CHATTER.iter().find(|t| t.0 == base).map(|t| (t.1, if t.2 { CHATTER_TROPHY } else { CHATTER_TOSS })),
+        _ => None,
+    }
+}
+
+/// Seat `seat`'s `n`-th chatter roll, 0..100 (BO2's `randomintrange(0, 100)`): a hash of the two,
+/// so every machine, seeing the same events, rolls the same.
+pub fn chatter_roll(seat: usize, n: u32) -> u32 {
+    let mut h = (seat as u64) << 32 | n as u64;
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    (h % 100) as u32
+}
+
+/// The converted event of chatter `line` in faction `faction`'s voice `n`
+/// (`ZHBO_BO2_Bc_<F><n>_<line>`).
+pub fn chatter_event_name(faction: u8, n: usize, line: &str) -> String {
+    format!("ZHBO_BO2_Bc_{}{n}_{line}", faction as char)
+}
+
+/// Seat `seat`'s General's (faction `faction`, the first one's when unknown) event for `line`.
+pub fn chatter_event(faction: Option<u8>, seat: usize, line: &str) -> Option<&'static str> {
+    static EVENTS: std::sync::OnceLock<Vec<(u8, usize, &'static str, &'static str)>> = std::sync::OnceLock::new();
+    let all = EVENTS.get_or_init(|| {
+        VOICE_FACTIONS
+            .iter()
+            .flat_map(|&f| (0..VOICES).flat_map(move |n| CHATTER_LINES.iter().map(move |&l| (f, n, l, &*Box::leak(chatter_event_name(f, n, l).into_boxed_str())))))
+            .collect()
+    });
+    let f = faction.filter(|f| VOICE_FACTIONS.contains(f)).unwrap_or(VOICE_FACTIONS[0]);
+    all.iter().find(|e| e.0 == f && e.1 == seat % VOICES && e.2 == line).map(|e| e.3)
+}
+
 pub const IMPACT: &str = "ZHBO_BO2_Impact";
 pub const IMPACT_FLESH: &str = "ZHBO_BO2_ImpactFlesh";
 /// Hold breath (`FUN_0052e3d0` notifies `playerbreathinsound` / `playerbreathoutsound` /
@@ -216,12 +342,23 @@ pub struct Cues {
 /// Other players' footsteps: each first-person General but the presented one puts a foot down
 /// every stride he walks on the ground, at the stride the own steps use, heard at him
 /// ([`STEP_NPC`]/[`SPRINT_STEP_NPC`]). BO2 plays every other player's steps this way
-/// (`_footsteps.csc`'s `firstperson = 0` aliases); a General with Dead Silence
-/// (`specialty_quieter`) makes none. Presentation only: read off the sim's records.
+/// (`_footsteps.csc`'s `firstperson = 0` aliases), and his jump and landing too: `playerjump`
+/// plays the step alias, `playerland` `fly_land_npc_<surface>` ([`LAND_NPC`]). A General with Dead
+/// Silence (`specialty_quieter`) makes none. Presentation only: read off the sim's records.
 #[derive(Clone, Debug, Default)]
 pub struct RemoteSteps {
-    /// Per seat: his General, where his body was last frame and the stride left to the next step.
-    seats: [Option<(u32, Vec3, f32)>; crate::sim::MAX_PLAYERS],
+    seats: [Option<StepSeat>; crate::sim::MAX_PLAYERS],
+}
+
+/// One seat's footfall state: his General, where his body was last frame, the stride left to the
+/// next step, and whether he was in the air (with his fastest fall).
+#[derive(Clone, Copy, Debug)]
+struct StepSeat {
+    general: u32,
+    last: Vec3,
+    left: f32,
+    airborne: bool,
+    fall: f32,
 }
 
 impl RemoteSteps {
@@ -234,31 +371,45 @@ impl RemoteSteps {
                 continue;
             };
             let pos = p.body.pos;
+            let quiet = p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter);
             let (stride, event) = if p.body.sprinting { (SPRINT_STRIDE, SPRINT_STEP_NPC) } else { (STRIDE, STEP_NPC) };
-            let left = match *slot {
+            let mut s = match *slot {
+                Some(s) if s.general == p.general => s,
                 // A new General (or one just seen): his first step half a stride on.
-                Some((general, last, left)) if general == p.general => {
-                    let moved = (pos - last).length_xy();
-                    // Teleports and respawns are not steps; nor is the air.
-                    if moved < 50.0 && p.body.on_ground {
-                        left - moved
-                    } else {
-                        left
-                    }
-                }
-                _ => STRIDE * 0.5,
+                _ => StepSeat { general: p.general, last: pos, left: STRIDE * 0.5, airborne: !p.body.on_ground, fall: 0.0 },
             };
-            let mut left = left;
-            if left <= 0.0 {
-                if !p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter) {
+            let moved = (pos - s.last).length_xy();
+            if p.body.on_ground {
+                // He landed: BO2's landing (`playerland`), when he fell fast enough to be heard.
+                if s.airborne && s.fall > LAND_SPEED && !quiet {
+                    cues.play_at(LAND_NPC, pos);
+                    s.left = STRIDE * 0.5;
+                }
+                // Teleports and respawns are not steps.
+                if moved < 50.0 && !s.airborne {
+                    s.left -= moved;
+                }
+                s.airborne = false;
+                s.fall = 0.0;
+            } else {
+                // He left the ground going up: BO2's jump plays the step alias (`playerjump`).
+                if !s.airborne && p.body.vel.z > 0.0 && !quiet {
+                    cues.play_at(STEP_NPC, pos);
+                }
+                s.airborne = true;
+                s.fall = s.fall.max(-p.body.vel.z);
+            }
+            if s.left <= 0.0 {
+                if !quiet {
                     cues.play_at(event, pos);
                 }
-                left += stride;
-                if left < 0.0 {
-                    left = STRIDE;
+                s.left += stride;
+                if s.left < 0.0 {
+                    s.left = STRIDE;
                 }
             }
-            *slot = Some((p.general, pos, left));
+            s.last = pos;
+            *slot = Some(s);
         }
     }
 }
@@ -309,7 +460,7 @@ impl BreathSounds {
 
 /// The arsenal state the weapon cues compare against, from the last frame.
 #[derive(Clone, Debug, Default)]
-struct WeaponCues {
+pub struct WeaponCues {
     seen: bool,
     raise_left: f32,
     raise_played: bool,
@@ -504,32 +655,68 @@ impl Cues {
         self.weapon_moments(p);
     }
 
-    /// BO2's def-level weapon sounds at their moments, read off the arsenal's state changes: the
-    /// putaway as a drop begins (the weapon going away), the raise — or the first raise — once
-    /// the drop is done and the raise runs, and the zoom as aiming starts. An alt toggle plays
-    /// `altSwitchSoundPlayer` as it begins and its raise plays nothing: BO2's weapon change sends
-    /// EV_WEAPON_ALT instead of EV_PUTAWAY_WEAPON for an alt pair (`FUN_008db500`) and
+    /// BO2's def-level weapon sounds at their moments ([`WeaponCues::step`]), the player's own
+    /// (`*SoundPlayer`) versions.
+    fn weapon_moments(&mut self, p: &PlayerSim) {
+        use crate::weapons::arsenal::RaiseKind;
+        let mut queue = std::mem::take(&mut self.queue);
+        self.weapon.step(&p.arsenal, |m| {
+            let e = match m {
+                Moment::Putaway(d) => some(d.putaway_sound.as_str()),
+                Moment::AltSwitch(d) => some(d.alt_switch_sound.as_str()),
+                Moment::Raise(d, RaiseKind::First) => some(d.first_raise_sound.as_str()),
+                // An empty raise is a raise with its own time (switch-timing); its sound is the raise.
+                Moment::Raise(d, RaiseKind::Normal | RaiseKind::Quick | RaiseKind::Empty) => some(d.raise_sound.as_str()),
+                Moment::Raise(_, RaiseKind::Alt) => None,
+                Moment::AdsZoom(d) => some(d.ads_zoom_sound.as_str()),
+            };
+            if let Some(e) = e {
+                queue.push(Request { event: e, at: None, gain: 1.0 });
+            }
+        });
+        self.queue = queue;
+    }
+}
+
+/// A weapon moment BO2's client plays a def-level sound at ([`WeaponCues::step`]), with the def
+/// whose field it plays.
+#[derive(Clone, Copy, Debug)]
+pub enum Moment {
+    /// A drop begins: the weapon going away (EV_PUTAWAY_WEAPON).
+    Putaway(&'static crate::weapons::WeaponDef),
+    /// An alt toggle begins (EV_WEAPON_ALT).
+    AltSwitch(&'static crate::weapons::WeaponDef),
+    /// The drop is done and the raise runs (EV_RAISE_WEAPON; the first raise of a life its own kind).
+    Raise(&'static crate::weapons::WeaponDef, crate::weapons::arsenal::RaiseKind),
+    /// Aiming starts.
+    AdsZoom(&'static crate::weapons::WeaponDef),
+}
+
+impl WeaponCues {
+    /// The moments since the last frame, read off the arsenal's state changes: the putaway as a
+    /// drop begins (the weapon going away), the raise — or the first raise — once the drop is
+    /// done and the raise runs, and the zoom as aiming starts. An alt toggle is
+    /// [`Moment::AltSwitch`] as it begins and its raise is [`RaiseKind::Alt`]: BO2's weapon change
+    /// sends EV_WEAPON_ALT instead of EV_PUTAWAY_WEAPON for an alt pair (`FUN_008db500`) and
     /// EV_RAISE_PICKUP_WEAPON instead of EV_RAISE_WEAPON (`FUN_008df320`); the client plays the
     /// held def's `altSwitchSound(Player)` for the first and nothing for the second
     /// (`FUN_004c1590`). The held def is the one up after the toggle's command: with no alt drop
     /// (`iAltDropTime` 0, every launcher pair) the change finishes in that same pmove
     /// (`FUN_008e4da0`), so it is the incoming mode; a toggle with an alt drop (select fire's 500 ms)
-    /// plays it as the drop begins, from the outgoing mode.
-    fn weapon_moments(&mut self, p: &PlayerSim) {
+    /// is the outgoing mode as the drop begins.
+    ///
+    /// [`RaiseKind::Alt`]: crate::weapons::arsenal::RaiseKind::Alt
+    pub fn step(&mut self, a: &crate::weapons::Arsenal, mut on: impl FnMut(Moment)) {
         use crate::weapons::arsenal::RaiseKind;
-        let a = &p.arsenal;
-        let prev = std::mem::take(&mut self.weapon);
+        let prev = std::mem::take(self);
         let mut now = WeaponCues { seen: true, raise_left: a.raise_left, raise_played: prev.raise_played, drop_left: a.drop_left, ads: a.ads };
         if a.drop_left > prev.drop_left + 1e-6 {
             // An alt toggle with a drop (alt-timing's `iAltDropTime`) begins here: BO2 sends
             // EV_WEAPON_ALT, not EV_PUTAWAY_WEAPON, and the held def is still the outgoing mode.
-            let e = if a.alt_pending {
-                some(a.current().def.alt_switch_sound.as_str())
-            } else {
-                a.weapons.get(a.previous).and_then(|w| some(w.def.putaway_sound.as_str()))
-            };
-            if let Some(e) = e {
-                self.play(e);
+            if a.alt_pending {
+                on(Moment::AltSwitch(a.current().def));
+            } else if let Some(w) = a.weapons.get(a.previous) {
+                on(Moment::Putaway(w.def));
             }
         }
         // A new raise (the timer jumped up, or the first frame seen with one running) re-arms it.
@@ -538,30 +725,17 @@ impl Cues {
             // A zero-drop alt toggle (every launcher pair) changes the mode in the same pmove: the
             // sound is the incoming mode's. A toggle with a drop played it as the drop began.
             if a.raise_kind == RaiseKind::Alt && prev.drop_left <= 0.0 {
-                if let Some(e) = some(a.current().def.alt_switch_sound.as_str()) {
-                    self.play(e);
-                }
+                on(Moment::AltSwitch(a.current().def));
             }
         }
         if a.raise_left > 0.0 && a.drop_left <= 0.0 && !now.raise_played {
             now.raise_played = true;
-            let def = a.current().def;
-            let e = match a.raise_kind {
-                RaiseKind::First => some(def.first_raise_sound.as_str()),
-                // An empty raise is a raise with its own time (switch-timing); its sound is the raise.
-                RaiseKind::Normal | RaiseKind::Quick | RaiseKind::Empty => some(def.raise_sound.as_str()),
-                RaiseKind::Alt => None,
-            };
-            if let Some(e) = e {
-                self.play(e);
-            }
+            on(Moment::Raise(a.current().def, a.raise_kind));
         }
         if prev.ads <= 0.0 && a.ads > 0.0 {
-            if let Some(e) = some(a.current().def.ads_zoom_sound.as_str()) {
-                self.play(e);
-            }
+            on(Moment::AdsZoom(a.current().def));
         }
-        self.weapon = now;
+        *self = now;
     }
 }
 
@@ -725,6 +899,23 @@ mod tests {
         p.arsenal.loadout.perks.push(crate::weapons::Perk::by_id("DeadSilence").expect("Dead Silence"));
         assert!(p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter));
         assert!(heard(&mut players, &mut steps, &mut c).is_empty(), "Dead Silence");
+        // A jump plays the step at him, the landing his landing.
+        players[0] = None;
+        let p = players[1].as_mut().unwrap();
+        p.arsenal.loadout.perks.clear();
+        let mut steps = RemoteSteps::default();
+        steps.update(&players, 0, &mut c);
+        c.queue.clear();
+        let p = players[1].as_mut().unwrap();
+        p.body.on_ground = false;
+        p.body.vel.z = 120.0;
+        steps.update(&players, 0, &mut c);
+        assert_eq!(events(&mut c), [STEP_NPC], "the jump");
+        players[1].as_mut().unwrap().body.vel.z = -200.0;
+        steps.update(&players, 0, &mut c);
+        players[1].as_mut().unwrap().body.on_ground = true;
+        steps.update(&players, 0, &mut c);
+        assert_eq!(events(&mut c), [LAND_NPC], "the landing");
         // Overhead (no first person): none either.
         players[1] = None;
         assert!(heard(&mut players, &mut steps, &mut c).is_empty());

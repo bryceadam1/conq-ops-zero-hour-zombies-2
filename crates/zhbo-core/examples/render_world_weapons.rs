@@ -8,9 +8,12 @@
 //!
 //! Optional flags: `--weapon <id>` (repeatable: only these weapons; default every base weapon of
 //! the archive's table, `+`-free ids), `--all` (every converted weapon, combinations included).
+//! `--torso <id>`: instead, the whole General in body mode (`ZHBO_NATIVE_BODY=2`) holding weapon
+//! `<id>`, once standing and once mid-way through each torso action the archive's table gives it
+//! (`zhbo_core::torso`: reload, knife, shot, raise, and the frag's throw), into `<outdir>/torso_<id>.png`.
 //!
 //! **What it draws.** The pipeline the game draws the overhead weapon with: `zhbo_native_body` in
-//! weapon mode (`ZHBO_NATIVE_BODY=1`, the default) with the engine's `tag_weapon_right` transform
+//! weapon mode (`ZHBO_NATIVE_BODY=1`) with the engine's `tag_weapon_right` transform
 //! at the origin, fed over the same file protocol the bridge serves (`zhbo_native_body_wanted` /
 //! `_provide`). The core composes the manifest's parts (the world model, its base parts and the
 //! attachments on their tags) and `nativebody::gpu` uploads and submits it to a headless `zhbo-gfx`
@@ -80,6 +83,7 @@ fn run() -> Result<(), String> {
     let mut archive_path = None;
     let mut only = Vec::new();
     let mut all = false;
+    let mut torso: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -92,6 +96,10 @@ fn run() -> Result<(), String> {
                 i += 1;
             }
             "--all" => all = true,
+            "--torso" => {
+                torso = args.get(i + 1).cloned();
+                i += 1;
+            }
             a => return Err(format!("unknown argument {a}")),
         }
         i += 1;
@@ -107,6 +115,9 @@ fn run() -> Result<(), String> {
         }
     }
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    if let Some(id) = torso {
+        return render_torso(&archive, &table, &id, &out);
+    }
     // The game's default third person: the native weapon in the W3D body's hand.
     zhbo_core::config::init(zhbo_core::config::Config { native_body: 1, ..Default::default() });
     let shot = open_renderer()?;
@@ -238,6 +249,167 @@ fn render(archive: &Archive, shot: &Shot, vm: i32, general: u32) -> Result<(Vec<
     // A General per weapon keeps his own rig; drop it before the next one.
     ffi::zhbo_native_body_reset();
     Ok((px, notes))
+}
+
+/// The General in body mode with weapon `id`: standing, then mid-way through each torso action.
+fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, out: &Path) -> Result<(), String> {
+    use zhbo_core::torso;
+    let layers = String::from_utf8(archive.bytes(zhbo_core::names::SOUND_LAYERS_PATH).ok_or("no sound_layers.txt")?).map_err(|e| e.to_string())?;
+    torso::install(&layers);
+    let def = table.weapons.iter().find(|d| d.id == id).ok_or_else(|| format!("no weapon {id}"))?;
+    let frag = table.weapons.iter().find(|d| d.id == "frag_grenade_mp");
+    zhbo_core::config::init(zhbo_core::config::Config { native_body: 2, ..Default::default() });
+    let shot = open_renderer()?;
+    let stand = torso::context(0, false, false);
+    let mut poses: Vec<(String, Option<(u8, u16)>)> = vec![("idle".into(), None)];
+    for (name, d, action) in [("reload", Some(def), torso::RELOAD), ("knife", Some(def), torso::MELEE), ("fire", Some(def), torso::FIRE), ("raise", Some(def), torso::RAISE), ("throw", frag, torso::THROW)] {
+        if let Some(c) = d.and_then(|d| torso::pick_for(d, action, stand)) {
+            poses.push((name.into(), Some((action, c))));
+        }
+    }
+    let mut tiles = Vec::new();
+    for (k, (name, clip)) in poses.iter().enumerate() {
+        let general = 900 + k as u32;
+        let t = clip.and_then(|(_, c)| torso::get().clip(c)).map_or(0.0, |c| c.length * 0.45);
+        ffi::publish_torso(clip.map(|(action, clip)| ffi::TorsoAction { general, action, clip, t }).into_iter());
+        let px = render_body(archive, &shot, def.viewmodel, def.body_anims, general)?;
+        let clip_name = clip.and_then(|(_, c)| torso::get().clip(c)).map_or(String::new(), |c| c.name.clone());
+        println!("{id} {name}: {clip_name} at {t:.2} s");
+        tiles.push(to_rgb(&px));
+    }
+    write_sheet_cols(&out.join(format!("torso_{}.png", id.replace(['+', '~'], "_"))), &tiles, tiles.len() as u32)?;
+    // The cost of several Generals at once: `n` bodies (each his own rig, half of them reloading),
+    // drawn and presented `FRAMES` times; the core's pose and submit per General, and the frame.
+    for n in [1u32, 4, 8, 16] {
+        const FRAMES: u32 = 60;
+        let generals: Vec<u32> = (0..n).map(|k| 2000 + k).collect();
+        let reload = poses.iter().find(|p| p.0 == "reload").and_then(|p| p.1);
+        let input = |g: u32, k: u32| ZhboNativeBodyIn {
+            general: g,
+            mode: 2,
+            vm: def.viewmodel,
+            faction: FACTION as i32,
+            state: zhbo_native::thirdperson::state::id(def.body_anims, zhbo_native::thirdperson::state::STAND_RUN) as i32,
+            time: k as f32 / 30.0,
+            rate: 1.0,
+            pos: [(g % 4) as f32 * 3.0, (g / 4 % 4) as f32 * 3.0, 0.0],
+            target_view: VIEW,
+            before_view: BEFORE_VIEW,
+            light_count: 1,
+            lights: [ZhboNativeLight { dir: norm([-0.4, 0.3, -1.0]), color: [1.0; 3] }, ZhboNativeLight::default(), ZhboNativeLight::default()],
+            ..Default::default()
+        };
+        // Load every rig first.
+        for _ in 0..ROUNDS {
+            for &g in &generals {
+                unsafe { ffi::zhbo_native_body(&input(g, 0)) };
+            }
+            let mut sink = Vec::new();
+            serve(archive, &mut sink);
+            zhbo_gfx::ffi::with_renderer((), |r| {
+                r.touch(VIEW);
+                r.frame();
+            });
+        }
+        let (mut core, start, mut drawn) = (std::time::Duration::ZERO, std::time::Instant::now(), 0);
+        for k in 0..FRAMES {
+            ffi::publish_torso(generals.iter().filter(|g| *g % 2 == 0).filter_map(|&g| reload.map(|(action, clip)| ffi::TorsoAction { general: g, action, clip, t: k as f32 / 30.0 })));
+            let c = std::time::Instant::now();
+            for &g in &generals {
+                drawn += (unsafe { ffi::zhbo_native_body(&input(g, k)) } == DRAWN) as u32;
+            }
+            core += c.elapsed();
+            zhbo_gfx::ffi::with_renderer((), |r| {
+                r.touch(VIEW);
+                r.frame();
+            });
+        }
+        let total = start.elapsed();
+        println!("bench {n} Generals ({drawn} of {} drawn): core {:.3} ms/frame, frame with GPU {:.3} ms/frame", n * FRAMES, core.as_secs_f64() * 1000.0 / FRAMES as f64, total.as_secs_f64() * 1000.0 / FRAMES as f64);
+    }
+    ffi::zhbo_native_body_reset();
+    zhbo_gfx::ffi::zhgfx_shutdown();
+    Ok(())
+}
+
+/// One General in body mode, framed whole from the front-right, as a player beside him sees him.
+fn render_body(archive: &Archive, shot: &Shot, vm: i32, body_anims: u8, general: u32) -> Result<Vec<u8>, String> {
+    // The body is drawn at the General's size (`units::drawn_inches`).
+    let k = zhbo_core::units::DRAWN_ZH_PER_INCH;
+    let centre = [0.0, 0.0, 40.0 * k];
+    let dist = 30.0 * k / (FOV / 2.0).tan();
+    let eye = [centre[0] + dist * 0.75, centre[1] - dist * 0.6, centre[2] + dist * 0.15];
+    let view = look_at(eye, centre);
+    let aspect = W as f32 / H as f32;
+    let t = 1.0 / (FOV / 2.0).tan();
+    let (near, far) = (0.05f32, dist * 4.0);
+    let proj = [t / aspect, 0.0, 0.0, 0.0, 0.0, t, 0.0, 0.0, 0.0, 0.0, far / (far - near), 1.0, 0.0, 0.0, -near * far / (far - near), 0.0];
+    zhbo_gfx::ffi::with_renderer((), |r| r.set_view_transform(VIEW, Some(&view), Some(&proj)));
+    let light = ZhboNativeLight { dir: norm([-0.4, 0.3, -1.0]), color: [1.0, 0.97, 0.9] };
+    let inp = ZhboNativeBodyIn {
+        general,
+        mode: 2,
+        vm,
+        faction: FACTION as i32,
+        state: zhbo_native::thirdperson::state::id(body_anims, zhbo_native::thirdperson::state::STAND_IDLE) as i32,
+        time: 0.0,
+        rate: 1.0,
+        pos: [0.0; 3],
+        yaw: 0.0,
+        eye,
+        ambient: [0.55, 0.55, 0.58],
+        lights: [light, ZhboNativeLight::default(), ZhboNativeLight::default()],
+        light_count: 1,
+        target_view: VIEW,
+        before_view: BEFORE_VIEW,
+        ..Default::default()
+    };
+    let mut notes = Vec::new();
+    // Twice past loading: the torso clip loads on the first drawn frame.
+    let mut drawn = 0;
+    for _ in 0..ROUNDS {
+        let answer = unsafe { ffi::zhbo_native_body(&inp) };
+        serve(archive, &mut notes);
+        if answer == DRAWN {
+            drawn += 1;
+            if drawn >= 3 {
+                break;
+            }
+        }
+        // Each round submits a draw: present it so the next starts clean.
+        zhbo_gfx::ffi::with_renderer((), |r| {
+            r.touch(VIEW);
+            r.frame();
+        });
+    }
+    take_logs(&mut notes);
+    if !notes.is_empty() {
+        eprintln!("{notes:?}");
+    }
+    unsafe { ffi::zhbo_native_body(&inp) };
+    shot.lock().unwrap().take();
+    zhbo_gfx::ffi::with_renderer((), |r| {
+        r.touch(VIEW);
+        r.request_screenshot(zhbo_gfx::runtime::INVALID, "");
+        r.frame();
+    });
+    shot.lock().unwrap().take().ok_or_else(|| "the renderer produced no screenshot".into())
+}
+
+/// The tiles at full size, `cols` across.
+fn write_sheet_cols(path: &Path, tiles: &[Vec<u8>], cols: u32) -> Result<(), String> {
+    let rows = (tiles.len() as u32).div_ceil(cols).max(1);
+    let (sw, sh) = (W * cols, H * rows);
+    let mut sheet = vec![0u8; (sw * sh * 3) as usize];
+    for (k, t) in tiles.iter().enumerate() {
+        let (ox, oy) = ((k as u32 % cols) * W, (k as u32 / cols) * H);
+        for y in 0..H {
+            let src = ((y * W) * 3) as usize;
+            let dst = (((oy + y) * sw + ox) * 3) as usize;
+            sheet[dst..dst + (W * 3) as usize].copy_from_slice(&t[src..src + (W * 3) as usize]);
+        }
+    }
+    write_png(path, sw, sh, &sheet)
 }
 
 fn serve(archive: &Archive, notes: &mut Vec<String>) {
