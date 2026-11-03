@@ -853,6 +853,7 @@ End
 
 Weapon gl_an94_mp
   DisplayName = Grenade Launcher
+  WeapType = projectile
   Class = launcher
   WeapClass = grenade
   Fire = semi
@@ -939,6 +940,7 @@ End
 
 Weapon frag_grenade_mp
   DisplayName = Grenade
+  WeapType = grenade
   Class = lethal
   CacSlot = primarygrenade
   Fire = semi
@@ -960,6 +962,7 @@ End
 
 Weapon claymore_mp
   DisplayName = Claymore
+  WeapType = grenade
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -982,6 +985,7 @@ End
 ; detonator (`hasDetonator`). Generic offhand times.
 Weapon satchel_charge_mp
   DisplayName = C4
+  WeapType = grenade
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -1002,6 +1006,7 @@ End
 
 Weapon concussion_grenade_mp
   DisplayName = Concussion
+  WeapType = grenade
   Class = tactical
   CacSlot = specialgrenade
   Fire = semi
@@ -1024,6 +1029,7 @@ End
 ; Placed tactical equipment (BO2's `specialgrenade` slot lists it beside the grenades).
 Weapon trophy_system_mp
   DisplayName = Trophy System
+  WeapType = grenade
   Class = equipment
   CacSlot = specialgrenade
   Fire = semi
@@ -1116,6 +1122,7 @@ End
 
 Weapon smaw_mp
   DisplayName = SMAW
+  WeapType = projectile
   Class = launcher
   CacSlot = secondary
 End
@@ -1130,6 +1137,7 @@ End
 ; A pistol by class that BO2 lists under SPECIALS (its statstable group, `CacGroup`).
 Weapon knife_ballistic_mp
   DisplayName = Ballistic Knife
+  WeapType = projectile
   Class = pistol
   CacSlot = secondary
   CacGroup = weapon_special

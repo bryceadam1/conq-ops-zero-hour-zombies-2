@@ -15,12 +15,14 @@
 //!   damage keeps `perk_flakJacket` percent (35). `cac_modified_damage` returns the damage unchanged
 //!   when the victim is the attacker (`:957-958`), so a General's own blasts are not reduced; nor is
 //!   a grenade stuck to him (`grenadestuck`, `:1132-1135`). Explosive is `isexplosivedamage`
-//!   (`:1058-1084`): the grenade, splash and explosive means of death, minus the tacticals — in the
-//!   mod's data, a def whose effect is [`Effect::Explode`].
+//!   (`:1058-1084`): the grenade, splash and explosive means of death
+//!   ([`crate::damage::MeansOfDeath::is_explosive_damage`]: not a rocket's direct hit, not an
+//!   impact), minus the tacticals — in the mod's data, a def whose effect is [`Effect::Explode`].
 //! * **Tactical Mask** (`specialty_stunprotection`, `_weapons.gsc:1375-1376`): a concussion
 //!   grenade's stun on the victim lasts x0.1, whoever threw it.
 
-use crate::host::{damage_kind, disable_kind, LogicHost, ObjInfo};
+use crate::damage::MeansOfDeath;
+use crate::host::{disable_kind, LogicHost, ObjInfo};
 use crate::impacts::Surface;
 use crate::math::Vec3;
 use crate::weapons::{Arsenal, Effect, Specialty, WeaponDef};
@@ -145,13 +147,15 @@ impl LogicHost for Guarded<'_> {
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3) {
         self.host.fire_fx(shooter, fx_weapon, target, pos)
     }
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool {
-        let flak = kind == damage_kind::EXPLOSION && self.def.effect == Effect::Explode && victim != shooter && self.stuck_to != Some(victim);
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: MeansOfDeath) -> bool {
+        let flak = how.is_explosive_damage() && self.def.effect == Effect::Explode && victim != shooter && self.stuck_to != Some(victim);
         let scale = if flak { self.guard(victim).map_or(1.0, |g| g.blast) } else { 1.0 };
-        if kind == damage_kind::EXPLOSION && self.first_person(victim) {
+        // `_shellshock.gsc:19`: the explosive causes shake him (a rocket's direct hit too, not an
+        // impact).
+        if how.shellshocks() && self.first_person(victim) {
             self.hit(victim, ShockHitKind::Damage(amount * scale / crate::units::BO2_TO_ZH_DAMAGE));
         }
-        self.host.damage(shooter, victim, amount * scale, kind)
+        self.host.damage(shooter, victim, amount * scale, how)
     }
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)
@@ -226,14 +230,19 @@ mod tests {
         let guards = [Guard { general: 2, blast: flak, stun: 1.0, first_person: false, flash_protected: false }, Guard { general: 3, blast: 1.0, stun: 1.0, first_person: false, flash_protected: false }];
         let frag = def(Effect::Explode);
         let g = |def: &'static WeaponDef, stuck_to: Option<u32>| Guarded { host: &host, guards: &guards, def, stuck_to, thrown: true, owner: 1, at: None, hits: &hits };
-        g(frag, None).damage(1, 2, 100.0, damage_kind::EXPLOSION);
-        g(frag, None).damage(1, 3, 100.0, damage_kind::EXPLOSION);
-        g(frag, None).damage(2, 2, 100.0, damage_kind::EXPLOSION);
-        g(frag, Some(2)).damage(1, 2, 100.0, damage_kind::EXPLOSION);
-        g(def(Effect::Stun), None).damage(1, 2, 100.0, damage_kind::EXPLOSION);
-        g(frag, None).damage(1, 2, 100.0, damage_kind::SMALL_ARMS);
+        use MeansOfDeath::*;
+        g(frag, None).damage(1, 2, 100.0, GrenadeSplash);
+        g(frag, None).damage(1, 3, 100.0, GrenadeSplash);
+        g(frag, None).damage(2, 2, 100.0, GrenadeSplash);
+        g(frag, Some(2)).damage(1, 2, 100.0, GrenadeSplash);
+        g(def(Effect::Stun), None).damage(1, 2, 100.0, GrenadeSplash);
+        g(frag, None).damage(1, 2, 100.0, RifleBullet);
+        // A rocket's direct hit and a grenade's strike are not `isexplosivedamage`; its splash is.
+        g(frag, None).damage(1, 2, 100.0, Projectile);
+        g(frag, None).damage(1, 2, 100.0, Impact);
+        g(frag, None).damage(1, 2, 100.0, ProjectileSplash);
         let log: Vec<f32> = host.damage_log.borrow().iter().map(|d| d.2).collect();
-        assert_eq!(log, [100.0 * flak, 100.0, 100.0, 100.0, 100.0, 100.0]);
+        assert_eq!(log, [100.0 * flak, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0 * flak]);
     }
 
     /// Tactical Mask cuts a thrown concussion's stun to x0.1 whoever threw it
@@ -263,7 +272,7 @@ mod tests {
             host.add(crate::host::ObjInfo { pos: crate::math::Vec3::new(dist, 0.0, 0.0), ..general(1, 0) });
             let guards = [Guard { general: 1, blast: 1.0, stun: if mask { t.stun_protection_scale } else { 1.0 }, first_person: false, flash_protected: false }];
             let g = Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits };
-            crate::projectiles::blast(&g, conc, 1, crate::math::Vec3::ZERO, None, 1.0, 1.0, &[]);
+            crate::projectiles::blast(&g, conc, 1, crate::math::Vec3::ZERO, crate::projectiles::Hit::NONE, 1.0, 1.0, &[]);
             let secs: Vec<f32> = host.disabled.borrow().iter().filter(|d| d.0 == 1).map(|d| d.2).collect();
             secs
         };

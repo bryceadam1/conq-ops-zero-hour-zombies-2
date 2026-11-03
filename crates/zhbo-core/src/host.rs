@@ -4,6 +4,7 @@
 //!
 //! Keep this file in sync with `host/zhbo/zhbo_core.h`.
 
+use crate::damage::MeansOfDeath;
 use crate::math::Vec3;
 use std::ffi::{c_char, CString};
 
@@ -30,7 +31,9 @@ pub mod objflags {
     pub const FIRING: u32 = 1 << 12;
 }
 
-/// How damage is dealt (Zero Hour damage types decide what armour applies).
+/// The ABI's damage kinds that the shield hook reports back (`zhbo_logic_shield_damage`): the first
+/// three of [`crate::damage::ZH_DAMAGE_TYPES`], which `LogicApi.damage` carries for every Zero Hour
+/// damage type (the core's own hits name their BO2 means of death, [`LogicHost::damage`]).
 pub mod damage_kind {
     pub const SMALL_ARMS: i32 = 0;
     pub const MELEE: i32 = 1;
@@ -126,8 +129,10 @@ pub trait LogicHost {
     fn set_controlled(&self, id: u32, controlled: bool);
     /// Play a Zero Hour weapon's fire FX/sound from `shooter` toward `target`/`pos` without damage.
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3);
-    /// Deal damage (a [`damage_kind`]) as `shooter`. Returns true if the victim died from it.
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool;
+    /// Deal damage as `shooter` by BO2's means of death `how`: the engine takes it as the Zero
+    /// Hour damage type the tuning pack's `[MeansOfDeath]` table names for it
+    /// ([`crate::damage`]), so its armour applies. Returns true if the victim died from it.
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: MeansOfDeath) -> bool;
     fn heal(&self, id: u32, amount: f32);
     /// Create a Zero Hour object (a projectile's model) owned by `owner`'s player; 0 if it can't.
     fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32;
@@ -360,7 +365,8 @@ impl LogicHost for CLogicHost {
         }
     }
 
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool {
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: MeansOfDeath) -> bool {
+        let kind = crate::tuning::get().means_of_death.code(how);
         self.0.damage.is_some_and(|f| f(shooter, victim, amount, kind) != 0)
     }
 

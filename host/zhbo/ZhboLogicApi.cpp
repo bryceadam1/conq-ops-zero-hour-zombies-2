@@ -334,14 +334,58 @@ void cbFireFx(uint32_t shooter, const char *fxWeapon_, uint32_t target, const Zh
 	(void)target;
 }
 
+// ZHBO_DAMAGE_* (zhbo_core.h) to Zero Hour's DamageType, code by code.
+static const DamageType s_zhboDamageTypes[] = {
+	DAMAGE_SMALL_ARMS /* ZHBO_DAMAGE_SMALL_ARMS */,
+	DAMAGE_MELEE /* ZHBO_DAMAGE_MELEE */,
+	DAMAGE_EXPLOSION /* ZHBO_DAMAGE_EXPLOSION */,
+	DAMAGE_CRUSH /* ZHBO_DAMAGE_CRUSH */,
+	DAMAGE_ARMOR_PIERCING /* ZHBO_DAMAGE_ARMOR_PIERCING */,
+	DAMAGE_GATTLING /* ZHBO_DAMAGE_GATTLING */,
+	DAMAGE_RADIATION /* ZHBO_DAMAGE_RADIATION */,
+	DAMAGE_FLAME /* ZHBO_DAMAGE_FLAME */,
+	DAMAGE_LASER /* ZHBO_DAMAGE_LASER */,
+	DAMAGE_SNIPER /* ZHBO_DAMAGE_SNIPER */,
+	DAMAGE_POISON /* ZHBO_DAMAGE_POISON */,
+	DAMAGE_HEALING /* ZHBO_DAMAGE_HEALING */,
+	DAMAGE_UNRESISTABLE /* ZHBO_DAMAGE_UNRESISTABLE */,
+	DAMAGE_WATER /* ZHBO_DAMAGE_WATER */,
+	DAMAGE_DEPLOY /* ZHBO_DAMAGE_DEPLOY */,
+	DAMAGE_SURRENDER /* ZHBO_DAMAGE_SURRENDER */,
+	DAMAGE_HACK /* ZHBO_DAMAGE_HACK */,
+	DAMAGE_KILLPILOT /* ZHBO_DAMAGE_KILL_PILOT */,
+	DAMAGE_PENALTY /* ZHBO_DAMAGE_PENALTY */,
+	DAMAGE_FALLING /* ZHBO_DAMAGE_FALLING */,
+	DAMAGE_DISARM /* ZHBO_DAMAGE_DISARM */,
+	DAMAGE_HAZARD_CLEANUP /* ZHBO_DAMAGE_HAZARD_CLEANUP */,
+	DAMAGE_PARTICLE_BEAM /* ZHBO_DAMAGE_PARTICLE_BEAM */,
+	DAMAGE_TOPPLING /* ZHBO_DAMAGE_TOPPLING */,
+	DAMAGE_INFANTRY_MISSILE /* ZHBO_DAMAGE_INFANTRY_MISSILE */,
+	DAMAGE_AURORA_BOMB /* ZHBO_DAMAGE_AURORA_BOMB */,
+	DAMAGE_LAND_MINE /* ZHBO_DAMAGE_LAND_MINE */,
+	DAMAGE_JET_MISSILES /* ZHBO_DAMAGE_JET_MISSILES */,
+	DAMAGE_STEALTHJET_MISSILES /* ZHBO_DAMAGE_STEALTHJET_MISSILES */,
+	DAMAGE_MOLOTOV_COCKTAIL /* ZHBO_DAMAGE_MOLOTOV_COCKTAIL */,
+	DAMAGE_COMANCHE_VULCAN /* ZHBO_DAMAGE_COMANCHE_VULCAN */,
+	DAMAGE_SUBDUAL_MISSILE /* ZHBO_DAMAGE_SUBDUAL_MISSILE */,
+	DAMAGE_SUBDUAL_VEHICLE /* ZHBO_DAMAGE_SUBDUAL_VEHICLE */,
+	DAMAGE_SUBDUAL_BUILDING /* ZHBO_DAMAGE_SUBDUAL_BUILDING */,
+	DAMAGE_SUBDUAL_UNRESISTABLE /* ZHBO_DAMAGE_SUBDUAL_UNRESISTABLE */,
+	DAMAGE_MICROWAVE /* ZHBO_DAMAGE_MICROWAVE */,
+	DAMAGE_KILL_GARRISONED /* ZHBO_DAMAGE_KILL_GARRISONED */,
+	DAMAGE_STATUS /* ZHBO_DAMAGE_STATUS */,
+};
+static_assert(sizeof(s_zhboDamageTypes) / sizeof(s_zhboDamageTypes[0]) == ZHBO_DAMAGE_COUNT, "one DamageType per ZHBO_DAMAGE_* code");
+
 int32_t cbDamage(uint32_t shooter, uint32_t victimId, float amount, int32_t kind)
 {
 	Object *victim = TheGameLogic->findObjectByID((ObjectID)victimId);
 	if (!victim || victim->isEffectivelyDead())
 		return 0;
 	DamageInfo info;
-	// Zero Hour's armour decides what each kind can hurt (explosions hurt vehicles, bullets barely).
-	info.in.m_damageType = kind == ZHBO_DAMAGE_MELEE ? DAMAGE_MELEE : kind == ZHBO_DAMAGE_EXPLOSION ? DAMAGE_EXPLOSION : DAMAGE_SMALL_ARMS;
+	// Zero Hour's armour decides what each kind can hurt (explosions hurt vehicles, bullets barely):
+	// the core sends the kind its [MeansOfDeath] table names for the hit's BO2 means of death.
+	info.in.m_damageType = kind >= 0 && kind < ZHBO_DAMAGE_COUNT ? s_zhboDamageTypes[kind] : DAMAGE_SMALL_ARMS;
 	info.in.m_deathType = DEATH_NORMAL;
 	info.in.m_sourceID = (ObjectID)shooter;
 	if (const Object *src = TheGameLogic->findObjectByID((ObjectID)shooter))

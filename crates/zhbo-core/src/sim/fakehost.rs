@@ -24,6 +24,8 @@ pub struct FakeHost {
     pub controlled: RefCell<Vec<u32>>,
     pub fx: RefCell<Vec<(u32, String, u32)>>,
     pub damage_log: RefCell<Vec<(u32, u32, f32)>>,
+    /// Each damage's victim and BO2 means of death, in [`FakeHost::damage_log`]'s order.
+    pub damage_how: RefCell<Vec<(u32, crate::damage::MeansOfDeath)>>,
     pub disabled: RefCell<Vec<(u32, i32, f32)>>,
     pub spawned: RefCell<Vec<(u32, String)>>,
     pub destroyed: RefCell<Vec<u32>>,
@@ -104,8 +106,9 @@ impl LogicHost for FakeHost {
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, _pos: Vec3) {
         self.fx.borrow_mut().push((shooter, fx_weapon.to_string(), target));
     }
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, _kind: i32) -> bool {
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: crate::damage::MeansOfDeath) -> bool {
         self.damage_log.borrow_mut().push((shooter, victim, amount));
+        self.damage_how.borrow_mut().push((victim, how));
         let mut objs = self.objects.borrow_mut();
         let v = objs.iter_mut().find(|o| o.id == victim).unwrap();
         v.health -= amount;

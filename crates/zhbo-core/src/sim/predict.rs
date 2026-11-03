@@ -79,7 +79,7 @@ impl LogicHost for Sandbox<'_> {
     fn set_controlled(&self, _id: u32, _controlled: bool) {}
     fn fire_fx(&self, _shooter: u32, _fx_weapon: &str, _target: u32, _pos: Vec3) {}
     /// Nobody is hurt by a prediction (and so it never knows of a kill: the sim's hit marker says so).
-    fn damage(&self, _shooter: u32, _victim: u32, _amount: f32, _kind: i32) -> bool {
+    fn damage(&self, _shooter: u32, _victim: u32, _amount: f32, _how: crate::damage::MeansOfDeath) -> bool {
         false
     }
     fn heal(&self, id: u32, amount: f32) {

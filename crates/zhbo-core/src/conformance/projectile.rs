@@ -98,7 +98,7 @@ impl LogicHost for Range {
     fn set_pose(&self, _id: u32, _pos: Vec3, _yaw: f32, _moving: bool) {}
     fn set_controlled(&self, _id: u32, _controlled: bool) {}
     fn fire_fx(&self, _shooter: u32, _fx_weapon: &str, _target: u32, _pos: Vec3) {}
-    fn damage(&self, _shooter: u32, victim: u32, amount: f32, _kind: i32) -> bool {
+    fn damage(&self, _shooter: u32, victim: u32, amount: f32, _how: crate::damage::MeansOfDeath) -> bool {
         self.hits.borrow_mut().push((self.frame.get(), victim, amount));
         let mut objs = self.objects.borrow_mut();
         let Some(v) = objs.iter_mut().find(|o| o.id == victim) else { return false };

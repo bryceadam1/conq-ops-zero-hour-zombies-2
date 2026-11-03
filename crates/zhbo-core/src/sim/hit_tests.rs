@@ -52,7 +52,95 @@ fn shoot(boxes: &[HitBox], others: &[(u32, f32)], aim: (f32, f32), tune: impl Fn
     host.damage_log.borrow_mut().clear();
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 1);
     let log = host.damage_log.borrow().iter().map(|d| (d.1, d.2)).collect();
+    LAST_HOW.with(|h| *h.borrow_mut() = host.damage_how.borrow().clone());
     log
+}
+
+thread_local! {
+    /// The means of death of [`shoot`]'s last round's hits, in order.
+    static LAST_HOW: std::cell::RefCell<Vec<(u32, crate::damage::MeansOfDeath)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn last_how() -> Vec<crate::damage::MeansOfDeath> {
+    LAST_HOW.with(|h| h.borrow().iter().map(|x| x.1).collect())
+}
+
+/// BO2's means of death for a round (`FUN_005cfc60`, `_globallogic_player.gsc:802`): a rifle's
+/// `MOD_RIFLE_BULLET`, a pistol's `MOD_PISTOL_BULLET`, a soldier's head `MOD_HEAD_SHOT`; all three
+/// reach Zero Hour's armour as small arms (the tuning pack's `[MeansOfDeath]`).
+#[test]
+fn a_round_carries_bo2s_means_of_death() {
+    use crate::damage::MeansOfDeath::*;
+    let boxes = [hit_box(hitloc::HEAD, 62.0, [4.0, 4.0, 5.0]), hit_box(hitloc::TORSO_MID, 40.0, [5.0, 8.0, 15.0])];
+    let rifle = |_: &mut crate::weapons::WeaponDef| {};
+    let pistol = |d: &mut crate::weapons::WeaponDef| d.weap_class = crate::weapons::WeapClass::Pistol;
+    assert_eq!(shoot(&boxes, &[(2, 60.0)], (60.0, 62.0), rifle).len(), 1);
+    assert_eq!(last_how(), [HeadShot]);
+    shoot(&boxes, &[(2, 60.0)], (60.0, 40.0), rifle);
+    assert_eq!(last_how(), [RifleBullet]);
+    shoot(&boxes, &[(2, 60.0)], (60.0, 40.0), pistol);
+    assert_eq!(last_how(), [PistolBullet]);
+    let table = crate::tuning::get().means_of_death;
+    for m in [HeadShot, RifleBullet, PistolBullet] {
+        assert_eq!(table.zh_name(m), "SMALL_ARMS");
+    }
+}
+
+/// A round into a Zero Hour vehicle: a rifle bullet whatever it strikes (no head, no location
+/// multiplier), the full curve's damage under BO2's vehicle rule (`vehicledamagescalar`).
+#[test]
+fn a_round_into_a_vehicle_is_a_rifle_bullet_at_full_damage() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.add(ObjInfo { id: 2, owner_player: 1, flags: objflags::VEHICLE, geom_type: geom::BOX, major_radius: 26.0, minor_radius: 13.0, height: 15.0, health: 5000.0, max_health: 5000.0, pos: Vec3::new(60.0, 0.0, 0.0), ..Default::default() });
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    wait_until_ready(&mut sim, &host);
+    let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+    let mut def = w.def.clone();
+    def.damage = [40.0; 6];
+    def.damage_range = [0.0; 6];
+    def.pellets = 1;
+    def.location_multipliers = [3.0; crate::hitloc::COUNT];
+    def.specialties = crate::weapons::Specialties::default();
+    let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+    (w.def, w.main) = (def, def);
+    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, ..Default::default() }, 20);
+    host.damage_log.borrow_mut().clear();
+    host.damage_how.borrow_mut().clear();
+    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, ..Default::default() }, 1);
+    let log: Vec<(u32, f32)> = host.damage_log.borrow().iter().map(|d| (d.1, d.2)).collect();
+    assert_eq!(log, [(2, 40.0 * crate::units::BO2_TO_ZH_DAMAGE)], "no location multiplier on a vehicle");
+    assert_eq!(host.damage_how.borrow().as_slice(), [(2, crate::damage::MeansOfDeath::RifleBullet)]);
+}
+
+/// A knife reaches a vehicle's side, not a circle of its length (BO2's melee trace meets the
+/// entity's bounds): beside a tank turned side-on, the blow lands on its side when the side is in
+/// reach, by `MOD_MELEE`, and not when the side is a unit past it (its centre is then well inside
+/// the reach plus its length, which used to strike).
+#[test]
+fn a_knife_reaches_a_vehicles_box() {
+    let knife_at = |pos: Vec3, yaw: f32| {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(ObjInfo { id: 2, owner_player: 1, flags: objflags::VEHICLE, geom_type: geom::BOX, major_radius: 26.0, minor_radius: 13.0, height: 15.0, yaw, health: 5000.0, max_health: 5000.0, pos, ..Default::default() });
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 20);
+        let how = host.damage_how.borrow().clone();
+        how
+    };
+    let reach = super::MELEE_RANGE;
+    // Side-on (its long axis across the knife): the side half a unit inside the reach.
+    let side = knife_at(Vec3::new(13.0 + reach - 0.5, 0.0, 0.0), std::f32::consts::FRAC_PI_2);
+    assert_eq!(side, [(2, crate::damage::MeansOfDeath::Melee)]);
+    // Its side a unit past the reach.
+    let past = knife_at(Vec3::new(13.0 + reach + 1.0, 0.0, 0.0), std::f32::consts::FRAC_PI_2);
+    assert!(13.0 + reach + 1.0 < reach + 26.0 && past.is_empty(), "{past:?}");
 }
 
 /// BO2's player damage (`FUN_005f05c0`): the weapon's multiplier for the location the trace
