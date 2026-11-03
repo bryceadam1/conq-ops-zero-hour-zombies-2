@@ -11025,3 +11025,100 @@ lines are in `ConquerOps_Instance02.log`.
 * Headless replay checks: the autopilot recording and the real-input recording both pass (above).
 * Logs: no error, desync or mismatch lines in any leg's `ConquerOps.log`, the MP logs or
   `zhbo-gfx.log`, once the remote-shot fix was in. There is no PullPin error any more.
+
+## Explosions reach Zero Hour's objects by BO2's radius damage, and hit vehicles by BO2's vehicle rule (2026-11-03, branch `v1/splash-damage`)
+
+**Report.** "If I fire the SMAW into a group of tanks, only the one that actually got hit takes
+damage." Reproduced in game with a new scene (`scripts/autotest-mac.sh --splash`,
+`ZHBO_AUTOPILOT=splash`: an enemy Overlord ahead, a Crusader either side with 10 units between the
+hulls, one behind, two rebels in front of its flanks, all held still; one SMAW level into the
+Overlord, then a frag; the bridge logs every health change). Before: the Overlord took 1100 (all of
+it: dead), each Crusader beside it 151 of 480, the rebels died. The splash did reach the
+neighbours, but next to a one-shot kill it read as nothing.
+
+**Causes, all of them.**
+* **The direct hit ignored BO2's vehicle rule.** A missile's strike dealt its `iDamage` × 1.5 to
+  whatever it struck: the SMAW's 1000 (there to kill any player outright) became 1500 on any
+  vehicle or structure. BO2 scales a direct hit on a vehicle by `getvehicleprojectilescalar`
+  (`_globallogic_vehicle.gsc:306-321`, applied to `MOD_PROJECTILE`/`MOD_GRENADE` in
+  `callback_vehicledamage`): 0.2 for the SMAW and FHJ-18, 1 for everything else; its turrets take
+  the same flat 200 (`_turret_killstreak.gsc:903-904`); radius damage on a vehicle is unscaled for
+  every player weapon (`getvehicleprojectilesplashscalar`). So in BO2 the struck vehicle and its
+  neighbours take comparable damage (200 vs up to 150): the blast is the point.
+* **The engine query was centre-to-centre.** `cbQuery` used `FROM_CENTER_3D` with the blast radius
+  plus 12 units: an object whose hull was in the blast but whose centre was not (an Overlord, half
+  length 26; any large structure) was never listed, so it took nothing, even when struck (a
+  structure whose centre is more than 49.5 units behind the wall a SMAW strikes; read from the
+  code, not run in game) — and a projectile flew into big objects before its segment query found
+  them. Zero Hour's own radius damage uses `FROM_BOUNDINGSPHERE_3D`
+  (`Weapon.cpp` `DAMAGE_RANGE_CALC_TYPE`).
+* **The distance was centre minus the major radius** (infantry: to the middle). BO2's radius damage
+  measures each entity to its bounds (t6mp `FUN_005f2130` → `FUN_005f1fd0`: the blast point
+  clamped to `absmin`/`absmax` per axis; decompiled and disassembled this round). The old measure
+  overrated a box's side (a Crusader 10 units off a hull counted as touching it) and underrated
+  infantry (a soldier at 95 % of the radius took 0 instead of BO2's outer damage).
+* **A grenade struck a hull on frame after frame.** In the after-run the frag struck the Overlord
+  on six frames running (15 × 1.5 × `TankArmor` SMALL_ARMS 25 % each): touching the ground cleared
+  `Projectile::last_struck`, so a grenade skipping along a hull struck it again every step.
+* A concussion's stun time ran over the distance to the soldier's middle; BO2's runs over
+  `distance(self.origin, einflictor.origin)` (`_weapons.gsc:1366`), his feet.
+
+**Fix.**
+* `cbQuery` returns every object whose bounding sphere comes within the radius
+  (`FROM_BOUNDINGSPHERE_3D`); the contract is documented on `LogicHost::query` and in CONTRACT.md.
+  `ObjInfo::bounding_sphere`/`in_query` mirror Zero Hour's `GeometryInfo` for the test hosts
+  (`FakeHost`, the conformance ranges), so the tests see what the engine returns. The callers whose
+  reach is an origin distance keep it explicitly (`ObjInfo::origin_within`: the Trophy System, the
+  Black Hat, the sonar and the target finder); the rest already measured their own.
+* `hitscan::solid` (the no-hit-box half of `target_from`) and `hitscan::distance_to` (per shape,
+  `hitloc::Body::distance` for the boxes); `projectiles::blast_distance` measures a blast to the
+  solid. `blast` queries the radius itself (no slack) and always includes what it struck.
+* `projectiles::impact_damage`: a soldier (a General or Zero Hour infantry, BO2's player) takes the
+  whole `iDamage`; anything else `iDamage` × `Tuning::vehicle_projectile_scale(weapon)`, the
+  tuning pack's `getvehicleprojectilescalar.<weapon>` keys (smaw_mp, fhj18_mp = 0.2; a weapon not
+  listed is 1). Used by the blast's direct hit, the strike, the dud and the bolt.
+* `Projectile::hit_object` reports whether the move still meets the object last struck; the
+  projectile forgets it only once it does not (the ground no longer clears it).
+* Stun time over the origin distance; the radius reach over the solid distance.
+
+**How BO2's damage maps onto Zero Hour's armour (decided, CONTRACT.md "Damage").** One factor for
+everything, `BO2_TO_ZH_DAMAGE` 1.5 (BO2's 100-health player ↔ a 180-health Ranger), then Zero
+Hour's armour by kind: blasts are `EXPLOSION`, which tanks, trucks, structures and infantry take at
+100 % and aircraft at 100–130 %. Vehicles get BO2's vehicle rules, not a separate scale: BO2 sizes
+its vehicles in hits (the AGR dies to 800 with explosives × 1.5: three SMAWs), and Zero Hour's
+health pools already land in the same place (a Crusader, 480, dies to two). After: SMAW into the
+group — the Overlord 300 (800 of 1100 left), each Crusader beside it 136 (BO2's falloff at the
+28-unit corner distance), the rebels dead; then the frag's blast against the Overlord's nose: the
+Overlord 300, each Crusader 179. Two rockets wreck a Crusader group; a lone SMAW no longer deletes
+an Overlord and leaves its escort untouched.
+
+**Tests.** `conformance::splash` sweeps every explosive (launchers, launcher grenades, thrown
+grenades, the crossbow's bolt grenade, C4, Claymore, Bouncing Betty, the stuns) against six object
+classes (infantry, a General, Humvee- and Overlord-sized vehicles, a hovering aircraft, a
+War Factory-sized structure), off the end and off the side at 0/25/50/75/95 % of the radius and at
+105 %: BO2's falloff over the solid distance, nothing past the radius, BO2's concussion time; for
+an impact fuse a direct hit in a tight group (the struck one its strike by the vehicle rule and no
+radius damage, the one behind it the blast at its hull). Run against the old measure it fails
+for every class. The install test `every_explosive_hurts_zero_hour_objects_by_bo2s_radius_damage` runs it over
+the 36 converted explosives. `conformance::projectile`'s ground-blast expectation is now the
+distance to the soldier's bounds (BO2's `FUN_005f1fd0`), not his middle.
+`projectiles::tests::a_grenade_against_a_hull_strikes_it_once` (fails on the old ground clear with
+four strikes). The in-game `--splash` leg checks the Overlord took exactly 300 and that a Crusader
+beside it and a rebel took the blast.
+
+**Gotchas.** Zero Hour's `PartitionManager` bounding-sphere distance subtracts both radii and puts
+a box's or cylinder's sphere half its height up (a sphere's at its position); `GeometryInfo`'s box
+sphere is the half diagonal including half the height. The worktree has no engine submodule, but
+`cargo xtask build` clones the engine itself (`ZHBO_WORK_DIR=<worktree>/target/zhbo-work`,
+`--dist <worktree>/target/dist`); the glue is copied at the start of the build, so a source edit
+during the build's Rust phase can land in it.
+
+**Verified.** `cargo test --workspace`: 1,093 passed, 0 failed; `cargo clippy --workspace
+--all-targets` clean. Real-install suite (`-p zhbo-assets -- --ignored --skip conformance`): 69
+passed, including the full-roster lockstep gate and the new explosive sweep (36 explosives).
+Conformance byte-identical to integration7 (weapons 1,979 cells / 11 clusters, cac 0 cells and 4
+BO2-only rows, 12 gap clusters). In game (`cargo xtask build` into the worktree): `--splash` 4/4
+(numbers above; the frag struck the Overlord once), the default autopilot 16/16, `--mp` 19/23 with
+the state hash agreeing on every common frame and no CRC mismatch. The four `--mp` failures (the
+target is not killed in the first fight, so no respawn) are the same on main 3cd2a0a built in this
+worktree (19/23, the same four) and on `v1/smoke-screen`: not this change.

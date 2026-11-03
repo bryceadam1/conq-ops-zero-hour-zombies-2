@@ -907,6 +907,33 @@ mod tests {
         assert!(fails.is_empty(), "{fails:#?}");
     }
 
+    /// Every explosive the install converts to (launchers, launcher grenades, thrown grenades, the
+    /// crossbow's bolt grenade, placed charges and mines, the stuns) against every class of Zero
+    /// Hour object, at several distances from its solid: BO2's radius damage (falloff over the
+    /// distance to the bounds) and, for an impact fuse, the struck one's strike by BO2's vehicle
+    /// rule while its neighbour takes the blast (`zhbo_core::conformance::splash`).
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_explosive_hurts_zero_hour_objects_by_bo2s_radius_damage() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, .. } = mp;
+        let names = crate::weapons::names(&bo2_dir);
+        let roster = crate::weapons::Roster::read(&patch);
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &roster);
+        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
+        let defs: &'static [zhbo_core::weapons::WeaponDef] = Box::leak(table.weapons.into_boxed_slice());
+        let swept: Vec<&zhbo_core::weapons::WeaponDef> = defs.iter().filter(|d| zhbo_core::conformance::splash::is_explosive(d)).collect();
+        let fails: Vec<String> = swept.iter().flat_map(|d| zhbo_core::conformance::splash::check(d)).collect();
+        let ids: Vec<&str> = swept.iter().map(|d| d.id.as_str()).collect();
+        println!("{} explosives swept: {}", ids.len(), ids.join(" "));
+        for id in ["smaw_mp", "usrpg_mp", "fhj18_mp", "gl_an94_mp", "frag_grenade_mp", "sticky_grenade_mp", "satchel_charge_mp", "claymore_mp", "bouncingbetty_mp", "explosive_bolt_mp", "concussion_grenade_mp", "proximity_grenade_mp"] {
+            assert!(ids.contains(&id), "{id} is swept");
+        }
+        assert!(fails.is_empty(), "{fails:#?}");
+    }
+
     /// Every attachment BO2 offers on every weapon: the weapon with it (and its alt mode) plays by
     /// the attachment's numbers, and its viewmodel with the attachment's model converts.
     #[test]

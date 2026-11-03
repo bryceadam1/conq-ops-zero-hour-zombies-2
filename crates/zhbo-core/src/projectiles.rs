@@ -75,8 +75,9 @@ pub struct Projectile {
     /// Struck an enemy for its impact damage this step and flew on (stuck or bounced): whether
     /// that killed (the client's hit marker). Cleared every step.
     pub struck: Option<bool>,
-    /// The object it last struck and bounced off: not struck again until it strikes something
-    /// else (a bounce leaves it inside the object's cylinder for a step).
+    /// The object it last struck and bounced off: not struck again while its path still meets it
+    /// (a bounce leaves it inside the object's cylinder, and a grenade that drops against the hull
+    /// rolls along it a few steps; a frag once struck an Overlord on six frames running).
     pub last_struck: Option<u32>,
     /// Gravity and bounce, from the tuning pack at launch.
     pub flight: Flight,
@@ -180,7 +181,11 @@ impl Projectile {
                 }
             }
             // Objects along the way (never its thrower, as BO2's missile skips its owner).
-            if let Some((o, t)) = self.hit_object(host, self.pos, next) {
+            let (hit, still_touching) = self.hit_object(host, self.pos, next);
+            if !still_touching {
+                self.last_struck = None;
+            }
+            if let Some((o, t)) = hit {
                 // Where along this move it met him, not the move's end (a bolt covers 25 units
                 // a step).
                 let at = self.pos + (next - self.pos) * t;
@@ -215,7 +220,6 @@ impl Projectile {
             let ground = host.ground_height(next.x, next.y);
             if next.z <= ground {
                 self.pos = Vec3::new(next.x, next.y, ground);
-                self.last_struck = None;
                 if spawns {
                     return Some(self.spawn(host, None));
                 }
@@ -255,14 +259,16 @@ impl Projectile {
         None
     }
 
-    /// The first object the move `from`→`to` meets, and how far along the move (0..1) it does.
-    fn hit_object(&self, host: &dyn LogicHost, from: Vec3, to: Vec3) -> Option<(ObjInfo, f32)> {
+    /// The first object the move `from`→`to` meets, and how far along the move (0..1) it does
+    /// (never [`Self::last_struck`]); and whether the move still meets the last one struck.
+    fn hit_object(&self, host: &dyn LogicHost, from: Vec3, to: Vec3) -> (Option<(ObjInfo, f32)>, bool) {
         let mid = (from + to) * 0.5;
         let reach = (to - from).length() * 0.5 + HIT_RADIUS + 12.0;
         let mut objs = Vec::new();
         host.query(mid, reach, self.owner, &mut objs);
-        objs.into_iter()
-            .filter(|o| o.id != self.owner && o.id != self.object && Some(o.id) != self.last_struck && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
+        let met: Vec<(ObjInfo, f32)> = objs
+            .into_iter()
+            .filter(|o| o.id != self.owner && o.id != self.object && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
             .filter_map(|o| {
                 // Closest approach of the segment to the object's axis, within its radius and height.
                 let r = if o.has(objflags::INFANTRY) { 1.5 } else { o.major_radius } + HIT_RADIUS * 0.5;
@@ -273,14 +279,17 @@ impl Projectile {
                 let (dx, dy) = (p.x - o.pos.x, p.y - o.pos.y);
                 (dx * dx + dy * dy <= r * r && p.z >= o.pos.z - 1.0 && p.z <= o.pos.z + o.height.max(2.0) + 1.0).then_some((o, t))
             })
-            // The nearest along the move (ties by id, deterministic).
-            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.id.cmp(&b.0.id)))
+            .collect();
+        let touching = met.iter().any(|(o, _)| Some(o.id) == self.last_struck);
+        // The nearest along the move (ties by id, deterministic).
+        let first = met.into_iter().filter(|(o, _)| Some(o.id) != self.last_struck).min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.id.cmp(&b.0.id)));
+        (first, touching)
     }
 
     /// The impact damage (`iDamage`) of a strike on `o` that does not end the flight; notes the
     /// hit for the client ([`Self::struck`]).
     fn strike(&mut self, host: &dyn LogicHost, o: &ObjInfo) {
-        let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
+        let amount = impact_damage(self.def, o);
         if amount > 0.0 {
             self.struck = Some(host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS));
         }
@@ -293,7 +302,7 @@ impl Projectile {
         self.remove_object(host);
         let (mut hit_enemy, mut kill) = (false, false);
         if let Some(o) = &direct {
-            let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
+            let amount = impact_damage(self.def, o);
             if amount > 0.0 {
                 kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
                 hit_enemy = true;
@@ -349,7 +358,7 @@ impl Projectile {
         }
         let (mut hit_enemy, mut kill) = (false, false);
         if let Some(o) = direct {
-            let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
+            let amount = impact_damage(self.def, &o);
             if amount > 0.0 {
                 kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
                 hit_enemy = true;
@@ -376,6 +385,25 @@ impl Projectile {
             self.object = 0;
         }
     }
+}
+
+/// What a missile's strike deals the object it struck (t6mp `FUN_00608c10`): the def's impact damage
+/// (`iDamage`), in Zero Hour's damage. A soldier (a General or Zero Hour infantry: BO2's players)
+/// takes all of it; anything else (a vehicle, an aircraft, a structure: BO2's vehicles and
+/// killstreak gear) takes BO2's `getvehicleprojectilescalar` share of it, from the tuning pack
+/// ([`crate::tuning::Tuning::vehicle_projectile_scale`]: a fifth for the SMAW and FHJ-18, whose
+/// 1000 is there to kill any player outright).
+pub fn impact_damage(def: &WeaponDef, o: &ObjInfo) -> f32 {
+    let scale = if o.has(objflags::INFANTRY) { 1.0 } else { crate::tuning::get().vehicle_projectile_scale(&def.id) };
+    def.damage[0] * scale * BO2_TO_ZH_DAMAGE
+}
+
+/// How far a blast at `at` is from `o`, for its damage: to the object's solid (its Zero Hour
+/// geometry; BO2's soldier-sized cylinder for infantry, [`crate::hitscan::solid`]), as BO2's radius
+/// damage measures each entity to its bounds (t6mp `FUN_005f1fd0`). A tank beside the one struck is
+/// as far as the gap between their hulls, not between their centres.
+pub fn blast_distance(o: &ObjInfo, at: Vec3) -> f32 {
+    crate::hitscan::distance_to(&crate::hitscan::solid(o), at)
 }
 
 /// What a blast did: whether it hit or killed an enemy, and the surface it went off on.
@@ -429,8 +457,15 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
             host.fx(fx, at);
         }
     }
+    // Everything whose solid the blast may reach: the host returns each object whose bounding
+    // sphere comes within the radius (docs/CONTRACT.md), so a structure or an Overlord whose centre
+    // is farther than the radius is still found; the reach is then measured to its solid. What
+    // was struck is always in it (it takes its strike even if the host would not list it).
     let mut objs = Vec::new();
-    host.query(at, d.explosion_radius.max(1.0) + 12.0, owner, &mut objs);
+    host.query(at, d.explosion_radius.max(1.0), owner, &mut objs);
+    if let Some(o) = direct.filter(|x| !objs.iter().any(|o| o.id == x.id)) {
+        objs.push(o);
+    }
     objs.sort_by_key(|o| o.id);
     let (mut hit_enemy, mut kill) = (false, false);
     for o in objs.iter().filter(|o| !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)) {
@@ -443,8 +478,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
         if shields.iter().any(|b| b.object != 0 && b.object == o.id) {
             continue;
         }
-        let centre = Vec3::new(o.pos.x, o.pos.y, o.pos.z + o.height * 0.5);
-        let dist = ((centre - at).length() - if o.has(objflags::INFANTRY) { 0.0 } else { o.major_radius }).max(0.0);
+        let dist = blast_distance(o, at);
         let direct_hit = direct.is_some_and(|x| x.id == o.id);
         if dist > d.explosion_radius && !direct_hit {
             continue;
@@ -455,7 +489,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 // What it struck takes the impact damage (`iDamage`) and is spared the radius: t6mp
                 // `FUN_00608c10` damages the struck entity first, then passes it to the radius
                 // damage (`FUN_005f2130`) as the one to skip.
-                let mut amount = if direct_hit { d.damage[0] } else { d.explosion_damage_at(dist) } * BO2_TO_ZH_DAMAGE;
+                let mut amount = if direct_hit { impact_damage(d, o) } else { d.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE };
                 if own {
                     amount *= self_blast_scale;
                 }
@@ -471,11 +505,12 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 }
             }
             Effect::Stun => {
-                // `time = 2 + 4 * scale`, scale 1 at the centre, 0 at the edge (`_weapons.gsc:1372`);
-                // the thrower's own scale runs over half the radius (`:1364-1365`).
+                // `time = 2 + 4 * scale`, scale 1 at the centre, 0 at the edge (`_weapons.gsc:1372`),
+                // over the distance from the blast to his origin (`:1366`, `self.origin`: his feet,
+                // not his bounds); the thrower's own scale runs over half the radius (`:1364-1365`).
                 let thrown = crate::equipment::Kind::of(d) == crate::equipment::Kind::Other;
                 let radius = d.explosion_radius.max(1.0) * if own { tuning.concussion_self_radius_scale } else { 1.0 };
-                let scale = 1.0 - (dist / radius).clamp(0.0, 1.0);
+                let scale = 1.0 - ((o.pos - at).length() / radius).clamp(0.0, 1.0);
                 let mut secs = tuning.concussion_time_min + tuning.concussion_time_scale * scale;
                 if own {
                     secs *= self_stun_scale;
@@ -527,6 +562,70 @@ mod tests {
     use super::*;
     use crate::sim::tests::{general, soldier, FakeHost};
     use crate::weapons::weapon;
+
+    /// A frag thrown into a tank's hull strikes it once (its `iDamage`), however long it lies
+    /// against the hull before its fuse: in game one struck an Overlord on six frames running,
+    /// because touching the ground forgot which object it had bounced off.
+    #[test]
+    fn a_grenade_against_a_hull_strikes_it_once() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let tank = crate::host::ObjInfo {
+            id: 5,
+            owner_player: 1,
+            flags: objflags::VEHICLE,
+            geom_type: crate::host::geom::BOX,
+            major_radius: 26.0,
+            minor_radius: 13.0,
+            height: 15.0,
+            health: 1100.0,
+            max_health: 1100.0,
+            pos: Vec3::new(50.0, 0.0, 0.0),
+            ..Default::default()
+        };
+        host.add(tank);
+        let mut damage = [0.0; 6];
+        damage[0] = 15.0;
+        let frag: &'static WeaponDef = Box::leak(Box::new(WeaponDef { damage, ..weapon("frag_grenade_mp").clone() }));
+        // Thrown as the General throws (the def's speed), at pitches from level to a lob, at the
+        // hull from 60 to 120 units off.
+        for i in 0..=8 {
+            for d in [60.0, 84.0, 120.0] {
+                host.damage_log.borrow_mut().clear();
+                host.objects.borrow_mut()[1].pos.x = d + 26.0;
+                let pitch = -0.1 + 0.1 * i as f32;
+                let mut p = Projectile::launch(frag, 1, Vec3::new(0.0, 0.0, 11.0), Vec3::new(pitch.cos(), 0.0, pitch.sin()), frag.fuse_time, &host, 0.0);
+                let mut steps = 0;
+                while p.step(&host).is_none() {
+                    steps += 1;
+                    assert!(steps < 600);
+                }
+                let strikes = host.damage_log.borrow().iter().filter(|h| h.1 == 5 && (h.2 - 15.0 * BO2_TO_ZH_DAMAGE).abs() < 1e-3).count();
+                assert!(strikes <= 1, "thrown at pitch {pitch} from {d}: {:?}", host.damage_log.borrow());
+            }
+        }
+        // Dropping in close to the hull, low and slow (a frag that landed short and skips on).
+        host.objects.borrow_mut()[1].pos.x = 50.0;
+        let mut struck = 0;
+        for start in [16.0, 19.0, 21.0, 22.0] {
+            for z in [0.5, 1.5, 3.0] {
+                for speed in [20.0, 40.0, 80.0, 160.0] {
+                    host.damage_log.borrow_mut().clear();
+                    let mut p = Projectile::launch(frag, 1, Vec3::new(start, 0.0, z), Vec3::new(1.0, 0.0, 0.0), frag.fuse_time, &host, 0.0);
+                    p.vel = Vec3::new(speed, 0.0, 0.0);
+                    let mut steps = 0;
+                    while p.step(&host).is_none() {
+                        steps += 1;
+                        assert!(steps < 600);
+                    }
+                    let strikes = host.damage_log.borrow().iter().filter(|h| h.1 == 5 && (h.2 - 15.0 * BO2_TO_ZH_DAMAGE).abs() < 1e-3).count();
+                    assert!(strikes <= 1, "from {start} at {z} high, {speed}: {:?}", host.damage_log.borrow());
+                    struck += strikes;
+                }
+            }
+        }
+        assert!(struck > 0, "some reached the hull");
+    }
 
     #[test]
     fn a_frag_flies_bounces_and_explodes_on_its_fuse() {

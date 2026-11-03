@@ -371,20 +371,7 @@ pub fn target_from(o: &ObjInfo, bodies: &HitBodies, rifle: bool) -> Target {
     if let Some((body, scale)) = o.has(objflags::INFANTRY).then(|| bodies.body(o.id)).flatten() {
         return Target { id: o.id, pos: o.pos, shape: Shape::Body { body, yaw: o.yaw, scale, rifle }, head_fraction: 0.0 };
     }
-    if o.has(objflags::INFANTRY) {
-        return Target {
-            id: o.id,
-            pos: o.pos,
-            shape: Shape::Cylinder { radius: INFANTRY_HIT_RADIUS.min(o.major_radius.max(1.0)), height: o.height.max(6.0) },
-            head_fraction: INFANTRY_HEAD_FRACTION,
-        };
-    }
-    let shape = match o.geom_type {
-        geom::BOX => Shape::Box { half_x: o.major_radius, half_y: o.minor_radius, height: o.height.max(1.0), yaw: o.yaw },
-        geom::SPHERE => Shape::Sphere { radius: o.major_radius },
-        _ => Shape::Cylinder { radius: o.major_radius, height: o.height.max(1.0) },
-    };
-    Target { id: o.id, pos: o.pos, shape, head_fraction: 0.0 }
+    crate::hitscan::solid(o)
 }
 
 /// Launch velocity for a grenade of throw speed `speed` from `from` to land at `to`: the low arc

@@ -73,6 +73,32 @@ impl ObjInfo {
     pub fn has(&self, flag: u32) -> bool {
         self.flags & flag != 0
     }
+
+    /// Zero Hour's bounding sphere of the object (`GeometryInfo`): its centre (half the height
+    /// above the position, except a sphere's, which is the position) and radius (a sphere's
+    /// radius; a cylinder's radius or half height, whichever is larger; a box's half diagonal).
+    pub fn bounding_sphere(&self) -> (Vec3, f32) {
+        let half = self.height * 0.5;
+        match self.geom_type {
+            geom::SPHERE => (self.pos, self.major_radius),
+            geom::BOX => (self.pos + Vec3::new(0.0, 0.0, half), (self.major_radius * self.major_radius + self.minor_radius * self.minor_radius + half * half).sqrt()),
+            _ => (self.pos + Vec3::new(0.0, 0.0, half), self.major_radius.max(half)),
+        }
+    }
+
+    /// Whether [`LogicHost::query`] around `center` with `radius` returns this object: its
+    /// bounding sphere comes within `radius` of `center` (Zero Hour's `FROM_BOUNDINGSPHERE_3D`,
+    /// `PartitionManager` `distCalcProc_BoundaryAndBoundary_3D`). The test hosts filter by it.
+    pub fn in_query(&self, center: Vec3, radius: f32) -> bool {
+        let (c, r) = self.bounding_sphere();
+        ((c - center).length() - r).max(0.0) < radius
+    }
+
+    /// Whether its position is within `radius` of `center`: for the callers of
+    /// [`LogicHost::query`] whose reach is BO2's distance to an origin, not to a solid.
+    pub fn origin_within(&self, center: Vec3, radius: f32) -> bool {
+        (self.pos - center).length() <= radius
+    }
 }
 
 /// Engine services available inside the deterministic logic step.
@@ -91,7 +117,9 @@ pub trait LogicHost {
     fn extent(&self) -> (Vec3, Vec3);
     /// Object by id, with relationship flags relative to `viewer`'s owner.
     fn object(&self, id: u32, viewer: u32) -> Option<ObjInfo>;
-    /// Objects whose position is within `radius` of `center` (3D), relationship relative to `viewer`.
+    /// Objects whose bounding sphere comes within `radius` of `center` (3D; [`ObjInfo::in_query`]),
+    /// relationship relative to `viewer`. A superset of what reaches: callers measure each
+    /// object's own solid, or its centre, for what they need.
     fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>);
     fn set_pose(&self, id: u32, pos: Vec3, yaw: f32, moving: bool);
     /// Suspend (true) or resume (false) the object's own AI and physics.

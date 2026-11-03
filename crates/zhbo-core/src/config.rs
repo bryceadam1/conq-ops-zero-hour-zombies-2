@@ -15,8 +15,8 @@ pub enum Autopilot {
     /// player or a test driver (`ZHBO_AUTOPILOT=manual`).
     Manual,
     /// Scripted first-person input drives the General (any other value); the flags pick the test's
-    /// focus (`ZHBO_AUTOPILOT=1`, `equipment`, `build`, `classpick`, `showcase`, `scope`).
-    Scripted { equipment: bool, build: bool, classpick: bool, scope: bool },
+    /// focus (`ZHBO_AUTOPILOT=1`, `equipment`, `build`, `classpick`, `showcase`, `scope`, `splash`).
+    Scripted { equipment: bool, build: bool, classpick: bool, scope: bool, splash: bool },
     /// The two-instance multiplayer test (`ZHBO_AUTOPILOT=mp`, `scripts/mptest-mac.sh`): no scene
     /// is spawned (every machine would have to spawn it identically); each machine builds its own
     /// General from its Command Center, walks him to a meeting point, takes control and fights the
@@ -131,6 +131,7 @@ pub fn autopilot_mode(value: Option<&str>) -> Autopilot {
             build: m == "build",
             classpick: m == "classpick",
             scope: m == "scope",
+            splash: m == "splash",
         },
     }
 }
@@ -183,30 +184,34 @@ mod tests {
         assert_eq!(autopilot_mode(Some("manual")), Autopilot::Manual);
         assert_eq!(
             autopilot_mode(Some("1")),
-            Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: false }
+            Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: false, splash: false }
         );
         assert_eq!(
             autopilot_mode(Some("equipment")),
-            Autopilot::Scripted { equipment: true, build: false, classpick: false, scope: false }
+            Autopilot::Scripted { equipment: true, build: false, classpick: false, scope: false, splash: false }
         );
         assert_eq!(
             autopilot_mode(Some("build")),
-            Autopilot::Scripted { equipment: false, build: true, classpick: false, scope: false }
+            Autopilot::Scripted { equipment: false, build: true, classpick: false, scope: false, splash: false }
         );
         assert_eq!(
             autopilot_mode(Some("classpick")),
-            Autopilot::Scripted { equipment: false, build: false, classpick: true, scope: false }
+            Autopilot::Scripted { equipment: false, build: false, classpick: true, scope: false, splash: false }
         );
         assert_eq!(
             autopilot_mode(Some("scope")),
-            Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: true }
+            Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: true, splash: false }
+        );
+        assert_eq!(
+            autopilot_mode(Some("splash")),
+            Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: false, splash: true }
         );
         assert_eq!(autopilot_mode(Some("mp")), Autopilot::Multiplayer);
         // Any other value scripts the standard input, like before (the bridge matched modes the
         // same way; unknown values fall through to scripted input).
         assert_eq!(
             autopilot_mode(Some("showcase")),
-            Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: false }
+            Autopilot::Scripted { equipment: false, build: false, classpick: false, scope: false, splash: false }
         );
     }
 

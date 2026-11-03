@@ -340,7 +340,7 @@ impl Equipment {
                     let mut objs = Vec::new();
                     host.query(p.pos, tn.trophy_range, p.viewer(), &mut objs);
                     objs.sort_by_key(|o| o.id);
-                    for o in objs.iter().filter(|o| o.has(objflags::PROJECTILE) && o.has(objflags::ENEMY)) {
+                    for o in objs.iter().filter(|o| o.has(objflags::PROJECTILE) && o.has(objflags::ENEMY) && o.origin_within(p.pos, tn.trophy_range)) {
                         if p.charges == 0 {
                             break;
                         }

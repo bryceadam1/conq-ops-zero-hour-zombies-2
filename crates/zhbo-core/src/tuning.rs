@@ -221,6 +221,8 @@ tuning! {
     proximity_exit_duration: "proximity_exit_duration" = 0.6, "Shock Charge: seconds of the exit shock (`_proximity_grenade.gsc:206`).";
     shock_view_kick_fade: "shock_view_kick_fade" = 3.0, "Seconds over which a shellshock's view kick fades out at its end: t6mp's loader stores a constant 3000 ms for it (`FUN_008bca80`, `param_1[5] = 3000`), never the file's `viewKickFadeTime`.";
     emp_grenade_duration: "empgrenade_duration" = 12.0, "EMP Grenade: seconds a vehicle stays disabled (`_empgrenade.gsc:102`, `empduration = 12`).";
+    vehicle_projectile_scale_smaw: "getvehicleprojectilescalar.smaw_mp" = 0.2, "SMAW: share of its impact damage (`iDamage`) a direct hit deals to anything but a soldier (`_globallogic_vehicle.gsc:312-313` `getvehicleprojectilescalar`, applied to `MOD_PROJECTILE` in `callback_vehicledamage`; BO2's turrets take the same 200 of 1000, `_turret_killstreak.gsc:903-904`). Read by weapon name ([`Tuning::vehicle_projectile_scale`]).";
+    vehicle_projectile_scale_fhj18: "getvehicleprojectilescalar.fhj18_mp" = 0.2, "FHJ-18 AA: as the SMAW (`_globallogic_vehicle.gsc:314-315`).";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";
     shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";
@@ -245,6 +247,24 @@ tuning! {
     projectile_bounce_along: "ProjectileBounceAlong" = 0.6, "Grenade bounce: share of the speed along the surface kept, where the def has no `parallelBounce` cell (the mod's value).";
     projectile_rest_speed: "ProjectileRestSpeed" = 3.0, "A bouncing grenade below this speed comes to rest, Zero Hour units/s (the mod's value).";
     equipment_arm_time: "EquipmentArmTime" = 1.0, "Seconds after it is down before equipment does anything (the mod's stand-in for BO2's `waittillnotmoving` plus `activationdelay`).";
+}
+
+/// The key prefix of BO2's per-weapon direct-hit scale against vehicles
+/// (`getvehicleprojectilescalar`, `_globallogic_vehicle.gsc:306-321`): `<prefix><weapon name>`.
+pub const VEHICLE_PROJECTILE_SCALAR: &str = "getvehicleprojectilescalar.";
+
+impl Tuning {
+    /// The share of `weapon`'s impact damage (`iDamage`) a direct hit deals to anything that is
+    /// not a soldier: BO2's `getvehicleprojectilescalar`, keyed in the pack by the weapon's name
+    /// (its base weapon for a combination or alt mode), 1 for every weapon it does not name.
+    pub fn vehicle_projectile_scale(&self, weapon: &str) -> f32 {
+        let base = weapon.split(['+', '~']).next().unwrap_or(weapon);
+        Self::KEYS
+            .iter()
+            .zip(self.values())
+            .find(|(k, _)| k.strip_prefix(VEHICLE_PROJECTILE_SCALAR) == Some(base))
+            .map_or(1.0, |(_, v)| v)
+    }
 }
 
 /// Keys match case-insensitively, ignoring `_` and `.` (`perk_weapSwitchMultiplier`).
@@ -331,5 +351,18 @@ mod tests {
         assert_eq!((t.trophy_system_range, t.trophy_system_ammo, t.perk_delay_explosive_time), (512.0, 2.0, 0.9));
         assert_eq!((t.hacker_tool_max_equipment_distance, t.concussion_time_min, t.concussion_time_scale, t.emp_grenade_duration), (2000.0, 2.0, 4.0, 12.0));
         assert_eq!((t.equipment_hacker_tool_time_ms, t.vehicle_hacker_tool_time_ms, t.hacker_tool_lock_start), (50.0, 4000.0, 0.1));
+    }
+
+    #[test]
+    fn bo2s_vehicle_projectile_scalars_by_weapon_name() {
+        // `_globallogic_vehicle.gsc` `getvehicleprojectilescalar`: the SMAW and FHJ-18 deal a fifth
+        // of their impact damage to a vehicle; every other weapon all of it.
+        let t = Tuning::default();
+        assert_eq!(t.vehicle_projectile_scale("smaw_mp"), 0.2);
+        assert_eq!(t.vehicle_projectile_scale("fhj18_mp"), 0.2);
+        assert_eq!(t.vehicle_projectile_scale("usrpg_mp"), 1.0);
+        assert_eq!(t.vehicle_projectile_scale("gl_an94_mp~an94_mp+gl"), 1.0);
+        let pack = parse("getvehicleprojectilescalar.smaw_mp = 0.5");
+        assert_eq!(pack.vehicle_projectile_scale("smaw_mp"), 0.5, "the pack's value");
     }
 }

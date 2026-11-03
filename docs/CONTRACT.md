@@ -30,7 +30,30 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   so a converted body's eye and the sim's first-person eye are the same world point (third person, R7).
   Stock ZH infantry mesh heads are taller than their collision cylinder (14.3–16 units vs
   `GeometryHeight` 12–13); the sim's 12-unit, 72-inch body is the reference.
-* Damage: BO2 damage (100 HP scale) × `BO2_TO_ZH_DAMAGE` (1.5; a Ranger has 180 HP).
+* Damage: BO2 damage (100 HP scale) × `BO2_TO_ZH_DAMAGE` (1.5; a Ranger has 180 HP), for every
+  target; Zero Hour's armour then scales it by the damage kind (`SMALL_ARMS`, `MELEE`, `EXPLOSION`:
+  a blast is `EXPLOSION`, which `TankArmor`, `TruckArmor`, `StructureArmor` and `HumanArmor` take at
+  100 %, the aircraft armours at 100–130 %). BO2's two kinds of victim map onto Zero Hour's objects:
+  a **soldier** (a General, Zero Hour infantry) is BO2's player and takes BO2's numbers as they are;
+  **anything else** (a vehicle, an aircraft, a structure) is BO2's vehicle/killstreak gear and takes
+  BO2's vehicle rules: a missile's direct hit deals `iDamage` × the weapon's
+  `getvehicleprojectilescalar` (tuning pack `getvehicleprojectilescalar.<weapon>`: SMAW and FHJ-18
+  0.2, every other weapon 1; `projectiles::impact_damage`), and radius damage is unscaled (BO2's
+  splash scalar is 1 for every player weapon). A SMAW into a Crusader group (480 HP): the struck tank
+  300, each neighbour 105–225 by the gap between the hulls, so two rockets wreck the group; into
+  infantry: 1500 on the one struck, the blast kills a Ranger within three-eighths of the radius (BO2's falloff: 225 at the solid).
+* Radius damage measures each object to its **solid** (`projectiles::blast_distance`: its Zero Hour
+  geometry box/cylinder/sphere, BO2's soldier-sized cylinder for infantry, `hitscan::solid`), as
+  BO2's measures each entity to its bounds (t6mp `FUN_005f1fd0`, from `FUN_005f2130`), and falls
+  off from the inner damage at the solid to the outer at the radius. A concussion's stun time runs
+  over the distance to the soldier's origin, as `_weapons.gsc:1366` measures it.
+* The object query (`LogicHost::query`, the bridge's `cbQuery`) returns every object whose
+  **bounding sphere** comes within the radius (Zero Hour's `FROM_BOUNDINGSPHERE_3D`, the measure its
+  own radius damage uses; `ObjInfo::in_query` is the same test for the test hosts): a superset, and
+  each caller measures what it needs (a blast the solid, `ObjInfo::origin_within` where BO2 measures
+  an origin: the Trophy System's range, the Black Hat's, the sonar and target finder). It was
+  centre-to-centre, which never listed a structure or an Overlord whose hull was in a blast but whose
+  centre was not.
 * Angles: radians. Yaw 0 = +X, counter-clockwise (same as `Object::getOrientation`). Pitch + is up,
   clamped to ±85°.
 * Time: logic runs at 30 Hz (`LOGIC_DT`). The client runs per rendered frame with real `dt`. The
@@ -854,7 +877,8 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   row has no flesh cell, so a grenade off a soldier raises nothing), and their constants live once
   in `zhbo_core::impacts` (`GRENADE_BOUNCE`, `PROJECTILE_DUD`, `DUD_HIT_SOUND_TYPE`). No ABI change.
 * **A missile's strike** (t6mp `FUN_00608c10`). Every strike of an object deals the def's `iDamage`
-  (`damage[0]`) first: a rocket's or launcher grenade's direct hit takes only that, because BO2's
+  (`damage[0]`; × the weapon's `getvehicleprojectilescalar` on anything but a soldier, see Damage
+  above) first: a rocket's or launcher grenade's direct hit takes only that, because BO2's
   radius damage skips the struck entity; a Semtex or C4 sticking, or a frag or flashbang bouncing
   off a player, strikes for it before it sticks or bounces (`Projectile::struck`, a hit marker). A
   `bolt` explosion (`projExplosion` 9, the crossbow) becomes its `szSpawnedGrenadeWeaponName`

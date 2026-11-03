@@ -87,6 +87,7 @@ struct ZhboConfig
 	Bool autopilot_build = FALSE;
 	Bool autopilot_classpick = FALSE; // =classpick: the create-a-class editor run (scene like the default scripted run)
 	Bool autopilot_mp = FALSE;		  // =mp: the two-instance multiplayer run (no scene; each machine plays its own player)
+	Bool autopilot_splash = FALSE;	  // =splash: an enemy armour group and infantry for the SMAW's blast
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
@@ -284,6 +285,11 @@ struct Autopilot
 	UnsignedInt mpStillSince;
 	UnsignedInt mpNextTry;
 	Bool mpRespawning;
+	// ZHBO_AUTOPILOT=splash (splashAutopilotFrame): the scene's objects (the struck target first)
+	// and their health last logged.
+	ObjectID splashIds[8];
+	Real splashHealth[8];
+	Int splashCount;
 };
 extern Autopilot s_autopilot;
 void autopilotFrame();

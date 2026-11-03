@@ -45,7 +45,7 @@ pub use spawn::ChosenClass;
 pub use lockstep::Fingerprint;
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
-use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};
+use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HIT_RADIUS};
 use crate::impacts::Surface;
 use crate::input::{buttons, FpsInput};
 use crate::math::{basis_xy, dir_from_angles, Vec3};
