@@ -286,13 +286,16 @@ fn a_particle_shorter_than_a_frame_shows_fainter() {
 }
 
 #[test]
-fn a_projectile_trail_rides_its_object_as_a_streak() {
-    let trail = Elem { kind: kind::TRAIL, looping: true, interval_msec: 100, count: Range { base: 50.0, amplitude: 0.0 }, ..sprite() };
-    let ini = particle_system("ZHBO_test_tr", &trail, "t.tga", false, Grid::NONE, Spawn::START, Play { looping_secs: 5.0, role: Role::Trail, orient: true }).unwrap();
-    assert!(ini.contains("Type = STREAK") && ini.contains("Priority = WEAPON_TRAIL"), "{ini}");
-    // The same element in a blast stays sprites.
-    let ini = particle_system("ZHBO_test_tr2", &trail, "t.tga", false, Grid::NONE, Spawn::START, Play { looping_secs: 5.0, role: Role::Blast, orient: false }).unwrap();
-    assert!(ini.contains("Type = PARTICLE"), "{ini}");
+fn a_projectile_trail_rides_its_object() {
+    let puff = Elem { looping: true, interval_msec: 50, count: Range { base: 50.0, amplitude: 0.0 }, ..sprite() };
+    let ini = particle_system("ZHBO_test_tr", &puff, "t.tga", false, Grid::NONE, Spawn::START, Play { looping_secs: 5.0, role: Role::Trail, orient: true }).unwrap();
+    assert!(ini.contains("Type = PARTICLE") && ini.contains("Priority = WEAPON_TRAIL"), "{ini}");
+    // Its ribbon (trail) element is left out: Zero Hour cannot draw a ribbon (seen on the SMAW).
+    let ribbon = Elem { kind: kind::TRAIL, materials: vec![zhbo_formats::xmodel::Material::default()], ..puff.clone() };
+    let e = Effect { name: "test/trail".into(), elems: vec![ribbon], ..Default::default() };
+    let mut c = Converted::default();
+    let name = c.convert(&e, "T", Play { looping_secs: 5.0, role: Role::Trail, orient: true }, &|_| None, None);
+    assert!(c.systems(&name).is_empty());
     let text = "Object ZHBO_Proj_a\n  Draw = W3DModelDraw ModuleTag_01\n    DefaultConditionState\n      Model = A\n    End\n  End\nEnd\n\nObject ZHBO_Proj_b\n  Draw = W3DModelDraw ModuleTag_01\n    DefaultConditionState\n      Model = B\n    End\n  End\nEnd\n";
     let out = crate::props::with_trails(text, &[("ZHBO_Proj_b".to_string(), vec!["S0".to_string(), "S1".to_string()])]);
     assert!(out.contains("      Model = B\n      ParticleSysBone = None S0\n      ParticleSysBone = None S1\n"), "{out}");

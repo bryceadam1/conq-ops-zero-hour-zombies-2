@@ -364,6 +364,14 @@ impl<'a> Converted<'a> {
             if !kind::is_sprite(el.kind) || el.vis.is_empty() {
                 continue;
             }
+            // A moving effect's trail element is a ribbon through the points it leaves, drawn
+            // with ribbon art (the RPG's `fxt_smk_trail`, 512 x 64). Zero Hour has no ribbon: as
+            // sprites the strip tiles the view with streaks, and as a `STREAK` it crosses the
+            // shooter's eye in screen-wide polygons (both seen on the SMAW). On a projectile it is
+            // left out; its puffs, flares and fire are drawn.
+            if el.kind == kind::TRAIL && play.role == Role::Trail {
+                continue;
+            }
             let Some(m) = el.materials.first() else { continue };
             if m.name.contains("distortion") {
                 continue; // a screen-space ripple Zero Hour can't draw
@@ -811,7 +819,7 @@ pub enum Role {
     /// A cloud that carries gameplay over its time (the smoke screen, which blocks sight).
     Area,
     /// What a thrown or launched projectile trails in flight (`projTrailEffect`): its systems ride
-    /// the projectile's drawable ([`Converted::systems`]), and BO2's trail elements are ribbons.
+    /// the projectile's drawable ([`Converted::systems`]) and leave their particles along its path.
     Trail,
 }
 
@@ -1051,7 +1059,7 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, grid: G
     let turn = last.rotation_total * MS_PER_FRAME;
     let frames = flipbook_fields(el, grid) + &distance_fields(el);
     Some(format!(
-        "ParticleSystem {name}\n  Priority = {}\n  IsOneShot = No\n  Shader = {shader}\n  Type = {kind}\n  ParticleName = {texture}\n  \
+        "ParticleSystem {name}\n  Priority = {}\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
          AngleZ = {:.2} {:.2}\n  AngularRateZ = {turn:.4} {turn:.4}\n  AngularDamping = 1.00 1.00\n  VelocityDamping = {damping:.4} {damping:.4}\n  \
          Gravity = {gravity:.4}\n  Lifetime = {:.0} {:.0}\n  SystemLifetime = {system_life:.0}\n  Size = {:.2} {:.2}\n  StartSizeRate = 0.00 0.00\n  \
          SizeRate = {size_rate:.3} {size_rate:.3}\n  SizeRateDamping = {size_damping:.4} {size_damping:.4}\n{keys}  ColorScale = 0.00 0.00\n  BurstDelay = {burst_delay:.0} {burst_delay:.0}\n  \
@@ -1076,9 +1084,6 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, grid: G
         vel[2].0,
         vel[2].1,
         shader = if additive { "ADDITIVE" } else { "ALPHA" },
-        // A trail element of a moving effect is BO2's ribbon through the points it leaves:
-        // Zero Hour's streak, a line through its system's particles in order.
-        kind = if role == Role::Trail && el.kind == kind::TRAIL { "STREAK" } else { "PARTICLE" },
     ))
 }
 

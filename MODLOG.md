@@ -11693,8 +11693,13 @@ distance ranges are played).
   only terrain). A projectile's `projTrailEffect` (new `Weapon::trail_effect`) is converted framed
   as `Role::Trail` (`WEAPON_TRAIL`, Zero Hour's own trail priority; `Role::rank` follows the real
   `ParticlePriorityType` order now) and attached to the projectile object
-  (`ParticleSysBone = None <system>`: W3D finds no bone and uses the origin), with BO2's trail
-  elements as `Type = STREAK` (a ribbon through the system's particles). `effectOnDeath` starts its
+  (`ParticleSysBone = None <system>`: W3D finds no bone and uses the origin). BO2's trail
+  (ribbon) elements are left out on a projectile: the first in-game run had them as
+  `Type = STREAK`, and a streak through the SMAW's trail crossed the shooter's eye as screen-wide
+  hard-edged polygons (`ingame/smaw-streak-build1.png`); the second drew them as sprites, and the
+  RPG trail's ribbon art (`fxt_smk_trail`, 512 × 64, a new sprite every msec) tiled the view with
+  streaks. The puffs, flares and fire of the trail are drawn; so the hatchet's and the ballistic
+  knife's trails, which are only ribbons, stay empty. `effectOnDeath` starts its
   effect where and when each particle dies (`fx::death_travel`: the velocity graph's mean delta and
   the fall, stopped at the ground in an upright list), as a runner, on both sides of the sweep.
 * **Still not converted (and why):** emission elements of `effectEmitted` children (10 elements in

@@ -489,8 +489,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     **milliseconds** (Zero Hour parses the times as durations). A projectile's `projTrailEffect` is
     converted framed in `Role::Trail` and its systems are attached to the projectile object's model
     (`ParticleSysBone = None <system>` in `ZHBO_BO2_Projectiles.ini`: no bone of that name, so the
-    object's origin), so they ride it and leave their particles behind; BO2's trail elements are
-    `Type = STREAK` there (a ribbon through the system's particles).
+    object's origin), so they ride it and leave their particles behind. BO2's trail (ribbon)
+    elements are left out there: their art is a ribbon strip, which as sprites tiles the view with
+    streaks and as a Zero Hour `STREAK` crosses the shooter's eye in screen-wide polygons.
   - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
     `zhbo_loadout_viewmodels`).
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
