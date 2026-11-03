@@ -11798,3 +11798,48 @@ Overlord **22.5** (was 5.6, `MOD_IMPACT` as `EXPLOSION`), its blast then 249.3 o
 148.8 on each Crusader (it now bounces off the real box and comes to rest elsewhere); default 16/16;
 `mptest-mac.sh` (short) 25/25, the state hash equal on all 2,918 common frames, no CRC mismatch,
 content CRC D6FEF2AC on both.
+
+## Follow-up: the native BO2 body by default, the throw, more of another player, tactical assists (2026-11-03, branch `v1/remote-presentation`)
+
+* **Merged `origin/v1/damage-rules`** so the assists' recording host takes its `MeansOfDeath`
+  `LogicHost::damage` (the MODLOG and CONTRACT pending notes are unions).
+* **Weapon-specific assists.** `processassist` switches on the attacker's *last* weapon. The
+  concussion, flashbang, EMP grenade and Shock Charge reach a first-person General through the
+  sim's shock hits, which name the weapon and its owner, so each is also an attacker entry (BO2's
+  1-damage tactical blast, `idamage` floored at 1) tagged `score::Tactical`; a later plain hit
+  clears the tag. The tag is hashed; `Assist { level, tactical }`; 50 tdm points. Not reached: a
+  tactical on an overhead General (Zero Hour's paralysis has no owner in the host call).
+* **The throw.** t6mp `FUN_0052a4c0` attaches only the entity's current weapon and `FUN_0052a470`
+  puts a grenade (weapType 1) on `tag_inhand`: during the pin and throw BO2 draws the grenade, not
+  the gun. The gun dangled off `tag_weapon_right` where `pt_grenade_stand_throw` moves it; the body
+  pass now collapses the weapon's parts for `PRIME`/`THROW` (the client publishes each action with
+  its clip). The grenade itself is not drawn in the hand: offhands have no native world manifest.
+* **More of another player.** His dry fire (`emptyFireSound`: `wpn_generic_dryfire_npc` and the
+  pistols', launchers', crossbow's own; once per pull), his jump and landing (`_footsteps.csc`
+  `playerjump` plays the step alias, `playerland` `fly_land_npc_<surface>`), the script's `flinch`
+  (asked from the front: the sim's damage has no direction) and its whole-body `legs` clips for
+  `jump`/`land` as torso actions (the parser now takes `legs` lines in `EVENTS`), and BO2's battle
+  chatter: `reloadtracking` (`reloading_gen`, 40 %, not the `checkweaponreload` launchers) and
+  `grenadetracking` (each offhand's `attack_*`, 80 %, the Betty 20 %), in the speaker's voice. GSC
+  plays these through `mpsaylocalsound` → `dosound` → `playsoundontag`, i.e. **to everyone** on
+  his head (only `dolocationalsound` is team-only), so the mod does too. The roll is hashed from the
+  seat and his chatter count: every machine agrees. Not carried: `isspeakerinrange` (a teammate
+  already talking nearby) and the team-game gate (`level.teambased`).
+* **The native body is the default third person (`ZHBO_NATIVE_BODY=2`).** Checked:
+  * every faction's body manifest composes (in game `ZW…U`, and the mp run's G bodies);
+  * locomotion and stance: the sim's states through each weapon's animation set (unchanged);
+  * **scale (fixed):** `root_from_object` used the art scale alone, so the native General stood
+    1/1.15 of the W3D one, below the first-person eye line and inside the hit boxes the sim traces
+    at his drawn size (`HitBodies::body` already scales Generals by `GENERAL_SCALE`); now drawn at
+    `GENERAL_SCALE`. Hit boxes against the drawn body then agree (no sim change);
+  * **the tablet (fixed):** the native pass drew the gun over the W3D tablet (weapon mode) or hid
+    the W3D body and its tablet (body mode); `native_poses` reports no weapon while it is up;
+  * deaths: the sim drops the record, the W3D body's own death clip plays (no native death clip;
+    BO2 ragdolls);
+  * the shield on the back, the camo, attachments: body mode composes them (existing tests);
+  * overhead: selection stays (draw-module hide), the health bar draws, the size matches the W3D
+    body; neither body carries a team colour (unchanged);
+  * DX8 has no native pass: `zhbo_native_body` answers "not native" and the W3D body draws;
+  * cost: `render_world_weapons --torso` benchmarks the body pass: 16 Generals 0.22 ms of core and
+    0.68 ms per frame with the GPU (headless, Apple M1 Pro).
+  `1`/`weapon` and `0` stay as opt-outs.
