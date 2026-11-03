@@ -11710,7 +11710,7 @@ distance ranges are played).
   model), and spawn angles (199 oriented sprites, none in the blasts, impacts or flashes the mod
   plays; a ground-aligned sprite is `IsGroundAligned`). Bullet holes stay unmapped (above).
 * **Measured** (`~/.opencode/plan/fx-flipbook/`): before = main's sweep (`sheets-before/`),
-  after = `sweep9/`; contact sheets BO2 / Zero Hour in `sheets-flip/`, `sheets-before/`. The gate
+  after = `sheets-after/` (its `metrics.csv`); contact sheets BO2 / Zero Hour in `sheets-after/`, `sheets-before/`. The gate
   `fx_preview::install_tests::every_bo2_effect_converts_to_its_size` is tightened from 75 % to 95 %
   of the measured effects.
 * **Presentation only.** No sim input, table field the sim reads, or `Role::Sim` value changed; the
