@@ -697,7 +697,7 @@ pub(super) fn option_icon(editor: &Editor, i: usize) -> Option<String> {
         if def.class.is_offhand() {
             return Some(crate::names::cac_weapon_image(base_id(&def.id)));
         }
-        return Some(format!("ZHBO_BO2_Icon_{}", base_id(&def.id)));
+        return Some(weapons::weapon(base_id(&def.id)).hud_icon_image()).filter(|i| !i.is_empty());
     }
     if let Some(short) = editor.option_attachment(i) {
         return sprites::attachment_icon(short);

@@ -41,8 +41,8 @@ pub fn offhand_slot(lethal: bool) -> &'static str {
 /// The catalog's create-a-class entries: the converted table's base weapons that are BO2 class
 /// items (a `CacSlot`), once per display name. The table also carries the alt-mode variants an
 /// attachment adds (`gl_an94_mp`) and the converted combinations (`an94_mp+gl`), which are not
-/// items of their own. Every returned id is a base id, which is what the converter draws an icon
-/// for (`ZHBO_BO2_Icon_<base id>`).
+/// items of their own. Every returned id is a base id, whose def carries the icon
+/// (`WeaponDef::hud_icon`).
 pub(super) fn cac_entries() -> Vec<&'static WeaponDef> {
     let all = weapons::catalog().all();
     let mut seen: Vec<&str> = Vec::new();

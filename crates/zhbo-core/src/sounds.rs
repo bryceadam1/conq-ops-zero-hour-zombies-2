@@ -363,6 +363,31 @@ pub fn remote_offhand(def: &'static crate::weapons::WeaponDef) -> Option<&'stati
     some(def.npc_fire_sound.as_str())
 }
 
+/// Another player's round as BO2's shot event voices it for everyone else (`FUN_005320e0`, the
+/// third-person branch): the def's last-round sound in place of the shot when this round emptied
+/// the magazine (`fireLastSound`), and the fire string's opening beside it when this round opened
+/// the string (`fireStartSound`). `string` and `ammo` are the shooter's after the step, `later`
+/// the step's rounds after this one. A `None` shot is the FX weapon's chain.
+pub fn remote_round(def: &'static crate::weapons::WeaponDef, string: u16, ammo: u16, later: usize) -> RemoteRound {
+    let emptied = usize::from(ammo) + later == 0;
+    let opened = usize::from(string) == later + 1;
+    RemoteRound { shot: some(def.npc_fire_last_sound.as_str()).filter(|_| emptied), opening: some(def.npc_fire_start_sound.as_str()).filter(|_| opened) }
+}
+
+/// [`remote_round`]'s cues.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RemoteRound {
+    pub shot: Option<&'static str>,
+    pub opening: Option<&'static str>,
+}
+
+/// The Black Hat leaving the hand as the hack lands (the mod's moment the tool fires and spends its
+/// charge): its own `fireSoundPlayer`, as for any offhand that fires; others hear its
+/// [`remote_offhand`].
+pub fn hack_fire_for(def: &'static crate::weapons::WeaponDef) -> Option<&'static str> {
+    some(def.fire_sound.as_str())
+}
+
 /// The pull-back: the offhand's own (`pullbackSoundPlayer`), else nothing. BO2 names one for
 /// three offhands only (the Semtex's charge, the Shock Charge's arm, the Sensor Grenade's twist);
 /// the frag and the rest play none, so there is no global stand-in (the converter could never
@@ -442,6 +467,21 @@ impl Cues {
             }
             Some(Err(chain)) => self.play_at(chain, at),
             None => {}
+        }
+    }
+
+    /// Another player's def-level shot cue (`event`, a [`crate::weapons::Heard::Remote`] event:
+    /// a burst's opening, the last round) from `at`: its own layers by BO2's distance curves when
+    /// they converted, else the event with Zero Hour's falloff.
+    pub fn third_person_cue(&mut self, event: &'static str, at: Vec3, listener: Option<Vec3>) {
+        match crate::soundlayers::shot(event, listener.map(|l| (at - l).length())) {
+            Some(Ok(layers)) => {
+                for (layer, gain) in layers {
+                    self.play_at_gain(layer, at, gain);
+                }
+            }
+            Some(Err(chain)) => self.play_at(chain, at),
+            None => self.play_at(event, at),
         }
     }
 

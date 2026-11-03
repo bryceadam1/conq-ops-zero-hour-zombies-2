@@ -461,6 +461,30 @@ pub fn sound(w: &Weapon, i: u32, def: Option<String>) -> Option<String> {
     w.singles().into_iter().flatten().find(|s| *s != u0 && s.sound_overrides() & bit != 0).map_or(def, |s| s.override_sound(i))
 }
 
+/// Sound `i` of [`crate::weapons::OVERRIDE_SOUNDS`] as BO2's client plays it for a weapon of
+/// (resolved) fire type `fire`. Only four indices ever reach the override gate [`sound`]: its five
+/// callers (`FUN_008ebf70`, `FUN_008ebfa0`, `FUN_008ebfd0`, `FUN_008ec020`, `FUN_008ec070`) pass
+/// 0 (fireSound), 1 (fireSoundPlayer), 6 (fireStartSound) and 8 (fireStartSoundPlayer). The shot's
+/// sound event `FUN_005320e0` reads the rest straight off the def: the last round's
+/// `fireLastSound`/`fireLastSoundPlayer` (+0xe0/+0xe4), and, for another player's shot, the
+/// string's opening `fireStartSound` (+0xc8) — the first person's opening goes through the gate
+/// (`FUN_008ec070(w, 1)`). The gated third-person opening is played only by the looping-fire path
+/// (`FUN_0051aec0`, `FUN_00516180`: `FUN_008ec070(w, 0)`), which returns unless the fire type is
+/// full auto (0) or minigun (7). The fire-loop and stop sounds are read raw there too.
+pub fn heard_sound(w: &Weapon, i: u32, fire: u32, def: Option<String>) -> Option<String> {
+    const FIRE_SOUND: u32 = 0;
+    const FIRE_SOUND_PLAYER: u32 = 1;
+    const FIRE_START_SOUND: u32 = 6;
+    const FIRE_START_SOUND_PLAYER: u32 = 8;
+    const FULLAUTO: u32 = 0;
+    const MINIGUN: u32 = 7;
+    match i {
+        FIRE_SOUND | FIRE_SOUND_PLAYER | FIRE_START_SOUND_PLAYER => sound(w, i, def),
+        FIRE_START_SOUND if fire == FULLAUTO || fire == MINIGUN => sound(w, i, def),
+        _ => def,
+    }
+}
+
 /// `FUN_008ec0c0`: effect `i` (0 view flash, 1 world flash).
 pub fn effect(w: &Weapon, i: u32, def: Option<String>) -> Option<String> {
     if w.v.attachment(0).is_none() {
@@ -730,5 +754,35 @@ mod tests {
         assert_eq!(sound(&Weapon::new(v, &[GRIP, SILENCER]).unwrap(), 1, def.clone()).as_deref(), Some("silenced_plr"), "the silencer first");
         assert_eq!(sound(&Weapon::new(v, &[GRIP]).unwrap(), 1, def.clone()).as_deref(), Some("grip_plr"));
         assert_eq!(sound(&Weapon::new(v, &[]).unwrap(), 1, def).as_deref(), Some("def_plr"));
+    }
+
+    /// `FUN_005320e0`: another player's burst opens with the def's own `fireStartSound` (the B23R
+    /// with a silencer: its silencer unique's `null_sound` is the shooter's alone), the last round
+    /// is the def's; the shooter's opening and every shot go through the gate.
+    #[test]
+    fn only_four_sounds_pass_the_override_gate() {
+        let mut m = Mem::new();
+        let g = Gun::new(&mut m, "x_mp");
+        g.attachment(&mut m, 0, 0);
+        g.attachment(&mut m, SILENCER, 4);
+        let u0 = g.unique(&mut m, 0, 0, 0, 0, 0);
+        let sil = g.unique(&mut m, SILENCER as u32, SILENCER, 0, 0, 0);
+        let all = (1 << 12) - 1;
+        m.put32(u0 + WU::soundOverrides, all);
+        m.put32(sil + WU::soundOverrides, all);
+        for i in 0..12 {
+            m.put_str(sil + WU::fireSound + 4 * i, "null_sound");
+        }
+        let z = m.zone();
+        let w = Weapon::new(g.variant(&z), &[SILENCER]).unwrap();
+        let def = || Some("def".to_string());
+        const BURST3: u32 = 3;
+        let heard: Vec<Option<String>> = (0..12).map(|i| heard_sound(&w, i, BURST3, def())).collect();
+        let gated = [0, 1, 8];
+        for (i, h) in heard.iter().enumerate() {
+            let want = if gated.contains(&i) { "null_sound" } else { "def" };
+            assert_eq!(h.as_deref(), Some(want), "sound {i}");
+        }
+        assert_eq!(heard_sound(&w, 6, 0, def()).as_deref(), Some("null_sound"), "a full-auto opening loops through the gate");
     }
 }

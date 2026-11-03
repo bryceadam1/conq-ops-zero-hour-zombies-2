@@ -405,7 +405,7 @@ fn the_held_knife_hides_the_ammo_digits_only() {
         let mut prims = Vec::new();
         ammo::draw(&super::frame::Lui::new(1280.0, 720.0), &mut prims, sim.player(0).unwrap(), 0.0, 0.0, "");
         let names: Vec<String> = prims.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.clone()) } else { None }).collect();
-        (names.iter().filter(|n| n.contains("hud_mp_num_big_")).count(), names.iter().any(|n| n.starts_with("ZHBO_BO2_Icon_frag")))
+        (names.iter().filter(|n| n.contains("hud_mp_num_big_")).count(), names.iter().any(|n| n == "ZHBO_Mat_hud_grenadeicon"))
     };
     let (gun, nade) = digits(&sim);
     assert!(gun > 0 && nade, "the gun counts its rounds ({gun})");

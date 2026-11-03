@@ -446,18 +446,16 @@ pub fn blast_surface(host: &dyn LogicHost, at: Vec3, direct: Option<&ObjInfo>) -
 
 /// The effects BO2 plays for `def` going off on `surface`: the impact table's cell for the def's
 /// `impactType` and the surface, then the def's own `projExplosionEffect` on top
-/// (`FUN_004c0ac0`). Neither -> the stand-in (no converted table, or a mod-only def).
-pub fn blast_fx(def: &WeaponDef, surface: Surface) -> (Option<String>, Option<&str>) {
+/// (`FUN_004c0ac0`), then a smoke grenade's screen (`screen_fx`, its script's cloud, which water
+/// never raises). None of the first two -> the stand-in (no converted table, or a mod-only def).
+pub fn blast_fx(def: &WeaponDef, surface: Surface) -> (Option<String>, Option<&str>, Option<&str>) {
     let table = crate::impacts::fx_name(def.impact_type, surface, false, false);
     let own = (!def.explosion_fx.is_empty()).then_some(def.explosion_fx.as_str());
-    if table.is_none() && own.is_none() {
-        return (None, Some(DEFAULT_EXPLOSION_FX));
+    let screen = (def.effect == Effect::Smoke && !def.screen_fx.is_empty() && crate::smoke::raised_on(surface)).then_some(def.screen_fx.as_str());
+    if table.is_none() && own.is_none() && (def.effect != Effect::Smoke || def.screen_fx.is_empty()) {
+        return (None, Some(DEFAULT_EXPLOSION_FX), None);
     }
-    // A smoke grenade's own effect is its script's screen, which water never raises.
-    if def.effect == Effect::Smoke && !crate::smoke::raised_on(surface) {
-        return (table, None);
-    }
-    (table, own)
+    (table, own, screen)
 }
 
 /// The effects BO2 plays for `def` striking `surface` as a dud (event 0x51): the impact table's
@@ -476,8 +474,8 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
     let d = def;
     let surface = blast_surface(host, at, direct.as_ref());
     if d.effect != Effect::None {
-        let (table, own) = blast_fx(d, surface);
-        for fx in table.as_deref().into_iter().chain(own) {
+        let (table, own, screen) = blast_fx(d, surface);
+        for fx in table.as_deref().into_iter().chain(own).chain(screen) {
             host.fx(fx, at);
         }
     }

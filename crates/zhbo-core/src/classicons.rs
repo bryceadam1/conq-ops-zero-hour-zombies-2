@@ -44,7 +44,7 @@ pub const PAGE1_CLASS_SLOTS: usize = 12;
 pub struct ClassIcons {
     /// The class's display name (the preset's, or the player's custom name).
     pub name: String,
-    /// The primary weapon's converted HUD icon (`ZHBO_BO2_Icon_<id>`).
+    /// The primary weapon's converted HUD icon (its def's `hudIcon` sprite, `ZHBO_Mat_<material>`).
     pub primary: String,
     /// The secondary's icon.
     pub secondary: String,
@@ -56,11 +56,12 @@ pub struct ClassIcons {
     pub perks: Vec<&'static str>,
 }
 
-/// The per-weapon icon the converter emits (`ZHBO_BO2_Icon_<id>`); an attached variant uses its
-/// base gun's icon (`an94_mp+reflex` -> `ZHBO_BO2_Icon_an94_mp`), exactly like the class screen.
+/// A weapon's icon: its def's HUD icon sprite ([`crate::weapons::WeaponDef::hud_icon_image`]); an
+/// attached variant uses its base gun's (`an94_mp+reflex` -> `menu_mp_weapons_an94`'s), exactly
+/// like the class screen. Empty for a weapon the catalog lacks or that names no icon.
 pub(crate) fn weapon_icon(id: &str) -> String {
     let base = id.split('+').next().unwrap_or(id);
-    format!("ZHBO_BO2_Icon_{base}")
+    crate::weapons::weapon_or_none(base).map(|d| d.hud_icon_image()).unwrap_or_default()
 }
 
 /// All [`BUTTONS`] rows, in button order: the five default classes first, then the ACTIVE class
@@ -241,7 +242,7 @@ mod tests {
         }
         let set_two = icons();
         assert_eq!(set_two[preset_rows()].as_ref().map(|c| c.name.as_str()), Some("Alpha"));
-        assert_eq!(set_two[preset_rows()].as_ref().unwrap().primary, "ZHBO_BO2_Icon_an94_mp");
+        assert_eq!(set_two[preset_rows()].as_ref().unwrap().primary, "ZHBO_Mat_menu_mp_weapons_an94");
         assert_eq!(labels()[preset_rows()], Some("Alpha".to_string()));
         assert_eq!(custom_payload(preset_rows()), custom("Alpha", "an94_mp").to_wire_words());
         assert!(set_two[preset_rows() + 3..].iter().all(|c| c.is_none()), "set 2 carries three classes");
@@ -294,16 +295,16 @@ mod tests {
         // The first default class is BO2's Assault: the MTAR, no attachments.
         let assault = classes::loadout_of(first);
         assert_eq!(all_icons[0].as_ref().unwrap().primary, weapon_icon(&assault.primary));
-        assert_eq!(all_icons[0].as_ref().unwrap().primary, "ZHBO_BO2_Icon_tar21_mp");
+        assert_eq!(all_icons[0].as_ref().unwrap().primary, "ZHBO_Mat_menu_mp_weapons_tar21", "the def's `hudIcon`");
         assert_eq!(all_icons[0].as_ref().unwrap().perks.len(), assault.perks.len());
         // No customs: the custom buttons and the padded rows carry no class.
         assert!(all_icons[preset_rows()..].iter().all(|c| c.is_none()));
 
-        crate::profile::save(custom("My Sniper", "dsr50_mp+acog"));
+        crate::profile::save(custom("My Sniper", "svu_mp+acog"));
         let icons = icons();
         let sniper = icons[preset_rows()].as_ref().expect("the saved class is on the first custom button");
         assert_eq!(sniper.name, "My Sniper");
-        assert_eq!(sniper.primary, "ZHBO_BO2_Icon_dsr50_mp", "the base gun's icon, not the attachment's");
+        assert_eq!(sniper.primary, "ZHBO_Mat_menu_mp_weapons_svu", "the base gun's icon, not the attachment's");
         // The slots the class leaves out are the base kit's (BO2's default class).
         let base = crate::weapons::Loadout::default();
         assert_eq!(sniper.secondary, weapon_icon(&base.secondary));

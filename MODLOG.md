@@ -11619,3 +11619,104 @@ no `zhbo_native` blob format changed.
   his second General was also shot entering before his round began, so his log had one round and
   no shellshock. The same run with 5 passes 34/34 (8,365 common frames, 5 shellshocks on both
   machines, CQB worn). TESTING.md and the script's header now say so.
+
+## Conformance gaps: the enumerator test, eight of the twelve gap clusters (2026-11-03, branch `v1/conformance-gaps`)
+
+**The enumerator test (red on main).** `conformance_the_enumerator_matches_the_expected_rows` had
+every Peacekeeper row on BO2's side only. The enumerator (`all_legal_combos`, `add_variants`) was
+right; the test fed it `common_mp`'s weapons alone, while the converter, both conformance sides and
+the archive resolve BO2's pool (`patch_mp` > `common_patch_mp` > `common_mp`, `MpPool::weapons`).
+Only `common_patch_mp` defines the Peacekeeper, `sf_peacekeeper`, `grip_smg` and the `dualclip_*add`
+attachments. Eight more install tests (compatibility, attribute bars, legal-combo coverage, the
+XPR's anti-quickscope, camo assets, target finder, FMJ's specialties, the native pose, penetration)
+and the `weapons`/`attachments`/`fx` dump commands parsed one zone too, silently skipping the
+patch's weapons or checking launch values. All read the pool now; the unit test
+`paks::tests::weapon_definitions_are_read_through_the_pool` fails on any single-zone
+`weapon::all`/`all_in`/`attachments` parse not marked `zone-local:` with its reason.
+
+**Sounds (4 clusters, 11 cells → 0).**
+* *Expected-side transcription, cited.* `FUN_008ebe80` (the override gate) has five callers and
+  they pass only indices 0, 1, 6, 8 (`FUN_008ebf70`/`ebfa0`/`ebfd0`/`ec020`/`ec070`). The shot's
+  sound event `FUN_005320e0` reads `fireLastSound`/`fireLastSoundPlayer` (+0xe0/+0xe4) and, for
+  another player's shot, `fireStartSound` (+0xc8) straight off the def; only the shooter's opening
+  goes through the gate (`FUN_008ec070(w, 1)`). The gated third-person opening is the looping-fire
+  path's (`FUN_0051aec0`/`FUN_00516180`), which returns unless the fire type is full auto or
+  minigun. The expected side gated all twelve; `resolve::heard_sound` now follows the engine. The
+  silenced B23R's third-person opening is the def's (none), not the silencer unique's `null_sound`
+  (7 cells).
+* *Mod.* Others now hear a fire string's opening and the magazine's last round as BO2 plays them:
+  `WeaponDef::npc_fire_start_sound`/`npc_fire_last_sound` (table `FireStartSoundNpc`,
+  `FireLastSoundNpc`; the B23R Dual Wield's `_fire_npc_burst`, the FHJ's `wpn_strela_fire_npc`),
+  played by the client's remote round (`sounds::remote_round`: the last-round sound in place of the
+  FX chain, the opening beside it, counted per shooter per step) with BO2's distance layers
+  (`Heard::Remote` events ship layer rows keyed by their own event; `Cues::third_person_cue`).
+* *Black Hat.* It was ruled "never fires". `_hacker_tool.gsc:263` notifies `hacker_tool_fired`
+  from script once the lock holds, and the offhand's own fire spends the charge (`:210-231` refunds
+  it only when no hack landed). The mod's tool leaves the hand as the hack lands
+  (`Arsenal::hack_done`), so `Hacked` now plays its `fireSoundPlayer` for the hacker and its
+  `fireSound` at him for everyone else.
+
+**Names (5 → 0).** The converter mapped three keys by hand (`manifest::display_name_key`) and
+upper-cased the id when a key had no text. BO2 shows a reference its string tables lack as the
+reference (`WEAPON_CONCUSSION_GRENADE`, `BOUNCING_BETTY`: no english zone holds either; checked
+all 64) and `knife_mp` names none. `display_name` is now that rule; the menus already name items by
+their statstable name (`cac_name`), and no surface shows an offhand's or `knife_mp`'s HUD name.
+
+**hud_icon (1,871 → 0).** Every icon surface drew `ZHBO_BO2_Icon_<base id>`, a name the def did
+not carry, so an alt mode's icon did not exist. The def now carries BO2's `hudIcon`
+(`WeaponDef::hud_icon`, table `HudIcon`) and every surface draws its material's sprite
+(`hud_icon_image`, `ZHBO_Mat_<material>`): the class buttons, the RTS kit bar, the editor's rows,
+the offhand counters. The converter packs one sprite per material, so the `sf_`/`dualoptic_` alt
+modes name their gun's and nothing new ships; the `gl_` alts name none, as in BO2. The stand-in
+table names its weapons' icons; `the_built_in_hud_icons_are_the_installs` pins them and the alt
+modes to the install.
+
+**Smoke (1 → 0).** The mod carried the smoke grenade's cloud as its `ExplosionFx`, but
+`willy_pete_mp` names no `projExplosionEffect`: the cloud is the script's (`_smokegrenade.gsc`,
+`smoke_center_mp`'s effect). It is `WeaponDef::screen_fx` (table `ScreenFx`) now, played by
+`projectiles::blast_fx` after the impact cell and the def's own effect, only where the screen rises.
+
+**Riot shield world model (1, expected side, cited).** `FUN_0052a4c0` (the third-person weapon's
+models) adds `worldModel` and its parts only when the weapType is not riotshield; the shield on a
+player is what `refreshshieldattachment` attaches (`FUN_00967450`, the literal
+`t6_wpn_shield_carry_world` on `tag_weapon_left` while it is up, `_stow_world` on the back
+otherwise). `t6_wpn_shield_pickup_world` is only the dropped pickup's. The expected side reports
+the carried model for weapType 8; the mod already drew it.
+
+**Left in the report, with the reason.**
+* *`world_model` `gl_sa58` (67).* `FUN_0052a4c0` draws the current weapon index's `worldModel`
+  with no altmode→parent swap (the viewmodel's `FUN_00535540` has one), so BO2 shows the SMR's
+  launcher mode as `t6_wpn_ar_sa58_view` in third person. The mod's third-person weapon is keyed by
+  viewmodel (`W{vm}{k}`, `zhbo_native::world_weapon_path`) and an alt mode shares its gun's, so
+  matching needs a per-mode world-weapon key in the native world-weapon files and the host's
+  W-mesh names. Real but cosmetic (the same gun at view LOD); not done here.
+* *`anim_ads_up`/`anim_ads_down` (10 + 10).* BO2 registers the idle in an offhand's empty ADS slots
+  (`FUN_0052d3e0`) but never aims an offhand; the mod's ADS layer (`Loaded::ads_clip`) has no idle
+  fallback by design, and only a gun may aim (`wants_ads`). Reporting or loading the idle would
+  change nothing a player sees.
+* *`world_flash_effect` `knife_held_mp` (1).* The held knife is `bUseAsMelee`: its fire button
+  melees, so no shot (and no flash) ever leaves it; the mod gives it no FX weapon.
+* *`projectile_explosion_effect` sensor, Trophy (2).* Both are weapon objects whose watcher's
+  `detonate` is script (`_sensor_grenade.gsc:23` → `sensorgrenadedestroyed`, `:113-118`;
+  `_trophy_system.gsc:37` → `trophysystemdetonate`, `:251-266`): `playfx` and `delete`, never the
+  engine's `detonate()`, so the def field never plays.
+* *cac, 4 BO2-only MTX camos* (`camo_dayofdead`, `_mtp`, `_pap`, `_snake`). New evidence: BO2 lists
+  a store camo only when `CoD.CACUtility.ShouldDisplayWeaponOptionMTX` passes
+  (`cacutility.lua:1130-1146`, `caccamomenu.lua:1287-1306`), i.e. `Engine.SkipMTXItem` is false.
+  That is t6mp `FUN_0093b170` → `FUN_006c9310`: skipped while `tu8_mtx_enabled` (default 0; "1 -
+  usable if purchased, 2 - completely enabled") is below 1, and at 1 unless purchased
+  (`FUN_006c9240`'s owned bits). A Steam MTX pack ships its art only to owners, and these four have
+  none on this install, so BO2 would not list them for this player either; the expected side does
+  not model `SkipMTXItem` because ownership has no offline source it could read independently.
+
+**Found elsewhere (not changed).** BO2's equipment destruction effects are per item in script, and
+the mod plays one: a destroyed Trophy System plays `fx_exp_equipment_lg` (`_trophy_system.gsc:256`,
+the mod `BREAK_FX`), a Trophy kill `fx_trophy_radius_detonation` (`:231`, the mod
+`fx_exp_equipment_lg`), a destroyed Betty `fx_betty_destroyed` (`_bouncingbetty.gsc:119`), and a
+shot claymore detonates through `weapondetonate` (`_weaponobjects.gsc:347-393`) where the mod only
+breaks it.
+
+**Bumps (integrator).** The archive's `hud::VERSION` (the weapon table gains `FireStartSoundNpc`,
+`FireLastSoundNpc`, `ScreenFx`, `HudIcon`; `ExplosionFx` empties on the smoke grenade; the HUD
+icons are renamed by material; the offhands' and `knife_mp`'s `DisplayName`s change). No C ABI
+change.

@@ -538,11 +538,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // Crosshair and the overlay.
     let r = &d.reticle;
     let opt = |s: &str| (!s.is_empty()).then(|| s.to_string());
-    let icon_base = crate::generals::base_id(&d.id).to_string();
-    let hud_icon = sh
-        .has_sprite(&format!("ZHBO_BO2_Icon_{icon_base}"))
-        .then(|| sh.bo2.iter().find(|w| w.name == icon_base).and_then(|w| w.hud_icon.clone()))
-        .flatten();
+    // The def's HUD icon material, when its sprite shipped (`WeaponDef::hud_icon_image`, what
+    // every icon surface draws).
+    let hud_icon = (!d.hud_icon.is_empty() && sh.has_sprite(&d.hud_icon_image())).then(|| d.hud_icon.clone());
     b.opt_text("reticle_center", opt(&r.center))
         .opt_text("reticle_side", opt(&r.side))
         .list("reticle_sizes", &[r.center_size, r.side_size, r.min_ofs].map(|x| format!("{}", x as i64)))
@@ -679,7 +677,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             Place::Throw => sh.sound(zhbo_core::sounds::throw_for(d)),
             // A set-down item plays its own sound as it goes down (`client`'s `Planted` cue).
             Place::Plant => sh.sound(zhbo_core::sounds::plant_for(d)),
-            Place::Hack => None,
+            // The Black Hat fires as its hack lands (`client`'s `Hacked` cue).
+            Place::Hack => zhbo_core::sounds::hack_fire_for(d).and_then(|e| sh.sound(e)),
         }
     } else if d.class == Class::Melee || d.class == Class::Shield {
         // A knife or the Assault Shield fires no shot (the shield's trigger deploys it).
@@ -698,11 +697,15 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         match c {
             // An offhand others hear as it leaves the thrower's hand (`client`'s remote
             // `Thrown`/`Planted` cue, `sounds::remote_offhand`); a gun through its FX weapon.
-            "fire_sound" if d.class.is_offhand() => b.opt_text(c, (d.place != Place::Hack).then(|| zhbo_core::sounds::remote_offhand(d).and_then(|e| sh.sound(e))).flatten()),
+            // (the Black Hat's as its hack lands).
+            "fire_sound" if d.class.is_offhand() => b.opt_text(c, zhbo_core::sounds::remote_offhand(d).and_then(|e| sh.sound(e))),
             "fire_sound" => b.opt_text(c, npc.clone()),
             "fire_sound_player" => b.opt_text(c, plr.clone()),
             "fire_start_sound_player" => b.opt_text(c, own(&d.fire_start_sound)),
             "fire_last_sound_player" => b.opt_text(c, own(&d.fire_last_sound)),
+            // Another player's opening and last round (`client`'s remote round, `sounds::remote_round`).
+            "fire_start_sound" => b.opt_text(c, own(&d.npc_fire_start_sound)),
+            "fire_last_sound" => b.opt_text(c, own(&d.npc_fire_last_sound)),
             _ => b.absent(c),
         };
     }

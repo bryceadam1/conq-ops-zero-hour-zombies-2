@@ -286,7 +286,7 @@ pub fn schema() -> Schema {
         .col("view_ads_part_models", "parts", Kind::List, "ADS draw: the same list with attachViewModel[7] / viewModelADS swaps").asset()
         .col("view_hide_tags", "hide", Kind::Set, "the merged hideTags (G14 §4, FUN_008ec1a0)")
         .col("view_part_materials", "materials", Kind::List, "each hip part's LOD0 surface materials, `;`-joined per part").asset()
-        .col("world_model", "worldparts", Kind::Text, "worldModel[0]").asset()
+        .col("world_model", "worldparts", Kind::Text, "the third-person model: worldModel[0], a riot shield's the carried model the engine attaches (FUN_0052a4c0, FUN_00967450)").asset()
         .col("world_part_models", "worldparts", Kind::List, "third person: base attachWorldModel slots then each attachment's resolved unique (FUN_008ace30)").asset()
         .col("world_part_tags", "worldparts", Kind::List, "each world part's tag")
         .col("world_part_offsets", "worldparts", Kind::Floats(INCH_EPS), "each world part's offset, flattened, inches")
@@ -304,7 +304,7 @@ pub fn schema() -> Schema {
 
     // Sounds and effects.
     for name in OVERRIDE_SOUNDS {
-        s.col(name, "sounds", Kind::Text, "the def's alias unless the base unique's soundOverrides bit lets an attachment replace it (FUN_008ebe80)").asset();
+        s.col(name, "sounds", Kind::Text, "the def's alias as the client plays it: fireSound(Player) and the openings through the override gate (FUN_008ebe80, resolve::heard_sound), the rest raw (FUN_005320e0)").asset();
     }
     for name in DEF_SOUNDS {
         s.col(name, "sounds", Kind::Text, "the def's alias").asset();

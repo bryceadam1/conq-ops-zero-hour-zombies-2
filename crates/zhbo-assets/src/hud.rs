@@ -195,7 +195,8 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // Full-screen art that cannot share a 1024-px atlas page (the snipers' scope overlays).
     let mut standalone: Vec<(String, Rgba)> = Vec::new();
     // The fixed HUD and create-a-class sprites, then each converted weapon's own HUD icon
-    // (`ZHBO_BO2_Icon_<weapon>`, the lethal and tactical counters use them).
+    // (its `hudIcon` material, `WeaponDef::hud_icon_image`: the class buttons, the editor's rows and
+    // the lethal and tactical counters draw them).
     let mut wanted: Vec<(String, Source, u32)> = SPRITES
         .iter()
         .chain(crate::cac::SPRITES.iter())
@@ -243,12 +244,17 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 wanted.push((zhbo_core::names::cac_weapon_image(base), Source::Dynamic(format!("{image}_256")), 256));
             }
         }
-        let name = format!("ZHBO_BO2_Icon_{id}");
-        match (w.hud_icon_key, &w.hud_icon) {
-            (Some(hash), _) => wanted.push((name, Source::Hash(hash), 64)),
+        // The weapon's HUD icon under its material's name (`WeaponDef::hud_icon_image`): one
+        // sprite per material, shared by every def that names it (an alt mode names its gun's).
+        let Some(icon) = &w.hud_icon else { continue };
+        let name = zhbo_core::lui::materials::image(icon);
+        if wanted.iter().any(|(n, ..)| *n == name) {
+            continue;
+        }
+        match w.hud_icon_key {
+            Some(hash) => wanted.push((name, Source::Hash(hash), 64)),
             // Equipment icons are stubs in common_mp; the menus' zones hold the real material.
-            (None, Some(icon)) => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
-            _ => {}
+            None => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
         }
     }
     // The alt-fire slot's art (`zhbo_core::hud::ammo::alt_slot_icon`): each variant's `dpadIcon`
@@ -813,11 +819,14 @@ mod tests {
             // counter icon (only `code_post_gfx` loads it).
             "ZHBO_Mat_hud_gl_select",
             "ZHBO_Mat_hud_select_fire_bullet_stack",
-            "ZHBO_BO2_Icon_willy_pete_mp",
+            "ZHBO_Mat_hud_willy_pete",
         ] {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
         }
-        assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
+        // Only a weapon's HUD icon may lack an image.
+        let (pool, _) = crate::paks::MpPool::load(&bo2.path).unwrap().weapons().unwrap();
+        let icons: std::collections::BTreeSet<String> = pool.iter().filter_map(|w| w.hud_icon.as_deref()).map(zhbo_core::lui::materials::image).collect();
+        assert!(report.missing.iter().all(|(name, _)| icons.contains(name)), "{:?}", report.missing);
         // The reticle grid: every custom-reticle optic's art for every reticle row converts (the
         // Hybrid Optic's pair included), so no cell of any optic's page is blank.
         let patch = crate::generals::load_zone(&bo2.path, crate::fx::ZONE).unwrap();

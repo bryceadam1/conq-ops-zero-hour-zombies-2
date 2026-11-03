@@ -652,15 +652,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
                 let e = bo2.iter().find(|s| s.name == SMOKE_SCREEN_WEAPON).and_then(|s| s.explosion_effect.clone())?;
                 zhbo_formats::fx::find(&common, &e.name).or(Some(e))
             };
-            if let Some(e) = w.explosion_effect.clone().or_else(screen) {
-                d.explosion_fx = effects.add_area(&e, zhbo_core::tuning::get().smoke_duration, &|h| paks.image(h));
+            if let Some(e) = screen() {
+                d.screen_fx = effects.add_area(&e, zhbo_core::tuning::get().smoke_duration, &|h| paks.image(h));
             }
-            continue;
         }
         // The def's own `projExplosionEffect`, played on top of the impact table's cell (BO2's
         // `FUN_004c0ac0`); most explosives leave it empty and blow up with the table's alone.
         let Some(e) = &w.explosion_effect else { continue };
-        if matches!(d.effect, zhbo_core::weapons::Effect::Explode | zhbo_core::weapons::Effect::Stun | zhbo_core::weapons::Effect::Emp) {
+        use zhbo_core::weapons::Effect;
+        if matches!(d.effect, Effect::Explode | Effect::Stun | Effect::Emp | Effect::Smoke) {
             d.explosion_fx = effects.add(e, &|h| paks.image(h));
         }
     }
@@ -1383,7 +1383,8 @@ mod tests {
         // every dynamic LOD and never evicted by a fight's particles) whose looping parts stand the
         // tuning pack's screen time.
         let smoke = by_id("willy_pete_mp");
-        let body = fx_body(&smoke.explosion_fx).unwrap_or_else(|| panic!("no FXList {}", smoke.explosion_fx));
+        assert!(smoke.explosion_fx.is_empty(), "BO2's smoke grenade names no projExplosionEffect: the cloud is its script's");
+        let body = fx_body(&smoke.screen_fx).unwrap_or_else(|| panic!("no FXList {}", smoke.screen_fx));
         let systems: Vec<&str> = body.lines().filter_map(|l| l.trim().strip_prefix("Name = ")).collect();
         assert!(systems.len() >= 10, "the cloud's systems: {body}");
         let frames = (zhbo_core::tuning::get().smoke_duration * 30.0).round();
@@ -1427,9 +1428,7 @@ mod tests {
             }
         };
         for d in &table.weapons {
-            if d.effect != zhbo_core::weapons::Effect::Smoke {
-                check(&d.explosion_fx, "CRITICAL", "blast");
-            }
+            check(&d.explosion_fx, "CRITICAL", "blast");
             check(&d.dud_fx, "CRITICAL", "dud");
             check(&d.view_flash_fx, "CRITICAL", "flash");
             check(&d.silenced_view_flash_fx, "CRITICAL", "flash");

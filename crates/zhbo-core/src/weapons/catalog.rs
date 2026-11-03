@@ -876,6 +876,7 @@ End
 
 Weapon an94_mp
   DisplayName = AN-94
+  HudIcon = menu_mp_weapons_an94
   Class = rifle
   CacSlot = primary
   Fire = auto
@@ -909,6 +910,7 @@ End
 
 Weapon fnp45_mp
   DisplayName = Tac-45
+  HudIcon = menu_mp_weapons_fnp45
   Class = pistol
   WeapClass = pistol
   Attributes = 30 75 30 65
@@ -939,6 +941,7 @@ End
 
 Weapon frag_grenade_mp
   DisplayName = Grenade
+  HudIcon = hud_grenadeicon
   Class = lethal
   CacSlot = primarygrenade
   Fire = semi
@@ -960,6 +963,7 @@ End
 
 Weapon claymore_mp
   DisplayName = Claymore
+  HudIcon = hud_icon_claymore_256
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -982,6 +986,7 @@ End
 ; detonator (`hasDetonator`). Generic offhand times.
 Weapon satchel_charge_mp
   DisplayName = C4
+  HudIcon = hud_icon_satchelcharge_256
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -1002,6 +1007,7 @@ End
 
 Weapon concussion_grenade_mp
   DisplayName = Concussion
+  HudIcon = hud_us_stungrenade
   Class = tactical
   CacSlot = specialgrenade
   Fire = semi
@@ -1024,6 +1030,7 @@ End
 ; Placed tactical equipment (BO2's `specialgrenade` slot lists it beside the grenades).
 Weapon trophy_system_mp
   DisplayName = Trophy System
+  HudIcon = hud_trophy_system_256
   Class = equipment
   CacSlot = specialgrenade
   Fire = semi
@@ -1041,6 +1048,7 @@ End
 
 Weapon knife_held_mp
   DisplayName = Knife
+  HudIcon = menu_mp_weapons_ballistic_knife
   Class = melee
   Melee = 135 0.6
   MeleeDelay = 0.05
@@ -1053,6 +1061,7 @@ End
 ; surfaces on the BO2 body and in the deploy animation.
 Weapon riotshield_mp
   DisplayName = Assault Shield
+  HudIcon = menu_mp_weapons_riot_shield
   Class = shield
   CacSlot = primary
   CacGroup = weapon_special
@@ -1084,12 +1093,14 @@ End
 ; of these entries with the real weapon, which the mod's requirements check guarantees exists.
 Weapon tar21_mp
   DisplayName = MTAR
+  HudIcon = menu_mp_weapons_tar21
   Class = rifle
   CacSlot = primary
 End
 
 Weapon mp7_mp
   DisplayName = MP7
+  HudIcon = menu_mp_weapons_mp7
   Class = smg
   CacSlot = primary
   Description = Fully automatic personal defense weapon.  Versatile and strong overall.
@@ -1098,30 +1109,35 @@ End
 
 Weapon mk48_mp
   DisplayName = MK48
+  HudIcon = menu_mp_weapons_mk48
   Class = lmg
   CacSlot = primary
 End
 
 Weapon 870mcs_mp
   DisplayName = 870 MCS
+  HudIcon = menu_mp_weapons_870mcs
   Class = shotgun
   CacSlot = primary
 End
 
 Weapon svu_mp
   DisplayName = SVU
+  HudIcon = menu_mp_weapons_svu
   Class = sniper
   CacSlot = primary
 End
 
 Weapon smaw_mp
   DisplayName = SMAW
+  HudIcon = menu_mp_weapons_smaw
   Class = launcher
   CacSlot = secondary
 End
 
 Weapon fiveseven_mp
   DisplayName = Five-Seven
+  HudIcon = menu_mp_weapons_five_seven
   Class = pistol
   CacSlot = secondary
   Allowed = dw=dw
@@ -1130,6 +1146,7 @@ End
 ; A pistol by class that BO2 lists under SPECIALS (its statstable group, `CacGroup`).
 Weapon knife_ballistic_mp
   DisplayName = Ballistic Knife
+  HudIcon = menu_mp_weapons_ballistic_knife
   Class = pistol
   CacSlot = secondary
   CacGroup = weapon_special
@@ -1138,6 +1155,7 @@ End
 ; What a class with the Five-seven and Dual Wield gets: no CaC item of its own.
 Weapon fiveseven_dw_mp
   DisplayName = Five-Seven Dual Wield
+  HudIcon = menu_mp_weapons_five_seven
   Class = pistol
   DualWieldWeapon = fiveseven_lh_mp
 End

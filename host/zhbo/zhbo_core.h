@@ -349,7 +349,7 @@ typedef struct ZhboClassButton
 	int32_t page;      /* 1 or 2 */
 	int32_t slot;      /* the command set's index: page one starts at 1 (0 is Take Control) */
 	char name[48];     /* the button's label, UTF-8 */
-	char primary[48];  /* converted MappedImage names (ZHBO_BO2_Icon_<id>) */
+	char primary[48];  /* converted MappedImage names (ZHBO_Mat_<hudIcon material>) */
 	char secondary[48];
 	char lethal[48];
 	char tactical[48];

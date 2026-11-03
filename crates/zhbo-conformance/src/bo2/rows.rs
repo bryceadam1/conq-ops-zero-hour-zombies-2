@@ -15,6 +15,12 @@ use crate::weapons::{self as cols, enum_name};
 use std::collections::{BTreeMap, HashMap};
 use zhbo_formats::t6zone::layouts::WeaponDef as WD;
 
+/// `weapType_t` riotshield.
+const RIOTSHIELD: u32 = 8;
+/// The model BO2's engine attaches to a player whose weapon up is a riot shield
+/// (`refreshshieldattachment`, t6mp `FUN_00967450`).
+const SHIELD_CARRY_MODEL: &str = "t6_wpn_shield_carry_world";
+
 /// The always-given melee weapons (`_class.gsc:586`, `:682`).
 const KNIVES: [&str; 2] = ["knife_mp", "knife_held_mp"];
 
@@ -451,8 +457,19 @@ impl<'a> Expected<'a> {
         b.set("view_hide_tags", &resolve::hide_tags(pw));
         let mats: Vec<String> = gun.iter().cloned().chain(hip.iter().map(|p| p.model.clone())).map(|m| self.model_materials(&m)).collect();
         b.list("view_part_materials", &mats);
-        b.opt_text("world_model", d.world_model());
-        part_cols(&mut b, "world_part", &resolve::world_parts(pw));
+        // The model the player carries in third person. `FUN_0052a4c0` (the third-person weapon's
+        // models) adds `worldModel` and its parts (`FUN_008ace30`) only when the weapType is not
+        // riotshield; a riot shield is the model `refreshshieldattachment` attaches while it is
+        // the weapon up (`FUN_00967450`: the literal `t6_wpn_shield_carry_world` on
+        // `tag_weapon_left`), and its `worldModel` (`t6_wpn_shield_pickup_world`) is the dropped
+        // pickup's only.
+        if d.weap_type() == RIOTSHIELD {
+            b.text("world_model", SHIELD_CARRY_MODEL);
+            part_cols(&mut b, "world_part", &[]);
+        } else {
+            b.opt_text("world_model", d.world_model());
+            part_cols(&mut b, "world_part", &resolve::world_parts(pw));
+        }
 
         // Animations.
         let table = resolve::anims(w, left);
@@ -464,7 +481,7 @@ impl<'a> Expected<'a> {
 
         // Sounds and effects.
         for (i, (c, f)) in cols::OVERRIDE_SOUNDS.iter().zip(OVERRIDE_SOUND_FIELDS).enumerate() {
-            b.opt_text(c, resolve::sound(w, i as u32, d.sound(f)));
+            b.opt_text(c, resolve::heard_sound(w, i as u32, fire, d.sound(f)));
         }
         for (c, f) in cols::DEF_SOUNDS.iter().zip(DEF_SOUND_FIELDS) {
             // A melee's swing and hit are the melee weapon's (see `md`).
