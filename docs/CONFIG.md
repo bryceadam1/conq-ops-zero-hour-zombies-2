@@ -121,3 +121,31 @@ VeryHigh; 87–191 fps uncapped (`-noFPSLimit -fixedLogicFPS 30`), against 103�
 player's own `GameLOD.ini`). The bridge logs the applied level once (`graphics detail: …`) and, in a
 game, the dynamic level's changes and the frame rate every 5 s (`frame rate: …`). Graphics detail is
 presentation only: it is not in the content CRC and never reaches the sim.
+
+## The render rate (host patch 0026)
+
+Zero Hour capped rendering at `FramesPerSecondLimit` (30) and, outside network games, ran one logic
+frame per rendered frame, so the render cap was also the game's speed. The mod separates them at
+every game start (`MSG_NEW_GAME` → `Zhbo_PaceNewGame`, `ZhboDetail.cpp`):
+
+* **The logic** runs at the game's own speed: the skirmish or replay's speed argument, else
+  `LOGICFRAMES_PER_SECOND` (30), through SuperHackers' logic time scale. A replay plays at its
+  recorded speed (`FramePacer::setGameLogicFps`; stock tied a replay's logic to the render update). A
+  network game's logic stays paced by the network. The sim steps exactly the frames it did.
+* **The render rate** follows the display: the refresh rate of the display the window is on (SDL3's
+  current display mode; `EnumDisplaySettings` on the DX8 build), at least 60. The player's
+  `Options.ini` can set it: `MaxRenderFPS = 144` caps there (never below the logic rate),
+  `MaxRenderFPS = Uncapped` removes the cap, and `0`, `Display` or no line follows the display. It is
+  a per-machine setting, like the detail level, and never reaches the sim. SuperHackers' in-game
+  render-rate keys still change it until the next game. Vsync stays off (the wgpu backend's
+  default): the engine's own limiter paces the frames on every build, DX8 windowed included.
+* **Between logic frames** what is drawn moves at the render rate: the first-person eye, view kick
+  and roll (the core, CONTRACT.md "Time"); every object's drawable, drawn between its last two logic
+  transforms at the render's logic-frame phase (`Drawable::getRenderTransformMatrix`, one logic frame
+  behind like the eye; a jump over 100 units in one frame is a teleport and snaps); the native
+  third-person weapon and body, placed from that transform; W3D animation, whose clock now steps every
+  render update by its share of the logic frame while the logic runs; particles (SuperHackers already
+  integrate them by the phase). The viewmodel, sway, bob, ADS, HUD and tracers run on the client's
+  real `dt`.
+
+The bridge logs `render rate: up to N fps (<why>; display M Hz), logic L fps` when a game starts.

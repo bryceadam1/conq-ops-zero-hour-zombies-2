@@ -520,7 +520,8 @@ void applyWorldPoses()
 			in.before_view = 9; // k_composite_view (the pass this runs before)
 			if (const char *dbg = getenv("ZHBO_BO2_DEBUG"))
 				in.debug = static_cast<float>(atoi(dbg));
-			if (const Matrix3D *world = draw->getTransformMatrix())
+			// Where the drawable is drawn this frame (between logic frames, host patch 0026).
+			if (const Matrix3D *world = draw->getRenderTransformMatrix())
 			{
 				const Vector3 pos = world->Get_Translation();
 				in.pos[0] = pos.X;

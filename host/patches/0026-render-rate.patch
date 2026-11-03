@@ -1,0 +1,227 @@
+diff --git a/Core/GameEngine/Include/Common/FramePacer.h b/Core/GameEngine/Include/Common/FramePacer.h
+index c2b260109..93300afa2 100644
+--- a/Core/GameEngine/Include/Common/FramePacer.h
++++ b/Core/GameEngine/Include/Common/FramePacer.h
+@@ -70,6 +70,9 @@ public:
+ 
+ 	Real getLogicFramePhase() const; ///< Get how far the current render step reaches into the current logic frame, in [0,1]. Used to interpolate render updates between logic updates.
+ 
++	void setGameLogicFps( Int fps ); ///< ZHBO: the game's own logic rate (its speed); a replay plays at it while the render runs free. 0: none (stock: the replay's logic follows the render update).
++	Int  getGameLogicFps() const;
++
+ protected:
+ 
+ 	void flushPerformanceLogWindow();
+@@ -79,6 +82,7 @@ protected:
+ 
+ 	Int m_maxFPS; ///< Maximum frames per second for rendering
+ 	Int m_logicTimeScaleFPS; ///< Maximum frames per second for logic time scale
++	Int m_gameLogicFPS; ///< ZHBO: see setGameLogicFps
+ 
+ 	Real m_updateTime; ///< Last update delta time in seconds
+ 	Real m_logicFramePhase; ///< How far the current render step reaches into the current logic frame, ranging 0 to 1.
+diff --git a/Core/GameEngine/Source/Common/FramePacer.cpp b/Core/GameEngine/Source/Common/FramePacer.cpp
+index 65d37a5da..b420c8b5d 100644
+--- a/Core/GameEngine/Source/Common/FramePacer.cpp
++++ b/Core/GameEngine/Source/Common/FramePacer.cpp
+@@ -37,6 +37,7 @@ FramePacer::FramePacer()
+ 
+ 	m_maxFPS = BaseFps;
+ 	m_logicTimeScaleFPS = LOGICFRAMES_PER_SECOND;
++	m_gameLogicFPS = 0;
+ 	m_updateTime = 1.0f / (Real)BaseFps; // initialized to something to avoid division by zero on first use
+ 	m_logicFramePhase = 1.0f;
+ 	m_enableFpsLimit = FALSE;
+@@ -308,6 +309,13 @@ Int FramePacer::getActualLogicTimeScaleFps(LogicTimeQueryFlags flags) const
+ 		return getLogicTimeScaleFps();
+ 	}
+ 
++	// ZHBO: a replay plays at the recorded game's speed (set at its new-game message), so the render
++	// rate may follow the display without speeding the replay up.
++	if (m_gameLogicFPS > 0 && TheGameLogic != nullptr && TheGameLogic->isInReplayGame())
++	{
++		return m_gameLogicFPS;
++	}
++
+ 	// Returns uncapped value to align with the render update as per the original game behavior.
+ 	return RenderFpsPreset::UncappedFpsValue;
+ }
+@@ -337,3 +345,13 @@ Real FramePacer::getLogicFramePhase() const
+ {
+ 	return m_logicFramePhase;
+ }
++
++void FramePacer::setGameLogicFps( Int fps )
++{
++	m_gameLogicFPS = fps;
++}
++
++Int FramePacer::getGameLogicFps() const
++{
++	return m_gameLogicFPS;
++}
+diff --git a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
+index d859fb2f6..291945ee1 100644
+--- a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
++++ b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
+@@ -910,6 +910,9 @@ bool GameLogic::onNewGame(MAYBE_UNUSED GameMessage *msg)
+ 	if ( msg->getArgumentCount() >= 3 )
+ 		rankPoints = msg->getArgument( 2 )->integer;
+ 
++	// ZHBO: the game's speed (the skirmish/replay FPS argument, else Zero Hour's 30) drives the logic
++	// and the render rate follows the display (Zhbo_PaceNewGame); stock bound both to the argument.
++	Int gameLogicFps = 0;
+ 	if ( msg->getArgumentCount() >= 4 )
+ 	{
+ 		Int maxFPS = msg->getArgument( 3 )->integer;
+@@ -918,7 +921,9 @@ bool GameLogic::onNewGame(MAYBE_UNUSED GameMessage *msg)
+ 		DEBUG_LOG(("Setting max FPS limit to %d FPS", maxFPS));
+ 		TheFramePacer->setFramesPerSecondLimit(maxFPS);
+ 		TheWritableGlobalData->m_useFpsLimit = true;
++		gameLogicFps = maxFPS;
+ 	}
++	Zhbo_PaceNewGame(gameLogicFps); // ZHBO
+ 
+ 	// prepare for new game
+ 	prepareNewGame( gameMode, diff, rankPoints );
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
+index 010875d60..c7d5cc415 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
+@@ -2042,7 +2042,12 @@ void W3DDisplay::update()
+ 	WW3D::Update_Logic_Frame_Time(TheFramePacer->getLogicTimeStepMilliseconds());
+ 
+ 	// TheSuperHackers @info This binds the WW3D update to the logic update.
+-	WW3D::Sync(TheGameLogic->hasUpdated());
++	// ZHBO: when the render outpaces the logic, step W3D's animation clock every render update by its
++	// share of the logic frame (Update_Logic_Frame_Time above) while the logic runs, so models
++	// animate at the render rate instead of in 30 Hz steps. Presentation only: the logic reads no
++	// W3D animation state (and a network game's render rates already differ between machines).
++	const Bool renderOutpacesLogic = TheFramePacer->getActualLogicTimeScaleOverFpsRatio() < 1.0f;
++	WW3D::Sync(TheGameLogic->hasUpdated() || (renderOutpacesLogic && !TheGameLogic->isGamePaused()));
+ 
+ 	// update all views of the world - recomputes data which will affect drawing
+ 	if (WW3D::Get_Render_Backend() != nullptr && !WW3D::Get_Render_Backend()->Is_Device_Lost())
+diff --git a/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h b/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h
+index 9f87518c0..dcad41ce9 100644
+--- a/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h
++++ b/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h
+@@ -410,6 +410,10 @@ public:
+ 	void setInstanceScale(Real value) { m_instanceScale = value;}	///< set scale that will be applied to instance matrix before rendering.
+ 
+ 	const Matrix3D *getTransformMatrix() const;	///< return the world transform
++	/// ZHBO: the world transform this render update draws: an object's drawable between its last two
++	/// logic transforms at the render's logic-frame phase, so it moves at the render rate rather than
++	/// in logic steps (one logic frame behind, like the first-person eye). Presentation only.
++	const Matrix3D *getRenderTransformMatrix();
+ 
+ 	void draw();													///< render the drawable to the given view
+ 	void updateDrawable(Real timeScale);														///< update the drawable
+@@ -706,6 +710,11 @@ private:
+ 	Color m_flashColor;					///< color to flash the drawable
+ 
+ 	Matrix3D m_instance;				///< The instance matrix that holds the initial/default position & orientation
++	Matrix3D m_zhboFromTransform;	///< ZHBO: the object's transform at the logic frame before m_zhboToFrame.
++	Matrix3D m_zhboToTransform;		///< ZHBO: its transform at m_zhboToFrame.
++	Matrix3D m_zhboRenderTransform;	///< ZHBO: what getRenderTransformMatrix returned last.
++	UnsignedInt m_zhboToFrame;
++	Bool m_zhboInterpolating;
+ 	Real m_instanceScale;				///< the uniform scale factor applied to the instance matrix before it is sent to W3D.
+ 
+ 	DrawableInfo				m_drawableInfo;		///< structure pointed to by W3D render objects so they know which drawable they belong to.
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
+index 1fbf9009e..05c4a0cea 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
+@@ -37,6 +37,7 @@
+ #include "Common/ClientUpdateModule.h"
+ #include "Common/DrawModule.h"
+ #include "Common/FramePacer.h"
++#include "WWMath/quat.h" // ZHBO: the drawn transform between logic frames
+ #include "Common/GameAudio.h"
+ #include "Common/GameLOD.h"
+ #include "Common/GameState.h"
+@@ -404,6 +405,11 @@ Drawable::Drawable( const ThingTemplate *thingTemplate, DrawableStatusBits statu
+ 
+ 	m_instance.Make_Identity();
+ 	m_instanceIsIdentity = true;
++	m_zhboFromTransform.Make_Identity();
++	m_zhboToTransform.Make_Identity();
++	m_zhboRenderTransform.Make_Identity();
++	m_zhboToFrame = 0;
++	m_zhboInterpolating = FALSE;
+ 
+ 	//Real scaleFuzziness = thingTemplate->getInstanceScaleFuzziness();
+ 	//Real fuzzyScale = ( 1.0f + GameClientRandomValueReal( -scaleFuzziness, scaleFuzziness ));
+@@ -2639,7 +2645,7 @@ void Drawable::draw()
+ #endif
+ 
+ 	// call the database defined draw action method
+-	Matrix3D transformMtx = *getTransformMatrix();
++	Matrix3D transformMtx = *getRenderTransformMatrix(); // ZHBO: between logic frames
+ 	if (!isInstanceIdentity())
+ 	{
+ #ifdef ALLOW_TEMPORARIES
+@@ -4260,6 +4266,62 @@ const Matrix3D *Drawable::getTransformMatrix() const
+ 		return Thing::getTransformMatrix();
+ }
+ 
++// ZHBO: farther than this in one logic frame is a teleport, drawn where it lands.
++static const Real ZHBO_INTERPOLATION_SNAP_DISTANCE = 100.0f;
++
++static Bool zhboIsRotation(const Matrix3D &m)
++{
++	for (Int c = 0; c < 3; ++c)
++	{
++		const Real len2 = m[0][c] * m[0][c] + m[1][c] * m[1][c] + m[2][c] * m[2][c];
++		if (fabs(len2 - 1.0f) > 0.02f)
++			return FALSE;
++	}
++	return TRUE;
++}
++
++const Matrix3D *Drawable::getRenderTransformMatrix()
++{
++	const Matrix3D *now = getTransformMatrix();
++	// A client-only drawable is placed by the client each render update; at a logic rate at or
++	// above the render's there is nothing between frames to draw.
++	if (getObject() == nullptr || TheGameLogic == nullptr || TheFramePacer == nullptr ||
++		TheFramePacer->getActualLogicTimeScaleOverFpsRatio() >= 1.0f)
++	{
++		m_zhboInterpolating = FALSE;
++		return now;
++	}
++	const UnsignedInt frame = TheGameLogic->getFrame();
++	if (!m_zhboInterpolating || frame != m_zhboToFrame)
++	{
++		// From the previous logic frame's transform, if this drawable was drawn on it; else from here.
++		const Bool consecutive = m_zhboInterpolating && frame == m_zhboToFrame + 1;
++		m_zhboFromTransform = consecutive ? m_zhboToTransform : *now;
++		m_zhboToFrame = frame;
++		m_zhboInterpolating = TRUE;
++	}
++	m_zhboToTransform = *now;
++
++	const Real phase = TheFramePacer->getLogicFramePhase();
++	const Vector3 from = m_zhboFromTransform.Get_Translation();
++	const Vector3 to = m_zhboToTransform.Get_Translation();
++	if (phase >= 1.0f || (to - from).Length2() > ZHBO_INTERPOLATION_SNAP_DISTANCE * ZHBO_INTERPOLATION_SNAP_DISTANCE)
++		return now;
++	const Real t = phase <= 0.0f ? 0.0f : phase;
++	if (zhboIsRotation(m_zhboFromTransform) && zhboIsRotation(m_zhboToTransform))
++	{
++		Quaternion q;
++		Slerp(q, Build_Quaternion(m_zhboFromTransform), Build_Quaternion(m_zhboToTransform), t);
++		Build_Matrix3D(q, m_zhboRenderTransform);
++	}
++	else
++	{
++		m_zhboRenderTransform = m_zhboToTransform;
++	}
++	m_zhboRenderTransform.Set_Translation(from + (to - from) * t);
++	return &m_zhboRenderTransform;
++}
++
+ //-------------------------------------------------------------------------------------------------
+ /**
+  * Set and clear the drawable's caption text

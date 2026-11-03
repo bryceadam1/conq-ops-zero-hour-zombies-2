@@ -52,6 +52,9 @@ namespace zhbo_platform
 	// Seconds, monotonic.
 	double now();
 
+	// The refresh rate of the display the game window is on, in Hz (0 if unknown).
+	int displayRefreshHz();
+
 	void errorBox(const char *title, const char *text);
 
 	// End the process at once, without running the engine's shutdown.
