@@ -1255,6 +1255,10 @@ asserted on both sides. Archive `hud::VERSION` 84 at the same point (the weapon 
 converted materials `hud_shoutcasting_change_tab` and `hud_shoutcasting_viewing_box_dead` and two
 `UiText` keys `MPUI_SPECTATING` and `MPUI_FIRST_PERSON_VIEW`); the native blob formats are unchanged.
 
+**Pending for the next bump** (bug-sweep-3; not bumped): no ABI change. The archive gains two sound
+events, `ZHBO_BO2_StepNpc` and `ZHBO_BO2_SprintStepNpc` (other players' footsteps), so
+`hud::VERSION` must move.
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the

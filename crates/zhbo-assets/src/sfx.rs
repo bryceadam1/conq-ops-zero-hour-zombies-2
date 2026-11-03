@@ -93,6 +93,10 @@ pub const SFX: &[Sfx] = &[
     Sfx { event: "ZHBO_BO2_Step", from: From::World, layers: &["fly_step_run_grass"], kind: Kind::Player, limit: 2 },
     Sfx { event: "ZHBO_BO2_SprintStep", from: From::World, layers: &["fly_step_sprint_grass", "fly_gear_sprint_plr"], kind: Kind::Player, limit: 2 },
     Sfx { event: "ZHBO_BO2_Land", from: From::World, layers: &["fly_dtp_land_plr_grass"], kind: Kind::Player, limit: 1 },
+    // Other players' footsteps, heard at them (`zhbo_core::sounds::RemoteSteps`): BO2's
+    // third-person aliases (`_footsteps.csc`, `firstperson = 0`), positional for everyone.
+    Sfx { event: "ZHBO_BO2_StepNpc", from: From::World, layers: &["fly_step_run_npc_grass"], kind: Kind::World, limit: 4 },
+    Sfx { event: "ZHBO_BO2_SprintStepNpc", from: From::World, layers: &["fly_step_sprint_npc_grass"], kind: Kind::World, limit: 4 },
     // Hold breath: `clientscripts/mp/_audio.csc` plays `<teamclientprefix>_sinper_*` (`vox_gen` by
     // default) on the engine's `playerbreath*sound` notifies (`FUN_0052e3d0`).
     Sfx { event: "ZHBO_BO2_BreathIn", from: From::Voice, layers: &["vox_gen_sinper_hold"], kind: Kind::Player, limit: 1 },

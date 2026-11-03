@@ -500,6 +500,8 @@ pub struct Client {
     /// This frame's impacts of the presented seat's rounds, copied into `ClientOut`.
     pub hits: [ClientHit; CLIENT_HITS],
     pub hits_len: usize,
+    /// Other first-person Generals' footsteps (`sounds::RemoteSteps`).
+    remote_steps: sounds::RemoteSteps,
     /// Every seat's match (the scoreboard's other rows), by seat.
     pub seats: [SeatTally; crate::sim::MAX_PLAYERS],
     /// This frame's impacts of other players' rounds (`events::present_remote`): they take the
@@ -587,6 +589,7 @@ impl Client {
             hits_len: 0,
             remote_hits: Vec::with_capacity(CLIENT_HITS),
             seats: [SeatTally::default(); crate::sim::MAX_PLAYERS],
+            remote_steps: Default::default(),
             class_pick_forced: false,
             class_pick_declined: false,
             class_pick_open: false,
@@ -1017,6 +1020,7 @@ impl Client {
         self.tracers.predicted = predicting;
         self.tally_seats(sim, host, inp.local_player);
         self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
+        self.remote_steps.update(&sim.players, viewed, &mut self.cues);
         self.tick_hud(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
         // the sim's record.

@@ -11093,3 +11093,28 @@ ASSISTS stays 0, because the sim credits none.
 **Test.** `the_scoreboard_lists_every_player_in_the_match` sets up two seats. The other seat
 kills twice (a non-kill marker does not count) and dies once. The test asserts his tally, his
 side and the board's text order: the local row first.
+
+## Bug sweep 3: other players' footsteps are heard (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom.** Another player walking or sprinting up behind you made no sound. Only your own
+2D footsteps played (`Cues::update`, `ZHBO_BO2_Step`, `Kind::Player`). Zero Hour's infantry have
+no footsteps of their own, and nothing played anyone else's.
+
+**BO2.** `clientscripts/mp/_footsteps.csc` builds `fly_<move>_npc_<surface>` for every player
+but the local one (`firstperson = 0`) and `_plr_` for the local one. In `mp_raid`'s bank
+`fly_step_run_npc_grass` and `fly_step_sprint_npc_grass` are positional (200–1,250" and 200–1,650"),
+unlike the 2D `_plr_` ones. Dead Silence (`specialty_quieter`) silences a player's steps for
+everyone else.
+
+**Fix.** `sounds::RemoteSteps` (the client, presentation only). Every first-person General except
+the presented one puts a foot down once per stride he walks on the ground, at the stride the own
+steps use (54" walking, 69" sprinting). The step plays at him: `ZHBO_BO2_StepNpc`, or
+`ZHBO_BO2_SprintStepNpc` when he sprints. A General with `specialty_quieter` makes none. The
+converter adds the two events (`Kind::World`, from those aliases). A spectator hears the followed
+General's own steps as before, and everyone else's this way.
+
+**Needs `hud::VERSION`** (two new archive events; CONTRACT "Pending for the next bump"). Until the
+archive is rebuilt, the events are missing and the engine logs `sound ZHBO_BO2_StepNpc: error` once.
+
+**Test.** `other_generals_footsteps_are_heard_at_them`: one step per stride at the walker, the
+sprint's own event, none for the presented seat, none with Dead Silence, none overhead.
