@@ -158,7 +158,11 @@ replicated messages alone. The rules, and what enforces each:
   a free-for-all credits none) an `Assist { level }` event (`assist_25/50/75`) and one assist on
   `Score::assists`. The lists, the counts and each seat's last Generals are hashed (the world part).
   The scoreboard's ASSISTS is that count; the client adds the points (`client::ASSIST_POINTS`,
-  `mp/scoreinfo.csv`'s tdm column) to the SCORE column.
+  `mp/scoreinfo.csv`'s tdm column) to the SCORE column. A concussion, flashbang, EMP grenade or
+  Shock Charge that reached a first-person General (the sim's shock hits name the weapon and its
+  owner) is that attacker's last hit (`score::Tactical`, BO2's 1-damage tactical blast), and his
+  assist is then `assist_concussion`/`_flash`/`_emp`/`_proximity` (50); a later plain hit clears it.
+  The recording host takes damage-rules' `MeansOfDeath`.
 * **The local player's prediction is presentation.** The client (`client/predict.rs`) predicts its
   own first-person General over the inputs in flight by running the sim's own step for him
   (`Sim::predict_step`) on a copy of the sim (`Sim::scratch`) through `sim::predict::Sandbox`,
@@ -1421,7 +1425,9 @@ footsteps). The native blob formats are unchanged.
 the weapon table's `NpcSounds` and `TorsoAnims` keys (two new weapon fields: 156), the torso clips
 in each faction body manifest (ids from `torso::BASE`; `.zbc` format unchanged), the torso rows in
 `sound_layers.txt`, the new AudioEvents (`ZHBO_BO2_SndNpc_*`, `ZHBO_NTN_*`, the 18 voice events) and
-the General INI without the Zero Hour death voice. Until the archive is rebuilt the core finds no
+the General INI without the Zero Hour death voice; the follow-up adds `NpcSounds`' `empty_fire`,
+the flinch/jump/land torso actions (12 actions per set), `ZHBO_BO2_LandNpc` and the 117 battle
+chatter events. Until the archive is rebuilt the core finds no
 torso picks and no new events (the engine logs a missing event once).
 
 
@@ -1475,6 +1481,18 @@ bump together. `zhbo_logic_shield_damage` still reports only the first three.
   where he was last seen, in seat `% 3`'s voice and the faction the bridge names to
   `zhbo_native_body` (the USA voice while none has, e.g. `ZHBO_NATIVE_BODY=0`). The General INI no
   longer plays Zero Hour's hero death voice.
+* **More of another player** (follow-up): his dry fire (`NpcSounds` `empty_fire`, BO2's
+  `emptyFireSound`, once per trigger pull on an empty magazine), his jump and landing
+  (`_footsteps.csc`: the step alias and `ZHBO_BO2_LandNpc`), the script's `flinch` (asked from the
+  front: the sim's damage has no direction) and its whole-body `jump`/`land` clips as torso
+  actions (`torso::FLINCH`, `JUMP`, `LAND`; the last two replace every bone while they run), and
+  BO2's battle chatter (`_battlechatter_mp.gsc` `reloadtracking`/`grenadetracking`:
+  `ZHBO_BO2_Bc_<F><n>_<line>`, `sounds::CHATTER_LINES`; at the dvars' odds by a roll hashed from
+  the seat and his chatter count, so every machine agrees; on his head for everyone, as
+  `mpsaylocalsound` → `dosound` → `playsoundontag` plays it; never with Dead Silence). During a
+  grenade's pin and throw the body pass does not draw the gun (`Loaded::hide_weapon`): BO2 draws
+  the entity's one current weapon, the grenade, on `tag_inhand` (t6mp `FUN_0052a4c0`,
+  `FUN_0052a470`); the grenade itself is not drawn there yet.
 * **Who hears what.** Every seat's torso is tracked (the presented one too: an overhead General is
   drawn); its notes, the def sounds and the weapon change's sounds play at the General for everyone
   but a presented first-person General (his 2D versions play); the voices play for everyone, him
