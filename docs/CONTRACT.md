@@ -1015,7 +1015,7 @@ Hour's object updates and pathfinder, possibly inside a `zhbo_logic_step` callba
 sim state in the fingerprint and the engine's call order is the same on every peer, so every
 machine's units decide alike and Zero Hour's own CRC stays consistent; nothing new is stored on the
 engine side. `ZhboLogicApi.smoke` stays the per-frame notice (the bridge logs it; the smoke autotest
-reads it). The three free functions are pending the next ABI bump (see "Versioning").
+reads it). The three free functions are ABI 31 (see "Versioning").
 
 ## Lifecycle
 
@@ -1336,15 +1336,20 @@ asserted on both sides. Archive `hud::VERSION` 84 at the same point (the weapon 
 converted materials `hud_shoutcasting_change_tab` and `hud_shoutcasting_viewing_box_dead` and two
 `UiText` keys `MPUI_SPECTATING` and `MPUI_FIRST_PERSON_VIEW`); the native blob formats are unchanged.
 
-**Pending for the next bump** (smoke-screen): three free functions on the append-only surface,
-`zhbo_logic_smoke_blocks(ax, ay, az, bx, by, bz)`, `zhbo_logic_smoke_covers(x, y)` and
-`zhbo_logic_smoke_crosses(ax, ay, bx, by, since)` (each `int32_t`), for host patch 0024; no struct
-or API table moves. Archive `hud::VERSION` should move too: the smoke screen's particle systems are
-`AREA_EFFECT` and stand the tuning pack's 12 s (the converted INI changes).
-
-**Pending for the next bump** (bug-sweep-3; not bumped): no ABI change. The archive gains two sound
-events, `ZHBO_BO2_StepNpc` and `ZHBO_BO2_SprintStepNpc` (other players' footsteps), so
-`hud::VERSION` must move.
+**ABI 31** (playtest round 3's integration, one bump for the round): three free functions are
+appended after `zhbo_hammer_place_near`, `zhbo_logic_smoke_blocks(ax, ay, az, bx, by, bz)`,
+`zhbo_logic_smoke_covers(x, y)` and `zhbo_logic_smoke_crosses(ax, ay, bx, by, since)` (each
+`int32_t`, lock-free, from the sim's mirrored screens; host patch 0024, see "Smoke screens in Zero
+Hour's targeting and pathing"); no struct or API table moves. One meaning changes:
+`ZhboLogicApi.query` returns every object whose bounding sphere comes within the radius (Zero Hour's
+`FROM_BOUNDINGSPHERE_3D`, see "Units"), not centre-to-centre. Archive `hud::VERSION` 85 at the same
+point: the converted effects (runners, stubs, counts and motion by BO2's rules, each system at its
+`fx::Role`'s priority, the `_Framed` copies of flashes and bullet impacts, the smoke screen at
+`AREA_EFFECT` standing the tuning pack's 12 s), the props drawn at `GENERAL_SCALE` (the projectile
+objects' `Scale`, the planted shield in its deploy pose), the weapon table's `Shield` field now
+three boxes (39 numbers; a table converted before it does not parse, so the archive must be
+rebuilt) and two sound events, `ZHBO_BO2_StepNpc` and `ZHBO_BO2_SprintStepNpc` (other players'
+footsteps). The native blob formats are unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

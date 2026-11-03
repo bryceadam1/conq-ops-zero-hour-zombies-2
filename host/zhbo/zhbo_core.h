@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 30u
+#define ZHBO_ABI_VERSION 31u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -651,7 +651,7 @@ int32_t zhbo_content_versus(uint32_t theirs, char *out, int32_t cap);
 float zhbo_hammer_place_near(float radius);
 /* The smoke screens (smoke.rs; host patch 0024), from a lock-free mirror of the sim's screens
    written after each logic step, so every peer's engine gets the same answers. Lock-free (safe
-   inside any core callback and from the UI). Pending for the next ABI bump.
+   inside any core callback and from the UI). ABI 31.
    Whether a standing screen blocks the line of sight between two world points (BO2's sight test:
    never closer than 80 inches; else the segment's closest point within a screen's radius). */
 int32_t zhbo_logic_smoke_blocks(float ax, float ay, float az, float bx, float by, float bz);
