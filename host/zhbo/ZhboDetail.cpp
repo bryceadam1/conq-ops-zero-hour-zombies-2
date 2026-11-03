@@ -34,6 +34,8 @@ const char *staticName(StaticGameLODLevel level)
 }
 } // namespace
 
+void zhboForgetLoggedPacing();
+
 void zhboLogGraphicsDetail()
 {
 	if (!TheGameLODManager || !TheGlobalData)
@@ -51,6 +53,8 @@ void zhboLogGraphicsDetail()
 		TheGlobalData->m_enableDynamicLOD ? "on" : "off");
 	s_lastDynamicLevel = -2;
 	s_nextFrameRateLog = 0.0;
+	// A game started before the log opened (the engine's first startNewGame) logged into nothing.
+	zhboForgetLoggedPacing();
 }
 
 void zhboDetailFrame()
@@ -140,6 +144,12 @@ void Zhbo_PaceNewGame(Int gameLogicFps)
 {
 	s_notedSpeed = gameLogicFps;
 	applyPacing(gameLogicFps);
+}
+
+void zhboForgetLoggedPacing()
+{
+	s_loggedCap = -1;
+	s_loggedLogic = -1;
 }
 
 void zhboPaceStartingGame()
