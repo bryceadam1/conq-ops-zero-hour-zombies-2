@@ -53,7 +53,7 @@ impl Client {
             match e.kind {
                 EventKind::HitMarker { kill: true, .. } => t.kills += 1,
                 EventKind::GeneralDied { .. } => t.deaths += 1,
-                EventKind::Assist { level } => t.assist_points += crate::client::assist_points(level),
+                EventKind::Assist { level, tactical } => t.assist_points += crate::client::assist_points(level, tactical),
                 _ => {}
             }
             t.seen = true;
@@ -306,11 +306,11 @@ impl Client {
                     }
                 }
                 // BO2's assist: its score popup (`processscoreevent( assist_level )`).
-                EventKind::Assist { level } => {
+                EventKind::Assist { level, tactical } => {
                     if self.hud.score_popup <= 0.0 {
                         self.hud.score_points = 0;
                     }
-                    self.hud.score_points += crate::client::assist_points(level);
+                    self.hud.score_points += crate::client::assist_points(level, tactical);
                     self.hud.score_popup = SCORE_POPUP_TIME;
                 }
                 EventKind::Recoil { gun_kick } => {

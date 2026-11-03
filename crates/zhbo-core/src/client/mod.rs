@@ -106,8 +106,16 @@ pub const KILL_POINTS: u32 = 100;
 /// `assist_25`, `assist_50`, `assist_75`): `mp/scoreinfo.csv`'s `tdm score` column (25, 25, 50).
 pub const ASSIST_POINTS: [u32; 3] = [25, 25, 50];
 
-/// The score of an assist at `level` ([`ASSIST_POINTS`]).
-pub fn assist_points(level: u8) -> u32 {
+/// BO2's team-deathmatch score for a tactical's assist (`assist_concussion`, `assist_flash`,
+/// `assist_emp`, `assist_proximity`: 50 each in `mp/scoreinfo.csv`'s `tdm score`).
+pub const TACTICAL_ASSIST_POINTS: u32 = 50;
+
+/// The score of an assist at `level`, or of a tactical's ([`ASSIST_POINTS`],
+/// [`TACTICAL_ASSIST_POINTS`]).
+pub fn assist_points(level: u8, tactical: Option<crate::sim::score::Tactical>) -> u32 {
+    if tactical.is_some() {
+        return TACTICAL_ASSIST_POINTS;
+    }
     ASSIST_POINTS[(level.clamp(1, 3) - 1) as usize]
 }
 

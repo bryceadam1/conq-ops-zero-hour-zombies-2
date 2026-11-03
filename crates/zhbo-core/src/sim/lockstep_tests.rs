@@ -414,7 +414,7 @@ fn populated_sim() -> Sim {
     let shield = def("riotshield_mp");
     let bearer = crate::shield::Bearer::of(0, Vec3::new(3.0, 3.0, 0.0), 0.5, shield, true).expect("the shield's box");
     sim.deployed.push(deploy::Deployed { owner: 1, general: 101, def: shield, object: 902, bearer, damage_taken: 10.0, destroyed: Some(1.0), weapon: (1, crate::weapons::WeaponState::new(shield), true) });
-    sim.score.attacked.push(score::Attacked { victim: 100, attackers: vec![score::Attacker { seat: 1, general: 101, damage: 30.0 }] });
+    sim.score.attacked.push(score::Attacked { victim: 100, attackers: vec![score::Attacker { seat: 1, general: 101, damage: 30.0, tactical: Some(score::Tactical::Flash) }] });
     sim.score.assists[1] = 2;
     sim.score.generals[0] = [0, 0, 90, 100];
     sim

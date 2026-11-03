@@ -168,8 +168,9 @@ pub enum EventKind {
     /// The melee landed on someone (BO2's `meleeHitSound` moment).
     MeleeHit,
     /// Another player killed a General this player had hurt: BO2's assist (`score`), `level` 1, 2
-    /// or 3 for `assist_25`, `assist_50`, `assist_75`.
-    Assist { level: u8 },
+    /// or 3 for `assist_25`, `assist_50`, `assist_75`, or the tactical his last hit was
+    /// (`assist_concussion`, ...).
+    Assist { level: u8, tactical: Option<score::Tactical> },
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },
@@ -689,7 +690,7 @@ impl Sim {
         }
         self.step_projectiles(host);
         self.step_equipment(host);
-        self.apply_shock_hits();
+        self.apply_shock_hits(host);
         self.step_deployed(host);
         let (frame, smoke) = (self.frame, self.smoke);
         self.smokes.retain(|s| s.stands(frame, &smoke));
@@ -1148,7 +1149,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         FieldComputerOpened => format!("player {} opened the field computer", e.player),
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
         GeneralDied { general } => format!("player {}'s General {general} died", e.player),
-        Assist { level } => format!("player {} scored an assist ({})", e.player, level as u32 * 25),
+        Assist { level, tactical } => format!("player {} scored an assist ({})", e.player, tactical.map_or_else(|| (level as u32 * 25).to_string(), |t| format!("{t:?}").to_ascii_lowercase())),
         HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
         Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
         Swapped => format!("player {} swapped weapons", e.player),

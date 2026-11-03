@@ -19,13 +19,43 @@
 //! **Sim state.** The damage is the sim's own (`LogicHost::damage` as a seat's General, recorded
 //! by [`Tally`] around the step), so every machine records the same hits in the same order; the
 //! attacker lists and each seat's assist count are hashed (`Sim::fingerprint`'s world part).
-//! What BO2 adds on top (the concussion/flash/EMP/proximity assist score events, which key on the
-//! weapon) is not carried: the damage the sim records names no weapon.
+//! An attacker's last weapon decides the score event (`processassist`'s `switch ( weapon )`):
+//! a concussion, flashbang, EMP grenade or Shock Charge as his last hit scores `assist_concussion`,
+//! `assist_flash`, `assist_emp` or `assist_proximity` ([`Tactical`]). Those hit a first-person
+//! General through the sim's shellshock (`sim::guard`'s shock hits, which name the weapon and its
+//! owner: BO2's 1-damage tactical blast, `idamage` floored at 1); every other hit is a plain one.
 use super::{EventKind, Sim, MAX_PLAYERS};
 use crate::host::{objflags, LogicHost, ObjInfo};
 use crate::impacts::Surface;
 use crate::math::Vec3;
 use std::cell::RefCell;
+
+/// The tactical a hit came from, for the score event it makes ([`Tactical::of`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tactical {
+    Concussion,
+    Flash,
+    Emp,
+    Proximity,
+}
+
+crate::statehash::state_hash!(enum Tactical { Concussion, Flash, Emp, Proximity });
+
+impl Tactical {
+    /// BO2's names (`processassist`): `concussion_grenade_mp`, `flash_grenade_mp`,
+    /// `emp_grenade_mp`, `proximity_grenade(_aoe)_mp` — here the def's stun kind: the EMP's
+    /// effect, a placed stun (the Shock Charge), the two thrown ones by name (as `sim::shock`).
+    pub fn of(def: &crate::weapons::WeaponDef, thrown: bool) -> Option<Tactical> {
+        use crate::weapons::Effect;
+        match def.effect {
+            Effect::Emp => Some(Tactical::Emp),
+            Effect::Stun if !thrown => Some(Tactical::Proximity),
+            Effect::Stun if def.id == super::shock::FLASH_WEAPON => Some(Tactical::Flash),
+            Effect::Stun if def.id == super::shock::CONCUSSION_WEAPON => Some(Tactical::Concussion),
+            _ => None,
+        }
+    }
+}
 
 /// One enemy's damage to a General this life (BO2's `attackerdamage[clientid]`, in BO2 health).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,9 +64,11 @@ pub struct Attacker {
     /// The General he hurt him with (his own may have died since: a grenade still in the air).
     pub general: u32,
     pub damage: f32,
+    /// His last hit's tactical (BO2 keeps the last weapon): `None` for any other weapon.
+    pub tactical: Option<Tactical>,
 }
 
-crate::statehash::state_hash!(struct Attacker { seat, general, damage });
+crate::statehash::state_hash!(struct Attacker { seat, general, damage, tactical });
 
 /// A seat's General and the enemies who hurt him, in the order they first did.
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +134,29 @@ impl Score {
         }
     }
 
+    /// Seat `seat`'s General `shooter` hit `victim` for `damage` (BO2 health) with `tactical`:
+    /// onto the victim's list, if he is an enemy (BO2's friendly-fire branch tracks none).
+    fn track(&mut self, host: &dyn LogicHost, seat: usize, shooter: u32, victim: u32, damage: f32, tactical: Option<Tactical>) {
+        if host.object(victim, shooter).is_some_and(|o| o.has(objflags::ALLY)) {
+            return;
+        }
+        let list = match self.attacked.iter().position(|a| a.victim == victim) {
+            Some(i) => &mut self.attacked[i],
+            None => {
+                self.attacked.push(Attacked { victim, attackers: Vec::new() });
+                self.attacked.last_mut().expect("just pushed")
+            }
+        };
+        match list.attackers.iter_mut().find(|a| a.seat as usize == seat) {
+            Some(a) => {
+                a.damage += damage;
+                a.general = shooter;
+                a.tactical = tactical;
+            }
+            None => list.attackers.push(Attacker { seat: seat as u8, general: shooter, damage, tactical }),
+        }
+    }
+
     /// The victim's health came back by `bo2_health`: each attacker's damage decays by it.
     pub fn decay(&mut self, victim: u32, bo2_health: f32) {
         if let Some(a) = self.attacked.iter_mut().find(|a| a.victim == victim) {
@@ -137,25 +192,7 @@ impl Sim {
             let Some(victim_seat) = self.players.iter().position(|p| p.as_ref().is_some_and(|p| p.general == h.victim)) else { continue };
             let shooter = self.score.seat_of(&self.players, h.shooter);
             if let Some(seat) = shooter.filter(|&s| s != victim_seat) {
-                // Only an enemy's damage counts (BO2's friendly-fire branch tracks none).
-                let friendly = host.object(h.victim, h.shooter).is_some_and(|o| o.has(objflags::ALLY));
-                if !friendly {
-                    let damage = h.amount / crate::units::BO2_TO_ZH_DAMAGE;
-                    let list = match self.score.attacked.iter().position(|a| a.victim == h.victim) {
-                        Some(i) => &mut self.score.attacked[i],
-                        None => {
-                            self.score.attacked.push(Attacked { victim: h.victim, attackers: Vec::new() });
-                            self.score.attacked.last_mut().expect("just pushed")
-                        }
-                    };
-                    match list.attackers.iter_mut().find(|a| a.seat as usize == seat) {
-                        Some(a) => {
-                            a.damage += damage;
-                            a.general = h.shooter;
-                        }
-                        None => list.attackers.push(Attacker { seat: seat as u8, general: h.shooter, damage }),
-                    }
-                }
+                self.score.track(host, seat, h.shooter, h.victim, h.amount / crate::units::BO2_TO_ZH_DAMAGE, None);
             }
             if h.kill {
                 if let Some(killer) = shooter.filter(|&s| s != victim_seat) {
@@ -178,12 +215,24 @@ impl Sim {
             let with_killer = side(by).is_some_and(|o| o.has(objflags::ALLY));
             let with_victim = side(victim).is_some_and(|o| o.has(objflags::ALLY));
             if with_killer && !with_victim {
-                credited.push((a.seat as usize, assist_level(a.damage)));
+                credited.push((a.seat as usize, assist_level(a.damage), a.tactical));
             }
         }
-        for (seat, level) in credited {
+        for (seat, level, tactical) in credited {
             self.score.assists[seat] += 1;
-            self.emit(seat, EventKind::Assist { level });
+            self.emit(seat, EventKind::Assist { level, tactical });
+        }
+    }
+
+    /// A tactical's hit on a first-person General (`sim::guard`'s shock hit: the weapon and its
+    /// owner): BO2's 1-damage tactical blast on his attacker list, as that weapon.
+    pub(super) fn score_shock(&mut self, host: &dyn LogicHost, owner: u32, victim: u32, def: &crate::weapons::WeaponDef, thrown: bool) {
+        let Some(tactical) = Tactical::of(def, thrown) else { return };
+        if !self.players.iter().flatten().any(|p| p.general == victim) {
+            return;
+        }
+        if let Some(seat) = self.score.seat_of(&self.players, owner).filter(|&s| self.players.get(s).and_then(|p| p.as_ref()).is_none_or(|p| p.general != victim)) {
+            self.score.track(host, seat, owner, victim, 1.0, Some(tactical));
         }
     }
 }
@@ -295,7 +344,7 @@ mod tests {
 
     fn assists(sim: &Sim) -> Vec<(i32, u8)> {
         sim.events.iter().filter_map(|e| match e.kind {
-            EventKind::Assist { level } => Some((e.player, level)),
+            EventKind::Assist { level, .. } => Some((e.player, level)),
             _ => None,
         }).collect()
     }
@@ -354,6 +403,33 @@ mod tests {
         sim.score_hits(&host, &[]);
         hit(&mut sim, &host, 100, 102, 1000.0);
         assert_eq!(assists(&sim), [(1, 1)], "70 decayed by 60: assist_25, credited to his seat");
+    }
+
+    /// A tactical as the attacker's last hit scores its own event (`processassist`'s switch): the
+    /// concussion's stun, then the kill by his teammate; a later plain hit makes it a plain one.
+    #[test]
+    fn a_tactical_as_the_last_hit_scores_its_own_assist() {
+        let (mut sim, host) = match_of_four();
+        let conc = crate::weapons::catalog().get(super::super::shock::CONCUSSION_WEAPON).expect("the concussion");
+        sim.score_shock(&host, 101, 102, conc, true);
+        hit(&mut sim, &host, 100, 102, 1000.0);
+        let got: Vec<_> = sim.events.iter().filter_map(|e| match e.kind { EventKind::Assist { level, tactical } => Some((e.player, level, tactical)), _ => None }).collect();
+        assert_eq!(got, [(1, 1, Some(Tactical::Concussion))]);
+        let (mut sim, host) = match_of_four();
+        sim.score_shock(&host, 101, 102, conc, true);
+        hit(&mut sim, &host, 101, 102, 30.0);
+        hit(&mut sim, &host, 100, 102, 1000.0);
+        assert!(sim.events.iter().any(|e| matches!(e.kind, EventKind::Assist { level: 2, tactical: None })), "his last hit was the gun");
+        // A teammate's stun is not tracked; the classification by BO2's names.
+        let (mut sim, host) = match_of_four();
+        sim.score_shock(&host, 103, 102, conc, true);
+        assert!(sim.score.attacked.is_empty());
+        let def = |effect, id: &str| crate::weapons::WeaponDef { effect, id: id.into(), ..Default::default() };
+        use crate::weapons::Effect;
+        assert_eq!(Tactical::of(&def(Effect::Stun, "flash_grenade_mp"), true), Some(Tactical::Flash));
+        assert_eq!(Tactical::of(&def(Effect::Stun, "proximity_grenade_mp"), false), Some(Tactical::Proximity));
+        assert_eq!(Tactical::of(&def(Effect::Emp, "emp_grenade_mp"), true), Some(Tactical::Emp));
+        assert_eq!(Tactical::of(&def(Effect::Explode, "frag_grenade_mp"), true), None);
     }
 
     /// The step's damage reaches the scoring through its host ([`Sim::scored`]), in call order.

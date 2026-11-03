@@ -50,8 +50,14 @@ pub(super) fn emp_hits(host: &dyn LogicHost, players: &[Option<PlayerSim>], def:
 
 impl Sim {
     /// Turn the frame's [`ShockHit`]s into shellshocks on the first-person Generals.
-    pub(super) fn apply_shock_hits(&mut self) {
+    pub(super) fn apply_shock_hits(&mut self, host: &dyn LogicHost) {
         let hits = self.equipment.shock_hits.take();
+        for h in &hits {
+            // A tactical's hit is an attacker's for the assists (`score`).
+            if matches!(h.kind, ShockHitKind::Stun(_)) && h.owner != h.victim {
+                self.score_shock(host, h.owner, h.victim, h.def, h.thrown);
+            }
+        }
         for h in hits {
             let Some(p) = self.players.iter_mut().flatten().find(|p| p.general == h.victim && p.is_first_person()) else { continue };
             apply(p, &h);
