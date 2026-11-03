@@ -11619,3 +11619,66 @@ no `zhbo_native` blob format changed.
   his second General was also shot entering before his round began, so his log had one round and
   no shellshock. The same run with 5 passes 34/34 (8,365 common frames, 5 shellshocks on both
   machines, CQB worn). TESTING.md and the script's header now say so.
+
+## Graphics detail defaults to High (2026-11-03, `v1/graphics-high`)
+
+The user: "let's increase the default graphics detail to high since this isn't 2002 anymore. We'll
+still allow players to set it to low if they have issues." This Mac's `Options.ini` held
+`IdealStaticGameLOD = Low` / `StaticGameLOD = Low` (500 particles, half-resolution textures, no
+shadows).
+
+**Root cause: the 2002 detector cannot classify any current CPU, on every platform.**
+`GameLODManager::getRecommendedStaticLODLevel` matches `GameLODPresets.ini`'s `LODPreset` lines by
+CPU type (P3, P4, K7 only), MHz, video chip and RAM. `CPUDetectClass` names a P3/P4/K7 only for
+CPUID family 6 models 7–B, family 15 (Intel) or family 6 (AMD); everything newer, and every ARM CPU
+(no CPUID), is `XX`. For `XX`, `init()` runs the benchmark to place the CPU among the `BenchProfile`s,
+but SuperHackers replaced the benchmark with a stub returning 10.0 for int, float and memory, and the
+P4/K7 profiles' float scores are 15.1–21.3, so only `K7 1009` passes; no preset has a K7 at ≤ 1009
+MHz, and the code's "assume lowest spec" (P3 at 1000 MHz) matches nothing either: **Low**. The video
+side was never it: the wgpu backend reports 4 stages and PS 2.0 (`DC_GENERIC_PIXEL_SHADER_1_4`,
+above the presets' GF4), DX8 reads NVIDIA ids (anything ≥ 0x250 is a GF4) or the caps. So Windows DX8,
+Windows wgpu, macOS and Linux all landed on Low (a few Intel models whose base model nibble is 7–B
+read as a "P3" at their real MHz and got High by accident). SuperHackers noticed the same for texture
+reduction (`getRecommendedTextureLODLevel`, "the benchmark code always generates a low level").
+
+**Fix (host patch 0025, data-driven).** A new `GameLODPresets` statement `UnclassifiedHardwareLOD`
+(parsed like `ReallyLowMHz`; Custom refused) names the level for hardware the presets match nothing
+for *because the CPU is unclassified* (recorded before the benchmark rewrites `m_cpuType` to P3),
+with the stock 256 MB check still required. The mod ships `UnclassifiedHardwareLOD = High` in
+`data/Data/INI/GameLODPresets/ZHBO_GameLODPresets.ini`. Without the line the patch changes nothing.
+
+**Detected vs chosen.** ZH stores only `IdealStaticGameLOD` (the detector's pick) and
+`StaticGameLOD` (the level in use; the Options menu writes it only when the player changes it), so a
+chosen Low equal to the detected Low is indistinguishable. Decision: a `StaticGameLOD` equal to the
+`IdealStaticGameLOD` is the detector's, so `init()` forgets both and the display init detects again
+and writes them: old auto-Low files become High, and auto keeps following the recommendation. A level
+apart from the recommendation (Low, Medium, Very High, Custom) is the player's and persists. The cost:
+a player who explicitly picked Low while the old detector also said Low gets High once; setting Low
+again then sticks (the stored ideal is now High). **Gotcha:** this is also why a "chosen" level equal
+to the recommendation is not "pinned": it is the same level either way.
+
+**Dynamic LOD.** Rendering is capped at ZH's 30 fps, and the dynamic levels' thresholds (VeryHigh
+> 25, High > 20, Medium > 10) sit just under it, so they engage only on a machine that cannot hold
+the cap; kept. One change: below 20 fps the skip mask thinned every particle under `CRITICAL`, the
+smoke screen's `AREA_EFFECT` cloud included, while the sim still blocks sight through it (a low-fps
+player would see through smoke others cannot): `data/Data/INI/GameLOD/ZHBO_GameLOD.ini` sets
+`MinParticleSkipPriority = AREA_EFFECT` for Medium and Low. **Gotcha:** `DebrisSkipMask` and
+`SlowDeathScale` are read by the *logic* (`ObjectCreationList`, `SlowDeathBehavior`) yet follow the
+machine's frame rate; ZH ships them as no-ops ("commented out to prevent desyncs") and the new
+`zhbo_assets::detail` tests pin that (unit, and `--ignored` over the install's `INIZH.big`). GameLOD
+is loaded without the CRC xfer, so it is not in the content CRC, rightly: it is per machine.
+
+**High on wgpu.** Volumetric unit shadows (stencil) render correctly; full-resolution textures, cloud
+and light maps. Captures: `~/.opencode/plan/graphics-high/at-splash/` (High) vs
+`at-splash-low/` (Low, no shadows).
+
+**Diagnostics.** `ZhboDetail.cpp` logs `graphics detail: <level> (the recommended level | the
+player's choice; recommended …), particle cap …` at init, the dynamic level's changes, and
+`frame rate: … fps average, dynamic LOD …, N of cap particles` every 5 s in a game.
+
+**Verification.** `cargo test --workspace` green, clippy clean; `the_installs_dynamic_levels_keep_the_rules`
+(`--ignored`) passes. In game (macOS): the new `autotest-mac.sh --detail` 10/10 (no Options.ini →
+High/3000 and written; old Low/Low → High; chosen Low kept with its 500 cap; chosen Custom with
+1,234 kept); `--splash` 4/4 and `--smoke` 7/7 at High: 30.0 fps steady at the cap, VeryHigh
+throughout; uncapped (`-noFPSLimit -fixedLogicFPS 30`) 87–191 fps at High vs 103–247 at Low on an
+M1 Pro.

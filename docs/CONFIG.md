@@ -75,3 +75,49 @@ mod update the launcher regenerates the archive. With a stale
 archive the native viewmodel logs `the camo art is not in the archive (reconvert the BO2 art)` and
 draws the stock finish; the class camo never reaches the W3D fallback or the third-person body
 (CONTRACT.md, "The native viewmodel").
+
+## Graphics detail (Zero Hour's `GameLOD`)
+
+Zero Hour's detail level is its own: `Data\INI\GameLODPresets.ini` decides which level a machine is
+recommended, `Data\INI\GameLOD.ini` what each level sets (the `StaticGameLOD` blocks: particle cap,
+shadows, texture reduction, …) and the dynamic levels the render frame rate picks (`DynamicGameLOD`).
+The mod overrides both from `ConquerOps.big`, in files loaded after the stock ones; a block there
+changes only the fields it names:
+
+| File | What it sets |
+|---|---|
+| `data/Data/INI/GameLODPresets/ZHBO_GameLODPresets.ini` | `UnclassifiedHardwareLOD = High`: the level recommended for hardware the 2002 presets cannot classify (host patch 0025; without the line the stock fallback, Low, stands). |
+| `data/Data/INI/GameLOD/ZHBO_GameLOD.ini` | The dynamic `Medium` and `Low` levels (below 20 fps) stop thinning at `AREA_EFFECT`, so the smoke screen looks whole at every frame rate. |
+
+**Why the stock detector says Low.** `GameLODPresets.ini` knows three CPUs, P3, P4 and K7, and
+classifies anything else by a benchmark that SuperHackers replaced with a stub (fixed scores of 10,
+below the P4 and K7 profiles' float scores of 15–21). Every CPU since about 2005 (CPUID family 6 with
+a newer model, AMD's later families) and every ARM CPU is none of the three, so on every platform the
+mod builds (Windows DX8 and wgpu, macOS, Linux) the detector fell back to Low: 500 particles, half-
+resolution textures, no shadows. The video side was never the cause (the wgpu backend reports a
+shader-model-2 card, a DX8 card is read from its caps or NVIDIA id). Host patch 0025 gives such
+hardware the data's level instead, with the stock 256 MB memory check still in force.
+
+**Detected versus chosen.** `Options.ini` holds `IdealStaticGameLOD` (the detector's pick) and
+`StaticGameLOD` (the level in use, written by the Options menu only when the player changes it), so
+it cannot say whether a level was chosen. With the patch, a `StaticGameLOD` equal to the
+`IdealStaticGameLOD` is treated as the detector's: the game detects again at start (and writes both),
+so a file holding the old detector's Low gets High. A level that differs from the recommendation
+(Low, Medium, Very High or Custom set in the Options menu) is the player's and is kept. The one case
+it cannot tell apart is a player who explicitly chose the very level the old detector had picked:
+he gets High once, and Low set again then persists (the recommendation is now High).
+
+**The dynamic levels** follow the average render frame rate (`MinimumFPS`: VeryHigh above 25, High
+above 20, Medium above 10): above 25 fps everything draws; from 25 down the lowest priorities stop
+drawing (the converted casings and blast dressing are `WEAPON_EXPLOSION`; blasts, impacts and
+muzzle flashes are `CRITICAL` and always draw, `fx::Role`), and below 20 fps the skip mask thins what
+is left under the skip priority. `DebrisSkipMask` and `SlowDeathScale` are read by the logic, so they
+must stay 0 and 1.0 at every level: the dynamic level is each machine's own. The render rate is capped
+at Zero Hour's 30 fps (`FramesPerSecondLimit`), so the thresholds sit just under the cap: the
+levels engage only on a machine that cannot hold it. Measured on an M1 Pro Mac at High (the
+`--splash` leg: a SMAW and two frags into an armour group): a steady 30 fps capped, never leaving
+VeryHigh; 87–191 fps uncapped (`-noFPSLimit -fixedLogicFPS 30`), against 103–247 at Low. The tests in
+`crates/zhbo-assets/src/detail.rs` hold the data to these rules (the real-install one over the
+player's own `GameLOD.ini`). The bridge logs the applied level once (`graphics detail: …`) and, in a
+game, the dynamic level's changes and the frame rate every 5 s (`frame rate: …`). Graphics detail is
+presentation only: it is not in the content CRC and never reaches the sim.

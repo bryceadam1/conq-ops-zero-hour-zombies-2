@@ -493,6 +493,8 @@ void Zhbo_Init()
 		GGC_RequestBgfxFramebufferRebuild();
 	}
 
+	zhboLogGraphicsDetail();
+
 	s_lastTick = zhbo_platform::now();
 	s_ready = TRUE;
 }
@@ -1014,6 +1016,7 @@ void Zhbo_ClientFrame()
 	}
 
 	autopilotFrame();
+	zhboDetailFrame();
 	// A General with no class shows the class set instead of his own commands; once he has one (or
 	// Create a Class opened it for a re-pick) the bar tracks that.
 	zhboUpdateClassBar();

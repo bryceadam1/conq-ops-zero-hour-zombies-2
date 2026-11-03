@@ -50,6 +50,15 @@ The mod reads only Black Ops II's sound banks and image packs. BO2 is never run,
 connects to it. The step-by-step player instructions are in [INSTALL.md](INSTALL.md); a guided
 installer script that wraps this is still to do.
 
+## Graphics detail on every platform
+
+Zero Hour's detail detector (`GameLODPresets.ini`) recognises only 2002's CPUs (P3, P4, K7), so on
+every build here (Windows DX8 and wgpu, macOS on Apple silicon or Intel, Linux) it found no match and
+recommended **Low**: 500 particles, half-resolution textures, no shadows. Host patch 0025 and the
+mod's `UnclassifiedHardwareLOD = High` make **High** the default instead; the reason, and how a level
+the player chose is kept, are in [CONFIG.md](CONFIG.md), "Graphics detail". The Options menu still
+sets Low, Medium, High, Very High or Custom (Very High is SuperHackers' level: 5,000 particles).
+
 ## How the launcher starts the game
 
 `conquerops` (or `ConquerOps.exe`):

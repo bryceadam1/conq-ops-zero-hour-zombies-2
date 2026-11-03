@@ -21,6 +21,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
 | A smoke screen (BO2's smoke grenade): where, how long, how wide its sight blocker is | zhbo-core (`Sim::smokes`, `crate::smoke`, the tuning pack's `[Smoke]`) | Zero Hour's units and pathfinder ask the core's lock-free mirror (host patch 0024, "Smoke screens in Zero Hour's targeting and pathing"); the cloud is the converted BO2 effect, an `AREA_EFFECT` FXList played at the blast. |
+| Graphics detail (the static level, the particle cap, shadows, the dynamic LOD) | Zero Hour's `GameLODManager`, per machine | Presentation only and never a sim input: each machine picks its own level (host patch 0025 recommends High for hardware the 2002 presets cannot classify, CONFIG.md "Graphics detail"), and the dynamic level follows its own frame rate. Its two logic-side fields (`DebrisSkipMask`, `SlowDeathScale`) are pinned to no-ops by the data tests (`zhbo_assets::detail`). Not in the content CRC. |
 
 ## Units
 

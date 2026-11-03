@@ -1,0 +1,133 @@
+diff --git a/Core/GameEngine/Source/Common/INI/INI.cpp b/Core/GameEngine/Source/Common/INI/INI.cpp
+index 3bc9df42e..720c06646 100644
+--- a/Core/GameEngine/Source/Common/INI/INI.cpp
++++ b/Core/GameEngine/Source/Common/INI/INI.cpp
+@@ -85,6 +85,7 @@ static Xfer *s_xfer = nullptr;
+ 	* block make a new entry in this table and add an appropriate parsing function */
+ //-------------------------------------------------------------------------------------------------
+ extern void parseReallyLowMHz( INI* ini);		// yeah, so sue me (srj)
++extern void parseUnclassifiedHardwareLOD( INI* ini);	// ZHBO
+ struct BlockParse
+ {
+ 	const char *token;
+@@ -146,6 +147,7 @@ static const BlockParse theTypeTable[] =
+ 	{ "SpecialPower",                   INI::parseSpecialPowerDefinition },
+ 	{ "StaticGameLOD",                  INI::parseStaticGameLODDefinition },
+ 	{ "Terrain",                        INI::parseTerrainDefinition },
++	{ "UnclassifiedHardwareLOD",        parseUnclassifiedHardwareLOD },	// ZHBO
+ 	{ "Upgrade",                        INI::parseUpgradeDefinition },
+ 	{ "Video",                          INI::parseVideoDefinition },
+ 	{ "WaterSet",                       INI::parseWaterSettingDefinition },
+diff --git a/GeneralsMD/Code/GameEngine/Include/Common/GameLOD.h b/GeneralsMD/Code/GameEngine/Include/Common/GameLOD.h
+index f603ba392..bf743dac9 100644
+--- a/GeneralsMD/Code/GameEngine/Include/Common/GameLOD.h
++++ b/GeneralsMD/Code/GameEngine/Include/Common/GameLOD.h
+@@ -188,6 +188,12 @@ public:
+ 	Bool didMemPass();
+ 	void setReallyLowMHz(Int mhz) { m_reallyLowMHz = mhz; }
+ 	Bool isReallyLowMHz() const { return m_cpuFreq > 0 && m_cpuFreq < m_reallyLowMHz; }
++	// ZHBO: the level recommended for hardware the 2002 presets cannot classify (GameLODPresets'
++	// UnclassifiedHardwareLOD; unset, such hardware gets the stock fallback, Low).
++	void setUnclassifiedHardwareLOD(StaticGameLODLevel level) { m_unclassifiedHardwareLOD = level; }
++	StaticGameLODLevel getUnclassifiedHardwareLOD() const { return m_unclassifiedHardwareLOD; }
++	// ZHBO: the CPU is none the presets know (P3, P4, K7): every CPU since about 2005, and every ARM one.
++	Bool isCpuUnclassified() const { return !m_cpuClassified; }
+ 
+ 	StaticGameLODInfo m_staticGameLODInfo[STATIC_GAME_LOD_COUNT];
+ 	DynamicGameLODInfo m_dynamicGameLODInfo[DYNAMIC_GAME_LOD_COUNT];
+@@ -226,6 +232,8 @@ protected:
+ 	Real m_memBenchIndex;
+ 	Real m_compositeBenchIndex;
+ 	Int m_reallyLowMHz;
++	Bool m_cpuClassified;	///< ZHBO: the CPU detection named a type the presets know.
++	StaticGameLODLevel m_unclassifiedHardwareLOD;	///< ZHBO: see setUnclassifiedHardwareLOD.
+ };
+ 
+ Bool GameLODManager::isParticleSkipped()
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp b/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp
+index 2cb46b468..9b8a80f27 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp
+@@ -162,6 +162,21 @@ void parseReallyLowMHz(INI* ini)
+ 	}
+ }
+ 
++// ZHBO: `UnclassifiedHardwareLOD = High` (GameLODPresets): the level getRecommendedStaticLODLevel
++// picks when the presets match nothing because the CPU is one they cannot classify.
++void parseUnclassifiedHardwareLOD(INI* ini)
++{
++	StaticGameLODLevel level = STATIC_GAME_LOD_UNKNOWN;
++	INI::parseStaticGameLODLevel(ini, nullptr, &level, nullptr);
++	if (level == STATIC_GAME_LOD_CUSTOM)
++	{
++		DEBUG_CRASH(("UnclassifiedHardwareLOD must name a preset level, not Custom"));
++		throw INI_INVALID_DATA;
++	}
++	if (TheGameLODManager)
++		TheGameLODManager->setUnclassifiedHardwareLOD(level);
++}
++
+ void INI::parseBenchProfile( INI* ini)
+ {
+ 	if( TheGameLODManager )
+@@ -230,6 +245,8 @@ GameLODManager::GameLODManager()
+ 	m_compositeBenchIndex=0;
+ 	m_numBenchProfiles=0;
+ 	m_reallyLowMHz = 400;
++	m_cpuClassified = FALSE;
++	m_unclassifiedHardwareLOD = STATIC_GAME_LOD_UNKNOWN;
+ 
+ 	for (Int i=0; i<STATIC_GAME_LOD_CUSTOM; i++)
+ 		m_numLevelPresets[i]=0;
+@@ -319,8 +336,22 @@ void GameLODManager::init()
+ 
+ 	m_idealDetailLevel=(StaticGameLODLevel)optionPref.getIdealStaticGameDetail();
+ 
++	// ZHBO: Options.ini records the detector's pick (IdealStaticGameLOD) and the level in use
++	// (StaticGameLOD; the Options menu writes it only when the player changes it), not whether the
++	// player chose it. A level equal to the detector's is the detector's: detect again, so a level
++	// the 2002 detector wrote follows today's recommendation, while a level the player set apart from
++	// it is kept. (The one case it cannot tell, a player who explicitly picked the very level the
++	// detector had picked, gets the new recommendation once; a pick made after that persists.)
++	if (m_unclassifiedHardwareLOD != STATIC_GAME_LOD_UNKNOWN &&
++		userSetDetail != STATIC_GAME_LOD_UNKNOWN && userSetDetail == m_idealDetailLevel)
++	{
++		userSetDetail = STATIC_GAME_LOD_UNKNOWN;
++		m_idealDetailLevel = STATIC_GAME_LOD_UNKNOWN;
++	}
++
+ 	//always get this data in case we need it later.
+ 	testMinimumRequirements(nullptr,&m_cpuType,&m_cpuFreq,&m_numRAM,nullptr,nullptr,nullptr);
++	m_cpuClassified = (m_cpuType != XX);	// ZHBO: before the benchmark below assumes a P3.
+ 
+ 	if ((Real)(m_numRAM)/(Real)(256*1024*1024) >= PROFILE_ERROR_LIMIT)
+ 		m_memPassed=TRUE;	//check if they have at least 256 MB
+@@ -491,6 +522,7 @@ StaticGameLODLevel GameLODManager::getRecommendedStaticLODLevel()
+ 			m_videoChipType = DC_TNT2;	//presume it's at least TNT2 level
+ 
+ 		Int numMBRam=m_numRAM/(1024*1024);
++		Bool matched = FALSE;	// ZHBO: a preset matched this hardware.
+ 
+ 		for (Int i=STATIC_GAME_LOD_LAST; i >= STATIC_GAME_LOD_FIRST; i--)
+ 		{
+@@ -504,6 +536,7 @@ StaticGameLODLevel GameLODManager::getRecommendedStaticLODLevel()
+ 							((Real)numMBRam/(Real)preset->m_memory >= PROFILE_ERROR_LIMIT)
+ 						)
+ 					{	m_idealDetailLevel = (StaticGameLODLevel)i;
++						matched = TRUE;
+ 						break;
+ 					}
+ 
+@@ -513,6 +546,12 @@ StaticGameLODLevel GameLODManager::getRecommendedStaticLODLevel()
+ 				if (m_idealDetailLevel >= i)
+ 					break;	//we already found a higher level than the remaining presets so no need to keep searching.
+ 		}
++		// ZHBO: the presets list 2002's CPUs (P3, P4, K7) and nothing since; the benchmark that would
++		// place an unknown CPU among them is a stub (W3DShaderManager::testMinimumRequirements), whose
++		// fixed result sits below the P4 profiles, so any newer CPU fell to Low. Hardware the presets
++		// cannot classify gets the data's level for it instead (with the 256 MB the trees need).
++		if (!matched && !m_cpuClassified && m_memPassed && m_unclassifiedHardwareLOD != STATIC_GAME_LOD_UNKNOWN)
++			m_idealDetailLevel = m_unclassifiedHardwareLOD;
+ 		//Save ideal detail level for future usage
+ 		OptionPreferences optionPref;
+ 		optionPref["IdealStaticGameLOD"] = getStaticGameLODLevelName(m_idealDetailLevel);

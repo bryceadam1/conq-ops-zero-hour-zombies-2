@@ -44,6 +44,11 @@
 #                                      smoke grenade; a Ranger and a rebel stand either side of it in
 #                                      range and must not fight through it, and must once it clears;
 #                                      a neutral Ranger ordered straight across it must walk round it
+#   scripts/autotest-mac.sh --detail   the graphics detail Zero Hour picks (host patch 0025): four starts
+#                                      with Options.ini set up as a new player (none), a player whose
+#                                      file holds the old detector's Low, one who chose Low and one who
+#                                      chose Custom; the first two must get High, the others keep theirs.
+#                                      Options.ini is put back afterwards
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -75,6 +80,7 @@ mode=autopilot
 [[ "${1:-}" == "--w3d-ads" ]] && mode=w3d-ads
 [[ "${1:-}" == "--replay" ]] && mode=replay
 [[ "${1:-}" == "--splash" ]] && mode=splash
+[[ "${1:-}" == "--detail" ]] && mode=detail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -132,6 +138,48 @@ if [[ $mode == showcase ]]; then
     grep -E "showcase" "$out/ConquerOps.log"
     echo "captures: $out"
     exit 0
+fi
+if [[ $mode == detail ]]; then
+    # Options.ini records the detector's pick (IdealStaticGameLOD) and the level in use
+    # (StaticGameLOD). Each case starts the game with one such file, waits for the bridge's
+    # "graphics detail:" line (logged once GameLOD has applied the level) and checks the line and
+    # what the file holds afterwards.
+    options="$userdata/Options.ini"
+    keep="$out/Options.ini.player"
+    rm -f "$keep"
+    [[ -f "$options" ]] && cp -p "$options" "$keep"
+    put_back() { if [[ -f "$keep" ]]; then cp -p "$keep" "$options"; else rm -f "$options"; fi; }
+    trap 'finish; put_back' EXIT
+    ok=0
+    check() { # name, file, pattern
+        if grep -qE "$3" "$2"; then printf '%-40s PASS\n' "$1"; else printf '%-40s FAIL\n' "$1"; ok=1; fi
+    }
+    run_case() { # name, Options.ini text ("" for no file)
+        rm -f "$log" "$options"
+        [[ -n "$2" ]] && printf '%b' "$2" >"$options"
+        export ZHBO_AUTOPILOT=manual GGC_AUTO_EXIT_SECONDS=60
+        "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout-$1.txt" 2>&1
+        wait_for_log "graphics detail:" 90 || { echo "$1: no graphics detail line; see $log" >&2; ok=1; }
+        stop_game
+        cp "$log" "$out/ConquerOps-$1.log" 2>/dev/null || true
+        cp "$options" "$out/Options-$1.ini" 2>/dev/null || true
+    }
+    run_case new ""
+    check "new player: High" "$out/ConquerOps-new.log" "graphics detail: High \(the recommended level"
+    check "  ...with the High particle cap" "$out/ConquerOps-new.log" "graphics detail: High .*particle cap 3000"
+    check "  ...recorded in Options.ini" "$out/Options-new.ini" "^StaticGameLOD = High"
+    run_case detected-low "IdealStaticGameLOD = Low\nStaticGameLOD = Low\n"
+    check "old detector's Low: High" "$out/ConquerOps-detected-low.log" "graphics detail: High \(the recommended level"
+    check "  ...recorded in Options.ini" "$out/Options-detected-low.ini" "^StaticGameLOD = High"
+    run_case chose-low "IdealStaticGameLOD = High\nStaticGameLOD = Low\n"
+    check "player's Low: kept" "$out/ConquerOps-chose-low.log" "graphics detail: Low \(the player's choice"
+    check "  ...with the Low particle cap" "$out/ConquerOps-chose-low.log" "graphics detail: Low .*particle cap 500"
+    check "  ...still in Options.ini" "$out/Options-chose-low.ini" "^StaticGameLOD = Low"
+    run_case chose-custom "IdealStaticGameLOD = High\nStaticGameLOD = Custom\nMaxParticleCount = 1234\n"
+    check "player's Custom: kept" "$out/ConquerOps-chose-custom.log" "graphics detail: Custom \(the player's choice.*particle cap 1234"
+    check "  ...still in Options.ini" "$out/Options-chose-custom.ini" "^StaticGameLOD = Custom"
+    grep -h "graphics detail:" "$out"/ConquerOps-*.log
+    exit $ok
 fi
 if [[ $mode == equipment ]]; then
     export ZHBO_AUTOPILOT=equipment GGC_AUTO_EXIT_SECONDS=40
