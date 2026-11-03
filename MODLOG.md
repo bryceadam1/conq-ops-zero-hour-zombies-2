@@ -11160,3 +11160,45 @@ launcher with an end of its own into a 1:1 hillside. Each must end against the h
 slope) and the explosion items (they now get their blast). There is no change to the sim's
 inputs, state layout or content. Every machine steps the same arithmetic over the same height
 map.
+
+## Bug sweep 3: the long two-instance run (2026-11-02, branch `v1/bug-sweep-3`)
+
+`scripts/mptest-mac.sh` with `ZHBO_MPTEST_ROUNDS=N` (N > 1) is the long run. It is a closer stand-in
+for a real match before the first two-machine playtest, and it found the hanging-grenade bug above.
+Each instance sets `ZHBO_AUTOPILOT_ROUNDS`. That value is script-only and outside the content CRC,
+like the role.
+
+* **The bridge** (`mpAutopilotFrame`) counts take-controls. It walks every life back to the
+  meeting point, and it takes a General who is back overhead and alive into first person again
+  while lives are left. The joiner leaves the game a few seconds into his last life, still in first
+  person, the way the quit menu's Exit does it (`MSG_SELF_DESTRUCT` with transfer, then
+  `exitGame`).
+* **The script** (`Autopilot::mp_round`). The joiner first declines his spawn (Escape on the class
+  screen). Every life after the first fight then plays the same round: the tactical at the other
+  General's feet, a hip burst, an aimed burst, a reload and a knife. The host ends the round with a
+  long aimed burst. In his third life the joiner changes class after his throw (the pick screen is
+  forced open and the second default class picked) and stays for the bursts. Each session's log
+  line names the class the record wears, so the check can see the next General wear the new class.
+* **New log lines.** `player P's General is shellshocked (<shock>, <seconds> s)` (the bridge, from
+  the sim's shock serials). Every machine logs it for every player, so the two logs must agree frame
+  for frame. The engine's sound report is now one line per event per outcome, not one per event: a
+  positional event's first play can be out of range ("no sound"), and a later one heard.
+* **Checks** (TESTING.md "Multiplayer in game"): the decline and the second take-control; rounds
+  on both sides; the same shellshock lines in both logs up to the leave; the class change told to
+  both machines and worn by the next General; the leave, the host letting go of the leaver's
+  General, and the host's sim running on until Zero Hour ends the game he has won. Both runs also
+  check that each machine played the other player's gunshot chain and footsteps.
+* **Headless twin.** `the_long_multiplayer_autopilot_run_fights_in_lockstep` runs the same script on
+  three machines with the bridge's part played by the test. A concussion's stun shows there as the
+  engine disable, because the built-in table has no `Shock` blocks.
+
+**Findings and the result.** The first long run (4 lives) found the hanging grenade above. The
+concussions never went off. The footstep check failed only because the engine had logged the
+event once, out of range. A first draft also deadlocked: the joiner waited for a burst from a host
+whose lives were spent, so the host now plays until the joiner leaves. The final run on this branch
+(`ZHBO_MPTEST_ROUNDS=5`, about 9 min of match, the host on to frame 15,836) passes. The state hash
+agreed on all 9,957 common frames and on 93 equal CRC frames. Zero Hour reported no CRC mismatch.
+The two logs carry the same 4 shellshock lines. The joiner's CQB change was worn by his next
+General. The host let go of the leaver's General and ran 5,900 frames past the leave. One check
+first failed: the joiner had not drawn a weapon the host took up after the joiner had left. That
+look check now stops at the leave. Results: `~/.opencode/plan/bug-sweep-3/mp-long3/`.

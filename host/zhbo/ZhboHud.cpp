@@ -122,9 +122,12 @@ static void playSound(const char *event, const ZhboVec3 *at, float gain)
 			sound.setVolume(info->m_volume * gain);
 	}
 	const AudioHandle handle = TheAudio->addAudioEvent(&sound);
-	// Report each event once: a handle below AHSV_FirstHandle is an error (unknown event, no sound).
-	if (s_soundReported.insert(event).second)
-		logf("sound %s: %s", event, handle >= AHSV_FirstHandle ? "playing" : handle == AHSV_Muted ? "muted" : handle == AHSV_NoSound ? "no sound" : "error");
+	// Report each event once per outcome: a handle below AHSV_FirstHandle is an error (unknown
+	// event, no sound). A positional event's first play can be out of the listener's range ("no
+	// sound") and its later ones heard, so each outcome gets its own line.
+	const char *outcome = handle >= AHSV_FirstHandle ? "playing" : handle == AHSV_Muted ? "muted" : handle == AHSV_NoSound ? "no sound" : "error";
+	if (s_soundReported.insert(std::string(event) + ": " + outcome).second)
+		logf("sound %s: %s", event, outcome);
 }
 
 void cbSound(const char *event, const ZhboVec3 *at)

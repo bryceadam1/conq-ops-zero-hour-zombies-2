@@ -888,7 +888,8 @@ impl Client {
             ap.session += 1;
             ap.mp_fight = None;
             if ap.mp {
-                ap.log.push(format!("autopilot mp: first-person session {}", ap.session));
+                let class = sim.player(inp.local_player).and_then(|p| p.class.clone()).unwrap_or_else(|| "none".into());
+                ap.log.push(format!("autopilot mp: first-person session {} (class {class})", ap.session));
             }
         }
         if ap.mp {

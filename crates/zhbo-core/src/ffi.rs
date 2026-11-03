@@ -10,7 +10,7 @@ use crate::host::{CClientHost, CLogicHost, ClientApi, ClientHost, LogicApi};
 use crate::input::FpsInput;
 use crate::sim::{Sim, MAX_PLAYERS};
 use std::ffi::{c_char, CStr};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 struct State {
@@ -27,6 +27,8 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 /// Lock-free mirror of `Sim::controlled_ids` for the AI/physics suppression hooks.
 static CONTROLLED: [AtomicU32; MAX_PLAYERS] = [const { AtomicU32::new(0) }; MAX_PLAYERS];
+/// Per player, the last shellshock the log reported (`log_step`): his General and its serial.
+static SHOCK_LOGGED: [AtomicU64; MAX_PLAYERS] = [const { AtomicU64::new(0) }; MAX_PLAYERS];
 /// Per-player impact counts by surface (12 slots), accumulated every logic frame and printed
 /// + reset on the 30s — the client's per-client-frame `sim.events.clear()` can't eat a kill.
 static IMPACT_ACCUM: [[AtomicU32; 12]; MAX_PLAYERS] = [const { [const { AtomicU32::new(0) }; 12] }; MAX_PLAYERS];
@@ -440,9 +442,9 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
             let shooter = config.mp_role == crate::config::MpRole::Shooter;
             #[cfg(feature = "autopilot")]
             {
-                state.client.autopilot = Some(crate::client::Autopilot { mp: true, mp_shooter: shooter, ..Default::default() });
+                state.client.autopilot = Some(crate::client::Autopilot { mp: true, mp_shooter: shooter, mp_rounds: config.mp_rounds, ..Default::default() });
             }
-            state.logic.log(&format!("autopilot enabled: the multiplayer run, as the {} (ZHBO_AUTOPILOT=mp)", if shooter { "shooter" } else { "target" }));
+            state.logic.log(&format!("autopilot enabled: the multiplayer run, as the {}, {} round(s) (ZHBO_AUTOPILOT=mp)", if shooter { "shooter" } else { "target" }, config.mp_rounds));
         }
     }
     if config.state_hash_log {
@@ -634,6 +636,15 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
         for e in s.sim.events.iter().skip(first_new_event) {
             if let EventKind::Impact { surface, .. } = e.kind {
                 IMPACT_ACCUM[e.player as usize % IMPACT_ACCUM.len()][surface as usize].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    // A shellshock taking hold (the sim's own, so every machine logs it for every player).
+    for (i, p) in s.sim.players.iter().enumerate() {
+        if let Some((general, a)) = p.as_ref().and_then(|p| Some((p.general, p.shock.active.as_ref()?))) {
+            let key = (general as u64) << 32 | a.serial as u64;
+            if SHOCK_LOGGED[i % MAX_PLAYERS].swap(key, Ordering::Relaxed) != key {
+                s.logic.log(&format!("player {i}'s General is shellshocked ({}, {:.1} s)", a.def.name, a.duration));
             }
         }
     }

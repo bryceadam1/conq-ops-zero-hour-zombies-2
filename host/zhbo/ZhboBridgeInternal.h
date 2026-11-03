@@ -284,6 +284,13 @@ struct Autopilot
 	UnsignedInt mpStillSince;
 	UnsignedInt mpNextTry;
 	Bool mpRespawning;
+	// The long run (ZHBO_AUTOPILOT_ROUNDS > 1): the take-controls so far and how many it makes
+	// (the rounds, plus the target's declined first spawn); the target leaves the game early in
+	// his last life.
+	Int mpTakes;
+	Int mpTakeLimit;
+	Bool mpLong;
+	Bool mpTarget;
 };
 extern Autopilot s_autopilot;
 void autopilotFrame();

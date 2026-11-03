@@ -379,6 +379,28 @@ the weapon and camo that player holds (`native body: General G weapon V camo C c
 the other log's `autopilot mp: General G weapon V camo C in hand`). Results go to `$OUT`
 (default `$TMPDIR/ConquerOps-mp`): `host.log`, `join.log`, both stdouts, `hashes-joined.txt`.
 
+Both runs also check that each machine presented the other player: his gunshot chain and his
+footsteps were played there (`sound ZHBO_BO2_FireNpc_…: playing`, `sound ZHBO_BO2_StepNpc:
+playing`; the core plays both only for another player).
+
+**The long run** (`ZHBO_MPTEST_ROUNDS=N`, N > 1, sets `ZHBO_AUTOPILOT_ROUNDS` in both instances;
+limit 1,800 s): the joiner plays N lives and the host plays until the joiner has left, each life
+walked to the meeting point. The joiner first
+declines his spawn (Escape on the class screen; the bridge takes control again). Every life after
+the first fight throws the tactical at the other General (a concussion: a shellshock in both
+sims; the bridge logs `player P's General is shellshocked (…)`), fires a hip and an aimed burst,
+reloads, knifes and goes back overhead, unless he dies first; the host ends each round with a
+long aimed burst. In his third life the joiner changes class mid-life once his throw has made
+him a combatant and stays for the bursts, so his next General wears the new class (the session
+line names the record's class). The same script runs headless on the lockstep harness
+(`the_long_multiplayer_autopilot_run_fights_in_lockstep`: the decline, the rounds, a concussion's
+stun, the class change worn, every frame's fingerprint agreeing on three machines). In his last life he leaves the game in first person (the quit
+menu's Exit: `MSG_SELF_DESTRUCT`, then the shell). Its own checks: the decline and the second
+take-control; at least two rounds on each side; the same shellshock lines, frame for frame, in both
+logs (up to the leave); the class change worn by both machines' next General; and the host past
+the leave (it lets go of the leaver's General, and its sim runs on — at least 60 frames, until Zero
+Hour ends the game the host has won — with no mismatch). `ZHBO_MPTEST_ROUNDS=6` runs past ten minutes.
+
 Two machines (or the Windows VM and the Mac) need none of the above, only the same build: set
 `ZHBO_STATE_HASH_LOG=1` on both and compare the `state hash` lines afterwards. Zero Hour's online
 lobby also compares the exe CRC.

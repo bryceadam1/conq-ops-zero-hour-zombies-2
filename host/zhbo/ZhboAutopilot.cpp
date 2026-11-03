@@ -305,11 +305,51 @@ void mpSetPhase(Int phase, UnsignedInt frame)
 	s_autopilot.phaseFrame = frame;
 }
 
+// Take the General into first person, counting the long run's lives.
+void mpTakeControl(Object *general, UnsignedInt frame)
+{
+	++s_autopilot.mpTakes;
+	Zhbo_RequestTakeControl(general);
+	s_autopilot.controlledFrame = 0;
+	mpSetPhase(MP_FIGHT, frame);
+}
+
+// Leave the network game as the quit menu's Exit does (GameLogic::quit with the menu up): the
+// self-destruct message, then back to the shell.
+void mpLeaveGame(Object *general, UnsignedInt frame)
+{
+	logf("autopilot mp: leaving the game in first person (General %u, frame %u)", general ? (unsigned)general->getID() : 0u, frame);
+	GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_SELF_DESTRUCT);
+	msg->appendBooleanArgument(TRUE);
+	TheGameLogic->exitGame();
+	if (TheInGameUI)
+		TheInGameUI->setClientQuiet(TRUE);
+	logLine("autopilot mp: done (left the game)");
+	mpSetPhase(MP_DONE, frame);
+}
+
 void mpAutopilotFrame(UnsignedInt frame)
 {
 	Player *local = ThePlayerList->getLocalPlayer();
 	if (!local || s_autopilot.mpPhase == MP_DONE)
 		return;
+	if (s_autopilot.mpTakeLimit == 0)
+	{
+		const char *rounds = getenv("ZHBO_AUTOPILOT_ROUNDS");
+		const char *role = getenv("ZHBO_AUTOPILOT_ROLE");
+		const Int n = rounds ? atoi(rounds) : 1;
+		s_autopilot.mpLong = n > 1;
+		// As the core reads ZHBO_AUTOPILOT_ROLE (`config::mp_role`): `target`, any case.
+		AsciiString r(role ? role : "");
+		r.trim();
+		s_autopilot.mpTarget = r.compareNoCase("target") == 0;
+		// The target's lives are counted (his declined spawn is one more take); the host plays on
+		// until the target leaves and Zero Hour ends the game he has won, so the target always
+		// has someone to fight (and to kill the General he changed class in).
+		s_autopilot.mpTakeLimit = !s_autopilot.mpLong ? 0x7fffffff : s_autopilot.mpTarget ? n + 1 : 0x7fffffff;
+		if (s_autopilot.mpLong)
+			logf("autopilot mp: the long run, %s", s_autopilot.mpTarget ? "the target's lives after a declined spawn, leaving in the last" : "the host until the target leaves");
+	}
 	Object *cc = mpCommandCenter(local);
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
 	if (general && general->isEffectivelyDead())
@@ -347,12 +387,12 @@ void mpAutopilotFrame(UnsignedInt frame)
 			if (frame - s_autopilot.mpStillSince < LOGICFRAMES_PER_SECOND)
 				break;
 			Object *enemy = mpEnemyCommandCenter(local);
-			if (s_autopilot.mpRespawning || !cc || !enemy)
+			if ((s_autopilot.mpRespawning && !s_autopilot.mpLong) || !cc || !enemy)
 			{
-				// The second life is taken where he stands: the fight is over.
+				// The short run's second life is taken where he stands: the fight is over. The long
+				// run walks every life back to the meeting point.
 				logLine(s_autopilot.mpRespawning ? "autopilot mp: taking control of the next General" : "autopilot mp: no enemy Command Center; taking control here");
-				Zhbo_RequestTakeControl(fresh);
-				mpSetPhase(MP_FIGHT, frame);
+				mpTakeControl(fresh, frame);
 				break;
 			}
 			const Coord3D *mine = cc->getPosition();
@@ -395,27 +435,40 @@ void mpAutopilotFrame(UnsignedInt frame)
 			{
 				logf("autopilot mp: %s at (%.0f, %.0f) after %.0f s; taking control", arrived ? "arrived" : "stopped", at->x, at->y,
 					(frame - s_autopilot.phaseFrame) / (Real)LOGICFRAMES_PER_SECOND);
-				Zhbo_RequestTakeControl(general);
-				mpSetPhase(MP_FIGHT, frame);
+				mpTakeControl(general, frame);
 			}
 			break;
 		}
 		case MP_FIGHT:
 		{
 			const Bool controlled = general && zhbo_logic_is_controlled((uint32_t)general->getID());
+			const Bool more = s_autopilot.mpLong && s_autopilot.mpTakes < s_autopilot.mpTakeLimit;
 			if (controlled)
 			{
 				s_autopilot.controlledFrame = frame;
+				// The long run's target leaves the game a few seconds into his last life, still in
+				// first person: the host must carry on alone.
+				if (s_autopilot.mpLong && s_autopilot.mpTarget && s_autopilot.mpTakes >= s_autopilot.mpTakeLimit &&
+					frame - s_autopilot.phaseFrame > 4 * LOGICFRAMES_PER_SECOND)
+					mpLeaveGame(general, frame);
 				break;
 			}
 			// Not (yet, or any longer) in first person: give the take-control a few seconds to land.
 			if (s_autopilot.controlledFrame == 0 && general && frame - s_autopilot.phaseFrame < 10 * LOGICFRAMES_PER_SECOND)
 				break;
-			if (!general && !s_autopilot.mpRespawning)
+			if (!general && (!s_autopilot.mpRespawning || more))
 			{
 				logLine("autopilot mp: my General died; ordering the next one");
 				s_autopilot.controlledFrame = 0;
 				mpSetPhase(MP_RESPAWN, frame);
+				break;
+			}
+			// Back overhead alive (the field computer, or a declined spawn): the long run takes him
+			// into first person again.
+			if (general && more)
+			{
+				logf("autopilot mp: back overhead; taking control again (life %d of %d)", s_autopilot.mpTakes + 1, s_autopilot.mpTakeLimit);
+				mpTakeControl(general, frame);
 				break;
 			}
 			logf("autopilot mp: done (%s)", general ? "back overhead" : "died again");

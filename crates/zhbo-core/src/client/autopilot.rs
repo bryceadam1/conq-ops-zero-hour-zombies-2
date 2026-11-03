@@ -28,6 +28,21 @@ fn custom_class_key() -> Key {
         .unwrap_or(Key::Key1)
 }
 
+/// How far below the aim at his chest the long run throws its tactical (radians).
+const MP_TACTICAL_DIP: f32 = 0.2;
+
+/// The number key of the match list's second default class (the long multiplayer run's mid-life
+/// change: the joiner wears the first).
+fn second_preset_key() -> Key {
+    crate::classui::pick_rows(false)
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| matches!(r, crate::classui::PickRow::Preset(_)))
+        .nth(1)
+        .and_then(|(i, _)| crate::classui::pick_key(i))
+        .unwrap_or(Key::Key2)
+}
+
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
 /// changes stance, jumps, glances at the map, swaps to the pistol and fires it aimed, swaps back, knifes,
 /// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, then opens the
@@ -75,6 +90,13 @@ pub struct Autopilot {
     /// Its part: the shooter fires the long burst, the other the short one
     /// (`ZHBO_AUTOPILOT_ROLE`, [`crate::config::MpRole`]).
     pub mp_shooter: bool,
+    /// How many first-person lives the run plays (`ZHBO_AUTOPILOT_ROUNDS`; 1 the short run). More
+    /// is the long run: the target declines his first spawn, and every life after the first fight
+    /// plays [`Autopilot::mp_round`].
+    pub mp_rounds: u32,
+    /// The long run's class change has been made (once, by the target), and its spawn declined.
+    pub(crate) mp_changed_class: bool,
+    pub(crate) mp_declined: bool,
     /// First-person sessions so far (the client counts each take-control).
     pub(crate) session: u32,
     pub(crate) in_fps: bool,
@@ -112,7 +134,7 @@ pub struct Scripted {
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, mp: self.mp, mp_shooter: self.mp_shooter, ..Default::default() }
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
     }
 
     /// What it does at time `t`.
@@ -317,8 +339,28 @@ impl Autopilot {
         let t = self.t;
         let mut keys = KeySet::default();
         // Only pressed while the spawn's pick is really up: a respawned General has his class.
+        let long = self.mp_rounds > 1;
+        // The long run's target declines his first spawn: Escape on the spawn's class screen sends
+        // the classless General back overhead (BO2 never spawns a player without a class), and
+        // the bridge takes control of him again.
+        if long && !self.mp_shooter && self.session == 1 {
+            let mut keys = KeySet::default();
+            if (0.6..0.7).contains(&t) {
+                if !self.mp_declined {
+                    self.mp_declined = true;
+                    self.log.push("autopilot mp: declining the spawn (Escape on the class screen)".to_string());
+                }
+                keys.set_down(Key::Escape, true);
+            }
+            return Scripted { keys, ..Default::default() };
+        }
+        // Which life this is: the declined session does not count.
+        let life = if long && !self.mp_shooter { self.session - 1 } else { self.session };
+        if long && life >= 2 {
+            return self.mp_round(b, life);
+        }
         let pick = (0.3..0.4).contains(&t).then(custom_class_key);
-        if self.session >= 2 {
+        if life >= 2 {
             if (0.6..1.6).contains(&t) {
                 keys.set_down(b.forward, true);
             }
@@ -381,6 +423,79 @@ impl Autopilot {
             keys.set_down(b.field_computer, true);
         }
         Scripted { keys, class_pick: pick, look, ..Default::default() }
+    }
+
+    /// A life of the long multiplayer run after the first fight: at the meeting point again (the
+    /// bridge walks every General there), each throws his tactical at the other (the concussion:
+    /// a shellshock on both machines' sims), fires a hip burst and an aimed one at him, reloads,
+    /// knifes, and leaves by the field computer, or dies; the shooter ends with a long aimed burst.
+    /// On his second such life the target changes class mid-life once his throw has made him a
+    /// combatant (BO2's `MP_CHANGE_CLASS_NEXT_SPAWN`) and stays for the bursts, so his next
+    /// General wears it.
+    pub fn mp_round(&mut self, b: &Bindings, life: u32) -> Scripted {
+        let t = self.t;
+        let mut keys = KeySet::default();
+        let fight = match self.mp_fight {
+            Some(start) => start,
+            None if t >= 1.0 && (self.mp_aim.is_some() || t >= 20.0) => {
+                self.mp_fight = Some(t);
+                self.log.push(format!("autopilot mp: round {life} starts ({})", if self.mp_aim.is_some() { "the other General is in first person" } else { "nobody to aim at" }));
+                t
+            }
+            None => return Scripted::default(),
+        };
+        let c = t - fight;
+        let mut look = self.mp_aim;
+        let mut pick_force = 0;
+        let mut class_pick = None;
+        // The tactical, thrown at his feet (the throw leaves above the crosshair and flies far).
+        if (0.2..1.4).contains(&c) {
+            look = self.mp_aim.map(|(yaw, pitch)| (yaw, pitch - MP_TACTICAL_DIP));
+        }
+        if (0.4..0.8).contains(&c) {
+            keys.set_down(b.tactical, true);
+        }
+        if (2.5..3.2).contains(&c) {
+            keys.set_down(b.fire, true);
+        }
+        if (4.0..7.0).contains(&c) {
+            keys.set_down(b.ads, true);
+        }
+        if (4.5..6.5).contains(&c) {
+            keys.set_down(b.fire, true);
+        }
+        if (7.2..7.3).contains(&c) {
+            keys.set_down(b.reload, true);
+        }
+        if (9.5..9.6).contains(&c) {
+            keys.set_down(b.melee, true);
+        }
+        // The mid-life class change, once the throw has made him a combatant: the screen forced
+        // open, the next default class picked.
+        if !self.mp_shooter && life == 3 && !self.mp_changed_class {
+            if (1.3..1.4).contains(&c) {
+                pick_force = 1;
+            }
+            if (1.8..1.9).contains(&c) {
+                class_pick = Some(second_preset_key());
+                self.mp_changed_class = true;
+                self.log.push("autopilot mp: changing class mid-life after combat".to_string());
+            }
+        }
+        // The shooter ends each round with a long aimed burst at him; the target stays for it in
+        // the life he changed class in (the new class comes in with his next General).
+        let changing = !self.mp_shooter && life == 3;
+        if self.mp_shooter && (14.0..19.0).contains(&c) {
+            keys.set_down(b.ads, true);
+            if c >= 14.5 {
+                keys.set_down(b.fire, true);
+            }
+        }
+        let leave_at = if self.mp_shooter { 21.0 } else { 13.0 };
+        if !changing && (leave_at..leave_at + 0.1).contains(&c) {
+            keys.set_down(b.field_computer, true);
+        }
+        Scripted { keys, class_pick, pick_force, look, ..Default::default() }
     }
 
     /// The scope-overlay run (`ZHBO_AUTOPILOT=scope`): pick the seeded AS50 class and hold ADS from
