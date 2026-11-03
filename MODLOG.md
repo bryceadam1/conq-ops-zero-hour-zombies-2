@@ -11025,3 +11025,46 @@ lines are in `ConquerOps_Instance02.log`.
 * Headless replay checks: the autopilot recording and the real-input recording both pass (above).
 * Logs: no error, desync or mismatch lines in any leg's `ConquerOps.log`, the MP logs or
   `zhbo-gfx.log`, once the remote-shot fix was in. There is no PullPin error any more.
+
+## Bug sweep 3: another player's impacts, blasts, launches and shield are seen and heard (2026-11-02, branch `v1/bug-sweep-3`)
+
+**Symptom (found reading for the first two-machine playtest).** On the other machine, a player's
+rounds landed with no puff, spark or blood and no impact sound; his grenades, C4, Claymores,
+launcher rounds and their bounces and duds went off silently (the blast's FX is the logic's
+`LogicApi.fx`, so it showed, but its sound did not); his SMAW, RPG, FHJ, crossbow, war machine and
+every rifle's grenade-launcher alt fired without a sound; his Trophy System's kill and his
+deployed shield's plant, hits and destruction were silent. In single player the same held for any
+AI seat's overhead General's grenades.
+
+**Root cause.** `Client::consume_events` presented the presented seat's events through
+`present`, and everyone else's through an allowlist of three kinds (`Shot`, `Thrown`, `Planted`)
+with a `_ => {}` arm. Every other kind — including all the ones that happen at a place in the
+world and that `present` already played positionally — was dropped for anyone but its owner.
+`Launched` had no remote form at all, though the converter builds every launcher's third-person
+chain (`ZHBO_BO2_FireNpc_*`, `Kind::Remote`) exactly as for a gun. A remote event of a seat with no
+record (his General just died with his grenade in the air) was also skipped before the match.
+CONTRACT listed "other players' impacts" as out of scope.
+
+**Fix (`client/events.rs`).** `world_event` plays an event that happens at a place — `Impact`,
+`Exploded`, `Bounced`, `Dud`, `Intercepted`, `ShieldDeployed`, `ShieldDestroyed`, `ShieldHit` —
+the same for whoever's it is: its cues at the place, its impact into `ClientOut.hits`. `present`
+and the new `present_remote` both go through it. `present_remote` plays another player's `Shot`
+and now `Launched` as his gun's third-person chain at him, and `Thrown`/`Planted` as before. Its
+match has no wildcard, so a new event kind must say who sees it. Every sound these play is already
+a positional, everyone type (`Kind::World`/`Kind::Remote`); none of another player's `*Player` 2D
+sounds is ever played here. The impacts of other players' rounds take only the `ZHBO_CLIENT_HITS`
+slots the presented seat's own leave (`Client::remote_hits`, merged after the prediction's), so no
+ABI change.
+
+**Not changed.** Another player's knife swing, knife hit and reload stay silent here: the mod
+converts only their `*Player` versions (2D); BO2's third-person versions (`meleeSwipeSound`, the
+third-person reload notetracks) are a converter item.
+
+**Test.** `another_players_world_events_play_here_as_for_their_owner` presents one event of every
+kind (all 42 variant shapes) from the local seat and from another, and asserts that every cue the
+owner hears at a place plays here too, that the impacts are the same, that nothing of another
+player's plays as a 2D sound, and that his shot and launch are his chain. It fails on main for
+`Impact`, `Exploded`, `Bounced`, `Dud`, `Intercepted` and the shield events.
+`other_players_impacts_fill_only_the_slots_the_own_ones_leave` checks the slot order. The old
+`local_impacts_fill_the_record_and_pick_the_cue` asserted the bug ("another player's impact is not
+the local player's FX") and now asserts the opposite.

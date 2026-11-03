@@ -289,7 +289,7 @@ typedef struct ZhboClientOut
 	/* The class screen (pick or editor) is up: the bridge leaves the cursor free and swallows the
 	   game-bound mouse/key messages behind it, Escape included (the screen's Back). */
 	int32_t menu_open;
-	/* The local player's shot impacts this frame, in shot order (at most ZHBO_CLIENT_HITS). */
+	/* This frame's shot impacts: the presented seat's own in shot order, then other players' (at most ZHBO_CLIENT_HITS). */
 	ZhboClientHit hits[ZHBO_CLIENT_HITS];
 	int32_t hits_len;
 	/* The camera's roll, radians, as Matrix3D::Look_At_Dir takes it (the view kick's roll axis). */

@@ -188,10 +188,11 @@ impl Default for ClientIn {
 
 /// How many shot impacts one client frame can carry (`host/zhbo/zhbo_core.h`'s
 /// `ZHBO_CLIENT_HITS`). One shot per logic frame and at most a shotgun's pellets per shot; a
-/// render frame that spans two logic frames can overflow it, and the extras are dropped.
+/// render frame that spans two logic frames, or other players' rounds on top, can overflow it,
+/// and the extras are dropped (others' first).
 pub const CLIENT_HITS: usize = 8;
 
-/// One shot impact of the local player's this frame: BO2 plays the impact table's cell at `point`,
+/// One shot impact this frame (the presented seat's, or another player's round): BO2 plays the impact table's cell at `point`,
 /// oriented by `dir`, in that surface's way (docs/CONTRACT.md "Shot impacts (R8d)").
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -268,7 +269,8 @@ pub struct ClientOut {
     /// The in-match class pick is up: the bridge leaves the cursor free and swallows the
     /// game-bound mouse/key messages behind it.
     pub menu_open: i32,
-    /// The local player's shot impacts this frame, in shot order (at most [`CLIENT_HITS`]).
+    /// This frame's shot impacts: the presented seat's in shot order, then other players' (at
+    /// most [`CLIENT_HITS`]).
     pub hits: [ClientHit; CLIENT_HITS],
     /// How many `hits` are valid.
     pub hits_len: i32,
@@ -478,9 +480,12 @@ pub struct Client {
     pub cues: Cues,
     /// The local player's shellshock as presented: its view kick and ringing loop.
     pub shock: crate::shellshock::Presented,
-    /// This frame's shot impacts (the local player's), copied into `ClientOut`.
+    /// This frame's impacts of the presented seat's rounds, copied into `ClientOut`.
     pub hits: [ClientHit; CLIENT_HITS],
     pub hits_len: usize,
+    /// This frame's impacts of other players' rounds (`events::present_remote`): they take the
+    /// slots of `ClientOut.hits` the local player's leave.
+    pub remote_hits: Vec<ClientHit>,
     /// Set while the pick screen was forced open from outside a spawn (the command bar's
     /// Create-a-Class entry). It keeps the screen up even when a class is already chosen, so a
     /// pick can be replaced, and clears once one lands or Escape closes it.
@@ -561,6 +566,7 @@ impl Client {
             shock: Default::default(),
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
+            remote_hits: Vec::with_capacity(CLIENT_HITS),
             class_pick_forced: false,
             class_pick_declined: false,
             class_pick_open: false,
@@ -1224,9 +1230,18 @@ impl Client {
         let was_open = self.class_pick_open;
         self.class_pick_open = self.class_pick_wanted(unclassed);
         out.menu_open = self.class_pick_open as i32;
-        // The frame's impacts (consume_events filled them above).
+        // The frame's impacts (consume_events and the prediction filled them above): the
+        // presented seat's own, then other players' into the slots left.
         out.hits = self.hits;
-        out.hits_len = self.hits_len as i32;
+        let mut n = self.hits_len;
+        for hit in self.remote_hits.drain(..) {
+            if n == CLIENT_HITS {
+                break;
+            }
+            out.hits[n] = hit;
+            n += 1;
+        }
+        out.hits_len = n as i32;
         // A fresh open starts `animateIn`'s entrance fade (`codmenu.lua:2300-2326`); a screen that
         // stays up keeps its clock, and a closed one starts over on the next open.
         if self.class_pick_open && !was_open {
