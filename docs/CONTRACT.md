@@ -461,8 +461,36 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     Zero Hour's FXList has no model nugget. A converted system's `Priority` follows its role
     (`fx::Role`, as Zero Hour prioritises its own effects of that kind): blasts, impacts and
     muzzle flashes `CRITICAL`, casings and bounce dust `WEAPON_EXPLOSION`, the smoke screen
-    `AREA_EFFECT`. The lowest priority is culled by the dynamic LOD below 25 fps and can evict
-    nothing at the particle cap.
+    `AREA_EFFECT`, a projectile's trail `WEAPON_TRAIL`. The lowest priority is culled by the
+    dynamic LOD below 25 fps and can evict nothing at the particle cap.
+  - **Particle fields host patch 0025 adds** (`ParticleSystemInfo`, parsed from the converted
+    `ParticleSystem` blocks; presentation only, never xfered — a loaded system takes them from its
+    template — and never read by the sim):
+    * flipbooks: `FrameGrid` (cells per side of a square grid, a power of two up to 16; 1 = a plain
+      texture), `FrameCount`, `FrameStartType` (`FIXED`/`RANDOM`/`INDEXED`) and `FrameStart`,
+      `FrameRate` (cells a second), `FrameOverLife` (every cell once over the particle's life) and
+      `FrameLoops` (0 forever; n holds the last cell after n passes). The converter lays BO2's
+      atlas out again on that grid, row by row from the top left (`fx::flipbook_grid`, texture
+      `zhbo_fx_<image>_f<frames>.tga`); `Particle::getFrame` picks the cell from the updates the
+      particle has had (`m_lifetime − m_lifetimeLeft`, so it advances at the logic rate) and a
+      random start from a hash of its personality (no random stream is drawn), and
+      `W3DParticleSystemManager` hands the cells to W3D's point group (`Set_Arrays`' frame array,
+      `Set_Frame_Row_Column_Count_Log2`), which writes the UVs on the CPU for both the wgpu and
+      the DX8 backend. A batch never mixes grids.
+    * distance ranges from the camera (world units): `SpawnRange = min max` (no particle is emitted
+      while the system is outside it; BO2's `spawnRange`), `FarFade = start end` (fully drawn nearer
+      than start, gone past end; BO2's `fadeInRange`) and `NearFade = start end` (gone nearer than
+      start, fully drawn past end; BO2's `fadeOutRange`). The eye is the scene camera of the last
+      drawn frame (`ParticleSystemManager::setCameraPosition`, set by the renderer); an additive
+      particle darkens, the others fade.
+  - **Other nuggets the converter writes:** a blast's decal element (`Role::Blast`, upright) is a
+    `TerrainScorch` of BO2's radius (Zero Hour's own scorch marks; a hit's decal is not, as Zero
+    Hour marks only terrain); an omni light is a `LightPulse` whose `DecreaseTime` is BO2's life in
+    **milliseconds** (Zero Hour parses the times as durations). A projectile's `projTrailEffect` is
+    converted framed in `Role::Trail` and its systems are attached to the projectile object's model
+    (`ParticleSysBone = None <system>` in `ZHBO_BO2_Projectiles.ini`: no bone of that name, so the
+    object's origin), so they ride it and leave their particles behind; BO2's trail elements are
+    `Type = STREAK` there (a ribbon through the system's particles).
   - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
     `zhbo_loadout_viewmodels`).
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
@@ -1352,6 +1380,13 @@ objects' `Scale`, the planted shield in its deploy pose), the weapon table's `Sh
 three boxes (39 numbers; a table converted before it does not parse, so the archive must be
 rebuilt) and two sound events, `ZHBO_BO2_StepNpc` and `ZHBO_BO2_SprintStepNpc` (other players'
 footsteps). The native blob formats are unchanged.
+
+**Pending for the next bump (fx-flipbook):** archive `hud::VERSION` 85 → 86. The converted
+effects now use host patch 0025's particle fields (`FrameGrid` …, `SpawnRange`, `FarFade`,
+`NearFade`), the flipbook grid textures, the projectile trails (`ParticleSysBone` in the projectile
+objects) and `TerrainScorch`/the millisecond `LightPulse`; an engine without 0025 refuses those
+fields, and an archive converted before them would keep drawing first cells. No ABI change
+(`ZHBO_ABI_VERSION` stays 31), no struct, API table or native blob format moves.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

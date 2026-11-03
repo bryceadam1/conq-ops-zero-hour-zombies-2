@@ -98,8 +98,10 @@ use zhbo_formats::w3d::Blend;
 const MS_PER_FRAME: f32 = 1000.0 / 30.0;
 /// BO2's gravity (800 in/s^2) in Zero Hour units per frame^2 (the one BO2-inches factor).
 const G_PER_FRAME2: f32 = 800.0 / 900.0 * zhbo_core::units::ZH_PER_INCH;
-/// Largest side of an effect texture.
+/// Largest side of an effect texture (of one flipbook cell).
 const FX_TEXTURE_MAX: u32 = 256;
+/// Largest side of a flipbook grid texture.
+const FX_FLIPBOOK_MAX: u32 = 1024;
 
 /// Inches to Zero Hour units (`zhbo_core::units::inches`).
 fn units(inches: f32) -> f32 {
@@ -219,7 +221,7 @@ impl<'a> Converted<'a> {
         };
         let mut systems = Vec::new();
         let mut lights = String::new();
-        let at = Spawn { delay_ms: 0.0, origin: [0.0; 3] };
+        let at = Spawn::START;
         self.add_elems(effect, at, play, &name, paks, zones, &mut systems, &mut lights);
         let mut body = lights;
         body.push_str(&fxlist_particles(&systems, play.orient));
@@ -282,6 +284,12 @@ impl<'a> Converted<'a> {
         name
     }
 
+    /// The particle systems a converted FXList starts, in order (a projectile's trail is attached
+    /// to its drawable by name: `ParticleSysBone`).
+    pub fn systems(&self, list: &str) -> Vec<String> {
+        self.lists.get(list).map(|(s, _)| s.iter().map(|p| p.system.clone()).collect()).unwrap_or_default()
+    }
+
     /// The nugget text of a written FXList.
     pub fn body(&self, name: &str) -> Option<&str> {
         self.bodies.get(name).map(String::as_str)
@@ -298,7 +306,10 @@ impl<'a> Converted<'a> {
             }
             if el.kind == kind::RUNNER {
                 // The runner's effect starts where and when the runner spawns.
-                let child_at = Spawn { delay_ms: at.delay_ms + el.delay_msec.base + el.delay_msec.amplitude * 0.5, origin: add3(at.origin, origin_centre(el)) };
+                let child_at = at.run(el, play.looping_secs);
+                if child_at.times <= 0.0 {
+                    continue;
+                }
                 for child in &el.children {
                     self.add_elems(child, child_at, play, prefix, paks, zones, systems, lights);
                 }
@@ -306,6 +317,14 @@ impl<'a> Converted<'a> {
             }
             if el.kind == kind::OMNI_LIGHT {
                 lights.push_str(&light_pulse(el));
+                continue;
+            }
+            // A blast's decal (its scorch) is Zero Hour's own scorch mark on the ground, BO2's size.
+            // Hits are not: Zero Hour marks only terrain, and a bullet's hole is on what it struck.
+            if el.kind == kind::DECAL {
+                if play.role == Role::Blast && !orient {
+                    lights.push_str(&scorch(el));
+                }
                 continue;
             }
             // A model element (BO2's ejected shell casing) becomes a sprite of the model's own
@@ -323,14 +342,24 @@ impl<'a> Converted<'a> {
                         zones.iter().find_map(|z| xmodel::find_material(z, &mat.name).and_then(|m| m.color_map().cloned()))
                     });
                     let Some(img) = colour else { continue };
-                    let Some(tex) = self.texture(&img.name, img.key(), (1, 1), paks) else { continue };
+                    let Some(tex) = self.texture(&img.name, img.key(), (1, 1), 1, paks) else { continue };
                     let sys = format!("{prefix}_shell{}", systems.len());
-                    if let Some(ini) = model_particle_system(&sys, el, &tex.0, at.delay_ms, play) {
+                    if let Some(ini) = model_particle_system(&sys, el, &tex.file, at, play) {
                         self.particles.push_str(&ini);
                         systems.push(Placed { system: sys, offset: frame_vec(orient, add3(at.origin, origin_centre(el))) });
                     }
                 }
                 continue;
+            }
+            // The effect each particle starts where it dies (`effectOnDeath`: the smoke grenade's
+            // falling wisp leaves its lingering puffs), as a runner at the end of its life.
+            if let Some(death) = &el.on_death {
+                let mut then = at.run(el, play.looping_secs);
+                then.delay_ms += 0.5 * (el.life_msec.min() + el.life_msec.max());
+                then.origin = add3(then.origin, death_travel(el, !orient));
+                if then.times > 0.0 {
+                    self.add_elems(death, then, play, prefix, paks, zones, systems, lights);
+                }
             }
             if !kind::is_sprite(el.kind) || el.vis.is_empty() {
                 continue;
@@ -340,16 +369,16 @@ impl<'a> Converted<'a> {
                 continue; // a screen-space ripple Zero Hour can't draw
             }
             let Some(img) = m.color_map() else { continue };
-            let Some(tex) = self.texture(&img.name, img.key(), el.atlas, paks) else { continue };
+            let Some(tex) = self.texture(&img.name, img.key(), el.atlas, el.flipbook.frames, paks) else { continue };
             // As BO2 blends the material: glows add, smoke and debris mix by alpha (premultiplied
             // art too, the nearest Zero Hour has). Without a render state, art with no real alpha adds.
             let additive = match m.blend() {
                 Blend::Additive { .. } => true,
                 Blend::Alpha | Blend::Premultiplied => false,
-                Blend::Opaque | Blend::AlphaTest => tex.1,
+                Blend::Opaque | Blend::AlphaTest => tex.opaque,
             };
             let sys = format!("{prefix}_{}", systems.len());
-            if let Some(ini) = particle_system(&sys, el, &tex.0, additive, at.delay_ms, play) {
+            if let Some(ini) = particle_system(&sys, el, &tex.file, additive, tex.grid, at, play) {
                 self.particles.push_str(&ini);
                 systems.push(Placed { system: sys, offset: frame_vec(orient, add3(at.origin, origin_centre(el))) });
             }
@@ -358,36 +387,114 @@ impl<'a> Converted<'a> {
 
     /// [`Converted::texture`] for the headless preview (`fx_preview`): the BO2 row draws elements
     /// the conversion may skip.
-    pub fn preview_texture(&mut self, image: &str, key: zhbo_formats::ipak::ImageKey, atlas: (u32, u32), paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) {
-        self.texture(image, key, atlas, paks);
+    pub fn preview_texture(&mut self, image: &str, key: zhbo_formats::ipak::ImageKey, atlas: (u32, u32), frames: u32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) {
+        self.texture(image, key, atlas, frames, paks);
     }
 
-    /// The texture for a BO2 image (the first frame of a flipbook atlas), and whether it has no real
-    /// alpha.
-    fn texture(&mut self, image: &str, key: zhbo_formats::ipak::ImageKey, atlas: (u32, u32), paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> Option<(String, bool)> {
-        let file = format!("zhbo_fx_{}", crate::character::texture_file(image).trim_start_matches("zhbo_"));
+    /// The texture for a BO2 image. A flipbook atlas (`atlas` columns × rows, `frames` of its cells
+    /// in use) is laid out again as the square grid Zero Hour's point group draws from (host patch
+    /// 0025's `FrameGrid`; [`Grid`]); with one frame in use only the first cell is drawn.
+    fn texture(&mut self, image: &str, key: zhbo_formats::ipak::ImageKey, atlas: (u32, u32), frames: u32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> Option<Tex> {
+        let cells = (atlas.0.max(1) * atlas.1.max(1)).min(MAX_FRAMES);
+        let grid = Grid::of(frames.min(cells));
+        let file = texture_file(image, grid);
         // A reference stub (`,fxt_fire_gas_flash` in `common_mp`, streamed by `patch_mp`) carries
         // neither hash: ask by its name's hash, which the packs resolve by name (`Paks::image`).
         let key = if key.data_hash == 0 && key.name_hash == 0 { zhbo_formats::ipak::ImageKey { data_hash: 0, name_hash: zhbo_formats::ipak::r_hash_string(image) } } else { key };
-        let Some(mut rgba) = paks(key) else {
+        let Some(rgba) = paks(key) else {
             self.missing.insert(image.to_string());
             return None;
         };
-        // One cell of the atlas.
-        let (cw, ch) = ((rgba.width / atlas.0.max(1)).max(1), (rgba.height / atlas.1.max(1)).max(1));
-        if (cw, ch) != (rgba.width, rgba.height) {
-            let mut cell = vec![0u8; (cw * ch * 4) as usize];
-            for y in 0..ch {
-                let src = ((y * rgba.width) * 4) as usize;
-                cell[(y * cw * 4) as usize..((y + 1) * cw * 4) as usize].copy_from_slice(&rgba.pixels[src..src + (cw * 4) as usize]);
-            }
-            rgba = zhbo_formats::iwi::Rgba { width: cw, height: ch, pixels: cell };
-        }
-        let rgba = crate::generals::shrink(rgba, FX_TEXTURE_MAX);
-        let additive = rgba.pixels.as_chunks::<4>().0.iter().all(|p| p[3] >= 250);
+        let rgba = flipbook_grid(&rgba, atlas, grid);
+        let opaque = rgba.pixels.as_chunks::<4>().0.iter().all(|p| p[3] >= 250);
         self.textures.entry(format!("Art\\Textures\\{file}")).or_insert_with(|| images::tga_bytes(&rgba));
-        Some((file, additive))
+        Some(Tex { file, opaque, grid })
     }
+}
+
+/// A converted effect texture: its file, whether it has no real alpha, and its flipbook grid.
+struct Tex {
+    file: String,
+    opaque: bool,
+    grid: Grid,
+}
+
+/// The most frames Zero Hour's point group can draw from one texture (a 16 × 16 grid: W3D's
+/// `FrameRowColumnCountLog2` is at most 4).
+const MAX_FRAMES: u32 = 256;
+
+/// A flipbook as Zero Hour draws it (host patch 0025): `side` cells per side of a square grid
+/// (a power of two), `frames` of them in use, row by row from the top left. `side` 1 is a plain
+/// texture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Grid {
+    pub side: u32,
+    pub frames: u32,
+}
+
+impl Grid {
+    pub const NONE: Grid = Grid { side: 1, frames: 1 };
+
+    /// The smallest grid holding `frames` cells.
+    pub fn of(frames: u32) -> Grid {
+        let frames = frames.clamp(1, MAX_FRAMES);
+        let mut side = 1;
+        while side * side < frames {
+            side *= 2;
+        }
+        Grid { side, frames }
+    }
+}
+
+/// The converter's texture file for a BO2 image drawn on `grid`.
+pub fn texture_file(image: &str, grid: Grid) -> String {
+    let base = crate::character::texture_file(image);
+    let base = base.trim_start_matches("zhbo_");
+    if grid.frames > 1 {
+        let stem = base.strip_suffix(".tga").unwrap_or(base);
+        format!("zhbo_fx_{stem}_f{}.tga", grid.frames)
+    } else {
+        format!("zhbo_fx_{base}")
+    }
+}
+
+/// A BO2 atlas image (`atlas` columns × rows) as the texture Zero Hour draws: the first cell alone
+/// for a single frame, else its first `grid.frames` cells (row by row) in `grid`'s square layout.
+/// Each cell is shrunk to at most `FX_TEXTURE_MAX`, and to 1024 / `side` in a grid, so a 32-frame
+/// fire stays a 1024-pixel texture.
+fn flipbook_grid(rgba: &zhbo_formats::iwi::Rgba, atlas: (u32, u32), grid: Grid) -> zhbo_formats::iwi::Rgba {
+    use zhbo_formats::iwi::Rgba;
+    let (cols, rows) = (atlas.0.max(1), atlas.1.max(1));
+    let (cw, ch) = ((rgba.width / cols).max(1), (rgba.height / rows).max(1));
+    let cell = |i: u32| -> Rgba {
+        let (cx, cy) = (i % cols, (i / cols).min(rows - 1));
+        let mut px = vec![0u8; (cw * ch * 4) as usize];
+        for y in 0..ch {
+            let sy = (cy * ch + y).min(rgba.height - 1);
+            let src = ((sy * rgba.width + cx * cw) * 4) as usize;
+            let n = (cw * 4) as usize;
+            if src + n <= rgba.pixels.len() {
+                px[(y * cw * 4) as usize..(y * cw * 4) as usize + n].copy_from_slice(&rgba.pixels[src..src + n]);
+            }
+        }
+        Rgba { width: cw, height: ch, pixels: px }
+    };
+    if grid.frames <= 1 {
+        return crate::generals::shrink(cell(0), FX_TEXTURE_MAX);
+    }
+    let max_cell = FX_TEXTURE_MAX.min(FX_FLIPBOOK_MAX / grid.side);
+    let cells: Vec<Rgba> = (0..grid.frames).map(|i| crate::generals::shrink(cell(i), max_cell)).collect();
+    let (w, h) = (cells[0].width, cells[0].height);
+    let mut out = Rgba { width: w * grid.side, height: h * grid.side, pixels: vec![0u8; (w * h * grid.side * grid.side * 4) as usize] };
+    for (i, c) in cells.iter().enumerate() {
+        let (gx, gy) = (i as u32 % grid.side, i as u32 / grid.side);
+        for y in 0..h.min(c.height) {
+            let dst = (((gy * h + y) * out.width + gx * w) * 4) as usize;
+            let n = (w.min(c.width) * 4) as usize;
+            out.pixels[dst..dst + n].copy_from_slice(&c.pixels[(y * c.width * 4) as usize..(y * c.width * 4) as usize + n]);
+        }
+    }
+    out
 }
 
 /// The FXList name of a converted tracer (`probability` 1: the sim's every-Nth cadence).
@@ -428,11 +535,72 @@ pub(crate) struct Placed {
     pub offset: [f32; 3],
 }
 
-/// When and where (BO2 inches, the effect's frame) a runner's effect starts.
-#[derive(Clone, Copy, Debug)]
+/// When and where (BO2 inches, the effect's frame) a runner's effect starts, and how often: a
+/// runner is an element like any other, so it starts its effect `count` times, once, or — looping —
+/// every `intervalMsec` (BO2's `FxElemDef::spawn`). Zero Hour has no runner, so the effect's own
+/// systems repeat: `repeat` is the runner's (interval, span) in msec, `times` how many of the
+/// effect each runner spawn stands for.
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Spawn {
     delay_ms: f32,
     origin: [f32; 3],
+    repeat: Option<(f32, f32)>,
+    times: f32,
+}
+
+impl Spawn {
+    /// The effect's own start.
+    const START: Spawn = Spawn { delay_ms: 0.0, origin: [0.0; 3], repeat: None, times: 1.0 };
+
+    /// Where, when and how often runner `el`, spawned at `self`, starts its effect. A looping
+    /// runner repeats it every interval, `count` times (or for the effect's looping life,
+    /// `looping_secs`, when it loops forever); a one-shot runner starts it `count` times at once
+    /// (BO2's mean, `base + amplitude / 2`). Nested looping runners keep the inner interval and
+    /// the total number of starts over the longer span.
+    fn run(&self, el: &Elem, looping_secs: f32) -> Spawn {
+        let delay_ms = self.delay_ms + el.delay_msec.base + el.delay_msec.amplitude * 0.5;
+        let origin = add3(self.origin, origin_centre(el));
+        if !el.looping {
+            let mean = el.count.base + el.count.amplitude * 0.5;
+            return Spawn { delay_ms, origin, repeat: self.repeat, times: self.times * mean.max(0.0) };
+        }
+        let every = el.interval_msec.max(1) as f32;
+        let loops = if looping_forever(el) { (looping_secs * 1000.0 / every).max(1.0) } else { el.count.base.max(1.0) };
+        let (outer_loops, outer_span) = match self.repeat {
+            Some((e, span)) => ((span / e).max(1.0), span),
+            None => (1.0, 0.0),
+        };
+        let span = (loops * every).max(outer_span);
+        let total = self.times * loops * outer_loops;
+        Spawn { delay_ms, origin, repeat: Some((every, span)), times: total * every / span }
+    }
+}
+
+/// How far (BO2 inches, the effect's frame) an element's particle has gone when it dies, on
+/// average: the velocity graph's integrated delta over the life (both frames; the world's Z is
+/// the effect's X in an upright list) and its gravity's fall. `grounded` stops it at the ground
+/// (the effect's X 0 in an upright list).
+pub fn death_travel(el: &Elem, grounded: bool) -> [f32; 3] {
+    let life = 0.5 * (el.life_msec.min() + el.life_msec.max());
+    let mut d = [0.0f32; 3];
+    if let Some(last) = el.vel.last() {
+        let mean = |(b, a): ([f32; 3], [f32; 3])| [b[0] + a[0] * 0.5, b[1] + a[1] * 0.5, b[2] + a[2] * 0.5];
+        let (l, w) = (mean(last.local_delta), mean(last.world_delta));
+        d = [(l[0] + w[2]) * life, (l[1] + w[0]) * life, (l[2] + w[1]) * life];
+    }
+    let secs = life / 1000.0;
+    d[0] -= 0.5 * 800.0 * (el.gravity.base + el.gravity.amplitude * 0.5) * secs * secs;
+    if grounded {
+        let start = origin_centre(el)[0];
+        d[0] = d[0].max(-start);
+    }
+    d
+}
+
+/// A looping element that loops until its effect is freed (`count` 0, or BO2's "forever",
+/// `INT_MAX` less the editor's rounding).
+fn looping_forever(el: &Elem) -> bool {
+    el.count.base <= 0.0 || el.count.base >= 2.0e9
 }
 
 fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
@@ -506,6 +674,57 @@ fn fitted_damping(k: f32, frames: f32) -> f32 {
     0.5 * (lo + hi)
 }
 
+/// Zero Hour's size rate and damping (`SizeRate`, `SizeRateDamping`) closest to a BO2 size graph
+/// over a life of `life` frames: after `a` updates a particle is `start + rate·(1 + d + … +
+/// d^(a−1))` wide, and BO2's is the graph (`sizes`, evenly spaced over the life) in the middle of
+/// that frame, `(a − ½) / life`.
+/// The damping is searched and the rate solved by least squares at each, every frame weighted
+/// by `shows` (the graph's opacity there): a puff that swells then shrinks while it fades keeps
+/// the size it has while it is seen, where matching the first slope or the end alone grew it
+/// past BO2's or shrank it from the start.
+fn fit_size(sizes: &[f32], shows: &[f32], start: f32, life: f32) -> (f32, f32) {
+    let n = sizes.len();
+    let frames = life.round().max(1.0) as usize;
+    if n < 2 {
+        return (0.0, 1.0);
+    }
+    let at = |g: &[f32], t: f32| {
+        let x = t.clamp(0.0, 1.0) * (n - 1) as f32;
+        let i = (x as usize).min(n - 2);
+        g[i] + (g[i + 1] - g[i]) * (x - i as f32)
+    };
+    let samples: Vec<(f32, f32)> = (1..=frames).map(|a| {
+        // The middle of the a-th frame Zero Hour shows, across BO2's life.
+        let t = (a as f32 - 0.5) / life;
+        (at(sizes, t) - start, at(shows, t).max(0.0) + 1e-3)
+    }).collect();
+    let mut best = (f32::INFINITY, 0.0, 1.0);
+    for k in 0..=120 {
+        let d = 0.85 + k as f32 * 0.0025;
+        let (mut gs, mut gg) = (0.0f32, 0.0f32);
+        let mut g = 0.0f32;
+        let mut p = 1.0f32;
+        let gains: Vec<f32> = samples.iter().map(|_| {
+            g += p;
+            p *= d;
+            g
+        }).collect();
+        for (&(y, w), &g) in samples.iter().zip(&gains) {
+            gs += w * g * y;
+            gg += w * g * g;
+        }
+        if gg <= 0.0 {
+            continue;
+        }
+        let r = gs / gg;
+        let err: f32 = samples.iter().zip(&gains).map(|(&(y, w), &g)| w * (r * g - y).powi(2)).sum();
+        if err < best.0 - 1e-9 {
+            best = (err, r, d);
+        }
+    }
+    (best.1, best.2)
+}
+
 /// An element's drawn size at one visual sample (BO2 inches from the centre to the edge, base and
 /// base plus amplitude): a stretched sprite, a tail or a line keeps its area as Zero Hour's square
 /// (the square root of width × length).
@@ -523,14 +742,16 @@ fn sample_rgba(v: &VisSample) -> [f32; 4] {
 }
 
 /// BO2's omni light (a `FX_ELEM_TYPE_OMNI_LIGHT` element) as a Zero Hour `LightPulse`: its
-/// brightest colour, its radius (the size graph), and lit for its life.
+/// brightest colour, its radius (the size graph), and lit for its life. Zero Hour reads the times
+/// as milliseconds (`INI::parseDurationUnsignedInt` turns them into frames): BO2's life as it is,
+/// at least one frame.
 fn light_pulse(el: &Elem) -> String {
     let brightest = el.vis.iter().map(sample_rgba).fold([0.0f32; 4], |b, c| if c[0] + c[1] + c[2] > b[0] + b[1] + b[2] { c } else { b });
     if brightest[0] + brightest[1] + brightest[2] <= 0.0 {
         return String::new();
     }
     let radius = el.vis.iter().map(|v| v.size[0] + v.size_amplitude[0] * 0.5).fold(0.0f32, f32::max);
-    let life = ((el.life_msec.base + el.life_msec.amplitude * 0.5) / MS_PER_FRAME).round().max(1.0);
+    let life = (el.life_msec.base + el.life_msec.amplitude * 0.5).max(MS_PER_FRAME).round();
     let c = |i: usize| (brightest[i] * 255.0).round() as u32;
     format!(
         "  LightPulse\n    Color = R:{} G:{} B:{}\n    Radius = {:.1}\n    IncreaseTime = 0\n    DecreaseTime = {life:.0}\n  End\n",
@@ -539,6 +760,17 @@ fn light_pulse(el: &Elem) -> String {
         c(2),
         units(radius)
     )
+}
+
+/// BO2's decal element (`FX_ELEM_TYPE_DECAL`) as Zero Hour's `TerrainScorch`: one of its scorch
+/// marks (`RANDOM`), the decal's radius (the size graph's first width, base plus half its random).
+fn scorch(el: &Elem) -> String {
+    let Some(v) = el.vis.first() else { return String::new() };
+    let radius = v.size[0] + v.size_amplitude[0] * 0.5;
+    if radius <= 0.0 || el.count.max() < 1.0 {
+        return String::new();
+    }
+    format!("  TerrainScorch\n    Type = RANDOM\n    Radius = {:.1}\n  End\n", units(radius))
 }
 
 /// The `ParticleSystem` nuggets of an FXList: each system at its spawn offset; `orient` makes each
@@ -578,15 +810,20 @@ pub enum Role {
     Dust,
     /// A cloud that carries gameplay over its time (the smoke screen, which blocks sight).
     Area,
+    /// What a thrown or launched projectile trails in flight (`projTrailEffect`): its systems ride
+    /// the projectile's drawable ([`Converted::systems`]), and BO2's trail elements are ribbons.
+    Trail,
 }
 
 impl Role {
-    /// Zero Hour's order of the priorities (`ParticlePriorityType`).
+    /// Zero Hour's order of the priorities (`ParticlePriorityType`: `WEAPON_EXPLOSION` lowest,
+    /// then … `WEAPON_TRAIL`, `AREA_EFFECT`, `CRITICAL`).
     fn rank(self) -> u8 {
         match self.priority() {
             "WEAPON_EXPLOSION" => 0,
-            "AREA_EFFECT" => 1,
-            _ => 2,
+            "WEAPON_TRAIL" => 1,
+            "AREA_EFFECT" => 2,
+            _ => 3,
         }
     }
 
@@ -596,6 +833,8 @@ impl Role {
             Role::Blast | Role::Impact | Role::Flash => "CRITICAL",
             Role::Shell | Role::Dust => "WEAPON_EXPLOSION",
             Role::Area => "AREA_EFFECT",
+            // Zero Hour's own missile and smoke trails.
+            Role::Trail => "WEAPON_TRAIL",
         }
     }
 }
@@ -623,7 +862,8 @@ struct Play {
 /// * look: the size graph's start, its starting slope damped to reach its end, the roll, and up
 ///   to eight evenly spaced colour/alpha keys (strictly increasing frames: a later key on frame 0
 ///   would end Zero Hour's sequence).
-fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, play: Play) -> Option<String> {
+fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, grid: Grid, at: Spawn, play: Play) -> Option<String> {
+    let delay_ms = at.delay_ms;
     let Play { looping_secs, role, orient } = play;
     let frames = |ms: f32| (ms / MS_PER_FRAME).max(1.0);
     // Zero Hour counts a particle's life down in the update that creates it, before it is ever
@@ -642,16 +882,22 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
         width(0.5 * (a + b))
     };
     let n = el.vis.len();
-    // Size over life: the graph's first slope, damped so the size lands on the last sample.
-    let growth = mean(&last) - mean(&first);
-    let slope = if n > 1 { (mean(&el.vis[1]) - mean(&first)) / (life_mean / (n - 1) as f32) } else { 0.0 };
-    let (size_rate, size_damping) = if slope.abs() > 1e-6 && growth.abs() > 1e-6 && slope.signum() == growth.signum() {
-        (slope, fitted_damping(growth / (slope * life_mean), life_mean))
-    } else {
-        (growth / life_mean, 1.0)
-    };
+    // Size over life: Zero Hour's rate and damping fitted to BO2's whole graph ([`fit_size`]),
+    // weighted by how much the particle shows at each moment.
+    let sizes: Vec<f32> = el.vis.iter().map(mean).collect();
+    let shows: Vec<f32> = el.vis.iter().map(|v| {
+        let [r, g, b, a] = sample_rgba(v);
+        if additive { r.max(g).max(b) * a } else { a }
+    }).collect();
+    let (size_rate, size_damping) = fit_size(&sizes, &shows, 0.5 * (start.0 + start.1), life_mean);
     // Colour and alpha over life: up to 8 of BO2's samples, evenly spaced, on strictly increasing
     // frames.
+    // A particle Zero Hour shows for longer than BO2's life (a whole frame for an 18 msec gas
+    // flash) shows that much fainter, so it covers what BO2's does over the time it is seen.
+    let bo2_life = 0.5 * (el.life_msec.min() + el.life_msec.max()).max(0.0);
+    // A loop spawning several a frame has its count cut to the ones BO2 has alive instead (below).
+    let crowded = el.looping && (el.interval_msec.max(1) as f32) < MS_PER_FRAME;
+    let presence = if crowded { 1.0 } else { (bo2_life / (life_mean.max(1.0) * MS_PER_FRAME)).clamp(0.05, 1.0) };
     let picks: Vec<usize> = if n <= 8 { (0..n).collect() } else { (0..8).map(|i| i * (n - 1) / 7).collect() };
     let mut keys = String::new();
     let mut last_frame: Option<u32> = None;
@@ -670,6 +916,7 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
         last_frame = Some(t);
         k += 1;
         let [r, g, b, a] = sample_rgba(&el.vis[i]);
+        let a = a * presence;
         // Additive art fades by darkening (Zero Hour plays no alpha keys for it); alpha-blended
         // art by its alpha.
         let (r, g, b) = if additive { (r * a, g * a, b * a) } else { (r, g, b) };
@@ -731,17 +978,21 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
     let mut delay = (frames(delay_ms + el.delay_msec.min()) - 1.0, frames(delay_ms + el.delay_msec.max()) - 1.0);
     // Spawning: a whole random count once, or one every interval (several a frame when the
     // interval is shorter than one).
-    let (count, burst_delay, system_life) = if el.looping {
+    let (mut count, mut burst_delay, mut system_life) = if el.looping {
         let every = el.interval_msec.max(1) as f32 / MS_PER_FRAME;
         // An area effect stands its time (BO2's timed effect entity keeps its looping effect
         // playing until it is freed: the smoke screen's 12 s), whatever its loops' count.
-        let forever = el.count.base <= 0.0 || el.count.base >= i32::MAX as f32 || role == Role::Area;
+        let forever = looping_forever(el) || role == Role::Area;
         let span = if forever { looping_secs * 30.0 } else { (el.count.base * every).max(1.0) };
         if every >= 1.0 {
             ((1.0, 1.0), (every.round() - 1.0).max(0.0), span.round().max(1.0))
         } else {
-            let per = 1.0 / every;
-            ((per.floor(), per.ceil() + 0.999), 0.0, span.ceil().max(1.0))
+            // Several a frame, each drawn for at least the frame Zero Hour draws it (BO2's live
+            // a fraction of one: the theatre camera's 3 msec glints every msec are three at a
+            // time, not 33): as many a frame as BO2 has alive at once.
+            let life_ms = 0.5 * (el.life_msec.min() + el.life_msec.max());
+            let per = 1.0 / every * (life_ms / MS_PER_FRAME).clamp(every, 1.0);
+            ((per, per + 0.999), 0.0, span.ceil().max(1.0))
         }
     } else {
         // Each one-shot particle has its own random delay in BO2: over a window of more than a
@@ -757,17 +1008,56 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
             ((el.count.min().max(0.0), el.count.max().max(0.0) + 0.999), 0.0, 1.0)
         }
     };
+    // Started by a looping runner: the element again at every runner spawn ([`Spawn::run`]). A
+    // one-shot element bursts every interval for the runner's span; a looping one runs its own
+    // loop from each spawn, so the loops overlap and their rates add.
+    if let Some((every_ms, span_ms)) = at.repeat {
+        let every = every_ms / MS_PER_FRAME;
+        let span = (span_ms / MS_PER_FRAME).round().max(1.0);
+        if el.looping {
+            // Runner spawn k starts the loop at k·E; its j-th particle comes at k·E + j·e. Zero
+            // Hour bursts at the finer of the two intervals, as many a burst as keeps the total
+            // (runner loops × element loops) over the whole span.
+            let e = el.interval_msec.max(1) as f32;
+            let loops = if looping_forever(el) { (looping_secs * 1000.0 / e).max(1.0) } else { el.count.base.max(1.0) };
+            let runs = (span_ms / every_ms).max(1.0);
+            let total_ms = (runs - 1.0) * every_ms + loops * e;
+            let period = (every_ms.min(e) / MS_PER_FRAME).round().max(1.0);
+            let life = (total_ms / MS_PER_FRAME).round().max(1.0);
+            let per = runs * loops / (life / period).ceil().max(1.0);
+            count = (per, per + 0.999);
+            burst_delay = period - 1.0;
+            system_life = life;
+        } else {
+            let mean = (el.count.base + el.count.amplitude * 0.5).max(0.0);
+            delay = (delay.0, delay.0);
+            if every >= 1.0 {
+                count = (el.count.min().max(0.0), el.count.max().max(0.0) + 0.999);
+                burst_delay = (every.round() - 1.0).max(0.0);
+            } else {
+                let per = mean / every;
+                count = (per, per + 0.999);
+                burst_delay = 0.0;
+            }
+            system_life = span;
+        }
+    }
+    // Each runner spawn standing for several starts of the effect.
+    if (at.times - 1.0).abs() > 1e-4 {
+        count = (count.0 * at.times, (count.1 - 0.999).max(count.0) * at.times + 0.999);
+    }
     // The roll: the starting rotation and the graph's total turn (radians per msec of life).
     let roll = (el.initial_rotation.min(), el.initial_rotation.max());
     let turn = last.rotation_total * MS_PER_FRAME;
+    let frames = flipbook_fields(el, grid) + &distance_fields(el);
     Some(format!(
-        "ParticleSystem {name}\n  Priority = {}\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
+        "ParticleSystem {name}\n  Priority = {}\n  IsOneShot = No\n  Shader = {shader}\n  Type = {kind}\n  ParticleName = {texture}\n  \
          AngleZ = {:.2} {:.2}\n  AngularRateZ = {turn:.4} {turn:.4}\n  AngularDamping = 1.00 1.00\n  VelocityDamping = {damping:.4} {damping:.4}\n  \
          Gravity = {gravity:.4}\n  Lifetime = {:.0} {:.0}\n  SystemLifetime = {system_life:.0}\n  Size = {:.2} {:.2}\n  StartSizeRate = 0.00 0.00\n  \
          SizeRate = {size_rate:.3} {size_rate:.3}\n  SizeRateDamping = {size_damping:.4} {size_damping:.4}\n{keys}  ColorScale = 0.00 0.00\n  BurstDelay = {burst_delay:.0} {burst_delay:.0}\n  \
          BurstCount = {:.3} {:.3}\n  InitialDelay = {:.0} {:.0}\n  DriftVelocity = X:0.00 Y:0.00 Z:0.00\n  VelocityType = ORTHO\n  \
          VelOrthoX = {:.3} {:.3}\n  VelOrthoY = {:.3} {:.3}\n  VelOrthoZ = {:.3} {:.3}\n  VolumeType = {volume}  IsHollow = No\n  IsGroundAligned = No\n  \
-         IsEmitAboveGroundOnly = No\n  IsParticleUpTowardsEmitter = No\n  WindMotion = Unused\nEnd\n\n",
+         IsEmitAboveGroundOnly = No\n  IsParticleUpTowardsEmitter = No\n  WindMotion = Unused\n{frames}End\n\n",
         role.priority(),
         roll.0,
         roll.1,
@@ -786,12 +1076,67 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
         vel[2].0,
         vel[2].1,
         shader = if additive { "ADDITIVE" } else { "ALPHA" },
+        // A trail element of a moving effect is BO2's ribbon through the points it leaves:
+        // Zero Hour's streak, a line through its system's particles in order.
+        kind = if role == Role::Trail && el.kind == kind::TRAIL { "STREAK" } else { "PARTICLE" },
     ))
+}
+
+/// BO2's flipbook (`FxElemAtlas`) as host patch 0025's particle fields, on the converted texture's
+/// `grid`: where a particle starts (`behavior & 3`: the fixed `index`, a random cell, or the next
+/// cell in spawn order), how it advances (bit 2: every cell once over its life, else `fps` cells a
+/// second; 0 holds its first cell), and bit 3, which stops it on its last cell after `loopCount`
+/// passes. Nothing for a texture with one frame.
+fn flipbook_fields(el: &Elem, grid: Grid) -> String {
+    use zhbo_formats::fx::Flipbook as F;
+    if grid.frames <= 1 {
+        return String::new();
+    }
+    let fb = el.flipbook;
+    let start = match fb.behavior & F::START_MASK {
+        F::START_RANDOM => "RANDOM",
+        F::START_INDEXED => "INDEXED",
+        _ => "FIXED",
+    };
+    let over_life = fb.behavior & F::PLAY_OVER_LIFE != 0;
+    let loops = if fb.behavior & F::LOOP_N_TIMES != 0 { fb.loop_count.max(1) as u32 } else { 0 };
+    format!(
+        "  FrameGrid = {}\n  FrameCount = {}\n  FrameStartType = {start}\n  FrameStart = {}\n  FrameRate = {:.2}\n  FrameOverLife = {}\n  FrameLoops = {loops}\n",
+        grid.side,
+        grid.frames,
+        fb.index as u32 % grid.frames,
+        if over_life { 0.0 } else { fb.fps as f32 },
+        if over_life { "Yes" } else { "No" },
+    )
+}
+
+/// BO2's distance ranges from the camera as host patch 0025's fields (Zero Hour units): the element
+/// spawns only while its effect is within `spawnRange`, fades out past `fadeInRange` (fully drawn
+/// nearer than its base, gone at base + amplitude: the far end) and in past `fadeOutRange` (gone
+/// nearer than its base, fully drawn past base + amplitude: the near end). The ends are read from
+/// the data itself: the gun flashes' light spawns from 0 to 3000 inches with its `fadeInRange` at
+/// 2500–3000 (a far fade: it is lit up close), and the close smoke's `fadeOutRange` 0–15 is a near
+/// one (a puff in the lens fades); the far-distance copies of an element (the RPG trail's 1500–3500
+/// and 3500–10000 inch ones, the big flashes' 1400–3800 tracers) are not drawn up close.
+fn distance_fields(el: &Elem) -> String {
+    let pair = |r: Range| (units(r.base.max(0.0)), units((r.base + r.amplitude).max(0.0)));
+    let mut out = String::new();
+    let spawn = pair(el.spawn_range);
+    if spawn.1 > 0.0 {
+        out.push_str(&format!("  SpawnRange = {:.1} {:.1}\n", spawn.0, spawn.1));
+    }
+    for (key, r) in [("FarFade", el.fade_in_range), ("NearFade", el.fade_out_range)] {
+        let (a, b) = pair(r);
+        if b > a {
+            out.push_str(&format!("  {key} = {a:.1} {b:.1}\n"));
+        }
+    }
+    out
 }
 
 /// A model element (an ejected shell) as a small sprite. The model's own colour map is the
 /// particle texture; BO2's model element gives no size, so a shell-sized default is used.
-fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32, play: Play) -> Option<String> {
+fn model_particle_system(name: &str, el: &Elem, texture: &str, at: Spawn, play: Play) -> Option<String> {
     let mut e = el.clone();
     // A model's visual states carry its scale, not a sprite size (0): the shell-sized sprite,
     // scaled by the model's own scale.
@@ -810,187 +1155,9 @@ fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32, pl
     if e.life_msec.base <= 0.0 {
         e.life_msec = Range { base: 700.0, amplitude: 200.0 };
     }
-    particle_system(name, &e, texture, false, delay_ms, Play { looping_secs: 1.0, ..play })
+    particle_system(name, &e, texture, false, Grid::NONE, at, Play { looping_secs: 1.0, ..play })
 }
 
 #[cfg(test)]
-mod effect_tests {
-    use super::*;
-    use zhbo_formats::fx::{Range, VelSample, VisSample};
-
-    fn sprite() -> Elem {
-        Elem {
-            kind: kind::SPRITE_BILLBOARD,
-            flags: SPAWN_OFFSET_SPHERE,
-            count: Range { base: 5.0, amplitude: 2.0 },
-            life_msec: Range { base: 1000.0, amplitude: 500.0 },
-            delay_msec: Range { base: 100.0, amplitude: 0.0 },
-            offset_radius: Range { base: 0.0, amplitude: 12.0 },
-            gravity: Range { base: 1.0, amplitude: 0.0 },
-            velocity: ([0.3, 0.0, 0.0], [0.1, 0.0, 0.0]),
-            vis: vec![
-                VisSample { color: [200, 180, 160, 255], color_amplitude: [200, 180, 160, 255], size: [6.0, 6.0], ..Default::default() },
-                VisSample { color: [100, 90, 80, 0], color_amplitude: [100, 90, 80, 0], size: [30.0, 30.0], ..Default::default() },
-            ],
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn an_element_keeps_its_timing_size_and_fade() {
-        let ini = particle_system("ZHBO_test_0", &sprite(), "zhbo_fx_smoke.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
-        // 1 to 1.5 s, plus the frame Zero Hour counts down before the first draw.
-        assert!(ini.contains("Lifetime = 31 46"), "{ini}");
-        // A whole random count of 5..=7 (Zero Hour truncates the burst count).
-        assert!(ini.contains("BurstCount = 5.000 7.999"), "{ini}");
-        assert!(ini.contains("InitialDelay = 2 2"));
-        assert!(ini.contains("Alpha1 = 1.00 1.00 0") && ini.contains("Alpha2 = 0.00 0.00 39"), "{ini}");
-        assert!(ini.contains("Shader = ALPHA") && ini.contains("VolumeType = SPHERE"));
-        assert!(ini.contains("Priority = CRITICAL"), "{ini}");
-        // Out along the normal (up), falling.
-        assert!(ini.contains("VelOrthoZ = 1.667 2.222"), "{ini}");
-        assert!(ini.contains("Gravity = -0.1481"), "{ini}");
-    }
-
-    #[test]
-    fn each_role_takes_zero_hours_priority_for_its_kind() {
-        let ini = |role| particle_system("ZHBO_test_r", &sprite(), "t.tga", false, 0.0, Play { looping_secs: 12.0, role, orient: false }).unwrap();
-        for (role, p) in [(Role::Blast, "CRITICAL"), (Role::Impact, "CRITICAL"), (Role::Flash, "CRITICAL"), (Role::Shell, "WEAPON_EXPLOSION"), (Role::Dust, "WEAPON_EXPLOSION"), (Role::Area, "AREA_EFFECT")] {
-            assert!(ini(role).contains(&format!("Priority = {p}\n")), "{role:?}");
-        }
-        // The lowest priority is only for what may vanish under load.
-        let model = Elem { kind: kind::MODEL, count: Range { base: 1.0, amplitude: 0.0 }, ..Default::default() };
-        assert!(model_particle_system("ZHBO_test_s", &model, "s.tga", 0.0, Play { looping_secs: 1.0, role: Role::Shell, orient: true }).unwrap().contains("Priority = WEAPON_EXPLOSION"));
-    }
-
-    #[test]
-    fn an_effect_in_two_roles_takes_the_higher_priority() {
-        let light = Elem { kind: kind::OMNI_LIGHT, ..Default::default() };
-        let e = Effect { name: "test/both".into(), elems: vec![light], ..Default::default() };
-        let mut c = Converted::default();
-        let name = c.add_as(&e, Role::Dust, &|_| None);
-        assert_eq!(c.add_as(&e, Role::Blast, &|_| None), name);
-        assert_eq!(c.roles.get(&name), Some(&Role::Blast));
-        // and never lowered
-        c.add_as(&e, Role::Shell, &|_| None);
-        assert_eq!(c.roles.get(&name), Some(&Role::Blast));
-    }
-
-    #[test]
-    fn looping_elements_spawn_one_per_interval_count_times() {
-        // Every 3 s, five times: one particle each 90 frames for 450 frames.
-        let slow = Elem { looping: true, interval_msec: 3000, ..sprite() };
-        let ini = particle_system("ZHBO_test_1", &slow, "t.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
-        assert!(ini.contains("SystemLifetime = 450") && ini.contains("BurstDelay = 89 89") && ini.contains("BurstCount = 1.000 1.000"), "{ini}");
-        // Every 3 msec, twenty times (the grenade's sparks, BO2's 57 msec looping life): eleven
-        // or twelve a frame for two frames, not twenty a frame for a second.
-        let fast = Elem { looping: true, interval_msec: 3, count: Range { base: 20.0, amplitude: 0.0 }, ..sprite() };
-        let ini = particle_system("ZHBO_test_2", &fast, "t.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
-        assert!(ini.contains("SystemLifetime = 2") && ini.contains("BurstDelay = 0 0") && ini.contains("BurstCount = 11.000 12.999"), "{ini}");
-        // Count 0: for as long as the effect loops.
-        let forever = Elem { looping: true, interval_msec: 1000, count: Range::default(), ..sprite() };
-        let ini = particle_system("ZHBO_test_3", &forever, "t.tga", false, 0.0, Play { looping_secs: 15.0, role: Role::Blast, orient: false }).unwrap();
-        assert!(ini.contains("SystemLifetime = 450"), "{ini}");
-    }
-
-    #[test]
-    fn the_velocity_graph_sets_how_far_it_goes() {
-        // Starts at 0.44 in/ms and slows to nothing: the graph's delta says it covers half the
-        // distance of the starting speed held for its life.
-        let s = |v: f32, d: f32| VelSample { local_velocity: ([v, 0.0, 0.0], [0.0; 3]), local_delta: ([d, 0.0, 0.0], [0.0; 3]), ..Default::default() };
-        let el = Elem { vel: vec![s(0.44, 0.0), s(0.0, 0.22)], ..sprite() };
-        let ini = particle_system("ZHBO_test_4", &el, "t.tga", false, 0.0, Play { looping_secs: 1.0, role: Role::Blast, orient: false }).unwrap();
-        let damping: f32 = ini.lines().find_map(|l| l.trim().strip_prefix("VelocityDamping = ")).unwrap().split_whitespace().next().unwrap().parse().unwrap();
-        // Zero Hour's travel over the mean life (37.5 frames) matches BO2's.
-        let frames = 37.5f32;
-        let v0 = units(0.44) * MS_PER_FRAME;
-        let zh = v0 * (1.0 - damping.powf(frames)) / (1.0 - damping);
-        let bo2 = units(0.22 * 1250.0);
-        assert!((zh - bo2).abs() / bo2 < 0.01, "damping {damping}: {zh} vs {bo2}");
-        assert_eq!(fitted_damping(1.0, 30.0), 1.0f32.min(fitted_damping(1.0, 30.0)));
-        assert!((fitted_damping(1.0, 30.0) - 1.0).abs() < 1e-3);
-    }
-
-    #[test]
-    fn short_lives_keep_strictly_increasing_key_frames() {
-        // Five samples over a 2-frame life: keys on frames 0, 1 (rounded 0.5 -> 1 is skipped as
-        // a repeat where it lands on the same frame), 2 — never a second key on frame 0.
-        let v = |a: u8| VisSample { color: [255, 255, 255, a], color_amplitude: [255, 255, 255, a], size: [4.0, 4.0], ..Default::default() };
-        let el = Elem { life_msec: Range { base: 66.0, amplitude: 0.0 }, vis: vec![v(255), v(200), v(150), v(100), v(0)], ..sprite() };
-        let ini = particle_system("ZHBO_test_5", &el, "t.tga", false, 0.0, Play { looping_secs: 1.0, role: Role::Blast, orient: false }).unwrap();
-        let frames: Vec<u32> = ini.lines().filter(|l| l.trim().starts_with("Alpha")).map(|l| l.split_whitespace().last().unwrap().parse().unwrap()).collect();
-        assert!(frames.windows(2).all(|w| w[1] > w[0]), "{frames:?}\n{ini}");
-        assert_eq!(frames[0], 0);
-    }
-
-    #[test]
-    fn an_element_bo2_spawns_none_of_is_not_drawn() {
-        let none = Elem { count: Range::default(), ..sprite() };
-        let mut c = Converted::default();
-        let e = Effect { name: "test/none".into(), elems: vec![none], ..Default::default() };
-        let name = c.add(&e, &|_| None);
-        assert_eq!(c.body(&name), Some(""));
-    }
-
-    #[test]
-    fn runners_start_their_effect_and_lights_pulse() {
-        // A runner 10 inches up its X starting an effect whose only element is an omni light: the
-        // list carries the light, from BO2's colour, radius and life.
-        let light = Elem {
-            kind: kind::OMNI_LIGHT,
-            count: Range { base: 1.0, amplitude: 0.0 },
-            life_msec: Range { base: 100.0, amplitude: 0.0 },
-            vis: vec![VisSample { color: [250, 200, 150, 255], color_amplitude: [250, 200, 150, 255], size: [120.0, 0.0], ..Default::default() }],
-            ..Default::default()
-        };
-        let child = Effect { name: "test/flash".into(), elems: vec![light], ..Default::default() };
-        let runner = Elem { kind: kind::RUNNER, count: Range { base: 1.0, amplitude: 0.0 }, origin: [Range { base: 10.0, amplitude: 0.0 }, Range::default(), Range::default()], children: vec![child.clone()], ..Default::default() };
-        // A runner BO2 spawns none of starts nothing.
-        let idle = Elem { count: Range::default(), ..runner.clone() };
-        let e = Effect { name: "test/blast".into(), elems: vec![runner, idle], ..Default::default() };
-        let mut c = Converted::default();
-        let name = c.add(&e, &|_| None);
-        let body = c.body(&name).unwrap();
-        assert_eq!(body.matches("LightPulse").count(), 1, "{body}");
-        assert!(body.contains("Color = R:250 G:200 B:150") && body.contains("Radius = 20.0") && body.contains("DecreaseTime = 3"), "{body}");
-    }
-
-    #[test]
-    fn spawn_offsets_go_on_the_nugget_in_the_lists_frame() {
-        let el = Elem { origin: [Range { base: 20.0, amplitude: 160.0 }, Range { base: -6.0, amplitude: 12.0 }, Range::default()], ..sprite() };
-        // The middle of the box, 100 inches up the normal: up in a world list, X in a framed one.
-        let world = frame_vec(false, origin_centre(&el));
-        let framed = frame_vec(true, origin_centre(&el));
-        assert!((world[2] - units(100.0)).abs() < 1e-4 && world[0].abs() < 1e-4, "{world:?}");
-        assert!((framed[0] - units(100.0)).abs() < 1e-4, "{framed:?}");
-        let text = fxlist_particles(&[Placed { system: "S".into(), offset: world }], false);
-        assert!(text.contains("Offset = X:0.00 Y:0.00 Z:16.67"), "{text}");
-        // The box's half extent spawns around it.
-        let ini = particle_system("ZHBO_test_6", &Elem { flags: 0, ..el }, "t.tga", false, 0.0, Play { looping_secs: 1.0, role: Role::Blast, orient: false }).unwrap();
-        assert!(ini.contains("VolumeType = BOX") && ini.contains("VolBoxHalfSize = X:1.00 Y:0.00 Z:13.33"), "{ini}");
-    }
-
-    #[test]
-    fn a_model_element_becomes_a_shell_sprite() {
-        let el = Elem { kind: kind::MODEL, count: Range { base: 1.0, amplitude: 0.0 }, models: vec!["fx_rifle_shell".into()], ..Default::default() };
-        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0, Play { looping_secs: 1.0, role: Role::Shell, orient: false }).unwrap();
-        assert!(ini.contains("ParticleSystem ZHBO_test_shell"), "{ini}");
-        assert!(ini.contains("ParticleName = zhbo_fx_shell.tga"));
-        // BO2's model element has no size: a shell-sized default life and sprite.
-        assert!(ini.contains("Lifetime = 22 28"), "{ini}");
-        assert!(ini.contains("Size = 0.17 0.17"), "{ini}");
-    }
-
-    #[test]
-    fn a_shell_fxlist_orients_to_the_tag_with_bo2_axes() {
-        let el = Elem { kind: kind::MODEL, count: Range { base: 1.0, amplitude: 0.0 }, velocity: ([0.3, 0.0, 0.0], [0.1, 0.0, 0.0]), ..Default::default() };
-        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0, Play { looping_secs: 1.0, role: Role::Shell, orient: true }).unwrap();
-        // The tag's X is the eject direction: identity axes, nothing on Z (the world effects' map
-        // puts it there, and the existing test still pins that).
-        assert!(ini.contains("VelOrthoX = 1.667 2.222"), "{ini}");
-        assert!(ini.contains("VelOrthoY = 0.000 0.000") && ini.contains("VelOrthoZ = 0.000 0.000"), "{ini}");
-        let systems = vec![Placed { system: "ZHBO_test_shell".to_string(), offset: [0.0; 3] }];
-        assert!(fxlist_particles(&systems, true).contains("    Name = ZHBO_test_shell\n    OrientToObject = Yes\n"), "shell");
-        assert!(!fxlist_particles(&systems, false).contains("OrientToObject"), "world");
-    }
-}
+#[path = "fx_tests.rs"]
+mod effect_tests;

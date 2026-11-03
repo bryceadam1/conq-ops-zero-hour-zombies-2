@@ -858,6 +858,9 @@ pub struct Weapon {
     /// table's cell for the `impactType` and the surface hit (`fx::ImpactKind`), so most
     /// explosives leave it empty.
     pub explosion_effect: Option<crate::fx::Effect>,
+    /// The effect a thrown or launched projectile trails in flight (`projTrailEffect`: the
+    /// hatchet's and the ballistic knife's streaks, the RPG's smoke). Presentation only.
+    pub trail_effect: Option<crate::fx::Effect>,
     pub impact_type: u32,
     /// `bounceSound`: one alias per BO2 surface (32, indexed by `materialSurfType_t`; empty where
     /// the def has none). A grenade's bounce event plays the cell for the surface it struck
@@ -1424,6 +1427,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
     // Bound against the pool by `all_in`/`pooled` (a patched def's may be a stub of `common_mp`'s).
     w.explosion_effect = crate::fx::read_or_stub(z, fx);
+    w.trail_effect = crate::fx::read_or_stub(z, z.try_u32(d + WD::projTrailEffect)?);
     w.hud_icon = named(z, d + WD::hudIcon);
     w.weapon_camo = named(z, d + WD::weaponCamo);
     w.hud_icon_key = icon_key(z, z.try_u32(d + WD::hudIcon)?);
@@ -1476,6 +1480,7 @@ fn bind_all(mut out: Vec<Weapon>, pool: &[&Zone]) -> Vec<Weapon> {
             &mut w.world_last_shot_eject_effect,
             &mut w.projectile_dud_effect,
             &mut w.explosion_effect,
+            &mut w.trail_effect,
         ] {
             *e = crate::fx::bind(e.take(), pool);
         }

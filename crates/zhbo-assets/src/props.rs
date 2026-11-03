@@ -125,8 +125,32 @@ pub(crate) fn projectiles(
         models.insert(id.clone(), name);
         made.push(id.as_str());
     }
-    out.insert("Data\\INI\\Object\\ZHBO_BO2_Projectiles.ini".into(), ini.into_bytes());
+    out.insert(PROJECTILES_INI_PATH.into(), ini.into_bytes());
     format!("projectiles {}", made.join(", "))
+}
+
+/// Where [`projectiles`] writes its objects.
+pub(crate) const PROJECTILES_INI_PATH: &str = "Data\\INI\\Object\\ZHBO_BO2_Projectiles.ini";
+
+/// The projectile objects of `text` with their trails: each `(object, systems)` pair's particle
+/// systems attached to the object's model (`ParticleSysBone`, at its origin: no bone of that name),
+/// so they follow it in flight and leave their particles behind.
+pub(crate) fn with_trails(text: &str, trails: &[(String, Vec<String>)]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut current: Option<&[String]> = None;
+    for line in text.split_inclusive('\n') {
+        if let Some(name) = line.strip_prefix("Object ") {
+            let name = name.trim();
+            current = trails.iter().find(|(o, _)| o == name).map(|(_, s)| s.as_slice());
+        }
+        out.push_str(line);
+        if line.trim_start().starts_with("Model = ") {
+            for sys in current.take().unwrap_or_default() {
+                out.push_str(&format!("      ParticleSysBone = None {sys}\n"));
+            }
+        }
+    }
+    out
 }
 
 /// The ids [`projectiles`] converts, in order: the converted weapons, their alt modes (an

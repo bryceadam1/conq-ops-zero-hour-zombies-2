@@ -669,6 +669,24 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             effects.add(&e, &|h| paks.image(h));
         }
     }
+    // A thrown or launched projectile's trail (`projTrailEffect`): its systems ride the
+    // projectile's drawable from its origin (`ParticleSysBone`), in its frame (BO2 plays the trail
+    // on the projectile, X along its flight).
+    let trails: Vec<(String, Vec<String>)> = table
+        .weapons
+        .iter()
+        .filter(|d| !d.projectile_object.is_empty())
+        .filter_map(|d| {
+            let e = bo2.iter().find(|w| w.name == base_id(&d.id))?.trail_effect.as_ref()?;
+            let list = effects.add_framed(e, crate::fx::Role::Trail, &|h| paks.image(h));
+            Some((d.projectile_object.clone(), effects.systems(&list)))
+        })
+        .collect();
+    if let Some(text) = out.get(crate::props::PROJECTILES_INI_PATH).map(|b| String::from_utf8_lossy(b).into_owned()) {
+        let text = crate::props::with_trails(&text, &trails);
+        summary.push(format!("{} projectile trails", trails.iter().filter(|(_, s)| !s.is_empty()).count()));
+        out.insert(crate::props::PROJECTILES_INI_PATH.into(), text.into_bytes());
+    }
     // The shots others see in first person flash as BO2's do (not Zero Hour's tracer).
     for (id, flash) in &flashes {
         if let Some(d) = table.weapons.iter().find(|d| &d.id == id && !d.fx_weapon.is_empty()) {

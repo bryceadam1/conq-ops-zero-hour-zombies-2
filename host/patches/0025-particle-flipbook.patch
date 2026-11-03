@@ -1,0 +1,411 @@
+diff --git a/Core/GameEngine/Include/GameClient/ParticleSys.h b/Core/GameEngine/Include/GameClient/ParticleSys.h
+index e551caaf0..301fd618e 100644
+--- a/Core/GameEngine/Include/GameClient/ParticleSys.h
++++ b/Core/GameEngine/Include/GameClient/ParticleSys.h
+@@ -209,6 +209,9 @@ public:
+ 
+ 	UnsignedInt getElapsedFrames() const;
+ 
++	// ZHBO: the cell of its system's flipbook this particle shows now (0 without a flipbook).
++	UnsignedByte getFrame() const;
++
+ protected:
+ 
+ 	// snapshot methods
+@@ -469,12 +472,74 @@ public:
+ 	Real m_windMotionEndAngleMax;						///< (for ping pong) max angel for angle 2
+ 	Byte m_windMotionMovingToEndAngle;			///< (for ping pong) TRUE if we're moving "towards" the end angle
+ 
++	// ZHBO: a flipbook texture (W3D's point frames): a square grid of cells, read row by row from
++	// the top left, of which the particle shows one at a time. Presentation only, never xfered:
++	// a loaded system takes them from its template.
++	enum FrameStartType
++	{
++		FRAME_START_FIXED = 0,	///< every particle starts on m_frameStart
++		FRAME_START_RANDOM,			///< each particle starts on its own random cell
++		FRAME_START_INDEXED,		///< the particles start on successive cells, in spawn order
++		FRAME_START_TYPE_COUNT
++	};
++	UnsignedInt m_frameGrid;						///< cells per side: 1 (no flipbook), 2, 4, 8 or 16
++	UnsignedInt m_frameCount;						///< cells in use (at most m_frameGrid squared)
++	FrameStartType m_frameStartType;		///< how a particle picks its first cell
++	UnsignedInt m_frameStart;						///< the first cell, FRAME_START_FIXED
++	Real m_frameRate;										///< cells per second (0: the particle keeps its first cell)
++	Bool m_frameOverLife;								///< the cells are played once over the particle's life (the rate is unused)
++	UnsignedInt m_frameLoops;						///< 0 loops forever; n holds the last cell after n passes
++
++	// ZHBO: distance ranges from the camera (world units; 0 for none). A particle is emitted only
++	// while the system is within the spawn range; it is fully shown nearer than the far fade's
++	// start, gone past its end, and gone nearer than the near fade's start, fully shown past its
++	// end (BO2's spawnRange, fadeInRange and fadeOutRange).
++	Real m_spawnRangeMin;
++	Real m_spawnRangeMax;
++	Real m_farFadeStart;
++	Real m_farFadeEnd;
++	Real m_nearFadeStart;
++	Real m_nearFadeEnd;
++
++	/// ZHBO: whether a system at `distance` from the camera emits.
++	Bool isInSpawnRange( Real distance ) const
++	{
++		return m_spawnRangeMax <= 0.0f || (distance >= m_spawnRangeMin && distance <= m_spawnRangeMax);
++	}
++
++	/// ZHBO: how much of a particle at `distance` from the camera shows (0..1).
++	Real getDistanceFade( Real distance ) const
++	{
++		Real fade = 1.0f;
++		if (m_farFadeEnd > m_farFadeStart)
++			fade *= 1.0f - MIN( 1.0f, MAX( 0.0f, (distance - m_farFadeStart) / (m_farFadeEnd - m_farFadeStart) ) );
++		if (m_nearFadeEnd > m_nearFadeStart)
++			fade *= MIN( 1.0f, MAX( 0.0f, (distance - m_nearFadeStart) / (m_nearFadeEnd - m_nearFadeStart) ) );
++		return fade;
++	}
++
++	/// log2 of the cells per side W3D draws (m_frameGrid rounded down to a power of two, at most 16).
++	UnsignedInt getFrameGridLog2() const
++	{
++		UnsignedInt log2 = 0;
++		while (log2 < 4 && (2u << log2) <= m_frameGrid)
++			++log2;
++		return log2;
++	}
++
+ };
+ 
+ //--------------------------------------------------------------------------------------------------------------
+ 
+ #ifdef DEFINE_PARTICLE_SYSTEM_NAMES
+ 
++// ZHBO
++static const char *const FrameStartTypeNames[] =
++{
++	"FIXED", "RANDOM", "INDEXED", nullptr
++};
++static_assert(ARRAY_SIZE(FrameStartTypeNames) == ParticleSystemInfo::FRAME_START_TYPE_COUNT + 1, "Incorrect array size");
++
+ /**** NOTE: These MUST be kept in sync with the enumerations above *****/
+ 
+ static const char *const ParticleShaderTypeNames[] =
+@@ -802,6 +867,11 @@ public:
+ 	virtual Int getOnScreenParticleCount() = 0;   ///< returns the number of particles on screen
+   virtual void setOnScreenParticleCount(int count);
+ 
++	// ZHBO: where the scene was last drawn from (the renderer sets it each frame), for the systems'
++	// distance ranges (ParticleSystemInfo::m_spawnRange*, m_farFade*, m_nearFade*).
++	void setCameraPosition( const Coord3D *pos ) { m_cameraPos = *pos; m_hasCameraPos = TRUE; }
++	Bool getCameraPosition( Coord3D *pos ) const { if (m_hasCameraPos) *pos = m_cameraPos; return m_hasCameraPos; }
++
+ 	ParticleSystemTemplate *findTemplate( const AsciiString &name ) const;
+ 	ParticleSystemTemplate *findParentTemplate( const AsciiString &name, int parentNum ) const;
+ 	ParticleSystemTemplate *newTemplate( const AsciiString &name );
+@@ -884,6 +954,9 @@ protected:
+ 
+ private:
+ 	TemplateMap m_templateMap;		///< a hash map of all particle system templates
++
++	Coord3D m_cameraPos;						///< ZHBO: the camera's last position (setCameraPosition)
++	Bool m_hasCameraPos;						///< ZHBO: whether a frame has been drawn yet
+ 	ParticleSystemIDMap m_systemMap; ///< a hash map of all particle systems
+ };
+ 
+diff --git a/Core/GameEngine/Source/GameClient/System/ParticleSys.cpp b/Core/GameEngine/Source/GameClient/System/ParticleSys.cpp
+index 60a92bdbe..d0e70fb48 100644
+--- a/Core/GameEngine/Source/GameClient/System/ParticleSys.cpp
++++ b/Core/GameEngine/Source/GameClient/System/ParticleSys.cpp
+@@ -679,6 +679,46 @@ UnsignedInt Particle::getElapsedFrames() const
+ 	return TheGameClient->getFrame() - m_createTimestamp;
+ }
+ 
++// ------------------------------------------------------------------------------------------------
++// ZHBO: the flipbook cell to draw. The age is the logic updates this particle has had (its life
++// counts down once per update), so the cells advance at the logic rate like its other key frames.
++// A random start is a hash of the particle's personality: no random stream is drawn.
++UnsignedByte Particle::getFrame() const
++{
++	const UnsignedInt cells = 1u << (2 * m_system->getFrameGridLog2());
++	const UnsignedInt count = MIN( m_system->m_frameCount, cells );
++	if (count <= 1)
++		return 0;
++
++	UnsignedInt start;
++	switch (m_system->m_frameStartType)
++	{
++		case ParticleSystemInfo::FRAME_START_RANDOM:
++			start = ((m_personality + 1u) * 2654435761u) >> 8;
++			break;
++		case ParticleSystemInfo::FRAME_START_INDEXED:
++			start = m_personality;
++			break;
++		default:
++			start = m_system->m_frameStart;
++			break;
++	}
++	start %= count;
++
++	const UnsignedInt age = m_lifetime > m_lifetimeLeft ? m_lifetime - m_lifetimeLeft : 0;
++	UnsignedInt step = 0;
++	if (m_system->m_frameOverLife)
++		step = m_lifetime > 0 ? (UnsignedInt)(((UnsignedInt64)age * count) / m_lifetime) : 0;
++	else if (m_system->m_frameRate > 0.0f)
++		step = (UnsignedInt)((Real)age * m_system->m_frameRate / (Real)LOGICFRAMES_PER_SECOND);
++
++	const UnsignedInt loops = m_system->m_frameLoops;
++	if (loops > 0 && step >= loops * count)
++		step = loops * count - 1;
++
++	return (UnsignedByte)((start + step) % count);
++}
++
+ // ------------------------------------------------------------------------------------------------
+ /** Return true if this particle is invisible */
+ // ------------------------------------------------------------------------------------------------
+@@ -870,6 +910,21 @@ ParticleSystemInfo::ParticleSystemInfo()
+ 	m_windMotionMovingToEndAngle = TRUE;
+ 	m_volumeParticleDepth = INVALID_VOLUME_PARTICLE_DEPTH;
+ 
++	// ZHBO: no flipbook.
++	m_frameGrid = 1;
++	m_frameCount = 1;
++	m_frameStartType = FRAME_START_FIXED;
++	m_frameStart = 0;
++	m_frameRate = 0.0f;
++	m_frameOverLife = FALSE;
++	m_frameLoops = 0;
++	m_spawnRangeMin = 0.0f;
++	m_spawnRangeMax = 0.0f;
++	m_farFadeStart = 0.0f;
++	m_farFadeEnd = 0.0f;
++	m_nearFadeStart = 0.0f;
++	m_nearFadeEnd = 0.0f;
++
+ }
+ 
+ 
+@@ -1326,6 +1381,21 @@ ParticleSystem::ParticleSystem( const ParticleSystemTemplate *sysTemplate,
+ 	m_particleType = sysTemplate->m_particleType;
+ 	m_particleTypeName = sysTemplate->m_particleTypeName;
+ 
++	// ZHBO: the flipbook (not xfered: a loaded system keeps these from its template).
++	m_frameGrid = sysTemplate->m_frameGrid;
++	m_frameCount = sysTemplate->m_frameCount;
++	m_frameStartType = sysTemplate->m_frameStartType;
++	m_frameStart = sysTemplate->m_frameStart;
++	m_frameRate = sysTemplate->m_frameRate;
++	m_frameOverLife = sysTemplate->m_frameOverLife;
++	m_frameLoops = sysTemplate->m_frameLoops;
++	m_spawnRangeMin = sysTemplate->m_spawnRangeMin;
++	m_spawnRangeMax = sysTemplate->m_spawnRangeMax;
++	m_farFadeStart = sysTemplate->m_farFadeStart;
++	m_farFadeEnd = sysTemplate->m_farFadeEnd;
++	m_nearFadeStart = sysTemplate->m_nearFadeStart;
++	m_nearFadeEnd = sysTemplate->m_nearFadeEnd;
++
+ 	m_isStopped = false;
+ 
+ 	// set up slave particle system, if any
+@@ -2111,6 +2181,16 @@ Bool ParticleSystem::update( Int localPlayerIndex  )
+ 					// emit a burst of particles
+ 					Int count = REAL_TO_INT(m_burstCount.getValue());
+ 
++					// ZHBO: none outside the system's spawn range from the camera.
++					Coord3D eye;
++					if (m_spawnRangeMax > 0.0f && TheParticleSystemManager->getCameraPosition( &eye ))
++					{
++						const Vector3 at = m_transform.Get_Translation();
++						const Real dx = at.X - eye.x, dy = at.Y - eye.y, dz = at.Z - eye.z;
++						if (!isInSpawnRange( sqrtf( dx * dx + dy * dy + dz * dz ) ))
++							count = 0;
++					}
++
+ 					count *= m_countCoeff;
+ 
+ 					for( Int i=0; i<count; i++ )
+@@ -2897,6 +2977,14 @@ void ParticleSystem::loadPostProcess()
+ // ------------------------------------------------------------------------------------------------
+ /** INI parse data */
+ // ------------------------------------------------------------------------------------------------
++// ZHBO: "FIELD = a b" into two consecutive Reals.
++static void parseRealPair( INI* ini, void * /*instance*/, void *store, const void* /*userData*/ )
++{
++	Real *pair = static_cast<Real *>(store);
++	pair[0] = ini->scanReal(ini->getNextToken());
++	pair[1] = ini->scanReal(ini->getNextToken());
++}
++
+ const FieldParse ParticleSystemTemplate::m_fieldParseTable[] =
+ {
+ 	{ "Priority",								INI::parseIndexList, ParticlePriorityNames, offsetof( ParticleSystemTemplate, m_priority ) },
+@@ -3001,6 +3089,19 @@ const FieldParse ParticleSystemTemplate::m_fieldParseTable[] =
+ 	{ "WindPingPongEndAngleMin",				INI::parseReal, nullptr, offsetof( ParticleSystemTemplate, m_windMotionEndAngleMin ) },
+ 	{ "WindPingPongEndAngleMax",				INI::parseReal, nullptr, offsetof( ParticleSystemTemplate, m_windMotionEndAngleMax ) },
+ 
++	// ZHBO: flipbook textures.
++	{ "FrameGrid",							INI::parseUnsignedInt,	nullptr,		offsetof( ParticleSystemTemplate, m_frameGrid ) },
++	{ "FrameCount",							INI::parseUnsignedInt,	nullptr,		offsetof( ParticleSystemTemplate, m_frameCount ) },
++	{ "FrameStartType",					INI::parseIndexList,		FrameStartTypeNames,		offsetof( ParticleSystemTemplate, m_frameStartType ) },
++	{ "FrameStart",							INI::parseUnsignedInt,	nullptr,		offsetof( ParticleSystemTemplate, m_frameStart ) },
++	{ "FrameRate",							INI::parseReal,					nullptr,		offsetof( ParticleSystemTemplate, m_frameRate ) },
++	{ "FrameOverLife",					INI::parseBool,					nullptr,		offsetof( ParticleSystemTemplate, m_frameOverLife ) },
++	{ "FrameLoops",							INI::parseUnsignedInt,	nullptr,		offsetof( ParticleSystemTemplate, m_frameLoops ) },
++	// ZHBO: distance ranges from the camera.
++	{ "SpawnRange",							parseRealPair,					nullptr,		offsetof( ParticleSystemTemplate, m_spawnRangeMin ) },
++	{ "FarFade",								parseRealPair,					nullptr,		offsetof( ParticleSystemTemplate, m_farFadeStart ) },
++	{ "NearFade",								parseRealPair,					nullptr,		offsetof( ParticleSystemTemplate, m_nearFadeStart ) },
++
+ 
+ 	{ nullptr,											nullptr,																					nullptr,		0 },
+ };
+@@ -3133,6 +3234,10 @@ ParticleSystemManager::ParticleSystemManager()
+ 
+ 	m_uniqueSystemID = INVALID_PARTICLE_SYSTEM_ID;
+ 
++	// ZHBO: no frame drawn yet.
++	m_cameraPos.zero();
++	m_hasCameraPos = FALSE;
++
+ 	m_onScreenParticleCount = 0;
+ 	m_localPlayerIndex = 0;
+ 	m_drawnLogicFramePhase = 1.0f;
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DParticleSys.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DParticleSys.h
+index f6343a5b6..dafc58580 100644
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DParticleSys.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DParticleSys.h
+@@ -63,8 +63,10 @@ private:
+ 	ShareBufferClass<Vector4> *m_RGBABuffer;		///< array of particle color and alpha
+ 	ShareBufferClass<float> *m_sizeBuffer;			///< array of particle sizes
+ 	ShareBufferClass<uint8> *m_angleBuffer;			///< array of particle orientations
++	ShareBufferClass<uint8> *m_frameBuffer;			///< ZHBO: array of particle flipbook cells
+ 
+ 	ParticleSystemInfo::ParticleShaderType m_batchShaderType;
+ 	Bool m_readyToRender;											///< if true, it is OK to render
+ 	ParticleSystemInfo::ParticleAlignmentType m_batchParticleAlignment;
++	UnsignedInt m_batchFrameGridLog2;					///< ZHBO: the batch's flipbook grid (log2 of its cells per side)
+ };
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DParticleSys.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DParticleSys.cpp
+index 32a34ae8a..d039eb98f 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DParticleSys.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DParticleSys.cpp
+@@ -79,6 +79,8 @@ W3DParticleSystemManager::W3DParticleSystemManager()
+ 	m_RGBABuffer = nullptr;
+ 	m_sizeBuffer = nullptr;
+ 	m_angleBuffer = nullptr;
++	m_frameBuffer = nullptr;
++	m_batchFrameGridLog2 = 0;
+ 	m_readyToRender = false;
+ 
+ 	m_onScreenParticleCount = 0;
+@@ -91,6 +93,7 @@ W3DParticleSystemManager::W3DParticleSystemManager()
+ 	m_RGBABuffer = NEW_REF( ShareBufferClass<Vector4>, (MAX_POINTS_PER_GROUP, "W3DParticleSystemManager::m_RGBABuffer") );
+ 	m_sizeBuffer = NEW_REF( ShareBufferClass<float>, (MAX_POINTS_PER_GROUP, "W3DParticleSystemManager::m_sizeBuffer") );
+ 	m_angleBuffer = NEW_REF( ShareBufferClass<uint8>, (MAX_POINTS_PER_GROUP, "W3DParticleSystemManager::m_angleBuffer") );
++	m_frameBuffer = NEW_REF( ShareBufferClass<uint8>, (MAX_POINTS_PER_GROUP, "W3DParticleSystemManager::m_frameBuffer") );
+ }
+ 
+ W3DParticleSystemManager::~W3DParticleSystemManager()
+@@ -108,6 +111,7 @@ W3DParticleSystemManager::~W3DParticleSystemManager()
+ 	REF_PTR_RELEASE(m_RGBABuffer);
+ 	REF_PTR_RELEASE(m_sizeBuffer);
+ 	REF_PTR_RELEASE(m_angleBuffer);
++	REF_PTR_RELEASE(m_frameBuffer);
+ }
+ 
+ /**
+@@ -163,6 +167,14 @@ void W3DParticleSystemManager::doParticles(RenderInfoClass &rinfo)
+ 
+ 	unsigned int personalities[MAX_POINTS_PER_GROUP];
+ 
++	// ZHBO: the eye, for the systems' distance ranges (emission and fades).
++	const Vector3 eye = rinfo.Camera.Get_Position();
++	{
++		Coord3D eyePos;
++		eyePos.set( eye.X, eye.Y, eye.Z );
++		TheParticleSystemManager->setCameraPosition( &eyePos );
++	}
++
+ 
+ 	m_fieldParticleCount = 0;
+ 
+@@ -266,6 +278,7 @@ void W3DParticleSystemManager::doParticles(RenderInfoClass &rinfo)
+ 		Real *sizeArray = m_sizeBuffer->Get_Array();
+ 		Vector4 *RGBAArray = m_RGBABuffer->Get_Array();
+ 		uint8 *angleArray = m_angleBuffer->Get_Array();
++		uint8 *frameArray = m_frameBuffer->Get_Array();
+ 		const Coord3D *pos;
+ 		const RGBColor *color;
+ 		Real psize;
+@@ -317,7 +330,24 @@ void W3DParticleSystemManager::doParticles(RenderInfoClass &rinfo)
+ 				RGBAArray[pointCount].W = p->getAlpha();
+ 			}
+ 
++			// ZHBO: the system's fades by distance from the camera: an additive particle darkens
++			// (its blend ignores alpha), the others fade.
++			if (sys->m_farFadeEnd > sys->m_farFadeStart || sys->m_nearFadeEnd > sys->m_nearFadeStart)
++			{
++				const Real dx = pos->x - eye.X, dy = pos->y - eye.Y, dz = pos->z - eye.Z;
++				const Real fade = sys->getDistanceFade( sqrtf( dx * dx + dy * dy + dz * dz ) );
++				if (sys->getShaderType() == ParticleSystemInfo::ADDITIVE)
++				{
++					RGBAArray[pointCount].X *= fade;
++					RGBAArray[pointCount].Y *= fade;
++					RGBAArray[pointCount].Z *= fade;
++				}
++				RGBAArray[pointCount].W *= fade;
++			}
++
+ 			angleArray[pointCount] = (uint8)(p->getAngle() * 255.0f / (2.0f * PI));
++			// ZHBO: the particle's flipbook cell (0, the whole texture, without a flipbook).
++			frameArray[pointCount] = p->getFrame();
+ 
+ 			if (++pointCount == MAX_POINTS_PER_GROUP)
+ 			{
+@@ -419,11 +449,11 @@ void W3DParticleSystemManager::doParticles(RenderInfoClass &rinfo)
+ 
+ 			/// @todo Use both QUADS and TRIS for particles
+ 			m_pointGroup->Set_Point_Mode( PointGroupClass::QUADS );
+-			m_pointGroup->Set_Arrays( m_posBuffer, m_RGBABuffer, nullptr, m_sizeBuffer, m_angleBuffer, nullptr, pointCount );
++			// ZHBO: the system's flipbook cells (the grid persists on the shared point group, so it is set every draw).
++			m_pointGroup->Set_Arrays( m_posBuffer, m_RGBABuffer, nullptr, m_sizeBuffer, m_angleBuffer, m_frameBuffer, pointCount );
++			m_pointGroup->Set_Frame_Row_Column_Count_Log2( (unsigned char)sys->getFrameGridLog2() );
+ 			m_pointGroup->Set_Billboard(sys->getParticleAlignment() == ParticleSystemInfo::PARTICLE_ALIGNMENT_BILLBOARD);
+ 
+-			/// @todo Support animated texture particles
+-			/// @todo lorenzen sez: unimplemented code wastes cpu cycles
+ 			m_pointGroup->Set_Point_Frame( 0 );
+ 
+ 			m_pointGroup->RenderVolumeParticle( rinfo, volumeParticleDepth);
+@@ -477,7 +507,8 @@ Bool W3DParticleSystemManager::finishedBatch(const ParticleSystem& system, const
+ {
+ 	return texture.Peek() != m_batchTexture.Peek() ||
+ 		system.getShaderType() != m_batchShaderType ||
+-		system.getParticleAlignment() != m_batchParticleAlignment;
++		system.getParticleAlignment() != m_batchParticleAlignment ||
++		system.getFrameGridLog2() != m_batchFrameGridLog2;
+ }
+ 
+ void W3DParticleSystemManager::initializeBatch(const ParticleSystem& system, const RefCountPtr<TextureClass>& texture)
+@@ -485,6 +516,7 @@ void W3DParticleSystemManager::initializeBatch(const ParticleSystem& system, con
+ 	m_batchTexture = texture;
+ 	m_batchShaderType = system.getShaderType();
+ 	m_batchParticleAlignment = system.getParticleAlignment();
++	m_batchFrameGridLog2 = system.getFrameGridLog2();
+ }
+ 
+ void W3DParticleSystemManager::flushParticleBatch(RenderInfoClass& rinfo, UnsignedInt& pointCount)
+@@ -511,7 +543,9 @@ void W3DParticleSystemManager::flushParticleBatch(RenderInfoClass& rinfo, Unsign
+ 
+ 		m_pointGroup->Set_Flag(PointGroupClass::TRANSFORM, true);
+ 		m_pointGroup->Set_Point_Mode(PointGroupClass::QUADS);
+-		m_pointGroup->Set_Arrays(m_posBuffer, m_RGBABuffer, nullptr, m_sizeBuffer, m_angleBuffer, nullptr, pointCount);
++		// ZHBO: each particle's flipbook cell on the batch's grid.
++		m_pointGroup->Set_Arrays(m_posBuffer, m_RGBABuffer, nullptr, m_sizeBuffer, m_angleBuffer, m_frameBuffer, pointCount);
++		m_pointGroup->Set_Frame_Row_Column_Count_Log2((unsigned char)m_batchFrameGridLog2);
+ 		m_pointGroup->Set_Billboard(m_batchParticleAlignment == ParticleSystemInfo::PARTICLE_ALIGNMENT_BILLBOARD);
+ 		m_pointGroup->Set_Point_Frame(0);
+ 		m_pointGroup->Render(rinfo);
+@@ -522,4 +556,5 @@ void W3DParticleSystemManager::flushParticleBatch(RenderInfoClass& rinfo, Unsign
+ 	m_batchTexture.Clear();
+ 	m_batchParticleAlignment = ParticleSystemInfo::PARTICLE_ALIGNMENT_BILLBOARD;
+ 	m_batchShaderType = ParticleSystemInfo::INVALID_SHADER;
++	m_batchFrameGridLog2 = 0;
+ }
