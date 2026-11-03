@@ -59,6 +59,13 @@ mod's `UnclassifiedHardwareLOD = High` make **High** the default instead; the re
 the player chose is kept, are in [CONFIG.md](CONFIG.md), "Graphics detail". The Options menu still
 sets Low, Medium, High, Very High or Custom (Very High is SuperHackers' level: 5,000 particles).
 
+## The render rate on every platform
+
+Zero Hour rendered at 30 fps, its logic rate. Host patch 0026 renders at the display's refresh rate
+(at least 60) on every build, the logic staying at 30; `MaxRenderFPS` in `Options.ini` sets another
+cap (CONFIG.md, "The render rate"). Vsync stays off: the engine's limiter paces the frames, so the
+DX8 build (whose swap interval only applies in fullscreen) behaves like the wgpu builds.
+
 ## How the launcher starts the game
 
 `conquerops` (or `ConquerOps.exe`):

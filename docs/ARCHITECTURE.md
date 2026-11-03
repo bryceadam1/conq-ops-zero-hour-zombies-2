@@ -187,7 +187,7 @@ starting the game. Depends on `zhbo-requirements` and `zhbo-assets`.
 | `ZhboScreenLook.cpp` | Sky/BO2-look toggles |
 | `ZhboControlBar.cpp` | `ZhboControlBarAccess`, idle-worker tracking |
 | `ZhboBuilding.cpp` | First-person build/repair/ghost |
-| `ZhboDetail.cpp` | Logs the graphics detail GameLOD applied, the dynamic LOD's changes and the frame rate (presentation only) |
+| `ZhboDetail.cpp` | The render rate at each game start (`Zhbo_PaceNewGame`, host patch 0026); logs the graphics detail GameLOD applied, the dynamic LOD's changes and the frame rate (presentation only) |
 | `ZhboMenu.cpp` | The shell create-a-class window (modal, code-built) and `Zhbo_MenuFrame` |
 
 It talks to `zhbo-core` through the `ZhboLogicApi`/`ZhboClientApi` tables only — no direct

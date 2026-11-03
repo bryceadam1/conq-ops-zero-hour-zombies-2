@@ -112,11 +112,11 @@ above 20, Medium above 10): above 25 fps everything draws; from 25 down the lowe
 drawing (the converted casings and blast dressing are `WEAPON_EXPLOSION`; blasts, impacts and
 muzzle flashes are `CRITICAL` and always draw, `fx::Role`), and below 20 fps the skip mask thins what
 is left under the skip priority. `DebrisSkipMask` and `SlowDeathScale` are read by the logic, so they
-must stay 0 and 1.0 at every level: the dynamic level is each machine's own. The render rate is capped
-at Zero Hour's 30 fps (`FramesPerSecondLimit`), so the thresholds sit just under the cap: the
-levels engage only on a machine that cannot hold it. Measured on an M1 Pro Mac at High (the
-`--splash` leg: a SMAW and two frags into an armour group): a steady 30 fps capped, never leaving
-VeryHigh; 87–191 fps uncapped (`-noFPSLimit -fixedLogicFPS 30`), against 103–247 at Low. The tests in
+must stay 0 and 1.0 at every level: the dynamic level is each machine's own. The thresholds are absolute
+frame rates, so with the render at the display's rate (below) they engage only on a machine that
+falls under 25 fps. Measured on an M1 Pro Mac at High (the `--splash` leg: a SMAW and two frags into
+an armour group) with the old 30 fps cap: a steady 30 fps, never leaving VeryHigh; uncapped
+(`-noFPSLimit -fixedLogicFPS 30`) 87–191 fps, against 103–247 at Low. The tests in
 `crates/zhbo-assets/src/detail.rs` hold the data to these rules (the real-install one over the
 player's own `GameLOD.ini`). The bridge logs the applied level once (`graphics detail: …`) and, in a
 game, the dynamic level's changes and the frame rate every 5 s (`frame rate: …`). Graphics detail is

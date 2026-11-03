@@ -152,7 +152,8 @@ void Zhbo_Log(const char *fmt, ...);
 
 /// A game starts (MSG_NEW_GAME; host patch 0026): its logic runs at `gameLogicFps` (the message's
 /// speed argument; 0: Zero Hour's 30) and the render rate follows the display, or the player's
-/// Options.ini `MaxRenderFPS` (ZhboDetail.cpp). Presentation only: the logic steps the same frames.
+/// Options.ini `MaxRenderFPS` (ZhboDetail.cpp). Applied now and again as the game starts
+/// (Zhbo_Reset), which also paces a loaded save. Presentation only: the logic steps the same frames.
 void Zhbo_PaceNewGame(Int gameLogicFps);
 
 // --- Multiplayer content check (content.rs; host patches 0018, 0021) --------------------------

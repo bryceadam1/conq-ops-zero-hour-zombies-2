@@ -217,6 +217,9 @@ void applyWorldPoses();
 void zhboLogGraphicsDetail();
 /// In a game: log the dynamic LOD's changes and, every few seconds, the average frame rate.
 void zhboDetailFrame();
+/// A game is starting (Zhbo_Reset from GameLogic::startNewGame): apply the render and logic rates at
+/// the speed the game's MSG_NEW_GAME noted (Zhbo_PaceNewGame), else 30, and forget the note.
+void zhboPaceStartingGame();
 
 // --- ZhboHud.cpp ------------------------------------------------------------------------------
 void evictTexts();

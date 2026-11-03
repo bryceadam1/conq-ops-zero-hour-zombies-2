@@ -89,9 +89,9 @@ namespace
 constexpr Int MIN_DEFAULT_RENDER_FPS = 60;
 Int s_loggedCap = -1;
 Int s_loggedLogic = -1;
-} // namespace
+Int s_notedSpeed = 0;
 
-void Zhbo_PaceNewGame(Int gameLogicFps)
+void applyPacing(Int gameLogicFps)
 {
 	if (!TheFramePacer || !TheWritableGlobalData)
 		return;
@@ -133,4 +133,17 @@ void Zhbo_PaceNewGame(Int gameLogicFps)
 		s_loggedCap = cap;
 		s_loggedLogic = logicFps;
 	}
+}
+} // namespace
+
+void Zhbo_PaceNewGame(Int gameLogicFps)
+{
+	s_notedSpeed = gameLogicFps;
+	applyPacing(gameLogicFps);
+}
+
+void zhboPaceStartingGame()
+{
+	applyPacing(s_notedSpeed);
+	s_notedSpeed = 0;
 }

@@ -72,7 +72,11 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   first-person eye and view kick are drawn between two logic frames at the render clock (the time
   since the frame's step, carried across steps so a render rate that does not divide 30 Hz stays
   even): the predicted record's last two frames while the client predicts (`client::predict`), the
-  sim record's last two otherwise.
+  sim record's last two otherwise. The render rate is independent of the logic's (host patch 0026,
+  CONFIG.md "The render rate"): by default the display's refresh rate, with the logic held at the
+  game's speed by the engine's logic time scale; Zero Hour's drawables are drawn between their last
+  two logic transforms (`Drawable::getRenderTransformMatrix`) and W3D animation advances every render
+  update. None of it reaches the sim: the core sends one input per logic frame whatever the render rate.
 
 ## Channels
 
