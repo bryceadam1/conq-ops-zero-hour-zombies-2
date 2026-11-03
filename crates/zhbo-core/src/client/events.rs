@@ -47,9 +47,13 @@ impl Client {
             match e.kind {
                 EventKind::HitMarker { kill: true, .. } => t.kills += 1,
                 EventKind::GeneralDied { .. } => t.deaths += 1,
+                EventKind::Assist { level } => t.assist_points += crate::client::assist_points(level),
                 _ => {}
             }
             t.seen = true;
+        }
+        for (t, &n) in self.seats.iter_mut().zip(sim.score.assists.iter()) {
+            t.assists = n;
         }
         let viewer = sim.player(local).map(|p| p.general);
         for (seat, p) in sim.players.iter().enumerate() {
@@ -114,6 +118,7 @@ impl Client {
             | EventKind::GeneralDied { .. }
             | EventKind::Melee
             | EventKind::MeleeHit
+            | EventKind::Assist { .. }
             | EventKind::OffhandReady { .. }
             | EventKind::CantPlant { .. }
             | EventKind::Detonated
@@ -292,6 +297,14 @@ impl Client {
                     if kill {
                         self.count_kill();
                     }
+                }
+                // BO2's assist: its score popup (`processscoreevent( assist_level )`).
+                EventKind::Assist { level } => {
+                    if self.hud.score_popup <= 0.0 {
+                        self.hud.score_points = 0;
+                    }
+                    self.hud.score_points += crate::client::assist_points(level);
+                    self.hud.score_popup = SCORE_POPUP_TIME;
                 }
                 EventKind::Recoil { gun_kick } => {
                     // The view kick is the sim's and never moves the mouse aim (BO2 keeps it out of

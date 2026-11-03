@@ -1,0 +1,385 @@
+//! BO2's assists: who else hurt a player before he was killed.
+//!
+//! BO2 keeps, per player and per life, every enemy player who damaged him and how much
+//! (`_globallogic_player.gsc` `trackattackerdamage`, called from the damage callback for an enemy
+//! player's damage only; the list is reset on spawn, `resetattackerlist`). When an enemy player
+//! kills him, every other attacker on the killer's team is credited an assist
+//! (`playerkilled_awardassists`, only in a team game: `processassist` returns unless
+//! `level.teambased`, and never for the victim's own team), scored by the damage he did:
+//! `assist_<25|50|75>` for `ceil(damage / 25)` clamped to 1..3 (`_globallogic_score.gsc:1213`).
+//! A suicide, a teamkill or a death to the world credits nobody (their `lpattackteam` is the
+//! victim's own team or `world`). While the victim's health regenerates, every attacker's damage
+//! decays by the health regained (`_healthoverlay.gsc` `decayplayerdamages`), so an old wound
+//! scores the lowest assist.
+//!
+//! Zero Hour's teams are its alliances: an attacker is on the killer's team when Zero Hour calls
+//! his General the killer's ally, and a free-for-all (nobody allied) credits no assists, as BO2's
+//! free-for-all does not.
+//!
+//! **Sim state.** The damage is the sim's own (`LogicHost::damage` as a seat's General, recorded
+//! by [`Tally`] around the step), so every machine records the same hits in the same order; the
+//! attacker lists and each seat's assist count are hashed (`Sim::fingerprint`'s world part).
+//! What BO2 adds on top (the concussion/flash/EMP/proximity assist score events, which key on the
+//! weapon) is not carried: the damage the sim records names no weapon.
+use super::{EventKind, Sim, MAX_PLAYERS};
+use crate::host::{objflags, LogicHost, ObjInfo};
+use crate::impacts::Surface;
+use crate::math::Vec3;
+use std::cell::RefCell;
+
+/// One enemy's damage to a General this life (BO2's `attackerdamage[clientid]`, in BO2 health).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Attacker {
+    pub seat: u8,
+    /// The General he hurt him with (his own may have died since: a grenade still in the air).
+    pub general: u32,
+    pub damage: f32,
+}
+
+crate::statehash::state_hash!(struct Attacker { seat, general, damage });
+
+/// A seat's General and the enemies who hurt him, in the order they first did.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attacked {
+    pub victim: u32,
+    pub attackers: Vec<Attacker>,
+}
+
+crate::statehash::state_hash!(struct Attacked { victim, attackers });
+
+/// The match's assist bookkeeping.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Score {
+    /// Each seat's General who has been hurt by an enemy seat this life.
+    pub attacked: Vec<Attacked>,
+    /// Each seat's assists so far (BO2's `pers["assists"]`): what the scoreboard's ASSISTS shows.
+    pub assists: [u32; MAX_PLAYERS],
+    /// The Generals each seat has had lately, newest last: a hit from a General whose seat record
+    /// is gone (his grenade landed after he died) is still his seat's, as BO2's grenade stays its
+    /// thrower's.
+    pub generals: [[u32; GENERALS_KEPT]; MAX_PLAYERS],
+}
+
+/// How many of a seat's Generals [`Score::generals`] remembers.
+pub const GENERALS_KEPT: usize = 4;
+
+crate::statehash::state_hash!(struct Score { attacked, assists, generals });
+
+/// BO2's assist score event for `damage` (BO2 health): `assist_25`, `assist_50` or `assist_75`,
+/// as 1, 2 or 3 (`int(ceil(damage / 25))` clamped to 1..3).
+pub fn assist_level(damage: f32) -> u8 {
+    (damage / 25.0).ceil().clamp(1.0, 3.0) as u8
+}
+
+/// One call of `LogicHost::damage` the step made, in call order.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hit {
+    pub shooter: u32,
+    pub victim: u32,
+    /// Zero Hour damage.
+    pub amount: f32,
+    pub kill: bool,
+}
+
+impl Score {
+    /// The seat whose General `general` is (now or lately).
+    fn seat_of(&self, players: &[Option<super::PlayerSim>], general: u32) -> Option<usize> {
+        if general == 0 {
+            return None;
+        }
+        players.iter().position(|p| p.as_ref().is_some_and(|p| p.general == general)).or_else(|| self.generals.iter().position(|g| g.contains(&general)))
+    }
+
+    /// Remember each seat's current General.
+    fn note_generals(&mut self, players: &[Option<super::PlayerSim>]) {
+        for (seat, p) in players.iter().enumerate().take(MAX_PLAYERS) {
+            let Some(p) = p else { continue };
+            let kept = &mut self.generals[seat];
+            if p.general != 0 && kept[GENERALS_KEPT - 1] != p.general {
+                kept.rotate_left(1);
+                kept[GENERALS_KEPT - 1] = p.general;
+            }
+        }
+    }
+
+    /// The victim's health came back by `bo2_health`: each attacker's damage decays by it.
+    pub fn decay(&mut self, victim: u32, bo2_health: f32) {
+        if let Some(a) = self.attacked.iter_mut().find(|a| a.victim == victim) {
+            for at in &mut a.attackers {
+                at.damage = (at.damage - bo2_health).max(0.0);
+            }
+        }
+    }
+
+    /// The General's life ended: his attackers are forgotten (BO2 clears `attackers` at death and
+    /// the rest at the next spawn).
+    pub fn forget(&mut self, victim: u32) {
+        self.attacked.retain(|a| a.victim != victim);
+    }
+}
+
+impl Sim {
+    /// Run `step` with the damage it deals recorded, then score it ([`Sim::score_hits`]).
+    pub(super) fn scored<R>(&mut self, host: &dyn LogicHost, step: impl FnOnce(&mut Sim, &dyn LogicHost) -> R) -> R {
+        let tally = Tally { host, hits: RefCell::new(Vec::new()) };
+        let out = step(self, &tally);
+        let hits = tally.hits.into_inner();
+        self.score_hits(host, &hits);
+        out
+    }
+
+    /// The step's hits, in order: an enemy seat's damage to a seat's General goes on his attacker
+    /// list; a seat's killing blow credits the assists and ends the list.
+    pub(super) fn score_hits(&mut self, host: &dyn LogicHost, hits: &[Hit]) {
+        self.score.note_generals(&self.players);
+        for h in hits {
+            // A player's General: a seat's record holds him (first person or overhead).
+            let Some(victim_seat) = self.players.iter().position(|p| p.as_ref().is_some_and(|p| p.general == h.victim)) else { continue };
+            let shooter = self.score.seat_of(&self.players, h.shooter);
+            if let Some(seat) = shooter.filter(|&s| s != victim_seat) {
+                // Only an enemy's damage counts (BO2's friendly-fire branch tracks none).
+                let friendly = host.object(h.victim, h.shooter).is_some_and(|o| o.has(objflags::ALLY));
+                if !friendly {
+                    let damage = h.amount / crate::units::BO2_TO_ZH_DAMAGE;
+                    let list = match self.score.attacked.iter().position(|a| a.victim == h.victim) {
+                        Some(i) => &mut self.score.attacked[i],
+                        None => {
+                            self.score.attacked.push(Attacked { victim: h.victim, attackers: Vec::new() });
+                            self.score.attacked.last_mut().expect("just pushed")
+                        }
+                    };
+                    match list.attackers.iter_mut().find(|a| a.seat as usize == seat) {
+                        Some(a) => {
+                            a.damage += damage;
+                            a.general = h.shooter;
+                        }
+                        None => list.attackers.push(Attacker { seat: seat as u8, general: h.shooter, damage }),
+                    }
+                }
+            }
+            if h.kill {
+                if let Some(killer) = shooter.filter(|&s| s != victim_seat) {
+                    self.award_assists(host, killer, h.shooter, h.victim);
+                }
+                self.score.forget(h.victim);
+            }
+        }
+    }
+
+    /// `victim` was killed by seat `killer`'s General `by`: every other attacker on the killer's
+    /// side, and not on the victim's, scores an assist.
+    fn award_assists(&mut self, host: &dyn LogicHost, killer: usize, by: u32, victim: u32) {
+        let Some(list) = self.score.attacked.iter().find(|a| a.victim == victim) else { return };
+        let mut credited = Vec::new();
+        for a in list.attackers.iter().filter(|a| a.seat as usize != killer) {
+            // His General now, else the one he hurt the victim with.
+            let his = self.players.get(a.seat as usize).and_then(|p| p.as_ref()).map_or(a.general, |p| p.general);
+            let side = |viewer: u32| host.object(his, viewer).or_else(|| host.object(a.general, viewer));
+            let with_killer = side(by).is_some_and(|o| o.has(objflags::ALLY));
+            let with_victim = side(victim).is_some_and(|o| o.has(objflags::ALLY));
+            if with_killer && !with_victim {
+                credited.push((a.seat as usize, assist_level(a.damage)));
+            }
+        }
+        for (seat, level) in credited {
+            self.score.assists[seat] += 1;
+            self.emit(seat, EventKind::Assist { level });
+        }
+    }
+}
+
+/// The step's host with every damage call recorded ([`Hit`]); everything else passes through.
+struct Tally<'a> {
+    host: &'a dyn LogicHost,
+    hits: RefCell<Vec<Hit>>,
+}
+
+impl LogicHost for Tally<'_> {
+    fn log(&self, msg: &str) {
+        self.host.log(msg)
+    }
+    fn ground_height(&self, x: f32, y: f32) -> f32 {
+        self.host.ground_height(x, y)
+    }
+    fn is_walkable(&self, x: f32, y: f32) -> bool {
+        self.host.is_walkable(x, y)
+    }
+    fn surface_at(&self, x: f32, y: f32) -> Surface {
+        self.host.surface_at(x, y)
+    }
+    fn extent(&self) -> (Vec3, Vec3) {
+        self.host.extent()
+    }
+    fn object(&self, id: u32, viewer: u32) -> Option<ObjInfo> {
+        self.host.object(id, viewer)
+    }
+    fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>) {
+        self.host.query(center, radius, viewer, out)
+    }
+    fn set_pose(&self, id: u32, pos: Vec3, yaw: f32, moving: bool) {
+        self.host.set_pose(id, pos, yaw, moving)
+    }
+    fn set_controlled(&self, id: u32, controlled: bool) {
+        self.host.set_controlled(id, controlled)
+    }
+    fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3) {
+        self.host.fire_fx(shooter, fx_weapon, target, pos)
+    }
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool {
+        let kill = self.host.damage(shooter, victim, amount, kind);
+        self.hits.borrow_mut().push(Hit { shooter, victim, amount, kill });
+        kill
+    }
+    fn heal(&self, id: u32, amount: f32) {
+        self.host.heal(id, amount)
+    }
+    fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32 {
+        self.host.spawn(template, owner, pos, yaw)
+    }
+    fn destroy(&self, id: u32) {
+        self.host.destroy(id)
+    }
+    fn disable(&self, id: u32, kind: i32, seconds: f32) {
+        self.host.disable(id, kind, seconds)
+    }
+    fn fx(&self, name: &str, pos: Vec3) {
+        self.host.fx(name, pos)
+    }
+    fn capture(&self, id: u32, new_owner: u32) {
+        self.host.capture(id, new_owner)
+    }
+    fn smoke(&self, center: Vec3, radius: f32) {
+        self.host.smoke(center, radius)
+    }
+    fn build_options(&self, general: u32) -> Vec<crate::building::BuildOption> {
+        self.host.build_options(general)
+    }
+    fn can_place(&self, general: u32, template: u32, pos: Vec3, angle: f32) -> bool {
+        self.host.can_place(general, template, pos, angle)
+    }
+    fn place(&self, general: u32, template: u32, pos: Vec3, angle: f32) -> u32 {
+        self.host.place(general, template, pos, angle)
+    }
+    fn work_site(&self, general: u32, pos: Vec3, reach: f32) -> Option<crate::building::Site> {
+        self.host.work_site(general, pos, reach)
+    }
+    fn work(&self, general: u32, site: u32, rate: f32) -> f32 {
+        self.host.work(general, site, rate)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::tests::{general, spawn, FakeHost};
+
+    /// Four players, two teams of two: seats 0 and 1 against 2 and 3. Generals 100 + seat.
+    fn match_of_four() -> (Sim, FakeHost) {
+        let host = FakeHost::default();
+        for seat in 0..4 {
+            host.add(general(100 + seat as u32, seat));
+        }
+        *host.teams.borrow_mut() = vec![(0, 0), (1, 0), (2, 1), (3, 1)];
+        let mut sim = Sim::new();
+        for seat in 0..4 {
+            spawn(&mut sim, &host, seat, 100 + seat as u32);
+        }
+        (sim, host)
+    }
+
+    fn hit(sim: &mut Sim, host: &FakeHost, shooter: u32, victim: u32, bo2_damage: f32) {
+        let amount = bo2_damage * crate::units::BO2_TO_ZH_DAMAGE;
+        let kill = host.damage(shooter, victim, amount, crate::host::damage_kind::SMALL_ARMS);
+        sim.score_hits(host, &[Hit { shooter, victim, amount, kill }]);
+    }
+
+    fn assists(sim: &Sim) -> Vec<(i32, u8)> {
+        sim.events.iter().filter_map(|e| match e.kind {
+            EventKind::Assist { level } => Some((e.player, level)),
+            _ => None,
+        }).collect()
+    }
+
+    /// BO2's rule (`playerkilled_awardassists`, `processassist`): the killer's teammates who hurt
+    /// the victim each score one, by `ceil(damage / 25)` clamped to 1..3; the killer does not.
+    #[test]
+    fn the_killers_teammates_who_hurt_the_victim_score_an_assist() {
+        let (mut sim, host) = match_of_four();
+        let hp = host.get(102).health / crate::units::BO2_TO_ZH_DAMAGE;
+        hit(&mut sim, &host, 101, 102, 60.0);
+        hit(&mut sim, &host, 100, 102, 10.0);
+        assert!(assists(&sim).is_empty(), "nobody scores while he lives");
+        hit(&mut sim, &host, 100, 102, hp);
+        assert_eq!(assists(&sim), [(1, 3)], "seat 1's 60 is assist_75; the killer scores none");
+        assert_eq!(sim.score.assists, { let mut a = [0; MAX_PLAYERS]; a[1] = 1; a });
+        assert!(sim.score.attacked.iter().all(|a| a.victim != 102), "his list ends with him");
+        assert_eq!([assist_level(0.0), assist_level(25.0), assist_level(25.5), assist_level(50.0), assist_level(51.0), assist_level(500.0)], [1, 1, 2, 2, 3, 3]);
+    }
+
+    /// No assist for a teammate's damage, the victim's own team, a free-for-all, a suicide or a
+    /// death to something that is not a player.
+    #[test]
+    fn friendly_damage_suicides_and_free_for_alls_score_nothing() {
+        // A teammate's damage to his own side is not tracked.
+        let (mut sim, host) = match_of_four();
+        hit(&mut sim, &host, 103, 102, 40.0);
+        assert!(sim.score.attacked.is_empty(), "a teammate's damage is not an attacker's");
+        // The victim kills himself: his attackers score nothing.
+        hit(&mut sim, &host, 100, 102, 40.0);
+        hit(&mut sim, &host, 102, 102, 1000.0);
+        assert!(assists(&sim).is_empty(), "a suicide credits nobody");
+        // Killed by a non-player (Zero Hour's own tank, id 900): nobody.
+        let (mut sim, host) = match_of_four();
+        hit(&mut sim, &host, 100, 102, 40.0);
+        hit(&mut sim, &host, 900, 102, 1000.0);
+        assert!(assists(&sim).is_empty(), "a death to the world credits nobody");
+        // A free-for-all: every player is his own team.
+        let (mut sim, host) = match_of_four();
+        host.teams.borrow_mut().clear();
+        hit(&mut sim, &host, 101, 102, 40.0);
+        hit(&mut sim, &host, 100, 102, 1000.0);
+        assert!(assists(&sim).is_empty(), "nobody is on the killer's team");
+    }
+
+    /// Regeneration decays every attacker's damage (`decayplayerdamages`): an old wound scores the
+    /// lowest assist. A hit from a General who has since died is still his seat's.
+    #[test]
+    fn regenerated_health_decays_the_damage_and_a_dead_attackers_hit_counts() {
+        let (mut sim, host) = match_of_four();
+        hit(&mut sim, &host, 101, 102, 70.0);
+        sim.score.decay(102, 60.0);
+        // Seat 1's General dies; his seat takes a new one (Generals 101 then 111).
+        sim.players[1].as_mut().unwrap().general = 111;
+        host.add(general(111, 1));
+        sim.score_hits(&host, &[]);
+        hit(&mut sim, &host, 100, 102, 1000.0);
+        assert_eq!(assists(&sim), [(1, 1)], "70 decayed by 60: assist_25, credited to his seat");
+    }
+
+    /// The step's damage reaches the scoring through its host ([`Sim::scored`]), in call order.
+    #[test]
+    fn the_steps_damage_calls_are_scored() {
+        let (mut sim, host) = match_of_four();
+        sim.scored(&host, |_, h| {
+            h.damage(101, 102, 40.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::host::damage_kind::SMALL_ARMS);
+            h.damage(100, 102, 1000.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::host::damage_kind::EXPLOSION);
+        });
+        assert_eq!(assists(&sim), [(1, 2)]);
+    }
+
+    /// Every machine scores the same hits the same way: two sims fed one script agree on the
+    /// events and the hash.
+    #[test]
+    fn two_machines_score_the_same_assists() {
+        let run = || {
+            let (mut sim, host) = match_of_four();
+            for (s, v, d) in [(101, 102, 30.0), (100, 103, 20.0), (101, 103, 20.0), (100, 102, 1000.0), (101, 103, 1000.0)] {
+                hit(&mut sim, &host, s, v, d);
+            }
+            (assists(&sim), sim.state_hash())
+        };
+        let (a, b) = (run(), run());
+        assert_eq!(a, b);
+        assert_eq!(a.0, [(1, 2), (0, 1)]);
+    }
+}

@@ -94,6 +94,11 @@ impl RtsState {
 
 impl Sim {
     pub fn rts_update(&mut self, host: &dyn LogicHost, player: i32, general: u32, current_slot: i32, shots: [u32; 3], target: Option<Vec3>) -> RtsWeapons {
+        // Its knife strikes deal damage now: scored for assists like the step's (`score`).
+        self.scored(host, |sim, host| sim.rts_update_frame(host, player, general, current_slot, shots, target))
+    }
+
+    fn rts_update_frame(&mut self, host: &dyn LogicHost, player: i32, general: u32, current_slot: i32, shots: [u32; 3], target: Option<Vec3>) -> RtsWeapons {
         let Ok(idx) = usize::try_from(player) else { return RtsWeapons::default() };
         if idx >= MAX_PLAYERS {
             return RtsWeapons::default();

@@ -102,6 +102,14 @@ pub const DEATH_BANNER_TIME: f32 = 3.0;
 /// The score popup's `DisplayTime` (`hud/scorepopup.lua:12`).
 pub const SCORE_POPUP_TIME: f32 = crate::hud::center::SCORE_DISPLAY;
 pub const KILL_POINTS: u32 = 100;
+/// BO2's team-deathmatch score for an assist by its level (`sim::score::assist_level`: 1, 2, 3 for
+/// `assist_25`, `assist_50`, `assist_75`): `mp/scoreinfo.csv`'s `tdm score` column (25, 25, 50).
+pub const ASSIST_POINTS: [u32; 3] = [25, 25, 50];
+
+/// The score of an assist at `level` ([`ASSIST_POINTS`]).
+pub fn assist_points(level: u8) -> u32 {
+    ASSIST_POINTS[(level.clamp(1, 3) - 1) as usize]
+}
 
 /// Horizontal FOV for a BO2 `cg_fov` (defined at 4:3) at the given aspect ratio (Hor+).
 pub fn horizontal_fov(cg_fov_deg: f32, aspect: f32) -> f32 {
@@ -197,6 +205,10 @@ pub struct SeatTally {
     /// Kills (`HitMarker { kill }`) and deaths (`GeneralDied`), as the HUD counts its own.
     pub kills: u32,
     pub deaths: u32,
+    /// His assists: the sim's own count (`sim::score::Score::assists`, the same on every machine),
+    /// and the points they scored (`Assist` events, [`assist_points`]).
+    pub assists: u32,
+    pub assist_points: u32,
     /// His army's colour and whether he is on the local player's side (`objflags::ALLY`), last
     /// read off his General while one stood.
     pub color: u32,

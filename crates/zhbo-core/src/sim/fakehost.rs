@@ -39,6 +39,9 @@ pub struct FakeHost {
     /// A hillside: from x = `start` on, the ground rises `grade` units per unit of x (level, at 0,
     /// when unset).
     pub hill: std::cell::Cell<Option<(f32, f32)>>,
+    /// Alliances: `(player, team)`; players on one team are allies (each player is his own team
+    /// when unset, a free-for-all).
+    pub teams: RefCell<Vec<(i32, i32)>>,
 }
 
 impl FakeHost {
@@ -54,7 +57,8 @@ impl FakeHost {
         let owner = self.objects.borrow().iter().find(|v| v.id == viewer).map(|v| v.owner_player);
         o.flags &= !(objflags::ALLY | objflags::ENEMY);
         if let Some(owner) = owner {
-            o.flags |= if o.owner_player == owner { objflags::ALLY } else { objflags::ENEMY };
+            let team = |p: i32| self.teams.borrow().iter().find(|t| t.0 == p).map_or(p, |t| t.1 + 1000);
+            o.flags |= if team(o.owner_player) == team(owner) { objflags::ALLY } else { objflags::ENEMY };
         }
         o
     }

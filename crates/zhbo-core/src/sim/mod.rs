@@ -21,6 +21,7 @@ mod shock;
 pub mod optics;
 mod plant;
 mod rts;
+pub mod score;
 mod spawn;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
@@ -166,6 +167,9 @@ pub enum EventKind {
     Melee,
     /// The melee landed on someone (BO2's `meleeHitSound` moment).
     MeleeHit,
+    /// Another player killed a General this player had hurt: BO2's assist (`score`), `level` 1, 2
+    /// or 3 for `assist_25`, `assist_50`, `assist_75`.
+    Assist { level: u8 },
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },
@@ -526,6 +530,9 @@ pub struct Sim {
     /// nothing in the step, so not hashed.
     pub antilag_hits: Vec<(u32, u32, u32)>,
 
+    /// BO2's assists: each seat's General's attackers this life and each seat's count
+    /// ([`score`]).
+    pub score: score::Score,
     /// The rewindable world of the last frames ([`antilag`]): what a shot is resolved against.
     pub history: antilag::History,
     /// `AntilagMaxRewind` in logic frames.
@@ -559,6 +566,7 @@ impl Sim {
             combat_seen: 0,
             emitted: 0,
             antilag_hits: Vec::new(),
+            score: score::Score::default(),
 
             history: antilag::History::default(),
             antilag_frames: antilag::max_rewind_frames(crate::tuning::Tuning::default().antilag_max_rewind),
@@ -653,8 +661,13 @@ impl Sim {
         }
     }
 
-    /// Once per logic frame, after the frame's messages were dispatched.
+    /// Once per logic frame, after the frame's messages were dispatched. The damage the step deals
+    /// is scored for assists ([`score`]).
     pub fn step(&mut self, host: &dyn LogicHost, frame: u32) {
+        self.scored(host, |sim, host| sim.step_frame(host, frame));
+    }
+
+    fn step_frame(&mut self, host: &dyn LogicHost, frame: u32) {
         self.frame = frame;
         self.shields = self.shield_bearers();
         self.equipment.shields.clone_from(&self.shields);
@@ -828,12 +841,14 @@ impl Sim {
 
     fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
         let Some(info) = host.object(p.general, p.general) else {
+            self.score.forget(p.general);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         };
         if info.has(objflags::DEAD) {
             host.set_controlled(p.general, false);
             self.equipment.clear_owner(host, idx);
+            self.score.forget(p.general);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         }
@@ -1092,6 +1107,8 @@ impl Sim {
             if p.regen_wait <= 0.0 && info.health < info.max_health {
                 let amount = (info.max_health / regen_full_time() * LOGIC_DT).min(info.max_health - info.health);
                 host.heal(p.general, amount);
+                // BO2 decays every attacker's damage by the health regained (`score`).
+                self.score.decay(p.general, amount / BO2_TO_ZH_DAMAGE);
                 p.health = info.health + amount;
                 return;
             }
@@ -1131,6 +1148,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         FieldComputerOpened => format!("player {} opened the field computer", e.player),
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
         GeneralDied { general } => format!("player {}'s General {general} died", e.player),
+        Assist { level } => format!("player {} scored an assist ({})", e.player, level as u32 * 25),
         HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
         Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
         Swapped => format!("player {} swapped weapons", e.player),
