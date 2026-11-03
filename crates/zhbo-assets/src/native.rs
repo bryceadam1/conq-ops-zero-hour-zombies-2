@@ -400,6 +400,7 @@ mod tests {
             mins: [0.0; 3],
             maxs: [30.0, 0.0, 4.0],
             hit_boxes: Vec::new(),
+            coll_surfs: Vec::new(),
             materials: vec![None],
         }
     }

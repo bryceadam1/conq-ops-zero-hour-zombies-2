@@ -14,6 +14,11 @@ use zhbo_formats::{t6zone::Zone, xanim, xmodel};
 
 const BASE_INI: &str = include_str!("../../../data/Data/INI/Object/ZZZ_ZHBO_General.ini");
 const INI_PATH: &str = "Data\\INI\\Object\\ZZZ_ZHBO_General.ini";
+
+/// The hand-written General objects (`ZZZ_ZHBO_General.ini`) the converter fills in.
+pub(crate) fn base_ini() -> &'static str {
+    BASE_INI
+}
 pub(crate) const MAX_TEXTURE: u32 = 512;
 pub(crate) const TABLET_TAG: &str = "tag_inhand";
 const WEAPON: &str = "t6_wpn_ar_an94_world";
@@ -525,8 +530,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         Err(e) => summary.push(format!("no hammer viewmodel: {e}")),
     }
     let mut projectile_models = BTreeMap::new();
-    summary.push(viewmodels::projectiles(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
-    viewmodels::share_projectiles(&mut table.weapons);
+    summary.push(crate::props::projectiles(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
+    crate::props::share_projectiles(&mut table.weapons);
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

@@ -595,8 +595,8 @@ pub struct WeaponDef {
     pub enemy_tracer_fx_weapon: String,
     /// Every how-many bullets a tracer is drawn (`TracerDef.drawInterval`; `FUN_007c65c0`).
     pub tracer_interval: u32,
-    /// An Assault Shield (BO2 weapType `riotshield`): its held and stowed collision boxes, posed on
-    /// the body by the converter. `None` for every other weapon.
+    /// An Assault Shield (BO2 weapType `riotshield`): its held, stowed and deployed collision
+    /// boxes, posed by the converter. `None` for every other weapon.
     pub shield: Option<ShieldGeometry>,
 }
 
@@ -640,13 +640,17 @@ impl ShieldBox {
     }
 }
 
-/// The Assault Shield's two collision boxes (`_riotshield.gsc`): `t6_wpn_shield_carry_world` on
+/// The Assault Shield's three collision boxes (`_riotshield.gsc`), each the bounds of the model's
+/// collision surfaces (`XModel.collSurfs`) where its bones stand: `t6_wpn_shield_carry_world` on
 /// `tag_weapon_left` while it is the weapon up, `t6_wpn_shield_stow_world` on `tag_stowed_back`
-/// while it is carried but not up.
+/// while it is carried but not up, and the carry model planted (`level.deployedshieldmodel`) in
+/// its deploy animation's last frame — in the model's own frame (`rot` identity, `pos` zero): the
+/// sim stands it `riotshield_placement_zoffset` over the ground.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ShieldGeometry {
     pub held: ShieldBox,
     pub stowed: ShieldBox,
+    pub deployed: ShieldBox,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id

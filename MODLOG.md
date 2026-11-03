@@ -11025,3 +11025,60 @@ lines are in `ConquerOps_Instance02.log`.
 * Headless replay checks: the autopilot recording and the real-input recording both pass (above).
 * Logs: no error, desync or mismatch lines in any leg's `ConquerOps.log`, the MP logs or
   `zhbo-gfx.log`, once the remote-shot fix was in. There is no PullPin error any more.
+
+## The planted shield read small: props were drawn at BO2's scale, the General at 1.15× (2026-11-02, v1/shield-scale)
+
+User report: "the riot shield is small compared to the size of the player when it is placed."
+
+**Root cause.** The General is drawn `GENERAL_SCALE` (1.15) over BO2's scale (his INI `Scale`), so
+everything composed on his skeleton (the gun, the shield on the arm and the back) is 1.15× too.
+The props the converter writes (`ZHBO_BO2_Projectiles.ini`: grenades and rounds in flight, the stuck
+crossbow bolt, every placed equipment, the planted shield) had no `Scale`: drawn at 1.0, 13% under
+the body they belong to. The shield shrank the moment it was planted: 53" of shield beside a 72"
+soldier is 0.81 of his alert-pose height in BO2, 0.70 in the mod (bottom-to-top 8.84 units beside a
+12.55-unit body; now 10.17). From the first-person eye (also 1.15×) its top sat ~16" (BO2) below
+eye level instead of ~8". The sim had the same split: the body's hit boxes are scaled by
+`GENERAL_SCALE`, the shield's boxes (`shield::Bearer`, held, stowed and planted) were not, so a
+carried shield blocked 13% smaller and lower than drawn, and the planted one stood where the
+unscaled model would.
+
+**Not the cause, checked:** the unit factor (one `ZH_PER_INCH`, applied once by the W3D skin), the
+model (the script's `level.deployedshieldmodel` *is* the carry model), the placement height
+(`riotshield_placement_zoffset` 26": origin over the ground, model −26..+27.5", the body on the
+ground). Dropped weapons do not exist as objects; every world-placed BO2 model goes through the one
+generator, `props::prop` (split out of `viewmodels.rs`, which was 1,725 lines).
+
+**Fix.**
+* `units::DRAWN_ZH_PER_INCH` / `drawn_inches` = `ZH_PER_INCH × GENERAL_SCALE`: lengths on a drawn
+  model. `shield::Bearer` (ray, tag, blast protection) and `BODY_MIDDLE` use it; deploy places the
+  shield where the drawn arm holds it, its origin `drawn_inches(zoffset)` up.
+* Every prop object gets `Scale = GENERAL_SCALE` (`props::OBJECT_SCALE`); the planted shield's
+  Zero Hour `Geometry` box is at the drawn scale too.
+* The planted shield shows BO2's deploy pose: `_riotshield.csc` plays `o_riot_stand_deploy` on it
+  (a late joiner sees its last frame). `shield::posed_model` bakes that last frame (armour panel up
+  over the visor, leg out, spikes into the ground).
+* Its collision is BO2's own: the xmodel parser now reads `XModel.collSurfs` (bounds and bone);
+  every shield box (held, stowed and a new **deployed** one in the table's `Shield` field, now
+  3 × 13 numbers) is the bounds of the model's collision surfaces where its bones stand, not the
+  render bounds. The planted shield's surfaces in the deploy pose: x −2.24..7.65, y ±17.16,
+  z −26.06..27.05 (the leg and the spikes carry none). Before, deploy reused the held box.
+
+**Gotcha:** the carry model's collmap brush (`XModel.collmaps`, contents 0x200336c0) is only
+16" wide (y ±8): it is the player-clip, not what bullets meet. The traced surfaces are
+`collSurfs` (contents 1, bone-bound).
+
+**Tests.** `props::tests::every_prop_is_drawn_at_the_bodys_scale` (real install): all 31 props of
+the shipped table (launcher rounds, the crossbow bolt and explosive bolt, the combat axe and
+ballistic knife, every lethal/tactical/equipment, the planted shield) measured on the converted W3D
+skin × the object's INI `Scale` against the BO2 model's own vertices × (art scale × the General
+INI's `Scale`), within 2%; the table's deployed box equals the posed collision surfaces.
+`props_are_drawn_at_the_generals_scale` pins the hand-written General INI's three `Scale`s to
+`GENERAL_SCALE`. `sim::shield_tests::a_planted_shield_blocks_where_its_model_is_drawn` checks
+the block edges (top, bottom, side) against the deployed box at `DRAWN_ZH_PER_INCH`. The blast
+test now derives its point from the held box instead of a hard-coded (56, 0, 6).
+Preview: `zhbo-assets props <dir> [--weapon id] [--prop-scale S] [--bo2]` draws each prop beside
+the body (BO2 reference, or the mod at any prop scale).
+
+**Integrator:** the converted art and the weapon table changed (object `Scale`, the posed shield
+model, the 3-box `Shield` field): `hud::VERSION` needs a bump. A table converted before this does
+not parse its `Shield` field (needs 39 numbers). No ABI change.

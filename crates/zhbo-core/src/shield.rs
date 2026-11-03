@@ -17,11 +17,13 @@
 //!   itself, protection by how close the blast is to the shield tag's forward axis
 //!   (`shieldBlastDamageProtection_30/60/120/180`: within half of each arc).
 //!
-//! Positions are Zero Hour world units; the box is inches on the body (x forward, y left, z up).
+//! Positions are Zero Hour world units; the box is inches on the body (x forward, y left, z up),
+//! drawn at the General's size ([`DRAWN_ZH_PER_INCH`]): the box is where the shield is drawn, on
+//! the arm, on the back or planted, as the body's hit boxes are where the body is drawn.
 
 use crate::math::Vec3;
 use crate::tuning::Tuning;
-use crate::units::ZH_PER_INCH;
+use crate::units::DRAWN_ZH_PER_INCH;
 use crate::weapons::{ShieldBox, WeaponDef};
 
 /// A General carrying a shield this frame, in the pose its box was measured in.
@@ -90,14 +92,14 @@ impl Bearer {
     fn body_of(&self, v: Vec3, point: bool) -> [f32; 3] {
         let d = if point { v - self.pos } else { v };
         let (s, c) = crate::math::det::sin_cos(self.yaw);
-        let k = if point { 1.0 / ZH_PER_INCH } else { 1.0 };
+        let k = if point { 1.0 / DRAWN_ZH_PER_INCH } else { 1.0 };
         [(d.x * c + d.y * s) * k, (-d.x * s + d.y * c) * k, d.z * k]
     }
 
     /// Body inches → world.
     fn world_of(&self, v: [f32; 3], point: bool) -> Vec3 {
         let (s, c) = crate::math::det::sin_cos(self.yaw);
-        let k = if point { ZH_PER_INCH } else { 1.0 };
+        let k = if point { DRAWN_ZH_PER_INCH } else { 1.0 };
         let w = Vec3::new((v[0] * c - v[1] * s) * k, (v[0] * s + v[1] * c) * k, v[2] * k);
         if point {
             self.pos + w
@@ -115,7 +117,7 @@ impl Bearer {
         let o = qrot(inv, [o[0] - self.b.pos[0], o[1] - self.b.pos[1], o[2] - self.b.pos[2]]);
         let d = qrot(inv, d);
         // Slabs; `t` in inches along a unit direction.
-        let (mut lo, mut hi) = (0.0f32, max_t / ZH_PER_INCH);
+        let (mut lo, mut hi) = (0.0f32, max_t / DRAWN_ZH_PER_INCH);
         for k in 0..3 {
             if d[k].abs() < 1e-9 {
                 if o[k] < self.b.mins[k] || o[k] > self.b.maxs[k] {
@@ -130,7 +132,7 @@ impl Bearer {
                 return None;
             }
         }
-        Some(lo * ZH_PER_INCH)
+        Some(lo * DRAWN_ZH_PER_INCH)
     }
 
     /// The shield tag's origin and forward axis (axis 0 of its matrix), in the world.
@@ -172,8 +174,8 @@ pub fn blocking(bearers: &[Bearer], counts: &dyn Fn(&Bearer) -> bool, origin: Ve
 /// Words per bearer in the engine's lock-free mirror (`ffi.rs`).
 pub const MIRROR_WORDS: usize = 7 + ShieldBox::NUMS;
 
-/// Where a Zero Hour unit's shot at a General is aimed: the middle of the sim's 72-inch body.
-pub const BODY_MIDDLE: f32 = crate::units::inches(36.0);
+/// Where a Zero Hour unit's shot at a General is aimed: the middle of his drawn 72-inch body.
+pub const BODY_MIDDLE: f32 = crate::units::drawn_inches(36.0);
 
 /// The core's vocabulary for engine damage reaching a General ([`crate::host::damage_kind`];
 /// the bridge maps Zero Hour's `DamageType` onto it): what a shield does to it.

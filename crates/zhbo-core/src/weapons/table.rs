@@ -1122,14 +1122,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("TracerInterval", "A tracer every this many bullets (`TracerDef.drawInterval`; 0: none).", FieldKind::Num,
         |d: &WeaponDef| d.tracer_interval.to_string(),
         |d: &mut WeaponDef, v: Values| { d.tracer_interval = v.text_num()? as u32; Ok(()) }),
-    field!("Shield", "An Assault Shield's held and stowed collision boxes, each rotation (x y z w), position, mins and maxs in inches on the posed body; empty for every other weapon.", FieldKind::Words,
-        |d: &WeaponDef| d.shield.map_or(String::new(), |g| nums(&[g.held.to_nums(), g.stowed.to_nums()].concat())),
+    field!("Shield", "An Assault Shield's held, stowed and deployed collision boxes, each rotation (x y z w), position, mins and maxs in inches: the held and stowed on the posed body, the deployed in the planted model's own frame; empty for every other weapon.", FieldKind::Words,
+        |d: &WeaponDef| d.shield.map_or(String::new(), |g| nums(&[g.held.to_nums(), g.stowed.to_nums(), g.deployed.to_nums()].concat())),
         |d: &mut WeaponDef, v: Values| {
             d.shield = if v.text.is_empty() {
                 None
             } else {
-                v.need(2 * ShieldBox::NUMS)?;
-                Some(ShieldGeometry { held: ShieldBox::from_nums(v.nums), stowed: ShieldBox::from_nums(&v.nums[ShieldBox::NUMS..]) })
+                v.need(3 * ShieldBox::NUMS)?;
+                let n = ShieldBox::NUMS;
+                Some(ShieldGeometry { held: ShieldBox::from_nums(v.nums), stowed: ShieldBox::from_nums(&v.nums[n..]), deployed: ShieldBox::from_nums(&v.nums[2 * n..]) })
             };
             Ok(())
         }),

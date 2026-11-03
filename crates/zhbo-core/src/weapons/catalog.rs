@@ -1049,7 +1049,8 @@ Weapon knife_held_mp
 End
 
 ; The Assault Shield stand-in (a primary of class `shield`): generic boxes in front of and behind a
-; 72-inch body at generic values; the converted table poses BO2's own collmaps on the BO2 body.
+; 72-inch body, and planted, at generic values; the converted table poses BO2's own collision
+; surfaces on the BO2 body and in the deploy animation.
 Weapon riotshield_mp
   DisplayName = Assault Shield
   Class = shield
@@ -1063,7 +1064,7 @@ Weapon riotshield_mp
   Move = 0.9 0.9 1
   Melee = 70 0.8
   MeleeDelay = 0.1
-  Shield = 0 0 0 1 16 0 36 -4 -17 -26 4 17 26 0 0 1 0 -8 0 44 -4 -17 -14 4 17 14
+  Shield = 0 0 0 1 16 0 36 -4 -17 -26 4 17 26 0 0 1 0 -8 0 44 -4 -17 -14 4 17 14 0 0 0 1 0 0 0 -2 -17 -26 8 17 27
 End
 
 ; The class melee weapon every class gets (BO2's `knife_mp`): a gun's melee strikes with it.
