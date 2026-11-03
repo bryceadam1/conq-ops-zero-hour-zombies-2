@@ -261,19 +261,19 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
     zhbo_core::config::init(zhbo_core::config::Config { native_body: 2, ..Default::default() });
     let shot = open_renderer()?;
     let stand = torso::context(0, false, false);
-    let mut poses: Vec<(String, Option<u16>)> = vec![("idle".into(), None)];
+    let mut poses: Vec<(String, Option<(u8, u16)>)> = vec![("idle".into(), None)];
     for (name, d, action) in [("reload", Some(def), torso::RELOAD), ("knife", Some(def), torso::MELEE), ("fire", Some(def), torso::FIRE), ("raise", Some(def), torso::RAISE), ("throw", frag, torso::THROW)] {
         if let Some(c) = d.and_then(|d| torso::pick_for(d, action, stand)) {
-            poses.push((name.into(), Some(c)));
+            poses.push((name.into(), Some((action, c))));
         }
     }
     let mut tiles = Vec::new();
     for (k, (name, clip)) in poses.iter().enumerate() {
         let general = 900 + k as u32;
-        let t = clip.and_then(|c| torso::get().clip(c)).map_or(0.0, |c| c.length * 0.45);
-        ffi::publish_torso(clip.map(|c| (general, c, t)).into_iter());
+        let t = clip.and_then(|(_, c)| torso::get().clip(c)).map_or(0.0, |c| c.length * 0.45);
+        ffi::publish_torso(clip.map(|(action, clip)| ffi::TorsoAction { general, action, clip, t }).into_iter());
         let px = render_body(archive, &shot, def.viewmodel, def.body_anims, general)?;
-        let clip_name = clip.and_then(|c| torso::get().clip(c)).map_or(String::new(), |c| c.name.clone());
+        let clip_name = clip.and_then(|(_, c)| torso::get().clip(c)).map_or(String::new(), |c| c.name.clone());
         println!("{id} {name}: {clip_name} at {t:.2} s");
         tiles.push(to_rgb(&px));
     }

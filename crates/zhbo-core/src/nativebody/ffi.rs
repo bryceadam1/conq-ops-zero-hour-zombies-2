@@ -221,12 +221,18 @@ impl State {
         let clip = rig.loaded.clip_for(inp.state as u16);
         // The upper body's action over it, while the client times one for him (`client::remote`).
         // Its clip loads the first time anyone plays it; until then the body runs without it.
-        let torso_id = torso_of(general).filter(|_| mode == Mode::Body);
-        if let Some((id, _)) = torso_id {
-            self.want_torso(&rig.loaded, id);
+        let action = torso_of(general).filter(|_| mode == Mode::Body);
+        if let Some(a) = action {
+            self.want_torso(&rig.loaded, a.clip);
         }
-        let torso = torso_id.and_then(|(id, t)| self.torso.get(&id).map(|c| (c, t)));
+        let torso = action.and_then(|a| self.torso.get(&a.clip).map(|c| (c, a.t)));
         rig.loaded.pose(&req, clip, torso, &mut self.posed);
+        // A grenade's pin and throw: BO2 draws the offhand on `tag_inhand` as the entity's one
+        // weapon (t6mp `FUN_0052a4c0` attaches only the entity's current weapon; `FUN_0052a470`
+        // puts a grenade on `tag_inhand`), so the gun in hand is not drawn meanwhile.
+        if action.is_some_and(|a| matches!(a.action, zhbo_native::thirdperson::torso::THROW | zhbo_native::thirdperson::torso::PRIME)) {
+            rig.loaded.hide_weapon(&mut self.posed);
+        }
         self.last = Some(general);
         #[cfg(feature = "renderer")]
         let answer = super::gpu::draw(self, &mut rig, inp);
@@ -291,24 +297,42 @@ pub fn faction_of(general: u32) -> Option<u8> {
     ((v >> 8) as u32 == general && v != 0).then_some((v & 0xff) as u8)
 }
 
-/// Each General's torso action this frame (`general << 32 | clip << 16 | milliseconds in`),
-/// published by the client (`client::remote`; the headless third-person render's `--torso` too): the
-/// body pass layers it. Presentation only.
+/// Each General's torso action this frame (`general << 32 | action << 28 | clip << 15 |
+/// milliseconds in`), published by the client (`client::remote`; the headless third-person
+/// render's `--torso` too): the body pass layers it. Presentation only.
 static TORSO: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
 
-pub fn publish_torso(torsos: impl Iterator<Item = (u32, u16, f32)>) {
+/// One General's torso action as the body pass takes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TorsoAction {
+    pub general: u32,
+    /// `zhbo_native::thirdperson::torso`'s action (`RELOAD`, `THROW`, ...).
+    pub action: u8,
+    /// The body manifest's clip id and seconds into it.
+    pub clip: u16,
+    pub t: f32,
+}
+
+pub fn publish_torso(torsos: impl Iterator<Item = TorsoAction>) {
     use std::sync::atomic::Ordering;
     let mut it = torsos;
     for slot in TORSO.iter() {
-        let v = it.next().map_or(0, |(g, clip, t)| ((g as u64) << 32) | ((clip as u64) << 16) | (t * 1000.0).clamp(0.0, 65535.0) as u64);
+        let v = it.next().map_or(0, |a| {
+            ((a.general as u64) << 32) | (((a.action & 0xf) as u64) << 28) | (((a.clip & 0x1fff) as u64) << 15) | (a.t * 1000.0).clamp(0.0, 32767.0) as u64
+        });
         slot.store(v, Ordering::Relaxed);
     }
 }
 
-/// General `general`'s torso clip and seconds into it, if he is in an action.
-pub(crate) fn torso_of(general: u32) -> Option<(u16, f32)> {
+/// General `general`'s torso action, if he is in one.
+pub(crate) fn torso_of(general: u32) -> Option<TorsoAction> {
     use std::sync::atomic::Ordering;
-    TORSO.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| (((v >> 16) & 0xffff) as u16, (v & 0xffff) as f32 / 1000.0))
+    TORSO.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| TorsoAction {
+        general,
+        action: ((v >> 28) & 0xf) as u8,
+        clip: ((v >> 15) & 0x1fff) as u16,
+        t: (v & 0x7fff) as f32 / 1000.0,
+    })
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

@@ -330,6 +330,17 @@ pub fn torso_weight(t: f32, length: f32) -> f32 {
 }
 
 impl Loaded {
+    /// Hide the weapon in hand for this pose (its parts' palette entries collapse): the body and
+    /// a stowed weapon keep drawing.
+    pub fn hide_weapon(&self, out: &mut Posed) {
+        let first = self.body.is_some() as usize;
+        for part in self.skeleton.parts.iter().skip(first).take(self.weapon.manifest.parts.len()) {
+            for p in out.palette.iter_mut().skip(part.first).take(part.count) {
+                *p = [0.0; 16];
+            }
+        }
+    }
+
     /// Torso clip `id`'s blob ([`zhbo_native::thirdperson::torso::BASE`] on) in the body's
     /// manifest.
     pub fn torso_path(&self, id: u16) -> Option<&str> {

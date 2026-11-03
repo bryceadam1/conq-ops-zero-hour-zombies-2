@@ -430,6 +430,13 @@ fn a_torso_clip_moves_the_upper_body_over_the_legs() {
     l.pose(&req, Some(&legs), Some((&torso, 1.0)), &mut out);
     assert!(close(out.local[spine].0, QUAT_IDENTITY), "nor at its end");
     assert_eq!(torso_weight(TORSO_BLEND * 0.5, 1.0), 0.5);
+    // A pin or a throw: the gun is not drawn (BO2's one entity weapon is the grenade then); the body
+    // still is.
+    l.pose(&req, Some(&legs), Some((&torso, 0.5)), &mut out);
+    l.hide_weapon(&mut out);
+    let gun_bone = l.skeleton.bone("tag_weapon").unwrap();
+    assert_eq!(out.palette[gun_bone], [0.0; 16], "the gun collapses");
+    assert_ne!(out.palette[spine], [0.0; 16], "the body draws");
     // Weapon-only mode is rigid: no torso.
     let rigid = Request { mode: Mode::Weapon, ..req };
     l.pose(&rigid, None, Some((&torso, 0.5)), &mut out);

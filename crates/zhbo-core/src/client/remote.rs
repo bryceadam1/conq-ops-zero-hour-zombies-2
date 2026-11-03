@@ -19,6 +19,7 @@ use crate::weapons::{NpcSound, WeaponDef};
 /// One General's torso action: the body manifest's clip and how far into it he is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Torso {
+    pub action: u8,
     pub clip: u16,
     pub t: f32,
 }
@@ -54,15 +55,15 @@ impl Remote {
         self.seats.get(seat).and_then(|s| s.torso)
     }
 
-    /// Every General in a torso action: `(General, clip, seconds in)`.
-    pub fn torsos(&self) -> impl Iterator<Item = (u32, u16, f32)> + '_ {
-        self.seats.iter().filter_map(|s| s.torso.map(|t| (s.general, t.clip, t.t)))
+    /// Every General in a torso action, for the body pass.
+    pub fn torsos(&self) -> impl Iterator<Item = crate::nativebody::ffi::TorsoAction> + '_ {
+        self.seats.iter().filter_map(|s| s.torso.map(|t| crate::nativebody::ffi::TorsoAction { general: s.general, action: t.action, clip: t.clip, t: t.t }))
     }
 
     fn start(&mut self, seat: usize, def: &WeaponDef, action: u8, context: u8) {
         let Some(s) = self.seats.get_mut(seat) else { return };
         if let Some(clip) = torso::pick_for(def, action, context) {
-            s.torso = Some(Torso { clip, t: 0.0 });
+            s.torso = Some(Torso { action, clip, t: 0.0 });
         }
     }
 
@@ -155,7 +156,7 @@ impl Remote {
                     sounds::Moment::Raise(_, RaiseKind::Alt) | sounds::Moment::AltSwitch(_) | sounds::Moment::AdsZoom(_) => return,
                 };
                 if let Some(clip) = table.pick(def.torso_anims, action, ctx) {
-                    started = Some(Torso { clip, t: 0.0 });
+                    started = Some(Torso { action, clip, t: 0.0 });
                 }
                 if heard {
                     if let Some(e) = sound.and_then(|m| sounds::some(def.npc_sound(m))) {
@@ -247,7 +248,7 @@ mod tests {
         c.queue.clear();
         // His reload.
         r.event(1, &EventKind::ReloadStarted, players[1].as_ref(), true, &mut c);
-        assert_eq!(r.torso(1), Some(Torso { clip: 4096, t: 0.0 }));
+        assert_eq!(r.torso(1), Some(Torso { action: torso::RELOAD, clip: 4096, t: 0.0 }));
         let mut heard = Vec::new();
         for _ in 0..80 {
             r.update(&players, 0, 1.0 / 30.0, &mut c);
@@ -278,7 +279,7 @@ mod tests {
         // The presented seat's own swing is his 2D one: nothing here.
         r.event(0, &EventKind::Melee, players[0].as_ref(), false, &mut c);
         assert!(played(&mut c).is_empty());
-        assert!(r.torsos().any(|(g, clip, _)| g == 2 && clip == 4098), "published for the body pass");
+        assert!(r.torsos().any(|a| a.general == 2 && a.clip == 4098 && a.action == torso::THROW), "published for the body pass");
     }
 
     /// A weapon change: his raise's torso and BO2's third-person raise sound at him.
