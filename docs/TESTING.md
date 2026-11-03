@@ -425,7 +425,8 @@ fingerprint agreeing on three machines; `the_long_run_changes_class_in_a_life_wi
 two and three). In his last life he leaves the game in first person (the quit
 menu's Exit: `MSG_SELF_DESTRUCT`, then the shell). Its own checks: the decline and the second
 take-control; at least min(2, N − 1) rounds on each side; the same shellshock lines, frame for frame, in both
-logs (up to the leave); the class change worn by both machines' next General; and the host past
+logs (up to the leave; at least one from N = 3 — at N = 2 the joiner's only round is the life he
+leaves a few seconds into, before its concussions land); the class change worn by both machines' next General; and the host past
 the leave (it lets go of the leaver's General, and its sim runs on — at least 60 frames, until Zero
 Hour ends the game the host has won — with no mismatch). `ZHBO_MPTEST_ROUNDS=6` runs past ten minutes.
 

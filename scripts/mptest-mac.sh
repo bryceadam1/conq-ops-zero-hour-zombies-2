@@ -263,7 +263,10 @@ if (( long )); then
     shocks "$h" | awk -v f="${left_frame:-999999999}" -F'[][]' '$2 + 0 < f' >"$out/host-shocks.txt"
     shocks "$j" >"$out/join-shocks.txt"
     n=$(wc -l <"$out/join-shocks.txt" | tr -d ' ')
-    if [[ $n -ge 1 ]] && cmp -s "$out/host-shocks.txt" "$out/join-shocks.txt"; then
+    # At N = 2 the joiner's only round is his last life, which he leaves a few seconds in, before
+    # the round's concussions land: the two logs must still agree, but may hold none.
+    want_shocks=$(( rounds >= 3 ? 1 : 0 ))
+    if [[ $n -ge $want_shocks ]] && cmp -s "$out/host-shocks.txt" "$out/join-shocks.txt"; then
         pass "the same shellshocks on both machines ($n)"
     else
         fail "the same shellshocks on both machines" "$(wc -l <"$out/host-shocks.txt" | tr -d ' ') vs $n"

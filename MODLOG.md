@@ -11776,3 +11776,15 @@ frames agreed.
 Real install: `every_converted_weapon_draws` audited every world manifest in the weapon-only mode,
 which now refuses the shield; a manifest held on its own body bone (`nativebody::held_on_body_bone`)
 is audited in body mode. The UI stand-ins must follow `UI_TEXT_KEYS`' order.
+
+## Bug sweep 4: verification (2026-11-03, branch `v1/bug-sweep-4`)
+
+In game on this branch (`~/.opencode/plan/bug-sweep-4/`): default 16/16, `--classpick` 12/12,
+`--rts` 16/16, `--scope` 1/1, `--w3d-ads` 2/2, `--input` 3/3, `--build` 18/18, `--replay` 5/5,
+`--smoke` 7/7, `--splash` 4/4, mp short 25/25. Long runs: `ZHBO_MPTEST_ROUNDS=3` 34/34 (the class
+change in the joiner's first round, worn by his last General, logged "assumed the CQB class" on
+both machines); `ZHBO_MPTEST_ROUNDS=2` 33/34 by the old shellshock check: at N = 2 the joiner's
+only round is the life he leaves four seconds into, before its concussions land, so both logs held
+none (and agreed). The check now asks for at least one shellshock from N = 3 and only agreement at
+N = 2. The default leg's screenshot `at-default/shot.bmp.000450.png` shows the new warning,
+"[R] Reload" with the key in yellow, at 9/30 rounds. Conformance: byte-identical to integration8.
