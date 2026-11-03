@@ -127,6 +127,8 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block),
   `shield.rs` (the Assault Shield on its bearer: the posed collmap box turned with the General,
   the ray block and the blast protection; `sim/deploy.rs` plants, wears down and returns it),
+  `smoke.rs` (BO2's smoke screen: its 12 s, the sight blocker's growth and BO2's sight test, which
+  Zero Hour's targeting and pathfinder ask through host patch 0024),
   `penetration.rs` (BO2's bullet penetration walk over `hitscan`'s shapes, its depth table from
   the tuning pack), `hitloc.rs` (BO2's hit locations, their trace ranking and the soldier's hit
   boxes per body state from the weapon table).

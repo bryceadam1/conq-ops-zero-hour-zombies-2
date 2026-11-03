@@ -22,7 +22,7 @@
 //!   equipment's copies of it and of the guards, the equipment's shock hits, `combat_seen`;
 //! * the installed data, which never changes during a game and which the content CRC (the
 //!   bridge's mod-content CRC folded into the INI CRC) already proves equal: the tuning,
-//!   penetration table, bullet range and hit bodies, and the antilag rewind cap (`antilag_frames`,
+//!   penetration table, bullet range and hit bodies, the smoke screen's numbers, and the antilag rewind cap (`antilag_frames`,
 //!   from the tuning pack).
 //!
 //! The hash is built from per-seat sub-hashes and one for the shared world, which the CRC log
@@ -64,6 +64,7 @@ impl Sim {
             projectiles,
             equipment,
             smokes,
+            smoke: _,
             frame,
             chosen,
             deployed,
@@ -108,7 +109,7 @@ impl Sim {
     }
 }
 
-fn world_hash(projectiles: &[(usize, crate::projectiles::Projectile)], equipment: &crate::equipment::Equipment, smokes: &[(crate::math::Vec3, f32, f32)], deployed: &[super::deploy::Deployed]) -> u64 {
+fn world_hash(projectiles: &[(usize, crate::projectiles::Projectile)], equipment: &crate::equipment::Equipment, smokes: &[crate::smoke::Smoke], deployed: &[super::deploy::Deployed]) -> u64 {
     let mut h = Hasher::new();
     projectiles.hash(&mut h);
     equipment.hash(&mut h);

@@ -29,6 +29,7 @@ pub mod thirdperson;
 pub mod playeranim;
 pub mod viewmodel_sweep;
 pub mod fx;
+pub mod fx_preview;
 pub mod shotfx;
 pub mod mixer;
 pub mod sfx;

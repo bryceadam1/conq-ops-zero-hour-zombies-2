@@ -76,9 +76,15 @@ impl Paks {
         Ok(Paks { paks, names: BTreeMap::new() })
     }
 
-    /// The pixels of the image with this key (`xmodel::Image::key`).
+    /// The pixels of the image with this key (`xmodel::Image::key`). A reference stub's key has no
+    /// data hash (`,fxt_fire_gas_flash` in `common_mp`: the zone that streams it is `patch_mp`); it
+    /// finds the image of the same name a learned zone streams ([`Paks::learn`]), by the name hash.
     pub(crate) fn image(&self, key: ImageKey) -> Option<Rgba> {
-        self.paks.iter().find_map(|pak| pak.entry(key).and_then(|e| images::load(pak, e).ok()))
+        let load = |key: ImageKey| self.paks.iter().find_map(|pak| pak.entry(key).and_then(|e| images::load(pak, e).ok()));
+        load(key).or_else(|| {
+            let named = self.names.values().find(|k| k.name_hash == key.name_hash && *k != &key)?;
+            load(*named)
+        })
     }
 
     /// Remember the streamed images `zone` loads (top-level and nested), by name; the first zone

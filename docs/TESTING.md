@@ -27,6 +27,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | BO2 conformance | Every fact of every weapon+attachment combination (and the create-a-class lists) the mod ships against BO2's own rules over the player's install: one CSV schema, `expected.csv` (BO2) vs `actual.csv` (the mod), clustered diffs. Fails while any gap exists — no allowlist | unit: `cargo test -p zhbo-conformance` (schema, CSV, differ, BO2 rules on synthetic zones), `cargo test -p zhbo-formats havok_lua big`; the gate: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets conformance -- --ignored` (~110 s; files in `ZHBO_CONFORMANCE_OUT`, default the temp dir; it fails while gaps remain, so run it apart from `-p zhbo-formats -- --ignored` — cargo stops at the first failing crate); the files for analysis: `cargo run --release -p zhbo-assets -- conformance <dir outside the repo>` (see "BO2 conformance" below) |
 | In-game scripted test | full loop: take control, move, fight, throw both offhands, toggle the grenade launcher, field computer, RTS hand-back. The script seeds a v2 profile with one custom class in the active set — the AN-94 with its under-barrel launcher, plus the frag, concussion, pistol and knife — because BO2's premades carry no attachments and the alt-mode step needs one; the autopilot picks that custom from the spawn screen by its computed row key (the match list is the set's custom slots, then the defaults, `changeclass.lua`); its rifle burst sweeps the aim ~6° down and back so it crosses the rebels' BO2 hit boxes whatever the terrain | `scripts/autotest.ps1` (Windows) / `scripts/autotest-mac.sh` (macOS; seeds `ConquerOps.profile` with the GL custom before launch — the standard autopilot picks the first profile custom when there is one, else the first default class) |
 | Shot impacts in game | the default autopilot run greps `player 0 impacts:` (flesh on the rebels, a terrain surface on the misses) and the bridge's `impact fx: N played, 0 missing` line — the latter proves the name resolved and `FXList::doFXPos` ran | `scripts/autotest.ps1` / `scripts/autotest-mac.sh` (default leg) |
+| Smoke-screen test | the General throws the seeded class's smoke grenade (`ZHBO_AUTOPILOT=smoke`); 3 s after it goes off (its sight blocker at 150 inches) the bridge stands a Ranger and a rebel either side of it, 80 units apart and the line between them through its centre, and orders a neutral Ranger straight across it. Checks: the screen stood, a unit was refused a target through it (`smoke: … can't see … through it`, host patch 0024), nobody attacked through it, the two fought once it cleared (≥ 11.9 s after the blast: BO2's 12 s), and the move went round (it never came within ¾ of the blocker's radius of the centre); the captures show the cloud in first person. The sim side (12 s, the blocker's growth, the sight test, water, the hooks' mirror) is unit-tested (`smoke::tests`, `sim::tests::a_smoke_grenade_*`, `the_screen_blocks_sight_through_it`, `ffi::tests::the_smoke_hooks_answer_from_the_sims_screens`) | `scripts/autotest-mac.sh --smoke` |
 | Scope-overlay test | the AS50 in hand, hold ADS past the 0.40 s transition; once the reticle zoom is up the native draw logs "the viewmodel is not drawn under the scope overlay" (BO2 skips the whole viewmodel) and the HUD draws the 2D overlay | `scripts/autotest-mac.sh --scope` |
 | W3D ADS-layer test | the W3D fallback (`ZHBO_NATIVE_VIEWMODEL=0`) composes the authored 0x55/0x56 clip over the action clip (`HAnimComboClass` pivot maps) and the slide is skipped; the bridge logs "viewmodel: ADS layer" + "viewmodel: ADS slide skipped" | `scripts/autotest-mac.sh --w3d-ads` (Windows: `scripts/autotest.ps1 -Mode w3d-ads`) |
 | Spectator (unit) | a spectating client (`ClientIn.spectating`) never sends input, a class pick or a selection, never captures the mouse; follows the first first-person General at the sim's input angles (smoothed across the logic frame, never ahead of the sim); BO2's switch bar (attack previous, aim next, cut at once) and the view toggle (the field-computer key / middle button: overhead and back); the followed General's death cuts to the next or flies out; a player defeated as his General falls sees his own death, then follows; the engine's observed seat is adopted; the HUD is the followed General's, reduced, with BO2's dead-spectate panel | `cargo test -p zhbo-core spectat` (`client/spectate_tests.rs`, `hud/spectate.rs`, `hud/tests.rs`) |
@@ -305,6 +306,22 @@ colour map and the native pass uses as the reflectance colour (RENDERER.md; pinn
 `a_coloured_spec_map_tints_the_metal`). The real-install test
 `the_camo_assets_convert_with_their_art` pins the converter's unresolved list to the 20 provably
 unreachable names (DLC-only stubs and diamond's colour-less technique).
+
+## The headless effect sheets (BO2 effects vs their conversion)
+
+`zhbo-assets fx-sheet <dir outside the repo> [--all] [--effects a,b]` (`fx_preview`) plays each
+converted effect by Zero Hour's particle rules (`ParticleSys.cpp`: logic-frame lifetimes counted
+down before the first draw, bursts, per-frame damping and gravity, size rates, key frames, ADDITIVE
+ignoring alpha keys) next to the BO2 effect it came from by `FxElemDef`'s (counts, delays, loops,
+the velocity graph's integrated delta, the visual-state graph, runners), from a soldier's eye 40 ft
+away. It writes a contact sheet per named effect (BO2's row over Zero Hour's at 50 ms … 2.5 s; the
+default set is every explosion, flash grenade, bullet impact and two muzzle flashes), the
+converter's INI for it (first line: images the packs did not have), and `metrics.csv`
+(width² × opacity over time, peak, reach, particle count, the additive "glow" part; every
+`common_mp` effect with `--all`). `zhbo-assets fx effect:<name>` prints every field of a BO2 effect.
+The gate is `fx_preview::install_tests::every_bo2_effect_converts_to_its_size` (ignored; reads
+the install): every runner starts the effects it names, no element's image is missing, three in
+four effects cover 0.5–2× BO2's, and each sheet effect 0.4–4×.
 
 ## The native-art audit
 

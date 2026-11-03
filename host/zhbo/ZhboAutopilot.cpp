@@ -504,8 +504,9 @@ void autopilotSpawn()
 		return;
 	}
 
-	// Three enemy riflemen ahead of the General (inside rifle range, outside the base).
-	if (enemy && !s_autopilot.build)
+	// Three enemy riflemen ahead of the General (inside rifle range, outside the base). The smoke
+	// scene places its own units around the screen once it stands.
+	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke)
 	{
 		for (Int i = -1; i <= 1; ++i)
 		{
@@ -541,6 +542,125 @@ void autopilotSpawn()
 	const Bool manual = s_config.autopilot_manual;
 	if (!s_autopilot.rts && !manual && !s_autopilot.build && !autopilotPlayback())
 		Zhbo_RequestTakeControl(general);
+}
+
+void autopilotSmokeSeen(const Coord3D &at, Real radius)
+{
+	const UnsignedInt frame = TheGameLogic->getFrame();
+	if (s_autopilot.smokeFirst == 0)
+	{
+		s_autopilot.smokeFirst = frame;
+		s_autopilot.smokeAt = at;
+		logf("autopilot: smoke went off at (%.0f, %.0f)", at.x, at.y);
+	}
+	s_autopilot.smokeLast = frame;
+	s_autopilot.smokeRadius = radius;
+}
+
+// What `obj` is attacking among the scene's units and the General, if any.
+static Object *smokeSceneVictim(Object *obj)
+{
+	AIUpdateInterface *ai = obj ? obj->getAI() : nullptr;
+	Object *victim = ai ? ai->getCurrentVictim() : nullptr;
+	if (!victim)
+		return nullptr;
+	const ObjectID id = victim->getID();
+	return id == s_autopilot.smokeRanger || id == s_autopilot.smokeRebel || id == s_autopilot.general ? victim : nullptr;
+}
+
+// ZHBO_AUTOPILOT=smoke: once the General's screen has grown (3 s after it went off, BO2's blocker at
+// its 150 inches), a Ranger and a rebel stand on either side of it inside each other's rifle range,
+// the line between them through its centre: neither may attack the other (or the General) while it
+// stands, and one must once it clears. A Ranger ordered across it, its straight line through the
+// centre, must walk round it (a neutral one, whom nobody shoots on the way).
+void smokeAutopilotFrame(UnsignedInt frame)
+{
+	Autopilot &a = s_autopilot;
+	if (a.smokeFirst == 0)
+		return;
+	Object *general = TheGameLogic->findObjectByID(a.general);
+	const Coord3D c = a.smokeAt;
+	if (!a.smokeScene && frame - a.smokeFirst >= 3 * LOGICFRAMES_PER_SECOND && general)
+	{
+		a.smokeScene = TRUE;
+		Player *local = autopilotPlayer();
+		Player *enemy = nullptr;
+		for (Int i = 0; i < ThePlayerList->getPlayerCount() && !enemy; ++i)
+		{
+			Player *p = ThePlayerList->getNthPlayer(i);
+			if (p != local && p->getPlayerTemplate() && local->getRelationship(p->getDefaultTeam()) == ENEMIES)
+				enemy = p;
+		}
+		// Along the General's line to the screen (u), and across it (v).
+		Coord3D u;
+		u.set(c.x - general->getPosition()->x, c.y - general->getPosition()->y, 0.0f);
+		const Real len = sqrtf(u.x * u.x + u.y * u.y);
+		if (len > 1.0f)
+			u.set(u.x / len, u.y / len, 0.0f);
+		else
+			u.set(Cos(general->getOrientation()), Sin(general->getOrientation()), 0.0f);
+		const Real yaw = atan2f(u.y, u.x);
+		Coord3D p;
+		p.set(c.x - u.x * 40.0f, c.y - u.y * 40.0f, 0.0f);
+		Object *ranger = spawnAt("AmericaInfantryRanger", local->getDefaultTeam(), p, yaw);
+		p.set(c.x + u.x * 40.0f, c.y + u.y * 40.0f, 0.0f);
+		Object *rebel = enemy ? spawnAt("GLAInfantryRebel", enemy->getDefaultTeam(), p, yaw + PI) : nullptr;
+		p.set(c.x + u.y * 60.0f, c.y - u.x * 60.0f, 0.0f);
+		// The neutral side's: no one shoots him on his way, and he stops for no one.
+		Player *neutral = ThePlayerList->getNeutralPlayer();
+		Object *mover = spawnAt("AmericaInfantryRanger", neutral ? neutral->getDefaultTeam() : local->getDefaultTeam(), p, yaw);
+		a.smokeRanger = ranger ? ranger->getID() : INVALID_ID;
+		a.smokeRebel = rebel ? rebel->getID() : INVALID_ID;
+		a.smokeMover = mover ? mover->getID() : INVALID_ID;
+		a.smokeMoverClosest = 1.0e9f;
+		a.smokeMoverGoal.set(c.x - u.y * 60.0f, c.y + u.x * 60.0f, 0.0f);
+		a.smokeMoverGoal.z = TheTerrainLogic->getGroundHeight(a.smokeMoverGoal.x, a.smokeMoverGoal.y);
+		if (mover && mover->getAI())
+			mover->getAI()->aiMoveToPosition(&a.smokeMoverGoal, CMD_FROM_PLAYER);
+		logf("autopilot: smoke scene: Ranger %u and rebel %u %.0f apart across the screen (radius %.1f), Ranger %u ordered across it",
+			(unsigned)a.smokeRanger, (unsigned)a.smokeRebel, 80.0f, a.smokeRadius, (unsigned)a.smokeMover);
+	}
+	if (!a.smokeScene)
+		return;
+	const Bool standing = frame <= a.smokeLast + 1;
+	Object *ranger = TheGameLogic->findObjectByID(a.smokeRanger);
+	Object *rebel = TheGameLogic->findObjectByID(a.smokeRebel);
+	Object *fighters[2] = { ranger, rebel };
+	for (Object *f : fighters)
+	{
+		Object *victim = smokeSceneVictim(f);
+		if (!victim)
+			continue;
+		if (standing && !a.smokeThrough)
+		{
+			a.smokeThrough = TRUE;
+			logf("autopilot: smoke: %s %u attacks %s %u through the screen", f->getTemplate()->getName().str(), (unsigned)f->getID(),
+				victim->getTemplate()->getName().str(), (unsigned)victim->getID());
+		}
+		if (!standing && !a.smokeCleared)
+		{
+			a.smokeCleared = TRUE;
+			logf("autopilot: smoke cleared: %s %u attacks %s %u (%.1f s after it went off)", f->getTemplate()->getName().str(), (unsigned)f->getID(),
+				victim->getTemplate()->getName().str(), (unsigned)victim->getID(), (frame - a.smokeFirst) / (Real)LOGICFRAMES_PER_SECOND);
+		}
+	}
+	if (standing && (frame - a.smokeFirst) % (2 * LOGICFRAMES_PER_SECOND) == 0)
+		logf("autopilot: smoke: standing %.0f s, Ranger %s, rebel %s", (frame - a.smokeFirst) / (Real)LOGICFRAMES_PER_SECOND,
+			smokeSceneVictim(ranger) ? "attacking" : "idle", smokeSceneVictim(rebel) ? "attacking" : "idle");
+	Object *mover = TheGameLogic->findObjectByID(a.smokeMover);
+	if (mover && !a.smokeMoverDone)
+	{
+		const Coord3D *m = mover->getPosition();
+		const Real dx = m->x - c.x, dy = m->y - c.y;
+		a.smokeMoverClosest = std::min(a.smokeMoverClosest, sqrtf(dx * dx + dy * dy));
+		const Real gx = m->x - a.smokeMoverGoal.x, gy = m->y - a.smokeMoverGoal.y;
+		if (gx * gx + gy * gy < 15.0f * 15.0f || !standing)
+		{
+			a.smokeMoverDone = TRUE;
+			logf("autopilot: smoke: the Ranger ordered across %s; he passed %.1f from its centre (radius %.1f)",
+				gx * gx + gy * gy < 15.0f * 15.0f ? "arrived" : "had not arrived before it cleared", a.smokeMoverClosest, a.smokeRadius);
+		}
+	}
 }
 
 void rtsAutopilotWave(UnsignedInt frame)

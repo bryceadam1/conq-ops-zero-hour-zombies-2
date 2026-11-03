@@ -87,6 +87,7 @@ struct ZhboConfig
 	Bool autopilot_build = FALSE;
 	Bool autopilot_classpick = FALSE; // =classpick: the create-a-class editor run (scene like the default scripted run)
 	Bool autopilot_mp = FALSE;		  // =mp: the two-instance multiplayer run (no scene; each machine plays its own player)
+	Bool autopilot_smoke = FALSE;	  // =smoke: the smoke screen against Zero Hour's units (sight and pathing)
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
@@ -284,12 +285,27 @@ struct Autopilot
 	UnsignedInt mpStillSince;
 	UnsignedInt mpNextTry;
 	Bool mpRespawning;
+	// ZHBO_AUTOPILOT=smoke (smokeAutopilotFrame): the screen as the core reports it (cbSmoke: the
+	// first and last frame it was told, its centre and radius), the scene around it and what it saw.
+	UnsignedInt smokeFirst;
+	UnsignedInt smokeLast;
+	Coord3D smokeAt;
+	Real smokeRadius;
+	Bool smokeScene;
+	ObjectID smokeRanger, smokeRebel, smokeMover;
+	Coord3D smokeMoverGoal;
+	Real smokeMoverClosest;
+	Bool smokeMoverDone, smokeThrough, smokeCleared;
 };
 extern Autopilot s_autopilot;
 void autopilotFrame();
 void autopilotShellFrame();
 void autopilotSpawn();
 void rtsAutopilotWave(UnsignedInt frame);
+/// ZHBO_AUTOPILOT=smoke: the scene around the General's smoke screen (in the logic step).
+void smokeAutopilotFrame(UnsignedInt frame);
+/// cbSmoke's report to the smoke scene: a screen stands this frame.
+void autopilotSmokeSeen(const Coord3D &at, Real radius);
 void trackGeneralBuilds(UnsignedInt frame);
 void trackIdleGenerals();
 

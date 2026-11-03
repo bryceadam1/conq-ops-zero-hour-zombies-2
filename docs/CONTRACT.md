@@ -20,6 +20,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
+| A smoke screen (BO2's smoke grenade): where, how long, how wide its sight blocker is | zhbo-core (`Sim::smokes`, `crate::smoke`, the tuning pack's `[Smoke]`) | Zero Hour's units and pathfinder ask the core's lock-free mirror (host patch 0024, "Smoke screens in Zero Hour's targeting and pathing"); the cloud is the converted BO2 effect, an `AREA_EFFECT` FXList played at the blast. |
 
 ## Units
 
@@ -411,15 +412,24 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `viewmodel_fired` (the right gun, or a single gun) flashes at `tag_flash` and ejects at
   `tag_brass`; `viewmodel_fired_left` (a dual-wield pair's left gun, appended to `ZhboClientOut`)
   at the `_lh` model's own `tag_flash1` and `tag_brass1`. A shell's X is the
-  eject direction, so its converted FXList sets `OrientToObject = Yes` and keeps BO2's axes, unlike
-  the world/impact effects' normal-up swap; `vViewShellEjectOffset`/`Rotation` are not applied.
+  eject direction, so its converted FXList sets `OrientToObject = Yes` and keeps BO2's axes, as
+  do the muzzle flashes (`ViewFlashFx`, the silencer pair, the world flash: played on the flash
+  bone's matrix, X down the barrel) and a bullet's impact cells (played on `zhboFrameAt`'s surface
+  frame, X along the normal): `fx::Converted::add_framed`, FXList `<name>_Framed`, offsets and
+  velocities in BO2's axes. Everything played with no matrix (a blast through the `fx` callback, a
+  bounce, a dud, the General's impacts) is the world copy, BO2's X (the normal) swapped to up;
+  `vViewShellEjectOffset`/`Rotation` are not applied.
   `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Viewmodel sound notetracks
   are unchanged (the bridge's `playNotes` runs before either path).
   - **Effects draw through the engine's `FXList` path, not the native pass.** The engine already
     owns particle systems, the blend modes from the material state bits, lifetimes and the world
     FX weapon pipeline; the native pass has no particle system and would duplicate all of it.
     Shell model elements are drawn as small sprites from the model's own colour map, because
-    Zero Hour's FXList has no model nugget.
+    Zero Hour's FXList has no model nugget. A converted system's `Priority` follows its role
+    (`fx::Role`, as Zero Hour prioritises its own effects of that kind): blasts, impacts and
+    muzzle flashes `CRITICAL`, casings and bounce dust `WEAPON_EXPLOSION`, the smoke screen
+    `AREA_EFFECT`. The lowest priority is culled by the dynamic LOD below 25 fps and can evict
+    nothing at the particle cap.
   - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
     `zhbo_loadout_viewmodels`).
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
@@ -929,6 +939,43 @@ from xyz, from height, source known, kind, amount)` for the share to apply (it s
   wear-down scales on Zero Hour damage ÷ `BO2_TO_ZH_DAMAGE`.
 * `zhbo_logic_shield_damage` is part of ABI 27 (`zhbo_core.h`, see "Versioning").
 
+## Smoke screens in Zero Hour's targeting and pathing
+
+BO2's smoke grenade raises a visibility blocker that its engine's own aiming (turrets, lock-ons)
+cannot see through (`crate::smoke` cites the script and t6mp functions); the mod's Zero Hour units
+are those, so host patch `0024-smoke-screen.patch` puts the sim's screens into three engine places:
+
+* **Targeting.** `WeaponSet::getAbleToAttackSpecificObject` (after its sanity checks) returns
+  `ATTACKRESULT_NOT_POSSIBLE` when `Zhbo_SmokeHides(source, victim)`: the line between their
+  centres (feet + half the geometry height) passes within a screen's current radius of its centre
+  and they are at least 80 inches apart (`zhbo_logic_smoke_blocks`, BO2's `FUN_006e2f90`). That one
+  test is every acquisition filter's (`PartitionFilterPossibleToAttack`, the guard and turret
+  scans) and the attack states' continuation condition (`cannotPossiblyAttackObject`, the turret's
+  `ATTACK_CONTINUED_TARGET`), so a unit neither picks nor keeps a target the screen hides, forced
+  or not; the UI's attack cursor (`ActionManager`) asks the same. A target inside the screen is
+  hidden from outside, and sees nothing out (beyond 80 inches).
+* **Pathing.** `Pathfinder::examineNeighboringCells` and `findGroundPath` add
+  `Zhbo_SmokePathCost(cell)` to a cell's cost while a screen covers its centre (seen from above):
+  100, the engine's own penalty for tunnelling through an invalid cell. A cost, not a wall: a path
+  goes round when it can, a unit inside walks out, a goal inside is still reached. Three engine
+  shortcuts would undo the way round, so each stops at a screen's edge: the A* step's straight run
+  at the goal (`examineCellsCallback`, half a step's cost per cell, which never sees the neighbour
+  costs), and the straight-line checks a path's smoothing and the walk along it use
+  (`linePassableCallback`, `groundPathPassableCallback`: a line that starts outside a screen may
+  not enter one; one that starts inside may go anywhere).
+* **Repathing.** `AIInternalMoveToState::update` recomputes a move's path once when
+  `Zhbo_SmokeCrossesPath(path, m_pathTimestamp)`: a segment of it passes under a screen that went
+  off after the path was computed (`zhbo_logic_smoke_crosses`).
+
+The answers come from an atomic mirror of `Sim::smoke_blockers()` (centre, radius now, the frame it
+went off) and the tuning pack's always-seen distance, written after each logic step and on
+take-control/reset (`ffi::publish_smokes`), never under the state lock — the hooks run inside Zero
+Hour's object updates and pathfinder, possibly inside a `zhbo_logic_step` callback. The screens are
+sim state in the fingerprint and the engine's call order is the same on every peer, so every
+machine's units decide alike and Zero Hour's own CRC stays consistent; nothing new is stored on the
+engine side. `ZhboLogicApi.smoke` stays the per-frame notice (the bridge logs it; the smoke autotest
+reads it). The three free functions are pending the next ABI bump (see "Versioning").
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,
@@ -968,6 +1015,7 @@ The functions the sections above do not cover, by when the bridge calls them (th
 | | `zhbo_world_mesh_count(vm)` | Third-person meshes of viewmodel `vm`'s weapon on the soldier model (-2: the tablet); cached by the bridge on first use. |
 | | `zhbo_native_body_ready(in)` | 1 when the native third-person body frame can be drawn (see "The native third person"). |
 | Building | `zhbo_general_build_rate()` | A General's building speed as a share of a dozer's (`building::GENERAL_BUILD_RATE`). |
+| Engine sight and path hooks (patch 0024) | `zhbo_logic_smoke_blocks(a, b)`, `zhbo_logic_smoke_covers(x, y)`, `zhbo_logic_smoke_crosses(a, b, since)` | Lock-free questions to the mirror of the standing smoke screens (see "Smoke screens in Zero Hour's targeting and pathing"). |
 | `GameLogic::getCRC` (patch 0020) | `zhbo_logic_crc(out, log)` | The sim's fingerprint and its per-seat/world parts (`ZhboLogicCrc`, 152 bytes); returns 1 when the sim holds state (the bridge xfers the hash after `MARKER:TheAI`), 0 when idle; `log` writes the parts to `ConquerOps.log` (see "Multiplayer (lockstep)"). |
 
 ### Engine gotchas (promoted from MODLOG)
@@ -1097,7 +1145,7 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
 flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, `bulletrange` (how far a non-spread round is traced), the optic displays'
-`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the melee reach and the knife's lunge (`player_meleeRange`, `player_meleeCharge*`, `[Melee]`; the lunge distance and times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
+`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the smoke screen's time and sight blocker (`[Smoke]`: `_smokegrenade.gsc`'s `spawntimedfx` time and `blocksight` radii, t6mp's always-seen distance; `smoke::Params`), the melee reach and the knife's lunge (`player_meleeRange`, `player_meleeCharge*`, `[Melee]`; the lunge distance and times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like
@@ -1246,6 +1294,12 @@ asserted on both sides. Archive `hud::VERSION` 84 at the same point (the weapon 
 `InstalledDlc` line and `CacSlot` now a sim field of the content fingerprint; the spectator HUD's two
 converted materials `hud_shoutcasting_change_tab` and `hud_shoutcasting_viewing_box_dead` and two
 `UiText` keys `MPUI_SPECTATING` and `MPUI_FIRST_PERSON_VIEW`); the native blob formats are unchanged.
+
+**Pending for the next bump** (smoke-screen): three free functions on the append-only surface,
+`zhbo_logic_smoke_blocks(ax, ay, az, bx, by, bz)`, `zhbo_logic_smoke_covers(x, y)` and
+`zhbo_logic_smoke_crosses(ax, ay, bx, by, since)` (each `int32_t`), for host patch 0024; no struct
+or API table moves. Archive `hud::VERSION` should move too: the smoke screen's particle systems are
+`AREA_EFFECT` and stand the tuning pack's 12 s (the converted INI changes).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

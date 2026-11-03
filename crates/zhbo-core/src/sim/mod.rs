@@ -487,8 +487,10 @@ pub struct Sim {
     pub projectiles: Vec<(usize, Projectile)>,
     /// Equipment that is down.
     pub equipment: Equipment,
-    /// Smoke screens: where, how wide, seconds left.
-    pub smokes: Vec<(Vec3, f32, f32)>,
+    /// Smoke screens standing ([`crate::smoke`]).
+    pub smokes: Vec<crate::smoke::Smoke>,
+    /// The tuning pack's `[Smoke]` values (installed data, not hashed).
+    pub smoke: crate::smoke::Params,
     pub tuning: MoveTuning,
     /// BO2's `bulletrange` (ZH units): how far a non-spread round is traced.
     pub bullet_range: f32,
@@ -543,6 +545,7 @@ impl Sim {
             projectiles: Vec::new(),
             equipment: Equipment::default(),
             smokes: Vec::new(),
+            smoke: crate::smoke::Params::default(),
             tuning: MoveTuning::default(),
             bullet_range: crate::units::inches(crate::tuning::Tuning::default().bulletrange),
             penetration: crate::penetration::Penetration::default(),
@@ -580,6 +583,11 @@ impl Sim {
         out
     }
 
+    /// The smoke screens standing as the engine's sight and path questions see them this frame.
+    pub fn smoke_blockers(&self) -> Vec<crate::smoke::Blocker> {
+        self.smokes.iter().filter(|s| s.stands(self.frame, &self.smoke)).map(|s| crate::smoke::Blocker { at: s.at, radius: s.radius(self.frame, &self.smoke), born: s.born }).collect()
+    }
+
     /// A sim configured from the gameplay tuning pack (`data/ConquerOps/tuning.ini`, loaded by the
     /// bridge). The tests use `Sim::new`, whose defaults are the pack's own values.
     pub fn with_tuning(t: &crate::tuning::Tuning) -> Self {
@@ -589,6 +597,7 @@ impl Sim {
         sim.penetration = crate::penetration::Penetration::from_tuning(t);
         sim.equipment.tuning = crate::equipment::EquipTuning::from_tuning(t);
         sim.antilag_frames = antilag::max_rewind_frames(t.antilag_max_rewind);
+        sim.smoke = crate::smoke::Params::from_tuning(t);
         sim
     }
 
@@ -669,11 +678,11 @@ impl Sim {
         self.step_equipment(host);
         self.apply_shock_hits();
         self.step_deployed(host);
-        for s in &mut self.smokes {
-            host.smoke(s.0, s.1);
-            s.2 -= LOGIC_DT;
+        let (frame, smoke) = (self.frame, self.smoke);
+        self.smokes.retain(|s| s.stands(frame, &smoke));
+        for s in &self.smokes {
+            host.smoke(s.at, s.radius(frame, &smoke));
         }
-        self.smokes.retain(|s| s.2 > 0.0);
         self.record_history();
     }
 
@@ -721,9 +730,8 @@ impl Sim {
                     let d = proj.def;
                     self.emit(*owner, EventKind::Exploded { at, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface });
                     self.deployed_caught_in_blast(host, *owner, d, at);
-                    if proj.def.effect == crate::weapons::Effect::Smoke {
-                        let radius = proj.def.explosion_radius.max(crate::projectiles::SMOKE_RADIUS);
-                        self.smokes.push((at, radius, crate::projectiles::SMOKE_TIME));
+                    if proj.def.effect == crate::weapons::Effect::Smoke && crate::smoke::raised_on(surface) {
+                        self.smokes.push(crate::smoke::Smoke { at, born: self.frame });
                     }
                     let mut ev = Vec::new();
                     self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, &mut ev);

@@ -11025,3 +11025,160 @@ lines are in `ConquerOps_Instance02.log`.
 * Headless replay checks: the autopilot recording and the real-input recording both pass (above).
 * Logs: no error, desync or mismatch lines in any leg's `ConquerOps.log`, the MP logs or
   `zhbo-gfx.log`, once the remote-shot fix was in. There is no PullPin error any more.
+
+## The smoke screen: BO2's 12 s screen, drawn whatever the particle load, hiding units from Zero Hour's units and turning their paths (2026-11-03, branch `v1/smoke-screen`)
+
+Playtest: "smoke grenades just seem to fizzle a little bit, not make a large screen of smoke";
+units should not see through it and should go round it while it lasts.
+
+**BO2's rule** (`_smokegrenade.gsc`, t6mp). The grenade names no effect; the script spawns a timed
+effect entity of `smoke_center_mp` (whose `projExplosionEffect` is `weapon/grenade/fx_smoke_willy_pete`)
+for 12 s (`spawntimedfx(…, 12)`; `FUN_00623ed0` frees it at `time + 12000`) and makes it a
+visibility blocker (`blocksight`: radius 64 in, then every 0.75 s `clamp(r * 1.5, 10, 150)`;
+`fxblocksight` → `SV_FX_SetVisBlocker`, `FUN_006e3020`). The engine's sight test (`FUN_006e2f90`)
+lets points closer than 80 in always see each other, else blocks a segment whose closest point is
+within a blocker's radius of its centre (`FUN_006e2e10`). It is asked by the turrets' target sight
+(`FUN_0067d3a0` via `FUN_0067d490`), a lock-on think (`FUN_0064f580`), an unreferenced helper
+(`FUN_005d7cd0`) and `bullettracepassed`'s optional sixth argument, which no MP script passes
+(trophy, sensor, Black Hat, claymore and the compass do not consult it). In water the script
+raises nothing. The mod had 15 s and 220 in by hand, and a fixed circle.
+
+**Root causes.**
+* *The fizzle.* Every converted BO2 effect was `Priority = WEAPON_EXPLOSION`, Zero Hour's lowest.
+  `ParticleSystem::createParticle` refuses priorities below the dynamic LOD's `MinParticlePriority`
+  (`UNIT_DAMAGE_FX` under 25 fps, `GameLOD.ini`), and at `MaxParticleCount` (500 at the `Low`
+  static LOD, which this Mac's `Options.ini` detects) a new particle may only evict *strictly lower*
+  priorities (`removeOldestParticles(count, cap)` loops `i < cap`): a `WEAPON_EXPLOSION` particle is
+  simply not made, and anything higher evicts the cloud's. **Gotcha** for every converted effect
+  (explosions too — the explosion-fx item's): the lowest priority is the first to vanish under load.
+  The screen now converts at `AREA_EFFECT` (`fx::Priority::Area`, `Converted::add_area`), Zero
+  Hour's own priority for gameplay clouds and fields (poison, radiation, beacon smoke), its looping
+  parts standing the tuning pack's 12 s.
+* *Sight.* `cbSmoke` idled attackers with either end inside a 2D circle; a line through the cloud
+  was never blocked and the idle unit re-acquired the same target a moment later.
+* *Pathing.* Nothing.
+
+**Fix.**
+* `crate::smoke` (new): `Smoke { at, born }` (lockstep, hashed), `Params` from the tuning pack's
+  new `[Smoke]` keys (`smokeduration`, `smoke_blocksight_*`), the blocker's step-by-step growth,
+  BO2's sight test, the ground cover and "crosses a path computed before it" tests, and the water
+  rule (also skips the cloud in `projectiles::blast_fx`). `Sim::smoke_blockers()`; the sim tells
+  the engine each frame at the radius *now*.
+* A lock-free mirror (`ffi::publish_smokes`, like the shields') and three free functions,
+  `zhbo_logic_smoke_blocks/covers/crosses` (pending the next ABI bump).
+* Host patch `0024-smoke-screen.patch`: `WeaponSet::getAbleToAttackSpecificObject` refuses a
+  victim the screen hides (`Zhbo_SmokeHides`; one test serves acquisition, the attack states'
+  `cannotPossiblyAttackObject`, turrets and the UI cursor); the pathfinder adds a cell cost under
+  a screen (100, the engine's own tunnelling penalty: a cost, not a wall) in
+  `examineNeighboringCells` and `findGroundPath`; a move whose path crosses a newer screen repaths
+  once (`AIInternalMoveToState::update`).
+  **Gotcha:** the cost alone did nothing. The A* step first runs a straight line at the goal at half
+  a step per cell (`examineCellsCallback`), which never sees neighbour costs, and the path's
+  smoothing and the walk along it straighten it again through `isLinePassable`. All three now stop
+  at a screen's edge (a line that starts inside one may go anywhere, so units inside walk out).
+* `cbSmoke` only logs now; the converter reads the screen from `smoke_center_mp`'s effect.
+  **Gotcha:** the pooled `smoke_center_mp` copy's materials are reference stubs, so its effect
+  converted to an *empty* FXList; it is re-read by name from `common_mp`. The real-install test now
+  fails on any converted blast effect that draws nothing, and pins the screen's priority and time.
+
+**Tests.** `smoke::tests` (12 s, growth, the sight cases incl. over it and the 80 in rule, ground
+and path), `sim::tests` (`a_smoke_grenade_screens_for_its_time_then_clears`,
+`the_screen_blocks_sight_through_it`, `a_smoke_grenade_in_water_raises_no_screen`),
+`ffi::tests::the_smoke_hooks_answer_from_the_sims_screens`, `fx` (area priority), the tuning pins,
+and the in-game `scripts/autotest-mac.sh --smoke` (`ZHBO_AUTOPILOT=smoke`): a Ranger and a rebel
+80 apart across the screen stay idle for its 12 s and fight 12.3 s after it went off; a neutral
+Ranger ordered straight across passed 27.2 from the centre (radius 25) — before the line fixes,
+1.4. First-person captures show a dense cloud for the whole screen, fading after.
+
+**Verified.** `cargo test --workspace` 1,094 passed; clippy clean (all targets, and zhbo-core with
+`harness`); real-install suite 68/68 (the full-roster lockstep gate included); conformance
+byte-identical to integration7 (weapons 1,979 cells / 11 clusters, cac 0 + 4 BO2-only, 12 gap
+clusters); `cargo xtask build` with patches 0001–0024; in game `--smoke` 7/7, default 16/16, `--mp`
+23/23 with the state hash equal on all 2,767 common frames (a first `--mp` run missed the target's
+respawn order, 19/23 with the hashes still equal and no smoke in play; the rerun passed).
+
+## BO2's explosions are their size: runners start their effects, and each element converts by BO2's rules (2026-11-03, branch `v1/explosion-fx`)
+
+Playtest report: "When I throw a grenade or fire a missile, I don't see much of an explosion." A
+headless player of both sides (`fx_preview`, `zhbo-assets fx-sheet`, TESTING.md "The headless
+effect sheets") showed why, and swept every `common_mp` effect (371 with something to draw).
+
+* **Root cause: no runner ever started its effect.** An `FxEffectDefRef` is loaded as its name
+  (`Load_FxEffectDefRef` is one xstring), so a runner's visual is the `char*` itself; the reader
+  read a pointer out of the name's first four bytes (`str_ptr`) and found nothing. BO2 builds its
+  explosions out of runners: the impact table's grenade cell (`explosions/fx_grenadeexp_*`, which
+  the rocket cells and the GL rounds share) is ground debris and dust plus two runners, and the
+  first runner is `explosions/fx_grenade_flash`, the whole flash and fireball (13 elements). Every
+  first-person muzzle flash is nothing *but* runners (`fx_muz_ar_flash_1p` = the gas flash +
+  smoke), so their FXLists were empty and no gun flashed. Sweep: 81 effects drew nothing at all.
+  `Zone::cstr` reads the name; the reader keeps every runner's names (`Elem::runs`).
+* **Same family, found by the sheets:** (a) a reference-stub image (`,fxt_fire_gas_flash` in
+  `common_mp`, streamed by `patch_mp`) carries neither hash, so the packs never found it: the
+  converter now asks by the name's `R_HashString`, which `Paks::image` resolves through the zones it
+  learned. (b) A stub *material* (`,gfx_fxt_smk_puff`: the satchel's fire puffs) has no textures:
+  `fx::bind_materials` binds it to the pool's full material, as BO2's asset pool does
+  (`Converted::with_pool`). (c) Zero Hour counts a particle's life down in the update that creates
+  it, so `Lifetime` 1 is never drawn and n shows n − 1 frames: every element under 50 ms (the
+  grenade's halogen flare, a muzzle flash's 18 ms gas) was invisible; the converter adds the frame.
+* **The brass was invisible too.** A model element's visual states carry its *scale*, size 0, so
+  every shell sprite was 0 wide (only the empty-state default had a size). It is now the
+  shell-sized sprite times the model's scale (`model_particle_system`); the real-install test
+  asserts no shell system is 0 wide.
+* **Each element now converts by BO2's rules** (`fx::particle_system`, all from the def): one-shot
+  `count` 0 spawns nothing (BO2's `base + rand(amplitude + 1)`); a looping element spawns one every
+  `intervalMsec`, `count` times (`msecLoopingLife` = interval × (count − 1) proves it: the grenade's
+  sparks are 20 over 57 ms, not 20 a frame for a second — the Betty's looping parts made it 8.6×
+  BO2's size before); a one-shot element whose particles each have their own delay trickles over
+  that window; `spawnOrigin` is the FXList `Offset` (the flash sits 20–60 inches up its normal; a
+  fireball centred on the ground was half underground) with the spawn box, sphere or cylinder as
+  the volume; the velocity graph's integrated delta (`FxElemVelStateSample::totalDelta`, inches per
+  msec of life — checked: the trapezoid of the samples) fits the per-frame damping, and a graph
+  that speeds up moves at its mean speed instead (an exponential speed-up flung smoke across the
+  map); world velocity is added; the size graph's starting slope is damped onto its end; colour and
+  alpha keys use the mean life (a 2–4 s puff faded at 2 s) on strictly increasing frames, and
+  BO2's second colour is the other end of a random lerp (the middle is used); `rotationTotal` is
+  the roll rate; a tail, line or non-uniform sprite keeps its area as Zero Hour's square; an omni
+  light is a `LightPulse` with its colour, radius and life (the old fixed 40-unit 400 ms pulse on
+  anything additive is gone).
+* **Orientation.** A bullet's impact is played on the surface frame and a flash on its bone's
+  matrix, but every list was built upright with BO2's X swapped to up, so a flash's 14 forward
+  inches would have gone up. Those are now `Converted::add_framed` copies (`<name>_Framed`,
+  `OrientToObject`, BO2's axes; CONTRACT.md); blasts, bounces and duds stay upright.
+* **Priority, by role.** Every converted system was `WEAPON_EXPLOSION`, Zero Hour's lowest: the
+  dynamic LOD stops drawing it below 25 fps, and at the particle cap it can evict nothing
+  (`removeOldestParticles` frees only lower priorities); smoke-screen found the same for its cloud
+  (merged here, its `add_area`/`AREA_EFFECT` kept). Now `fx::Role` sets it the way Zero Hour sets
+  its own effects of the kind (counted over `INIZH.big`'s ParticleSystem.ini through the systems its
+  FXLists start: impacts mostly `CRITICAL`, detonations and muzzle flashes `CRITICAL` cores over
+  `WEAPON_EXPLOSION` dressing, every casing `WEAPON_EXPLOSION`, gameplay clouds `AREA_EFFECT`):
+  blasts (`add`), bullet and dud hits and the General's impacts (`Role::Impact`) and muzzle flashes
+  (`Role::Flash`) are `CRITICAL` — in first person they are the feedback; casings and bounce dust
+  `WEAPON_EXPLOSION`; the smoke screen `AREA_EFFECT`. Trade-off for the integrator: at the cap a
+  `CRITICAL` blast inside a smoke screen evicts the screen's oldest particles (it never evicts
+  another blast). **Gotcha: this machine's `Options.ini` is `StaticGameLOD = Low`, whose
+  `MaxParticleCount` is 500** (High: 3000); a grenade is ~110 particles after the fix. **Gotcha:**
+  an effect converted under one name keeps the role it was first converted with.
+* **Not converted (Zero Hour cannot):** flipbook animation (the particle INI has no texture frames;
+  the W3D point group can, so an engine patch could add it — the first cell is drawn), models other
+  than shell casings, decals, particle clouds (one sprite), spawn angles, death/impact/emitted
+  effects (read, not played), distance fades. Effects are presentation only: no table field, sim
+  input or `Role::Sim` value changed (`ExplosionFx`/`DudFx` keep their names; only the presentation
+  `ViewFlashFx`/`SilencedViewFlashFx` take `_Framed`).
+* **Measured** (the sweep's mass, width² × opacity over 6 s, Zero Hour ÷ BO2): within 0.5–2× for
+  112 → 305 of 371 effects; near zero 81 → 6 (projectile trails made of emission elements, damage
+  states); the grenade/rocket cells 0.71 → 1.02 with the flash present, the Betty 8.9 → 1.4, the
+  muzzle flash 0 → 0.9. Contact sheets (BO2 / before / after): `~/.opencode/plan/explosion-fx/sheets/`.
+* **Gate:** `fx_preview::install_tests::every_bo2_effect_converts_to_its_size` (ignored, reads the
+  install): every runner starts what it names, no image missing, ≥ 3/4 of effects within 0.5–2×,
+  each sheet effect 0.4–4×. Unit tests in `fx::effect_tests` pin each rule.
+* **Shared with the smoke-screen item:** the cloud goes through the same `particle_system`, so it
+  gets the looping-count, life, key-frame and velocity-graph fixes too; `bind_materials` makes its
+  by-name re-read unnecessary (kept). The empty first-person flash FXLists it found
+  (`fx_muz_ar/smg/mg/snpr/sg_*_flash_1p`, `fx_muz_silencer_md`) were this item's runner and stub
+  causes and now draw; `impacts/fx_dud_m203` is one model element (the dud round, 10 s) and Zero
+  Hour's FXList draws no models, so it stays empty — as BO2's dud would show only the round.
+||||||| 3cd2a0a
+* **Verified in game** (`scripts/autotest-mac.sh`, this branch's dist, merge included): 16/16 —
+  lethal, tactical, the grenade going off, the grenade launcher and the impact FX among them; no
+  particle-system or FXList INI error in the log. `impact fx: 19 played, 2 missing` in the first
+  second's batch only (cells with no FX). The look of a blast close up is a playtest item.

@@ -168,8 +168,10 @@ The two scripts take `-Dist` to test a given build.
   the command bar's Lethal, Tactical and Melee buttons each have their own targeted flow. The
   primary/secondary swap is a direct toggle.
 * Explosions use BO2's own effects (its impact table's grenade and rocket explosions, flashbang,
-  equipment blasts), converted into Zero Hour particle systems; BO2's flipbook animation, models and
-  decals in them are not converted.
+  equipment blasts), converted into Zero Hour particle systems with the effects they start, their
+  spawn offsets, velocity graphs and omni lights; Zero Hour particles are square and do not
+  animate, so a flipbook shows its first frame, a stretched sprite keeps its area as a square, and
+  BO2's models (except shell casings), decals and particle clouds are not converted.
 * BO2's HUD font also lives in the fastfiles, so text uses Bahnschrift (Windows' DIN-style font),
   falling back to Arial. macOS asks for DIN Alternate, which has not been checked yet.
 * First person sounds like BO2: gunshots, reload foley, hit markers, footsteps and the low-health

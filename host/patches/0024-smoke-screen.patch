@@ -1,0 +1,145 @@
+diff --git a/Core/GameEngine/Source/GameLogic/AI/AIPathfind.cpp b/Core/GameEngine/Source/GameLogic/AI/AIPathfind.cpp
+index 0b6ce7e26..ca13eb6cc 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/AIPathfind.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/AIPathfind.cpp
+@@ -26,6 +26,7 @@
+ // AI pathfinding system
+ // Author: Michael S. Booth, October 2001
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "GameLogic/AIPathfind.h"
+ 
+@@ -6135,6 +6136,11 @@ struct ExamineCellsStruct
+ 			if (to->getPinched()) {
+ 				return 1; // abort.
+ 			}
++			// ZHBO: the straight run at the goal (at half a step's cost) stops at a smoke screen's
++			// edge; the neighbour search, which pays the screen's cost, carries on from there.
++			if (Zhbo_SmokePathCost(to_x, to_y)) {
++				return 1; // abort.
++			}
+ 			if (d->isHuman) {
+ 				// check if new cell is in logical map.	(computer can move off logical map)
+ 				if (to_x < d->thePathfinder->m_logicalExtent.lo.x) return 1; // abort
+@@ -6414,6 +6420,9 @@ Int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
+ 				newCostSoFar += 100*COST_ORTHOGONAL;
+ 			}
+ 
++			// ZHBO: a smoke screen stands over the cell: go round it while it stands.
++			newCostSoFar += Zhbo_SmokePathCost(newCellCoord.x, newCellCoord.y);
++
+ 			if (m_isTunneling) {
+ 				if (!validMovementPosition( isCrusher, locomotorSet.getValidSurfaces(), newCell, parentCell )) {
+ 					newCostSoFar += 10*COST_ORTHOGONAL;
+@@ -7353,6 +7362,8 @@ Path *Pathfinder::findGroundPath( const Coord3D *from,
+ 			}
+ 			newCell->setBlockedByAlly(false);
+ #endif
++			// ZHBO: a smoke screen stands over the cell: go round it while it stands.
++			newCostSoFar += Zhbo_SmokePathCost(newCellCoord.x, newCellCoord.y);
+ 			Int costRemaining = 0;
+ 			costRemaining = newCell->costToGoal( goalCell );
+ 
+@@ -9667,6 +9678,7 @@ struct LinePassableStruct
+ 	Bool centerInCell;
+ 	Bool blocked;
+ 	Bool allowPinched;
++	Bool startsInSmoke; // ZHBO
+ };
+ 
+ /*static*/ Int Pathfinder::linePassableCallback(Pathfinder* pathfinder, PathfindCell* from, PathfindCell* to, Int to_x, Int to_y, void* userData)
+@@ -9696,6 +9708,12 @@ struct LinePassableStruct
+ 		return 1; // bail out.
+ 	}
+ 
++	// ZHBO: a straight line from outside a smoke screen does not cut into it (a path's smoothing and
++	// the walk along it would undo the way round it); one that starts inside it may go anywhere.
++	if (!d->startsInSmoke && Zhbo_SmokePathCost(to_x, to_y)) {
++		return 1; // bail out.
++	}
++
+ 	if (from && to->getLayer() != LAYER_GROUND && from->getLayer() == to->getLayer()) {
+ 		if (to->getType() == PathfindCell::CELL_CLEAR) {
+ 			return 0;
+@@ -9716,12 +9734,17 @@ struct GroundPathPassableStruct
+ {
+ 	Int		diameter;
+ 	Bool	crusher;
++	Bool	startsInSmoke; // ZHBO
+ };
+ 
+ /*static*/ Int Pathfinder::groundPathPassableCallback(Pathfinder* pathfinder, PathfindCell* from, PathfindCell* to, Int to_x, Int to_y, void* userData)
+ {
+ 	const GroundPathPassableStruct* d = (const GroundPathPassableStruct*)userData;
+ 
++	// ZHBO: as linePassableCallback, a straight line from outside a smoke screen does not cut into it.
++	if (!d->startsInSmoke && Zhbo_SmokePathCost(to_x, to_y)) {
++		return 1;
++	}
+ 	Int curDiameter = pathfinder->clearCellForDiameter(d->crusher, to_x, to_y, to->getLayer(), d->diameter);
+ 	if (curDiameter==d->diameter) return 0;	//  good to go.
+ 	if (from && to->getLayer() != LAYER_GROUND && from->getLayer() == to->getLayer()) {
+@@ -9750,6 +9773,7 @@ Bool Pathfinder::isLinePassable( const Object *obj, LocomotorSurfaceTypeMask acc
+ 	getRadiusAndCenter(obj, info.radius, info.centerInCell);
+ 	info.blocked = blocked;
+ 	info.allowPinched = allowPinched;
++	info.startsInSmoke = Zhbo_SmokePathCost(REAL_TO_INT_FLOOR(startWorld.x / PATHFIND_CELL_SIZE_F), REAL_TO_INT_FLOOR(startWorld.y / PATHFIND_CELL_SIZE_F)) != 0; // ZHBO
+ 
+ 	Int ret = iterateCellsAlongLine(startWorld, endWorld, layer, linePassableCallback, (void*)&info);
+ 	return ret == 0;
+@@ -9768,6 +9792,7 @@ Bool Pathfinder::isGroundPathPassable( Bool isCrusher, const Coord3D& startWorld
+ 
+ 	info.diameter = pathDiameter;
+ 	info.crusher = isCrusher;
++	info.startsInSmoke = Zhbo_SmokePathCost(REAL_TO_INT_FLOOR(startWorld.x / PATHFIND_CELL_SIZE_F), REAL_TO_INT_FLOOR(startWorld.y / PATHFIND_CELL_SIZE_F)) != 0; // ZHBO
+ 
+ 	Int ret = iterateCellsAlongLine(startWorld, endWorld, startLayer, groundPathPassableCallback, (void*)&info);
+ 	return ret == 0;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp
+index f30f4f554..ef303a413 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp
+@@ -26,6 +26,7 @@
+ // Implementation of AI behavior states
+ // Author: Michael S. Booth, January 2002
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ 
+ #include "Common/ActionManager.h"
+@@ -1816,6 +1817,10 @@ StateReturnType AIInternalMoveToState::update()
+ 	if (thePath==nullptr) {
+ 		forceRecompute = true;
+ 	}
++	// ZHBO: a smoke screen went off across the path since it was computed: go round it.
++	else if (Zhbo_SmokeCrossesPath(thePath, m_pathTimestamp)) {
++		forceRecompute = true;
++	}
+ 	Bool blocked=false;
+ 	if (ai->isBlockedAndStuck() || ai->getNumFramesBlocked()>2*LOGICFRAMES_PER_SECOND) {
+ 		forceRecompute = true;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/WeaponSet.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/WeaponSet.cpp
+index e67626c90..2ea4bf234 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/WeaponSet.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/WeaponSet.cpp
+@@ -30,6 +30,7 @@
+ 
+ // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #define DEFINE_WEAPONSLOTTYPE_NAMES
+ #define DEFINE_COMMANDSOURCEMASK_NAMES
+@@ -510,6 +511,11 @@ CanAttackResult WeaponSet::getAbleToAttackSpecificObject( AbleToAttackType attac
+ 			victim == source)
+ 		return ATTACKRESULT_NOT_POSSIBLE;
+ 
++	// ZHBO: a smoke screen between them hides the victim (BO2's visibility blockers): no target to
++	// acquire or to keep attacking, forced or not, while it stands.
++	if (Zhbo_SmokeHides(source, victim))
++		return ATTACKRESULT_NOT_POSSIBLE;
++
+ 	Bool sameOwnerForceAttack = ((source->getControllingPlayer() == victim->getControllingPlayer()) && isForcedAttack(attackType));
+ 
+ // ----- examine VICTIM to determine legality of attack

@@ -36,6 +36,10 @@
 #   scripts/autotest-mac.sh --mp       two instances in one LAN game, each player's autopilot fighting
 #                                      the other's General; the logs' per-frame state hashes must agree
 #                                      (runs scripts/mptest-mac.sh; see there)
+#   scripts/autotest-mac.sh --smoke    the smoke screen against Zero Hour's units: the General throws a
+#                                      smoke grenade; a Ranger and a rebel stand either side of it in
+#                                      range and must not fight through it, and must once it clears;
+#                                      a neutral Ranger ordered straight across it must walk round it
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -63,6 +67,7 @@ mode=autopilot
 [[ "${1:-}" == "--build" ]] && mode=build
 [[ "${1:-}" == "--classpick" ]] && mode=classpick
 [[ "${1:-}" == "--scope" ]] && mode=scope
+[[ "${1:-}" == "--smoke" ]] && mode=smoke
 [[ "${1:-}" == "--w3d-ads" ]] && mode=w3d-ads
 [[ "${1:-}" == "--replay" ]] && mode=replay
 
@@ -518,6 +523,57 @@ EOF
     check "impacts: flesh" "player [0-9]+ impacts:.*flesh [1-9]"
     check "impacts: terrain" "player [0-9]+ impacts:.*(concrete|dirt|grass|asphalt|rock|sand|snow|wood) [1-9]"
     check "impact fx played" "impact fx: [1-9][0-9]* played, 0 missing"
+    echo "screenshots and log: $out"
+    exit $ok
+fi
+
+if [[ "$mode" == "smoke" ]]; then
+    # The class the script picks carries the smoke grenade (Willy Pete) as its tactical; the bridge's
+    # smoke scene (ZhboAutopilot.cpp) places the units once the screen has grown and logs what they do.
+    profile="$userdata/ConquerOps.profile"
+    rm -f "$profile"
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+Smoke Test
+primary=an94_mp;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=willy_pete_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
+    export ZHBO_AUTOPILOT=smoke GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-45} GGC_BGFX_SCREENSHOT_INTERVAL=${GGC_BGFX_SCREENSHOT_INTERVAL:-60}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    l="$out/ConquerOps.log"
+    check() { # name, pattern
+        if grep -qE "$2" "$l"; then printf '%-34s PASS\n' "$1"; else printf '%-34s FAIL\n' "$1"; ok=1; fi
+    }
+    check "smoke grenade went off" "autopilot: smoke went off at"
+    check "  ...its screen stood" "smoke: screen at .* blocks sight"
+    check "scene placed across it" "autopilot: smoke scene: Ranger [0-9]+ and rebel [0-9]+"
+    check "units can't see through it" "smoke: .* can't see .* through it"
+    if grep -q "attacks .* through the screen" "$l"; then
+        printf '%-34s FAIL\n' "  ...nobody fired through it"; ok=1
+    else
+        printf '%-34s PASS\n' "  ...nobody fired through it"
+    fi
+    # The positive control: once the screen is gone (12 s) they see each other and fight.
+    if awk '/autopilot: smoke cleared: .* attacks/ { for (i = 1; i <= NF; ++i) if ($i == "s" && $(i - 1) ~ /^\(/) t = substr($(i - 1), 2); found = 1 } END { exit !(found && t + 0 >= 11.9) }' "$l"; then
+        printf '%-34s PASS\n' "  ...and fought once it cleared"
+    else
+        printf '%-34s FAIL\n' "  ...and fought once it cleared"; ok=1
+    fi
+    # The move straight across it went round: never inside three quarters of the blocker's radius.
+    if awk '/the Ranger ordered across arrived; he passed/ { gsub(/[()]/, " "); for (i = 1; i <= NF; ++i) { if ($i == "passed") d = $(i + 1); if ($i == "radius") r = $(i + 1) } found = 1 } END { exit !(found && r > 0 && d >= 0.75 * r) }' "$l"; then
+        printf '%-34s PASS\n' "move order went round it"
+    else
+        printf '%-34s FAIL\n' "move order went round it"; ok=1
+    fi
+    grep -E "smoke" "$l" | head -40
     echo "screenshots and log: $out"
     exit $ok
 fi
