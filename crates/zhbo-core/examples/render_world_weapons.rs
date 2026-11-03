@@ -274,7 +274,7 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
     let mut tiles = Vec::new();
     for (k, (name, clip)) in poses.iter().enumerate() {
         let general = 900 + k as u32;
-        let t = clip.and_then(|(a, c)| torso::get().clip(c).map(|x| if *a == torso::DEATH { x.length + 1.0 } else { x.length * 0.45 })).unwrap_or(0.0);
+        let t = clip.and_then(|(a, c)| torso::get().clip(c).map(|x| if a == torso::DEATH { x.length + 1.0 } else { x.length * 0.45 })).unwrap_or(0.0);
         // His class's frag is the lethal the pin and the throw hold (`tag_inhand`).
         ffi::publish_offhands(&[(general, [frag.map_or(-1, |f| f.viewmodel), -1])]);
         ffi::publish_torso(clip.map(|(action, clip)| ffi::TorsoAction { general, action, clip, t, lethal: true }).into_iter());
