@@ -160,17 +160,9 @@ impl Remote {
             }
             EventKind::Thrown { lethal } => self.start(seat, offhand(lethal), torso::THROW, ctx),
             // Hurt: the flinch, unless a longer action is on.
-            EventKind::Damaged { .. } => {
-                if !self.busy(seat) {
-                    self.start(seat, held, torso::FLINCH, ctx);
-                }
-            }
+            EventKind::Damaged { .. } if !self.busy(seat) => self.start(seat, held, torso::FLINCH, ctx),
             // A shot's recoil, unless a longer action is on (BO2 fires from none of them).
-            EventKind::Shot { left: false, .. } | EventKind::Launched => {
-                if !self.busy(seat) {
-                    self.start(seat, held, torso::FIRE, ctx);
-                }
-            }
+            EventKind::Shot { left: false, .. } | EventKind::Launched if !self.busy(seat) => self.start(seat, held, torso::FIRE, ctx),
             _ => {}
         }
     }
