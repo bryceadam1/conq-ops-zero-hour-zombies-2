@@ -11687,3 +11687,23 @@ read by id from every bank. `the_localized_zones_are_the_installs_own_language` 
 French, two languages, a stale `localization.txt`, other case and none; the real-install
 `install_variants_convert_the_same_sim_content` lays the English zones out as French ones and gets
 every name back, the content fingerprint unmoved.
+
+## Bug sweep 4: health comes back as BO2's regen gives it (2026-11-03, branch `v1/bug-sweep-4`)
+
+**Found reading the sim against `_healthoverlay.gsc`.** The mod regenerated a General linearly from
+empty to full over `RegenFullTime` (3 s, "the mod's value") after a 5 s wait. BO2's
+`playerhealthregen` (`maps/mp/gametypes/_healthoverlay.gsc:78-200`) does something else: after
+`playerhealth_regularregendelay` (the gametype setting `playerHealthRegenTime`, 5 in
+`mp/gamesettings_default.cfg:60`) a player over `level.healthoverlaycutoff` (0.55) is set whole at
+once (`newhealth = 1`); one who fell to 55% or under since he was last whole (`veryhurt`, cleared
+only at full health) gets `regenrate` (0.1 of full) back every 0.05 s step from `veryhurttime`
+(3 s) after the hit, so from 10% to whole in 0.45 s. A General at 80% waited 5 s and then took
+another 0.6 s to fill; at 10%, 2.7 s.
+
+**Fix.** `track_health` follows the script: `PlayerSim::very_hurt` (hashed with the record), the
+wait `max(RegenDelay, veryhurttime)` when very hurt, then whole at once or `regenrate / RegenStep`
+of full per second. The tuning pack's `RegenFullTime` is gone; `healthoverlaycutoff`, `regenrate`,
+`RegenStep` and `veryhurttime` carry the script's constants with their lines. Overhead nothing
+changes (Zero Hour units do not regenerate). Test: `health_comes_back_as_bo2s_regen_gives_it`
+(light hurt whole at once; very hurt at 10% a step; a hit on the way up restarts the wait and keeps
+him very hurt).

@@ -148,6 +148,7 @@ impl Sim {
             health,
             max_health,
             regen_wait: 0.0,
+            very_hurt: false,
             hack: None,
             rts: RtsState::default(),
             hammer: None,

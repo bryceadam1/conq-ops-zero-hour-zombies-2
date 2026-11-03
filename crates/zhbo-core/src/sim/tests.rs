@@ -1763,6 +1763,61 @@ fn health_regenerates_after_delay_and_death_releases() {
     assert!(events(&sim).contains(&EventKind::GeneralDied { general: 1 }));
 }
 
+/// BO2's regeneration (`_healthoverlay.gsc` `playerhealthregen`): `playerHealthRegenTime` after
+/// the last hit a lightly hurt General (over `healthoverlaycutoff`, 55%) is whole again at once;
+/// a very hurt one (at or under it since he was last whole) gets `regenrate` (10%) back every
+/// 0.05 s step: from 10% to whole in under half a second. A hit during the regen starts the wait
+/// again, and he stays very hurt until whole.
+#[test]
+fn health_comes_back_as_bo2s_regen_gives_it() {
+    let t = crate::tuning::Tuning::default();
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    spawn(&mut sim, &host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    let max = host.get(1).max_health;
+    let wait = frames(t.regen_delay);
+    // Lightly hurt: nothing during the wait, then whole on the next step.
+    host.objects.borrow_mut()[0].health = max * 0.8;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), wait - 1);
+    assert_eq!(host.get(1).health, max * 0.8, "no regen during the wait");
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 2);
+    assert_eq!(host.get(1).health, max, "whole at once");
+    assert!(!sim.player(0).unwrap().very_hurt);
+    // Very hurt: a share at a time, whole in (1 - 0.1) / 0.1 steps of 0.05 s.
+    host.objects.borrow_mut()[0].health = max * 0.1;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), wait);
+    assert!(sim.player(0).unwrap().very_hurt);
+    let start = host.get(1).health;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 3);
+    let per_frame = max * t.regen_rate / t.regen_step * crate::units::LOGIC_DT;
+    assert!(((host.get(1).health - start) - 3.0 * per_frame).abs() < 1e-3, "{} per frame", (host.get(1).health - start) / 3.0);
+    // Hit again on the way up: still very hurt (over the cutoff now), the wait starts over.
+    let mid = (max * 0.7).max(host.get(1).health);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(0.2));
+    host.objects.borrow_mut()[0].health = mid - 1.0;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), wait - 1);
+    assert_eq!(host.get(1).health, mid - 1.0, "the hit restarted the wait");
+    assert!(sim.player(0).unwrap().very_hurt, "very hurt until whole");
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(t.regen_step * (1.0 / t.regen_rate)) + 2);
+    assert_eq!(host.get(1).health, max);
+    assert!(!sim.player(0).unwrap().very_hurt);
+}
+
+#[test]
+fn a_dead_general_is_released() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    spawn(&mut sim, &host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    host.objects.borrow_mut()[0].flags |= objflags::DEAD;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert!(sim.player(0).is_none());
+    assert!(events(&sim).contains(&EventKind::GeneralDied { general: 1 }));
+}
+
 #[test]
 fn damage_flinches_the_view_and_toughness_cuts_it() {
     // G7: flinch = BO2 damage x bg_viewKickScale (0.175), x0.25 with Toughness.

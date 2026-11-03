@@ -71,12 +71,9 @@ pub const FIELD_COMPUTER_RAISE: f32 = crate::viewmodel::TABLET_PULLOUT_TIME + 0.
 /// weapon comes up.
 pub const TAKE_CONTROL_READY: f32 = crate::client::ENTER_TIME + crate::viewmodel::TABLET_PUTAWAY_TIME;
 /// BO2 health regeneration: wait this long after the last hit, then regenerate. The values come
-/// from the tuning pack (`data/ConquerOps/tuning.ini`); these aliases are for the sim tests.
+/// from the tuning pack (`data/ConquerOps/tuning.ini`); this alias is for the sim tests.
 pub fn regen_delay() -> f32 {
     crate::tuning::get().regen_delay
-}
-pub fn regen_full_time() -> f32 {
-    crate::tuning::get().regen_full_time
 }
 /// Hard cap on queued client events so a headless or paused client cannot grow it forever.
 const MAX_EVENTS: usize = 512;
@@ -293,6 +290,9 @@ pub struct PlayerSim {
     pub health: f32,
     pub max_health: f32,
     pub regen_wait: f32,
+    /// BO2's `veryhurt`: his health fell to `healthoverlaycutoff` or under since he was last whole,
+    /// so it comes back a share at a time instead of at once (`_healthoverlay.gsc`).
+    pub very_hurt: bool,
     /// Black Hat: what it is aimed at (an object id) and how far along the hack is (seconds).
     pub hack: Option<(u32, f32)>,
     /// Under RTS control: the weapon lock, what the third slot does and the gun to go back to
@@ -322,7 +322,7 @@ pub struct PlayerSim {
 
 crate::statehash::state_hash!(struct PlayerSim {
     general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
-    view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, hack,
+    view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, very_hurt, hack,
     rts, hammer, site, building, optics, tracer_count, charge, shock, combat, spawned,
 });
 
@@ -446,6 +446,7 @@ impl PlayerSim {
             health: 500.0,
             max_health: 500.0,
             regen_wait: 0.0,
+            very_hurt: false,
             hack: None,
             rts: RtsState::default(),
             hammer: None,
@@ -1088,10 +1089,21 @@ impl Sim {
         self.equipment.sensed(idx, pos)
     }
 
+    /// The health he has and BO2's regeneration (`_healthoverlay.gsc` `playerhealthregen`): a hit
+    /// restarts the wait (`playerHealthRegenTime`); once it is over he is whole again at once,
+    /// unless his health fell to `healthoverlaycutoff` or under since he was last whole (very
+    /// hurt), when it comes back `regenrate` of full every `RegenStep` from `veryhurttime` after the
+    /// hit on.
     fn track_health(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, info: &ObjInfo) {
+        let t = crate::tuning::get();
         p.max_health = info.max_health;
+        if info.max_health > 0.0 && info.health >= info.max_health - 1e-3 {
+            p.very_hurt = false;
+        } else if info.max_health > 0.0 && info.health <= info.max_health * t.health_overlay_cutoff {
+            p.very_hurt = true;
+        }
         if info.health < p.health - 1e-3 {
-            p.regen_wait = regen_delay();
+            p.regen_wait = if p.very_hurt { t.regen_delay.max(t.very_hurt_time) } else { t.regen_delay };
             let amount = p.health - info.health;
             self.emit(idx, EventKind::Damaged { amount });
             let toughness = p.arsenal.class_specialties().has(Specialty::BulletFlinch);
@@ -1100,7 +1112,8 @@ impl Sim {
         } else {
             p.regen_wait = (p.regen_wait - LOGIC_DT).max(0.0);
             if p.regen_wait <= 0.0 && info.health < info.max_health {
-                let amount = (info.max_health / regen_full_time() * LOGIC_DT).min(info.max_health - info.health);
+                let per_second = if p.very_hurt { info.max_health * t.regen_rate / t.regen_step.max(1e-3) } else { f32::INFINITY };
+                let amount = (per_second * LOGIC_DT).min(info.max_health - info.health);
                 host.heal(p.general, amount);
                 p.health = info.health + amount;
                 return;
