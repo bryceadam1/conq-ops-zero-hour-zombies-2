@@ -11843,3 +11843,22 @@ content CRC D6FEF2AC on both.
   * cost: `render_world_weapons --torso` benchmarks the body pass: 16 Generals 0.22 ms of core and
     0.68 ms per frame with the GPU (headless, Apple M1 Pro).
   `1`/`weapon` and `0` stay as opt-outs.
+
+**Gotcha: the long run's leaver steps past the game.** The first long run of this follow-up failed
+one check: 7,750 common frames, only frame 7749 differing, and only seat 2's part (the host's;
+the world equal). The joiner had quit at 7743 and turned spectator at 7748; his machine stepped one
+more frame without the host's commands. `mptest-mac.sh` now compares the leaver's hashes only up
+to the frame he turned spectator after leaving (on that run: 7,748 frames, all equal).
+
+**Verified (this follow-up).** `cargo test --workspace` green; clippy clean (workspace, the renderer
+example); real-install suite 72/72; conformance byte-identical to integration8. In game, with the
+native body as the default: autotest default 16/16, `--rts` 16/16, `--classpick` 12/12 (the death
+voice `ZHBO_BO2_PainDeath_U2` played), `mptest-mac.sh` short 25/25 (state hash on 2,727 frames),
+long (`ZHBO_MPTEST_ROUNDS=5`) 34/34 (8,365 frames equal, 76 CRC frames alike, 5 shellshocks on both
+machines, the host on alone to frame 13,814). The logs played another player's knife
+(`ZHBO_BO2_SndNpc_wpn_melee_whoosh_npc`), reloads (`ZHBO_NTN_fly_smg_npc_reload_*`,
+`fly_assault_reload_npc_*`), pins, raises and putaways, pain and death voices, and battle chatter
+(`ZHBO_BO2_Bc_G2_reloading_gen`, `_attack_grenade`, `_attack_concussion`) on both machines.
+Images: `~/.opencode/plan/remote-presentation/render/` (`torso_*.png`: idle, reload, knife, shot,
+raise, throw with the gun hidden; `overhead_native_body.png`). No assist in the runs (a 1v1 has no
+teammate); the rule is the unit tests'.
