@@ -12581,3 +12581,113 @@ frame's turn (0.106 rad). The spectator log now also prints the yaw the view int
 compares a drawn value with the sim's must allow one logic frame's change now that rendering
 outpaces the logic. Also: `cargo xtask build` re-stages dist and drops `ConquerOps_BO2.big` from a
 dist it did not put there; copy (`cp -c`) the archive back or the launcher reconverts.
+
+## BO2's effects play their flipbooks, repeat their runners and keep their distances (2026-11-03, branch `v1/fx-flipbook`)
+
+Round 3 (explosion-fx) left a list of things Zero Hour "can't" do with a converted BO2 effect.
+Host patch `0025-particle-flipbook.patch` and the converter close most of them; the headless
+sweep (`zhbo-assets fx-sheet <dir> --all`) went from **305 of 371** effects within 0.5–2× of BO2's
+mass to **351 of 367** (four effects show nothing at the sheets' 40 ft in BO2 either, now that the
+distance ranges are played).
+
+* **Flipbooks (host patch 0025).** W3D's point group always could draw a cell of a frame grid
+  (`PointGroupClass` frame array, `FrameRowColumnCountLog2`, the frame UV tables) and the particle
+  renderer passed `Set_Point_Frame(0)` with a `@todo Support animated texture particles`. The patch
+  adds `ParticleSystemInfo` fields `FrameGrid`, `FrameCount`, `FrameStartType`/`FrameStart`,
+  `FrameRate`, `FrameOverLife`, `FrameLoops`; `Particle::getFrame` picks the cell from the updates
+  the particle has had (so cells advance at the logic rate, like its key frames) and a random start
+  from a hash of its personality (no random stream is drawn); `W3DParticleSystemManager` fills a
+  frame buffer per point and sets the batch's grid (a batch never mixes grids; the volume-particle
+  path sets it too, since the grid persists on the shared point group). The UVs are written on the
+  CPU before the vertices reach the backend, so the wgpu renderer and the DX8 reference need
+  nothing new (RENDERER.md). The fields are not xfered: `ParticleSystemManager::xfer` rebuilds each
+  system from its template and only then reads the saved state over it, so a loaded system keeps
+  its template's flipbook and saves stay compatible. The converter lays BO2's atlas
+  (`colIndexBits`/`rowIndexBits`, `entryCount`) out again on the smallest square power-of-two grid
+  (`fx::flipbook_grid`; cells shrunk to 1024 / side, `zhbo_fx_<image>_f<frames>.tga`; the archive
+  grew 1.392 → 1.421 GB) and writes BO2's `FxElemAtlas` rules: `behavior & 3` the start (fixed
+  `index`, random, spawn order), bit 2 every cell once over the life, else `fps`, bit 3 held after
+  `loopCount` passes. The rules are IW's EffectsEd atlas semantics read against the data (the
+  damage smoke is behaviour 5, random start over its life; the smoke screen's 32-cell cloud plays at
+  13–17 fps); the t6mp code only packs the atlas bytes into the vertex stream for the shader
+  (`FUN_005b4bb0` reads the elem def's `+0xae` `fps` beside the elem's own start byte), so the
+  exact shader arithmetic was not decompiled. A fixed start other than 0 now draws its own cell
+  (before: always the first).
+* **Root cause of the "draws almost nothing" set: a runner started its effect once.** A runner is an
+  element like any other (`FxElemDef::spawn`): looping, it starts its effect every `intervalMsec`
+  (`count` times, or until freed); one-shot, `count` times. The converter followed the runner's
+  delay and origin only, so the sentry/guardian/talon damage and death states (a smoke puff every
+  100 ms, forever) drew one puff (0.02× → 1.09×), the drone wash 0.01× → 0.87×, the plane damage
+  trail 0.01× → 1.05×, the disabled-equipment sparks 0.09× → 1.01×, the prox grenade's impact
+  (6 bolt bursts) 0.19× → 1.47×, the shotgun/Judge flashes (count-2 runners) 0.37× → 1.14×.
+  `Spawn::run` carries the runner's repeat (interval, span) and how many starts each spawn stands
+  for (nested runners keep the inner interval and the total); a one-shot element under it bursts
+  every interval for the span, a looping one runs at the finer interval with the total over the
+  span. `fx::effect_tests::a_looping_runner_starts_its_effect_every_interval`.
+* **The size is fitted to BO2's whole graph** (`fx::fit_size`): Zero Hour has one rate and one
+  damping; the old fit took the graph's first slope and damped it onto the last sample, and a puff
+  that swells then shrinks while it fades (every trail, the grenade trail 0.36×) was shrunk from
+  the start, while a short bump grew past BO2's. Now the damping is searched and the rate solved by
+  least squares against the graph at the middle of each frame Zero Hour shows, weighted by the
+  graph's opacity there. This one rule moved 19 effects into the band (flashbang 2.1× → 1.1×,
+  `fx_exp_equipment` 2.9× → 1.4×, the RPG trail, the hatchet and ballistic-knife trails 0 → 0.6×).
+* **Sub-frame particles.** Zero Hour shows a particle at least one logic frame; BO2's 18 ms gas
+  flash lives half of one. A one-shot particle shorter than the frames it is shown is drawn at
+  BO2's life ÷ the shown time of its opacity (`presence`: the gas flashes 4.6× → 1.9×); a loop
+  spawning several a frame instead keeps the ones BO2 has alive at once (the theatre camera's 3 ms
+  glints every 1 ms: 33 a frame → 3; 8.7× → 1.0×).
+* **Distance ranges (host patch 0025):** BO2 elements carry `spawnRange` and two fades, and many
+  effects are LOD tiers (the extreme metal hit's elements spawn 0–1000, 1000–1500, 1500–2500, …
+  inches away; the RPG trail's 1500–3500 and 3500–10000). Zero Hour drew every tier at once. The
+  patch adds `SpawnRange`, `FarFade`, `NearFade` (world units): no burst outside the spawn range,
+  and the render fades by the particle's distance from the scene camera (additive darkens). The
+  ends are read from the data: the gun flashes' light spawns 0–3000 inches with `fadeInRange`
+  2500–3000, so that range is the far fade (the light is lit up close); the close smoke's
+  `fadeOutRange` 0–15 is the near one. Both players in the sweep measure from the sheets' eye.
+* **BO2 reference player fix (the sweep's own bug, not the expected side of conformance):**
+  `fx_preview::play_bo2_at` cut a looping element at 2,000 spawns, so a trail looping every 1 ms
+  stopped at 2 s and every exhaust/trail read 2–4× "too big". It now spawns up to the moment asked
+  for.
+* **Other gaps closed:** the omni light's `LightPulse` wrote its life in frames where Zero Hour
+  reads milliseconds (`INI::parseDurationUnsignedInt`), so a 100 ms flash light lasted 3 ms: it is
+  BO2's life in ms now. A blast's decal is Zero Hour's own `TerrainScorch` (`RANDOM`, BO2's radius:
+  the grenade's 52.5 in, the rocket's 62.5, the flashbang's 27); a hit's is not (Zero Hour marks
+  only terrain). A projectile's `projTrailEffect` (new `Weapon::trail_effect`) is converted framed
+  as `Role::Trail` (`WEAPON_TRAIL`, Zero Hour's own trail priority; `Role::rank` follows the real
+  `ParticlePriorityType` order now) and attached to the projectile object
+  (`ParticleSysBone = None <system>`: W3D finds no bone and uses the origin). BO2's trail
+  (ribbon) elements are left out on a projectile: the first in-game run had them as
+  `Type = STREAK`, and a streak through the SMAW's trail crossed the shooter's eye as screen-wide
+  hard-edged polygons (`ingame/smaw-streak-build1.png`); the second drew them as sprites, and the
+  RPG trail's ribbon art (`fxt_smk_trail`, 512 × 64, a new sprite every msec) tiled the view with
+  streaks. The puffs, flares and fire of the trail are drawn; so the hatchet's and the ballistic
+  knife's trails, which are only ribbons, stay empty. `effectOnDeath` starts its
+  effect where and when each particle dies (`fx::death_travel`: the velocity graph's mean delta and
+  the fall, stopped at the ground in an upright list), as a runner, on both sides of the sweep.
+* **Still not converted (and why):** emission elements of `effectEmitted` children (10 elements in
+  6 effects, none the mod plays except the knife's flesh hit; Zero Hour's `PerParticleAttachedSystem`
+  is the match and is the next step), `effectOnImpact` (needs collision; 28 elements, mostly shell
+  bounces and exit blood), model elements other than casings (98, e.g. the burnt flash and smoke
+  canisters: Zero Hour's `Type = DRAWABLE` particles are the route, with a converted object per
+  model), and spawn angles (199 oriented sprites, none in the blasts, impacts or flashes the mod
+  plays; a ground-aligned sprite is `IsGroundAligned`). Bullet holes stay unmapped (above).
+* **Measured** (`~/.opencode/plan/fx-flipbook/`): before = main's sweep (`sheets-before/`),
+  after = `sheets-after/` (its `metrics.csv`); contact sheets BO2 / Zero Hour in `sheets-after/`, `sheets-before/`. The gate
+  `fx_preview::install_tests::every_bo2_effect_converts_to_its_size` is tightened from 75 % to 95 %
+  of the measured effects.
+* **Presentation only.** No sim input, table field the sim reads, or `Role::Sim` value changed; the
+  particle fields are client-side and not xfered. The projectile objects' INI gains Draw-module
+  lines only.
+* **Verified in game** (`scripts/autotest-mac.sh`, this branch's engine with 0025 and its own
+  converted archive): default 16/16, `--smoke` 7/7, `--splash` 4/4, no INI or particle error in
+  the logs; `--equipment` C4 thrown and detonated, with the Trophy/Black Hat checks failing
+  identically on main's build (`cap-before-equipment.log`: a pre-existing failure, not this
+  branch's). Before/after captures (main's dist vs this branch, same scripted runs, every 20th
+  frame) as contact sheets in `~/.opencode/plan/fx-flipbook/ingame/`: `frag.png`,
+  `grenade_launcher.png`, `smaw.png`, `frag_splash.png`, `c4.png`, `flashbang.png` (a copy of the
+  default leg with the flash grenade), `smoke.png`, `muzzle.png`; `smaw-streak-build1.png` is the
+  STREAK regression the ribbon rule fixes. The DX8 reference build was not compiled (no Windows
+  VM here); the patch is shared engine code with no backend-specific path.
+* **Bumps for the integrator:** archive `hud::VERSION` 85 → 86 (CONTRACT "Pending"); no ABI,
+  struct or native blob change. The content CRC's "engine INI" part changes with the converted
+  INIs (the projectile objects gain `ParticleSysBone` lines), as any archive change does.

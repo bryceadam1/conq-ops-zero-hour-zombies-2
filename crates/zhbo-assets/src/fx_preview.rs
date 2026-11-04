@@ -27,6 +27,9 @@ pub struct Sprite {
     pub alpha: f32,
     pub additive: bool,
     pub texture: String,
+    /// The flipbook cell drawn: the grid's side and the cell (row by row from the top left);
+    /// `(1, 0)` is the whole texture.
+    pub cell: (u32, u32),
 }
 
 impl Sprite {
@@ -81,6 +84,88 @@ pub struct ZhSystem {
     pub sphere: f32,
     pub box_half: [f32; 3],
     pub cylinder: (f32, f32),
+    /// Host patch 0028's flipbook: `FrameGrid`, `FrameCount`, `FrameStartType`, `FrameStart`,
+    /// `FrameRate`, `FrameOverLife`, `FrameLoops`.
+    pub frame_grid: u32,
+    pub frame_count: u32,
+    pub frame_start_type: String,
+    pub frame_start: u32,
+    pub frame_rate: f32,
+    pub frame_over_life: bool,
+    pub frame_loops: u32,
+    /// Host patch 0028's distance ranges from the camera (`SpawnRange`, `FarFade`, `NearFade`).
+    pub spawn_range: (f32, f32),
+    pub far_fade: (f32, f32),
+    pub near_fade: (f32, f32),
+}
+
+/// Where the sheets and the sweep look from ([`sheet_camera`] at 40 feet): the distance ranges are
+/// measured from it on both sides.
+pub fn eye() -> [f32; 3] {
+    sheet_camera(zhbo_core::units::inches(SHEET_DISTANCE_INCHES)).eye
+}
+
+/// How far the sheets' camera stands from the effect (inches).
+pub const SHEET_DISTANCE_INCHES: f32 = 480.0;
+
+fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+/// Whether something `d` from the camera is in a spawn range `(min, max)` (max 0: no range).
+pub fn in_spawn_range(range: (f32, f32), d: f32) -> bool {
+    range.1 <= 0.0 || (d >= range.0 && d <= range.1)
+}
+
+/// How much shows `d` from the camera under a far fade (gone past its end) and a near fade (gone
+/// nearer than its start): host patch 0028's `ParticleSystemInfo::getDistanceFade`.
+pub fn distance_fade(far: (f32, f32), near: (f32, f32), d: f32) -> f32 {
+    let mut f = 1.0;
+    if far.1 > far.0 {
+        f *= 1.0 - ((d - far.0) / (far.1 - far.0)).clamp(0.0, 1.0);
+    }
+    if near.1 > near.0 {
+        f *= ((d - near.0) / (near.1 - near.0)).clamp(0.0, 1.0);
+    }
+    f
+}
+
+impl ZhSystem {
+    /// The cell a particle shows (`Particle::getFrame`, host patch 0028): `personality` is its
+    /// spawn index in the system, `age` the updates it has had of its `life`.
+    pub fn frame(&self, personality: u32, age: u32, life: u32) -> u32 {
+        let mut log2 = 0;
+        while log2 < 4 && (2u32 << log2) <= self.frame_grid {
+            log2 += 1;
+        }
+        let count = self.frame_count.min(1 << (2 * log2));
+        if count <= 1 {
+            return 0;
+        }
+        let start = match self.frame_start_type.as_str() {
+            "RANDOM" => (personality.wrapping_add(1).wrapping_mul(2654435761)) >> 8,
+            "INDEXED" => personality,
+            _ => self.frame_start,
+        } % count;
+        let step = if self.frame_over_life {
+            if life > 0 { (age as u64 * count as u64 / life as u64) as u32 } else { 0 }
+        } else if self.frame_rate > 0.0 {
+            (age as f32 * self.frame_rate / 30.0) as u32
+        } else {
+            0
+        };
+        let step = if self.frame_loops > 0 { step.min(self.frame_loops * count - 1) } else { step };
+        (start + step) % count
+    }
+
+    /// The grid's side as W3D draws it (a power of two, at most 16).
+    pub fn grid_side(&self) -> u32 {
+        let mut side = 1;
+        while side < 16 && side * 2 <= self.frame_grid {
+            side *= 2;
+        }
+        side
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -167,6 +252,16 @@ pub fn parse_systems(text: &str) -> BTreeMap<String, ZhSystem> {
             "VolBoxHalfSize" => s.box_half = xyz(v),
             "VolCylinderRadius" => s.cylinder.0 = pair(v).0,
             "VolCylinderLength" => s.cylinder.1 = pair(v).0,
+            "FrameGrid" => s.frame_grid = pair(v).0 as u32,
+            "FrameCount" => s.frame_count = pair(v).0 as u32,
+            "FrameStartType" => s.frame_start_type = v.to_string(),
+            "FrameStart" => s.frame_start = pair(v).0 as u32,
+            "FrameRate" => s.frame_rate = pair(v).0,
+            "FrameOverLife" => s.frame_over_life = v == "Yes",
+            "FrameLoops" => s.frame_loops = pair(v).0 as u32,
+            "SpawnRange" => s.spawn_range = pair(v),
+            "FarFade" => s.far_fade = pair(v),
+            "NearFade" => s.near_fade = pair(v),
             k if k.starts_with("Alpha") => {
                 let n: Vec<f32> = v.split_whitespace().filter_map(|t| t.parse().ok()).collect();
                 if n.len() == 3 {
@@ -264,6 +359,9 @@ struct ZhParticle {
     life: u32,
     age: u32,
     alpha: Vec<(f32, u32)>,
+    /// Its spawn index in the system (Zero Hour's personality) and the life it started with.
+    personality: u32,
+    lifetime: u32,
 }
 
 /// A value of key frames at `age` (linear between keys; the first holds until its frame, a key
@@ -316,6 +414,7 @@ pub fn play_zh_each(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames:
         let mut life_left = sys.system_lifetime as u32;
         let mut burst_left = 0u32;
         let mut parts: Vec<ZhParticle> = Vec::new();
+        let mut personality = 0u32;
         // ParticleSystem::update, once per logic frame; the delay counts down first.
         let mut delay_left = delay;
         for fi in 0..frames as usize {
@@ -326,6 +425,8 @@ pub fn play_zh_each(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames:
             if forever || life_left > 0 {
                 if burst_left == 0 {
                     let n = rng.range(sys.burst_count.0, sys.burst_count.1) as u32;
+                    // None outside the spawn range (the system stands at its offset).
+                    let n = if in_spawn_range(sys.spawn_range, distance(frame(nugget.offset), eye())) { n } else { 0 };
                     for _ in 0..n.min((MAX_PARTICLES - parts.len().min(MAX_PARTICLES)) as u32) {
                         let local = match sys.volume.as_str() {
                             "SPHERE" => {
@@ -354,7 +455,12 @@ pub fn play_zh_each(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames:
                             life: rng.range(sys.lifetime.0, sys.lifetime.1).max(1.0) as u32,
                             age: 0,
                             alpha: sys.alpha.iter().map(|&(a, b, f)| (rng.range(a, b), f)).collect(),
+                            personality,
+                            lifetime: 0,
                         });
+                        personality += 1;
+                        let p = parts.last_mut().unwrap();
+                        p.lifetime = p.life;
                     }
                     burst_left = rng.range(sys.burst_delay.0, sys.burst_delay.1) as u32;
                 } else {
@@ -389,7 +495,12 @@ pub fn play_zh_each(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames:
             let color = keyed(&sys.color, p.age, |a, b, t| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]).unwrap_or([1.0; 3]);
             // ADDITIVE draws texture × colour; its alpha keys are not played.
             let alpha = if sys.additive { 1.0 } else { alpha.clamp(0.0, 1.0) };
-            visit(fi, Sprite { pos: p.pos, size: p.size.max(0.0), color, alpha, additive: sys.additive, texture: sys.texture.clone() });
+            // The distance fades: an additive particle darkens, the others fade.
+            let fade = distance_fade(sys.far_fade, sys.near_fade, distance(p.pos, eye()));
+            let (color, alpha) = if sys.additive { (color.map(|c| c * fade), alpha) } else { (color, alpha * fade) };
+            // The cell after this update: the life counted down (`m_lifetime - m_lifetimeLeft`).
+            let cell = (sys.grid_side(), sys.frame(p.personality, p.lifetime - p.life, p.lifetime));
+            visit(fi, Sprite { pos: p.pos, size: p.size.max(0.0), color, alpha, additive: sys.additive, texture: sys.texture.clone(), cell });
             }
         }
     }
@@ -399,9 +510,35 @@ pub fn play_zh_each(list: &ZhList, systems: &BTreeMap<String, ZhSystem>, frames:
 // Black Ops II: the parsed effect, played by FxElemDef's rules
 // ------------------------------------------------------------------------------------------------
 
-/// The texture file the converter writes for an element's image (`fx::Converted::texture`).
-pub fn texture_file(image: &str) -> String {
-    format!("zhbo_fx_{}", crate::character::texture_file(image).trim_start_matches("zhbo_"))
+/// The texture file the converter writes for an element's image and flipbook
+/// (`fx::Converted::texture`), and its grid.
+pub fn texture_file(el: &Elem, image: &str) -> (String, crate::fx::Grid) {
+    let grid = crate::fx::Grid::of(el.flipbook.frames.min(el.atlas.0.max(1) * el.atlas.1.max(1)));
+    (crate::fx::texture_file(image, grid), grid)
+}
+
+/// The cell BO2 draws of an element's flipbook (`FxElemAtlas`): the start (`behavior & 3`: the
+/// fixed index, a random cell — `random` 0..1 — or the spawn order `index`), then every cell once
+/// over the life (bit 2) or `fps` cells a second, held on the last after `loopCount` passes
+/// (bit 3).
+pub fn bo2_frame(el: &Elem, frames: u32, random: f32, index: u32, age_ms: f32, life_ms: f32) -> u32 {
+    use zhbo_formats::fx::Flipbook as F;
+    if frames <= 1 {
+        return 0;
+    }
+    let fb = el.flipbook;
+    let start = match fb.behavior & F::START_MASK {
+        F::START_RANDOM => (random * frames as f32) as u32,
+        F::START_INDEXED => index,
+        _ => fb.index as u32,
+    } % frames;
+    let step = if fb.behavior & F::PLAY_OVER_LIFE != 0 {
+        ((age_ms / life_ms.max(1.0)).clamp(0.0, 0.9999) * frames as f32) as u32
+    } else {
+        (age_ms.max(0.0) * fb.fps as f32 / 1000.0) as u32
+    };
+    let step = if fb.behavior & F::LOOP_N_TIMES != 0 { step.min(fb.loop_count.max(1) as u32 * frames - 1) } else { step };
+    (start + step) % frames
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
@@ -427,7 +564,10 @@ fn play_bo2_at(effect: &Effect, at: [f32; 3], t_ms: f32, looping_ms: f32, rng: &
         let mut spawns: Vec<f32> = Vec::new();
         if el.looping {
             let loops = if el.count.base > 0.0 { el.count.base as u32 } else { (looping_ms / el.interval_msec.max(1) as f32) as u32 };
-            for i in 0..loops.min(2000) {
+            // Only the spawns up to the moment asked for (a fast loop, every msec for a whole
+            // trail's life, used to be cut at 2,000 spawns: two seconds).
+            let due = (t_ms.max(0.0) / el.interval_msec.max(1) as f32) as u32 + 1;
+            for i in 0..loops.min(due) {
                 spawns.push(i as f32 * el.interval_msec.max(1) as f32);
             }
         } else {
@@ -436,7 +576,7 @@ fn play_bo2_at(effect: &Effect, at: [f32; 3], t_ms: f32, looping_ms: f32, rng: &
                 spawns.push(el.delay_msec.base + rng.next() * el.delay_msec.amplitude);
             }
         }
-        for &born in &spawns {
+        for (spawn_index, &born) in spawns.iter().enumerate() {
             // One draw from the effect's stream per spawn, so what a spawn looks like does not
             // depend on the moment asked for.
             let mut own = Rng(((rng.next() * 16_777_216.0) as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15) | 1);
@@ -472,6 +612,15 @@ fn play_bo2_at(effect: &Effect, at: [f32; 3], t_ms: f32, looping_ms: f32, rng: &
                     }
                 }
                 continue;
+            }
+            // Dead: the effect it starts where it died (`effectOnDeath`), from the mean path the
+            // converter uses (`fx::death_travel`).
+            if age >= life && depth > 0 {
+                if let Some(death) = &el.on_death {
+                    let t = crate::fx::death_travel(el, true);
+                    let p = [at[0] + (origin[1] + t[1]) * u, at[1] + (origin[2] + t[2]) * u, at[2] + (origin[0] + t[0]) * u];
+                    play_bo2_at(death, p, age - life, looping_ms, rng, out, depth - 1);
+                }
             }
             if age < 0.0 || age >= life || !kind::is_sprite(el.kind) || el.vis.is_empty() {
                 continue;
@@ -532,13 +681,26 @@ fn play_bo2_at(effect: &Effect, at: [f32; 3], t_ms: f32, looping_ms: f32, rng: &
             let color = lerp3(c0, c1, f);
             let alpha = a0 + (a1 - a0) * f;
             let additive = matches!(m.blend(), Blend::Additive { .. });
+            let (texture, grid) = texture_file(el, &img.name);
+            let cell = (grid.side, bo2_frame(el, grid.frames, rng.next(), spawn_index as u32, age, life));
+            let pos = [at[0] + local[1] * u, at[1] + local[2] * u, at[2] + local[0] * u];
+            // BO2's distance ranges from the camera: the spawn range at the spawn point, the fades
+            // where the particle is (`fadeInRange` the far end, `fadeOutRange` the near one).
+            let spawned_at = [at[0] + origin[1] * u, at[1] + origin[2] * u, at[2] + origin[0] * u];
+            let span = |r: zhbo_formats::fx::Range| (r.base.max(0.0) * u, (r.base + r.amplitude).max(0.0) * u);
+            if !in_spawn_range(span(el.spawn_range), distance(spawned_at, eye())) {
+                continue;
+            }
+            let fade = distance_fade(span(el.fade_in_range), span(el.fade_out_range), distance(pos, eye()));
+            let (color, alpha) = if additive { (color.map(|c| c * fade), alpha) } else { (color, alpha * fade) };
             out.push(Sprite {
-                pos: [at[0] + local[1] * u, at[1] + local[2] * u, at[2] + local[0] * u],
+                pos,
                 size: (2.0 * size * u).max(0.0),
                 color,
                 alpha,
                 additive,
-                texture: texture_file(&img.name),
+                texture,
+                cell,
             });
         }
     }
@@ -704,6 +866,9 @@ pub fn render(sprites: &[Sprite], textures: &BTreeMap<String, Rgba>, cam: &Camer
             for x in x0..x1 {
                 let u = ((x as f32 + 0.5 - (cx - rad)) / (2.0 * rad)).clamp(0.0, 0.999);
                 let v = ((y as f32 + 0.5 - (cy - rad)) / (2.0 * rad)).clamp(0.0, 0.999);
+                // The particle's cell of a flipbook grid (W3D's frame UV table: row by row).
+                let (side, idx) = (s.cell.0.max(1) as f32, s.cell.1 as f32);
+                let (u, v) = (((idx % side).floor() + u) / side, ((idx / side).floor() + v) / side);
                 let (tc, ta) = match tex {
                     Some(t) if t.width > 0 => {
                         let i = (((v * t.height as f32) as usize) * t.width as usize + (u * t.width as f32) as usize) * 4;
@@ -825,7 +990,7 @@ pub fn convert_one_text(effect: &Effect, pool: &[&zhbo_formats::t6zone::Zone], p
     // The BO2 row draws every element, converted or not: give it each element's first cell.
     for el in all_elems(effect) {
         if let Some(img) = el.materials.first().and_then(|m| m.color_map()) {
-            c.preview_texture(&img.name, img.key(), el.atlas, paks);
+            c.preview_texture(&img.name, img.key(), el.atlas, el.flipbook.frames, paks);
         }
     }
     let textures = decode_textures(&c.textures);
@@ -890,6 +1055,28 @@ pub fn sweep_install(bo2_dir: &std::path::Path, out: &std::path::Path, sheets: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_flipbook_advances_as_the_engine_and_bo2_play_it() {
+        // Host patch 0028's Particle::getFrame: over the life, at a rate, held after its loops.
+        let over = ZhSystem { frame_grid: 8, frame_count: 32, frame_over_life: true, ..Default::default() };
+        assert_eq!((over.frame(0, 0, 40), over.frame(0, 20, 40), over.frame(0, 39, 40)), (0, 16, 31));
+        let rate = ZhSystem { frame_grid: 4, frame_count: 16, frame_start: 3, frame_rate: 15.0, frame_loops: 1, ..Default::default() };
+        // 15 cells a second at 30 updates a second: one every other update, from cell 3.
+        assert_eq!((rate.frame(0, 0, 90), rate.frame(0, 4, 90)), (3, 5));
+        // One pass then held on the cell before the start.
+        assert_eq!(rate.frame(0, 89, 90), 2);
+        let random = ZhSystem { frame_grid: 2, frame_count: 2, frame_start_type: "RANDOM".into(), ..Default::default() };
+        let cells: std::collections::BTreeSet<u32> = (0..16).map(|p| random.frame(p, 0, 10)).collect();
+        assert_eq!(cells.len(), 2, "both cells are used");
+        assert_eq!(ZhSystem::default().frame(5, 5, 10), 0);
+        // BO2's side of the same rules.
+        use zhbo_formats::fx::Flipbook;
+        let el = Elem { flipbook: Flipbook { behavior: 4, frames: 32, ..Default::default() }, ..Default::default() };
+        assert_eq!((bo2_frame(&el, 32, 0.0, 0, 0.0, 1000.0), bo2_frame(&el, 32, 0.0, 0, 500.0, 1000.0)), (0, 16));
+        let el = Elem { flipbook: Flipbook { behavior: 2, fps: 10, frames: 4, ..Default::default() }, ..Default::default() };
+        assert_eq!(bo2_frame(&el, 4, 0.0, 3, 250.0, 1000.0), 1);
+    }
 
     #[test]
     fn a_converted_system_plays_by_zero_hours_rules() {
@@ -966,8 +1153,11 @@ mod install_tests {
         }
         assert!(runners > 100, "{runners} runners: the install's effects did not parse");
         // Measured 2026-11-03: 305 of 371 (82 %); before the fixes 112 (30 %), 81 effects drawing
-        // nothing at all.
-        assert!(within * 4 >= measured * 3, "only {within} of {measured} effects cover 0.5-2x BO2's");
+        // nothing at all. Then (fx-flipbook) 351 of 367 (96 %): looping and counted runners repeat
+        // their effect, the size is fitted to BO2's whole graph, sub-frame particles show for their
+        // share of the frame, and the distance ranges are kept (four effects show nothing at the
+        // sheets' 40 feet in BO2 either).
+        assert!(within * 100 >= measured * 95, "only {within} of {measured} effects cover 0.5-2x BO2's");
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }

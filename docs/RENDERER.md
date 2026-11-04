@@ -287,6 +287,12 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
   runs after the scene composite. The mod's first-person sky therefore cannot be a 2D gradient
   painted before the 3D pass, as in the DX8 build. In wgpu builds the bridge instead sets the scene
   view's clear colour to the sky colour while in first person.
+* **Particle flipbooks need nothing from zhbo-gfx.** Host patch 0028 animates particle textures
+  through W3D's point group (`PointGroupClass` frame array and `FrameRowColumnCountLog2`), which
+  writes each quad's UVs on the CPU (`Update_Arrays`, the frame UV tables) before the vertices
+  reach the backend: the wgpu renderer and the DX8 reference draw the same vertex stream, and no
+  new bgfx call, state or validation path is involved. The same patch's distance fades scale the
+  vertex colour/alpha the same way. CONTRACT.md lists the fields.
 
 ## The W3D fallback (kept on purpose)
 
