@@ -12902,3 +12902,16 @@ default; report before and after the death). Real install (`every_weapon_action_
 all 2,250 contexts equal the script asked directly and have a death, every `DEATH` entry is reached
 by some context, 20 BO2 spot picks, every converted shield bashes `meleebash`, every shotgun's round
 `normal_shotgun` and its headshot `headshot`.
+
+**Verified (v1/death-anims).** `cargo test --workspace` 1,218 passed; clippy clean (workspace
+`--all-targets`, zhbo-core `--features harness`); real install (`--ignored --skip conformance`) 77
+passed (the roster lockstep gate included); conformance byte-identical to integration9 (weapons 22
+cells / 3 column clusters, cac 0, 4 BO2-only rows, 4 gap clusters). In game (own dist, fresh
+archive): default 16/16, `--mp` short 25/25 (state hash on 2,835 common frames, content CRC
+71E4A2A1 on both) and again with the clip log 25/25 (2,720 frames; both machines logged the same
+corpse clips, `pb_stand_death_legs` for a rifle body kill — the victim's seat stepped after his
+killer's, the case the old lookup lost), `ZHBO_MPTEST_ROUNDS=3` 34/34 (4,730 frames, 2 shellshocks
+on both), `--rts` 16/16, `--classpick` 12/12, `--drops` 9/9, `--splash` 5/5, `--equipment` 8/8,
+`--showcase` (the default standing death held). Images in `~/.opencode/plan/death-anims/shots/`
+(the headless sheet draws a corpse per kind: default, headshot front, shotgun front/back, shield
+bash front, knife back, explosive front, crouched shotgun left, running backward, prone).
