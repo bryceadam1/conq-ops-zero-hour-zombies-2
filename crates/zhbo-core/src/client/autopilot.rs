@@ -39,6 +39,10 @@ fn nth_custom_class_key(n: usize) -> Option<Key> {
 const MP_KILL_TIME: f32 = 30.0;
 const MP_RELOAD_EVERY: f32 = 4.5;
 
+/// How long the other General must be out of the field before his return starts a long-run round
+/// over (seconds): longer than a weapon swap or a sprint out of sight, shorter than a new General.
+const MP_AWAY: f32 = 2.0;
+
 /// How far below the aim at his chest the long run throws its tactical (radians).
 const MP_TACTICAL_DIP: f32 = 0.2;
 
@@ -158,6 +162,13 @@ pub struct Autopilot {
     /// The General and class his record last wore (logged on a change: every General is picked
     /// for, and the scripts check that each one got his class, and which).
     pub(crate) mp_worn: Option<(u32, String)>,
+    /// His General is classed and the class's first raise is done: a round waits for it (every
+    /// General is picked for, so the kit comes up a moment into each life, and an offhand pressed
+    /// during the raise is refused).
+    pub(crate) mp_armed: bool,
+    /// When the other General left the field during this round (died, went overhead, or is back
+    /// behind a new General's class screen): his return a while later starts the round over.
+    pub(crate) mp_aim_lost: Option<f32>,
     /// Log lines for `ConquerOps.log` (drained by the FFI layer after the frame).
     pub log: Vec<String>,
 }
@@ -569,8 +580,16 @@ impl Autopilot {
                 self.log.push(format!("autopilot mp: round {life} starts over (the other General came in)"));
                 t
             }
+            // He came back after a while away (a new General, picked for and armed): the round
+            // starts over with him, so both scripts play it together again.
+            Some(_) if self.mp_aim.is_some() && self.mp_aim_lost.is_some_and(|lost| t - lost >= MP_AWAY) => {
+                self.mp_aim_lost = None;
+                self.mp_fight = Some(t);
+                self.log.push(format!("autopilot mp: round {life} starts over (the other General is back)"));
+                t
+            }
             Some(start) => start,
-            None if t >= 1.0 && (self.mp_aim.is_some() || t >= 20.0) => {
+            None if t >= 1.0 && self.mp_armed && (self.mp_aim.is_some() || t >= 20.0) => {
                 self.mp_fight = Some(t);
                 self.mp_fight_alone = self.mp_aim.is_none();
                 self.log.push(format!("autopilot mp: round {life} starts ({})", if self.mp_aim.is_some() { "the other General is in first person" } else { "nobody to aim at" }));
@@ -579,6 +598,11 @@ impl Autopilot {
             None => return Scripted { class_pick: repick, ..Default::default() },
         };
         let c = t - fight;
+        if self.mp_aim.is_none() {
+            self.mp_aim_lost.get_or_insert(t);
+        } else if self.mp_aim_lost.is_some_and(|lost| t - lost < MP_AWAY) {
+            self.mp_aim_lost = None;
+        }
         let mut look = self.mp_aim;
         let mut pick_force = 0;
         let mut class_pick = repick;

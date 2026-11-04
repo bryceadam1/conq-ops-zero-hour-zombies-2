@@ -886,7 +886,10 @@ fn autopilot_aim(sim: &Sim, local: i32) -> Option<(f32, f32)> {
         .enumerate()
         .filter(|(i, _)| *i as i32 != local)
         .filter_map(|(_, p)| p.as_ref())
-        .filter(|p| p.is_first_person())
+        // In the field: a General still behind his class screen, or bringing his new class's
+        // weapon up for the first time (every General is picked for, so each life starts so), is
+        // not in the fight yet; the script waits for him, as its own rounds wait to be armed.
+        .filter(|p| p.is_first_person() && !p.awaiting_class() && !(p.arsenal.raise_kind == crate::weapons::RaiseKind::First && p.arsenal.raise_left > 0.0))
         .map(chest)
         .min_by(|a, b| (*a - eye).length().total_cmp(&(*b - eye).length()))?;
     let d = target - eye;
@@ -921,6 +924,7 @@ impl Client {
             ap.in_fps = true;
             ap.session += 1;
             ap.mp_fight = None;
+            ap.mp_aim_lost = None;
             ap.mp_fight_alone = false;
             ap.mp_leave_at = None;
             ap.eq_lethal_at = None;
@@ -955,6 +959,7 @@ impl Client {
                 }
                 ap.mp_worn = worn;
             }
+            ap.mp_armed = sim.player(inp.local_player).is_some_and(|p| p.class.is_some() && p.arsenal.raise_left <= 0.0);
             ap.mp_aim = autopilot_aim(sim, inp.local_player).map(|(yaw, pitch)| (wrap_angle(yaw - off_aim.0), pitch - off_aim.1));
             ap.mp_over_drop = sim.player(inp.local_player).is_some_and(|p| sim.use_target(p).is_some());
             // What his General shows in third person on the other machines: the weapon in hand and
