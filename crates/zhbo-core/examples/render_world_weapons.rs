@@ -262,7 +262,7 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
     let shot = open_renderer()?;
     let stand = torso::context(0, 0, 0, false);
     let mut poses: Vec<(String, Option<(u8, u16)>)> = vec![("idle".into(), None)];
-    for (name, d, action) in [("reload", Some(def), torso::RELOAD), ("knife", Some(def), torso::MELEE), ("fire", Some(def), torso::FIRE), ("raise", Some(def), torso::RAISE), ("throw", frag, torso::THROW)] {
+    for (name, d, action) in [("reload", Some(def), torso::RELOAD), ("knife", Some(def), torso::MELEE), ("fire", Some(def), torso::FIRE), ("raise", Some(def), torso::RAISE), ("throw", frag, torso::THROW), ("flinch_front", Some(def), torso::FLINCH), ("flinch_back", Some(def), torso::FLINCH_BACK), ("flinch_left", Some(def), torso::FLINCH_LEFT), ("flinch_right", Some(def), torso::FLINCH_RIGHT)] {
         if let Some(c) = d.and_then(|d| torso::pick_for(d, action, stand)) {
             poses.push((name.into(), Some((action, c))));
         }
