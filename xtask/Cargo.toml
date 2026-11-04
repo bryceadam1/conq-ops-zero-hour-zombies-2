@@ -9,3 +9,6 @@ publish = false
 [dependencies]
 zhbo-formats = { path = "../crates/zhbo-formats" }
 zhbo-core = { path = "../crates/zhbo-core" }
+# The dist keeps the player's converted BO2 archive while `zhbo_assets::hud`'s version check
+# accepts it (`hud::archive_current`, the launcher's own test).
+zhbo-assets = { path = "../crates/zhbo-assets" }

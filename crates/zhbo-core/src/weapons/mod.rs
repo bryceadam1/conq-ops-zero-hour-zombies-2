@@ -16,6 +16,7 @@ pub mod handling;
 pub mod idle_sway;
 pub mod loadout;
 pub mod perks;
+pub mod pickup;
 pub mod recoil;
 pub mod rng;
 pub mod scope;
@@ -32,6 +33,7 @@ pub use handling::{AntiQuickScope, CycleTimes, OffhandClass, Penetrate, Traits, 
 pub use feel::{optic_of, reticle_art, reticle_index, reticle_name_key, GunKick, Reticle, Sway, ViewPos, RETICLE_OPTICS};
 pub use loadout::*;
 pub use perks::*;
+pub use pickup::{base_of, droppable, AmmoTaken, Carried, SwapRefused, WeaponOptions};
 pub use rng::*;
 pub use specialty::*;
 pub use table::*;

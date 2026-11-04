@@ -43,7 +43,7 @@
 #
 # Environment: ZHBO_ZH_DIR / ZHBO_BO2_DIR as for the launcher; DIST for a staged build other
 # than the default dist; OUT for the results folder; ZHBO_MPTEST_MAP (default Tournament Desert);
-# ZHBO_MPTEST_ROUNDS (default 1, the short run); ZHBO_MPTEST_SECONDS, the wall-clock limit (default
+# ZHBO_MPTEST_ROUNDS (default 1, the short run); ZHBO_MPTEST_SHOTS=1 captures both screens; ZHBO_MPTEST_SECONDS, the wall-clock limit (default
 # 480, the long run 1800).
 set -euo pipefail
 
@@ -80,6 +80,9 @@ finish() {
     cp "$host_log" "$out/host.log" 2>/dev/null || true
     cp "$join_log" "$out/join.log" 2>/dev/null || true
     rm -f "$host_profile" "$join_profile"
+    for f in "$out"/*-shot.bmp.*.bmp; do
+        [[ -f "$f" ]] && sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null 2>&1 && rm "$f"
+    done
 }
 stop_games
 rm -f "$host_log" "$join_log"
@@ -116,11 +119,20 @@ wait_for() { # file, pattern, seconds
     return 1
 }
 
-ZHBO_AUTOPILOT_ROLE=shooter "$dist/conquerops" "${window[@]}" -autoNetworkMode direct -autoNetworkHost 2 \
+# ZHBO_MPTEST_SHOTS=1: each instance captures its own screen every few seconds (the engine's
+# capture, as the autotest's), host-shot.* and join-shot.*: what each machine drew of the other.
+shots() { # name
+    if [[ -n "${ZHBO_MPTEST_SHOTS:-}" ]]; then
+        echo GGC_BGFX_SCREENSHOT_AFTER=300 GGC_BGFX_SCREENSHOT_INTERVAL=150 "GGC_BGFX_SCREENSHOT_PATH=$out/$1-shot.bmp"
+    fi
+}
+rm -f "$out"/*-shot.*
+
+env $(shots host) ZHBO_AUTOPILOT_ROLE=shooter "$dist/conquerops" "${window[@]}" -autoNetworkMode direct -autoNetworkHost 2 \
     -autoNetworkMap "$map" -autoNetworkName MPHost -autoNetworkTimeout 240 >"$out/host-stdout.txt" 2>&1
 # The joiner must start after the host holds instance slot 2 (its log opens after that).
 wait_for "$host_log" "zhbo-core" 120 || { echo "the host never started; see $out/host-stdout.txt" >&2; exit 1; }
-ZHBO_AUTOPILOT_ROLE=target "$dist/conquerops" "${window[@]}" -autoNetworkMode direct -autoNetworkJoin 127.0.0.2 \
+env $(shots join) ZHBO_AUTOPILOT_ROLE=target "$dist/conquerops" "${window[@]}" -autoNetworkMode direct -autoNetworkJoin 127.0.0.2 \
     -autoNetworkName MPJoin -autoNetworkTimeout 240 >"$out/join-stdout.txt" 2>&1
 
 # Until both runs are done (or one fails to start a game, or the limit).

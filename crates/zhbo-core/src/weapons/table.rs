@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{BonusCard, CamoOption, Class, OptionTab, Effect, FireMode, Inventory, Kind, Kick, PerkRow, Place, ShieldBox, ShieldGeometry, UiText, WeapClass, WeaponDef};
+use super::def::{BonusCard, DropRules, CamoOption, Class, OptionTab, Effect, FireMode, Inventory, Kind, Kick, PerkRow, Place, ShieldBox, ShieldGeometry, UiText, WeapClass, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::handling::{OffhandClass, Penetrate, WeapType};
 use super::specialty::Specialties;
@@ -1143,6 +1143,31 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "FireSoundNpc", "An offhand's third-person throw/plant BO2 sound event (`fireSound`): what other players hear; empty for a gun.", FieldKind::Str,
         |d: &WeaponDef| d.npc_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.npc_fire_sound = v.text.into(); Ok(()) }),
+    field!("Drop", "The weapon-drop rules' data: a carried killstreak gun (`bIsCarriedKillstreakWeapon`: never dropped, not counted among the primaries), spared by the dropped-weapon cleanup (`avoidDropCleanup`), not picked up prone (`blocksProne`).", FieldKind::Nums(3),
+        |d: &WeaponDef| [d.drop.carried_killstreak, d.drop.avoid_drop_cleanup, d.drop.blocks_prone].map(|b| (b as u8).to_string()).join(" "),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(3)?;
+            d.drop = DropRules { carried_killstreak: v.flag(0), avoid_drop_cleanup: v.flag(1), blocks_prone: v.flag(2) };
+            Ok(())
+        }),
+    field!("DropObject", "The Zero Hour object a dropped one lies on the ground as (`ZHBO_Drop_<base>`, its BO2 world model).", FieldKind::Str,
+        |d: &WeaponDef| d.drop_object.clone(),
+        |d: &mut WeaponDef, v: Values| { d.drop_object = v.text.into(); Ok(()) }),
+    field!(present "HudIconRatio", "The HUD icon's shape (`hudIconRatio`: 0 1:1, 1 2:1, 2 4:1), as the pickup hint draws it.", FieldKind::Num,
+        |d: &WeaponDef| d.hud_icon_ratio.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.hud_icon_ratio = v.text_num()? as u8; Ok(()) }),
+    field!(present "PickupSound", "Picking the weapon up (`pickupSoundPlayer`, EV_ITEM_PICKUP).", FieldKind::Str,
+        |d: &WeaponDef| d.pickup_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.pickup_sound = v.text.into(); Ok(()) }),
+    field!(present "AmmoPickupSound", "Taking its ammo by walking over one (`ammoPickupSoundPlayer`, EV_AMMO_PICKUP).", FieldKind::Str,
+        |d: &WeaponDef| d.ammo_pickup_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.ammo_pickup_sound = v.text.into(); Ok(()) }),
+    field!(present "PickupSoundNpc", "What others hear of the pickup (`pickupSound`).", FieldKind::Str,
+        |d: &WeaponDef| d.npc_pickup_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_pickup_sound = v.text.into(); Ok(()) }),
+    field!(present "AmmoPickupSoundNpc", "What others hear of the ammo pickup (`ammoPickupSound`).", FieldKind::Str,
+        |d: &WeaponDef| d.npc_ammo_pickup_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_ammo_pickup_sound = v.text.into(); Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -1294,7 +1319,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 156);
+        assert_eq!(WEAPON_FIELDS.len(), 163);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

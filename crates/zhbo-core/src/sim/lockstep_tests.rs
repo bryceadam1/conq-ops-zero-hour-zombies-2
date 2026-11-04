@@ -48,6 +48,11 @@ fn catalog_picks(r: u32, player: i32, pick: u32) -> Vec<u32> {
 /// render counts.
 fn play_match(rounds: u32, picks: &dyn Fn(u32, i32, u32) -> Vec<u32>) -> (u32, u32, u32) {
     let r = play(&Match { players: 2, rounds, picks });
+    // Each round's deaths (past the grace period) drop their weapons where the next round's
+    // Generals stand: the drops, the walk-overs and the use key's swap ran on every machine.
+    for label in ["dropped:", "picked:"] {
+        assert!(r.seen.iter().any(|s| s.starts_with(label)), "{label} {:?}", r.seen);
+    }
     (r.frames, r.renders[0], r.renders[1])
 }
 
@@ -414,6 +419,12 @@ fn populated_sim() -> Sim {
     let shield = def("riotshield_mp");
     let bearer = crate::shield::Bearer::of(0, Vec3::new(3.0, 3.0, 0.0), 0.5, shield, true).expect("the shield's box");
     sim.deployed.push(deploy::Deployed { owner: 1, general: 101, def: shield, object: 902, bearer, damage_taken: 10.0, destroyed: Some(1.0), weapon: (1, crate::weapons::WeaponState::new(shield), true) });
+    let options = crate::weapons::WeaponOptions { camo: "camo_gold".into(), reticle: "reticle_3".into(), reticle_color: "reticle_color_2".into() };
+    let weapon = crate::weapons::Carried { def: def("an94_mp"), clip: 20, stock: 60, alt_clip: 1, alt_stock: 2, options: options.clone() };
+    sim.drops.push(drops::Dropped { weapon, pos: Vec3::new(7.0, 8.0, 1.0), vel: Vec3::new(1.0, 2.0, -3.0), resting: false, yaw: 0.5, expires: Some(1800), owner: 100, owner_until: 40, object: 903 });
+    sim.kills.push(drops::Kill { victim: 101, friendly: true });
+    // A picked-up weapon wears its own options.
+    sim.players[0].as_mut().unwrap().arsenal.weapons[1].options = Some(options);
     sim.score.attacked.push(score::Attacked { victim: 100, attackers: vec![score::Attacker { seat: 1, general: 101, damage: 30.0, tactical: Some(score::Tactical::Flash) }] });
     sim.score.assists[1] = 2;
     sim.score.generals[0] = [0, 0, 90, 100];
@@ -423,7 +434,7 @@ fn populated_sim() -> Sim {
 /// Change the `n`-th leaf of the hashed state (the parts [`Sim::fingerprint`] streams).
 fn perturb_state(sim: &mut Sim, n: &mut usize) -> bool {
     use crate::statehash::StateHash;
-    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
+    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
 }
 
 /// Sensitivity: every leaf of the state (every scalar, string and definition of every player
@@ -498,6 +509,10 @@ fn only_a_sim_that_holds_state_joins_the_crc() {
     assert!(!sim.fingerprint().active, "the frame alone is no state");
     sim.smokes.push(crate::smoke::Smoke { at: Vec3::ZERO, born: 0 });
     assert!(sim.fingerprint().active, "a smoke screen");
+    let mut sim = Sim::new();
+    let weapon = crate::weapons::Carried { def: crate::weapons::weapon("an94_mp"), clip: 1, stock: 0, alt_clip: 0, alt_stock: 0, options: Default::default() };
+    sim.drops.push(drops::Dropped { weapon, pos: Vec3::ZERO, vel: Vec3::ZERO, resting: true, yaw: 0.0, expires: None, owner: 0, owner_until: 0, object: 0 });
+    assert!(sim.fingerprint().active, "a dropped weapon");
     let mut sim = populated_sim();
     assert!(sim.fingerprint().active);
     sim.reset();
@@ -717,4 +732,100 @@ fn a_remote_first_person_general_keeps_his_third_person() {
     assert_eq!(posed(Some(1)), vec![2], "player 0's machine draws player 1's General, not its own");
     assert_eq!(posed(Some(2)), vec![1], "and player 1's machine the other way round");
     assert_eq!(posed(None), vec![1, 2], "an overhead viewer sees both");
+}
+
+/// A weapon drop on two players' machines: player 1's General dies (past the grace period) and
+/// drops his rifle; player 0 steps onto the spot and takes its ammo (the same weapon), then a
+/// second death drops another gun, which player 0 swaps for with the use key, putting his own
+/// down. Every frame both machines (each predicting its own player) and a third that never
+/// renders hold the same fingerprint, objects, spawns and destroys.
+#[test]
+fn a_dropped_weapon_plays_alike_on_every_machine() {
+    let mut peers = [Peer::bare(0, 7), Peer::bare(1, 9), Peer::bare(2, 11)];
+    let mut net = Net::default();
+    let rifle = CustomClass { name: "Rifle".into(), primary: "an94_mp".into(), secondary: "fnp45_mp".into(), melee: "knife_held_mp".into(), ..Default::default() };
+    let sniper = CustomClass { name: "Sniper".into(), primary: "svu_mp".into(), secondary: "fnp45_mp".into(), melee: "knife_held_mp".into(), ..Default::default() };
+    let late = 500;
+    let mut seen: Vec<EventKind> = Vec::new();
+    for frame in 1..=late + 400 {
+        // The engine's logic, alike everywhere: player 1's first General dies at `late`, his
+        // second (a sniper) at `late + 150`; player 0 is moved onto the first drop.
+        for peer in &mut peers {
+            match frame {
+                1 => {
+                    let mut g0 = general(100, 0);
+                    g0.pos = Vec3::new(0.0, 0.0, 0.0);
+                    let mut g1 = general(101, 1);
+                    g1.pos = Vec3::new(0.0, 40.0, 0.0);
+                    peer.host.add(g0);
+                    peer.host.add(g1);
+                }
+                f if f == late || f == late + 150 => {
+                    let id = if f == late { 101 } else { 102 };
+                    for o in peer.host.objects.borrow_mut().iter_mut().filter(|o| o.id == id) {
+                        o.flags |= objflags::DEAD;
+                    }
+                }
+                f if f == late + 60 => {
+                    let at = peer.sim.drops.first().map(|d| d.pos).expect("the first drop lies there");
+                    for o in peer.host.objects.borrow_mut().iter_mut().filter(|o| o.id == 100) {
+                        o.pos = Vec3::new(at.x, at.y, 0.0);
+                    }
+                }
+                f if f == late + 100 => {
+                    // Before player 0, where he stands now.
+                    let at = peer.host.get(100).pos;
+                    let mut g = general(102, 1);
+                    g.pos = at + Vec3::new(8.0, 0.0, 0.0);
+                    peer.host.add(g);
+                }
+                _ => {}
+            }
+        }
+        match frame {
+            2 => {
+                net.send(frame, 0, Cmd::ChooseClass(100, 0, rifle.to_wire_words()));
+                net.send(frame, 1, Cmd::ChooseClass(101, 0, rifle.to_wire_words()));
+            }
+            4 => {
+                net.send(frame, 0, Cmd::TakeControl(100));
+                net.send(frame, 1, Cmd::TakeControl(101));
+            }
+            // Mid-life past the grace period: his next General wears it (`MP_CHANGE_CLASS_NEXT_SPAWN`).
+            f if f == late - 50 => net.send(frame, 1, Cmd::ChooseClass(101, 0, sniper.to_wire_words())),
+            f if f == late + 104 => net.send(frame, 1, Cmd::TakeControl(102)),
+            _ => {}
+        }
+        let cmds = net.take(frame);
+        for peer in &mut peers {
+            peer.logic(frame, &cmds, [0; 3]);
+        }
+        let h = peers[0].sim.fingerprint();
+        for peer in &peers[1..] {
+            let at = format!("seat {}'s machine at frame {frame}", peer.local);
+            assert_eq!(peer.sim.fingerprint(), h, "{at}: the sim state");
+            assert_eq!(peer.host.objects, peers[0].host.objects, "{at}: the objects");
+            assert_eq!(*peer.host.spawned.borrow(), *peers[0].host.spawned.borrow(), "{at}: spawns");
+            assert_eq!(*peer.host.destroyed.borrow(), *peers[0].host.destroyed.borrow(), "{at}: destroys");
+        }
+        seen.extend(peers[2].sim.events.drain(..).filter(|e| !matches!(e.kind, EventKind::Shot { .. } | EventKind::Recoil { .. } | EventKind::Impact { .. })).map(|e| e.kind));
+        // Player 0 fires and reloads early (room for spare rounds), and presses the use key once
+        // the second drop lies before him.
+        let b = crate::client::Bindings::default();
+        let mut keys = crate::input::KeySet::default();
+        match frame {
+            60..=120 => keys.set_down(b.fire, true),
+            130 => keys.set_down(b.reload, true),
+            f if f == late + 200 => keys.set_down(b.field_computer, true),
+            _ => {}
+        }
+        
+        peers[0].render(&mut net, frame, 1 + (frame % 2), keys, (0.0, 0.0));
+        peers[1].render(&mut net, frame, 1, crate::input::KeySet::default(), (0.0, 0.0));
+    }
+    let has = |f: &dyn Fn(&EventKind) -> bool| seen.iter().any(f);
+    assert!(has(&|k| matches!(k, EventKind::WeaponDropped { def, .. } if def.id == "an94_mp")), "the first death dropped the rifle");
+    assert!(has(&|k| matches!(k, EventKind::AmmoPickedUp { def, .. } if def.id == "an94_mp")), "player 0 took its ammo");
+    assert!(has(&|k| matches!(k, EventKind::WeaponDropped { def, .. } if def.id == "svu_mp")), "the second death dropped the sniper rifle: {seen:?}");
+    assert!(has(&|k| matches!(k, EventKind::WeaponPickedUp { def, .. } if def.id == "svu_mp")), "player 0 swapped for it: {:?}", peers[0].sim.drops.iter().map(|d| (d.weapon.def.id.clone(), d.pos)).collect::<Vec<_>>());
 }

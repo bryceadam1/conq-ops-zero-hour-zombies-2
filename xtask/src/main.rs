@@ -222,7 +222,10 @@ fn prepare_engine() -> Result<PathBuf> {
     Ok(engine)
 }
 
-fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
+/// Mirror `src` into `dst`: changed files rewritten, files `src` no longer has removed — except what
+/// `keep` says is not the source's to remove (a file the program writes into the folder at run
+/// time and still accepts, such as the dist's converted BO2 archive).
+fn copy_dir_if_changed(src: &Path, dst: &Path, keep_extra: &dyn Fn(&Path) -> bool) -> Result<()> {
     fs::create_dir_all(dst).map_err(|e| e.to_string())?;
     let mut keep: Vec<String> = Vec::new();
     for entry in fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))?.flatten() {
@@ -230,7 +233,7 @@ fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
         let from = entry.path();
         let to = dst.join(entry.file_name());
         if from.is_dir() {
-            copy_dir_if_changed(&from, &to)?;
+            copy_dir_if_changed(&from, &to, keep_extra)?;
         } else {
             let data = fs::read(&from).map_err(|e| e.to_string())?;
             if fs::read(&to).ok().as_deref() != Some(data.as_slice()) {
@@ -246,6 +249,9 @@ fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
     for entry in fs::read_dir(dst).map_err(|e| format!("{}: {e}", dst.display()))?.flatten() {
         if !keep.contains(&entry.file_name().to_string_lossy().into_owned()) {
             let p = entry.path();
+            if keep_extra(&p) {
+                continue;
+            }
             if p.is_dir() {
                 fs::remove_dir_all(&p).map_err(|e| format!("{}: {e}", p.display()))?;
             } else {
@@ -254,6 +260,14 @@ fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The dist's converted BO2 archive (`ConquerOps_BO2.big`), when the launcher would keep it: built
+/// by this converter version for this loadout (`zhbo_assets::hud::archive_current`). The launcher
+/// writes it at first launch from the player's own install; removing a current one cost every
+/// rebuilt dist a full reconversion. A stale one goes, and the launcher rebuilds it.
+fn keeps_bo2_archive(p: &Path) -> bool {
+    p.file_name().is_some_and(|n| n == zhbo_core::names::BO2_ARCHIVE_NAME) && zhbo_assets::hud::archive_current(p)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -501,7 +515,7 @@ fn build(opts: &Opts) -> Result<PathBuf> {
 
     let engine = prepare_engine()?;
     let glue = work_dir().join("zhbo-glue");
-    copy_dir_if_changed(&root.join("host/zhbo"), &glue)?;
+    copy_dir_if_changed(&root.join("host/zhbo"), &glue, &|_| false)?;
     let fwd = |p: &Path| p.to_string_lossy().replace('\\', "/");
     let mut defs = vec![format!("-DZHBO_GLUE_DIR={}", fwd(&glue)), format!("-DZHBO_CORE_LIB={}", fwd(&core_lib))];
     if opts.log_build {
@@ -600,7 +614,7 @@ fn build(opts: &Opts) -> Result<PathBuf> {
             if !stage.join("generalszh").is_file() {
                 return Err(format!("the deploy script did not stage generalszh into {}", stage.display()));
             }
-            copy_dir_if_changed(&stage, &dist)?;
+            copy_dir_if_changed(&stage, &dist, &keeps_bo2_archive)?;
             // macOS kills a freshly rewritten binary at its old path when a previous build was
             // run recently (the kernel's signature registration for the path outlives the file:
             // execs SIGKILL before main even though codesign verifies). Force a re-sign so the
@@ -718,4 +732,34 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<
 fn run(dist: &Path, game_args: &[String]) -> Result<()> {
     let (_, launcher) = Toolchain::host().launcher_file();
     run_cmd(Command::new(dist.join(launcher)).args(game_args))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dist sync mirrors the stage but keeps a current BO2 archive; a stale one (another
+    /// converter version) and any other stray file go.
+    #[test]
+    fn the_dist_keeps_a_current_bo2_archive_and_drops_a_stale_one() {
+        let root = std::env::temp_dir().join(format!("zhbo-xtask-dist-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (stage, dist) = (root.join("stage"), root.join("dist"));
+        fs::create_dir_all(&stage).unwrap();
+        fs::create_dir_all(&dist).unwrap();
+        fs::write(stage.join("generalszh"), b"new").unwrap();
+        fs::write(dist.join("generalszh"), b"old").unwrap();
+        fs::write(dist.join("stray.txt"), b"x").unwrap();
+        let archive = dist.join(zhbo_core::names::BO2_ARCHIVE_NAME);
+        fs::write(&archive, zhbo_formats::big::write_archive(&[zhbo_assets::hud::version_entry()])).unwrap();
+        copy_dir_if_changed(&stage, &dist, &keeps_bo2_archive).unwrap();
+        assert_eq!(fs::read(dist.join("generalszh")).unwrap(), b"new");
+        assert!(!dist.join("stray.txt").exists(), "a stray file goes");
+        assert!(archive.exists(), "a current archive stays");
+        let (path, _) = zhbo_assets::hud::version_entry();
+        fs::write(&archive, zhbo_formats::big::write_archive(&[(path, format!("{}\nloadout=\nall=\ncombos=\n", zhbo_assets::hud::VERSION - 1).into_bytes())])).unwrap();
+        copy_dir_if_changed(&stage, &dist, &keeps_bo2_archive).unwrap();
+        assert!(!archive.exists(), "a stale archive goes (the launcher rebuilds it)");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

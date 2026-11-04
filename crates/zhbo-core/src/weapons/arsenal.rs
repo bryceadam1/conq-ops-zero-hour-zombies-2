@@ -557,7 +557,7 @@ impl Arsenal {
     /// empty clip (`WeaponState::clip_empty`) drops over its `iEmptyDropTime` (`FUN_008db500`) and raises over its
     /// `iEmptyRaiseTime`, which beats the first raise (`FUN_008df320`; the first raise is spent
     /// either way).
-    fn switch_to(&mut self, index: usize) {
+    pub(super) fn switch_to(&mut self, index: usize) {
         let from = self.current().def;
         let from_empty = self.current().clip_empty();
         self.current_mut().interrupt(); // swapping cancels a reload, like BO2

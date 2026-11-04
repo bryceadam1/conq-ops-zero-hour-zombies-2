@@ -1494,6 +1494,14 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         tracer_interval: 0,
         // Posed on the body by `shield::geometry` once the zones are open (`generals::files`).
         shield: None,
+        drop: zhbo_core::weapons::DropRules { carried_killstreak: w.carried_killstreak, avoid_drop_cleanup: w.avoid_drop_cleanup, blocks_prone: w.blocks_prone },
+        // Set by `props::drops` for the weapons that lie on the ground.
+        drop_object: String::new(),
+        hud_icon_ratio: w.hud_icon_ratio.min(u8::MAX as u32) as u8,
+        pickup_sound: def_sound(&w.pickup_sound_player),
+        ammo_pickup_sound: def_sound(&w.ammo_pickup_sound_player),
+        npc_pickup_sound: def_sound(&w.pickup_sound),
+        npc_ammo_pickup_sound: def_sound(&w.ammo_pickup_sound),
     };
     #[cfg(debug_assertions)]
     {

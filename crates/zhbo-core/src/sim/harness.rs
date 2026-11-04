@@ -483,8 +483,21 @@ pub fn play(m: &Match) -> Report {
 /// events every frame it renders, so what it holds now is this step's.
 fn observe(sim: &Sim, seen: &mut BTreeSet<String>) {
     for e in &sim.events {
-        if let EventKind::GeneralDied { .. } = e.kind {
-            seen.insert(format!("died:{}", (sim.frame - 1) % ROUND / 30 * 30));
+        match e.kind {
+            EventKind::GeneralDied { .. } => {
+                seen.insert(format!("died:{}", (sim.frame - 1) % ROUND / 30 * 30));
+            }
+            // The weapon drops: a death's, a pickup's swap, a walk-over's ammo.
+            EventKind::WeaponDropped { def, .. } => {
+                seen.insert(format!("dropped:{}", def.id));
+            }
+            EventKind::WeaponPickedUp { def, .. } => {
+                seen.insert(format!("picked:{}", def.id));
+            }
+            EventKind::AmmoPickedUp { def, .. } => {
+                seen.insert(format!("ammo:{}", def.id));
+            }
+            _ => {}
         }
         let Some(p) = usize::try_from(e.player).ok().and_then(|i| sim.players.get(i)).and_then(|p| p.as_ref()) else { continue };
         let held = p.arsenal.current_weapon().id.as_str();

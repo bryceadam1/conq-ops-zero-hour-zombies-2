@@ -619,6 +619,19 @@ fn version_stamp() -> String {
     format!("{VERSION}\nloadout={}\nall={}\ncombos={}\n", loadout.join(";"), var("ZHBO_CONVERT_ALL_WEAPONS"), var("ZHBO_CONVERT_ALL_COMBOS"))
 }
 
+/// The archive's version entry as [`build_archive`] writes it (its path and this build's stamp): what
+/// [`archive_version`] reads back. For tests that stand an archive in for a real one.
+pub fn version_entry() -> (String, Vec<u8>) {
+    (VERSION_FILE.to_string(), version_stamp().into_bytes())
+}
+
+/// Whether the archive at `path` is one this converter would keep: ours, this [`VERSION`], built
+/// for this loadout. The launcher rebuilds any other; `cargo xtask build` keeps a current one in
+/// the dist (it is the player's own conversion, not part of the staged build).
+pub fn archive_current(path: &Path) -> bool {
+    archive_version(path) == Some(VERSION)
+}
+
 /// Version stored in an existing archive, if it is one of ours and was built for this loadout.
 pub fn archive_version(path: &Path) -> Option<u32> {
     let big = zhbo_formats::big::BigArchive::open(path).ok()?;

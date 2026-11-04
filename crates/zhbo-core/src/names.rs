@@ -75,6 +75,14 @@ pub fn viewmodel_anim(vm: u8, slot: u8) -> String {
 pub fn projectile_model(vm: u8) -> String {
     format!("ZPR{vm:02}_SKN")
 }
+/// A dropped weapon's model (`ZDR003_SKN`), numbered in conversion order.
+pub fn drop_model(n: u16) -> String {
+    format!("ZDR{n:03}_SKN")
+}
+/// The Zero Hour object a dropped weapon of base weapon `base` lies as (`ZHBO_Drop_an94_mp`).
+pub fn drop_object(base: &str) -> String {
+    format!("ZHBO_Drop_{base}")
+}
 /// The Zero Hour projectile object for weapon `id`.
 pub fn projectile_object(id: &str) -> String {
     format!("ZHBO_Proj_{id}")

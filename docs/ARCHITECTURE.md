@@ -13,7 +13,7 @@ zhbo-conformance → zhbo-formats
 zhbo-core        → zhbo-requirements, zhbo-native, (feature "renderer") zhbo-gfx
 zhbo-assets      → zhbo-core, zhbo-formats, zhbo-native, zhbo-conformance, zhbo-requirements
 zhbo-launcher    → zhbo-requirements, zhbo-assets
-xtask            → zhbo-core, zhbo-formats
+xtask            → zhbo-core, zhbo-formats, zhbo-assets (the dist keeps a current BO2 archive: `hud::archive_current`)
 
 host/zhbo (C++) ←─ ABI ─→ zhbo-core
 ```
@@ -68,12 +68,16 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   ADS zoom: the view FOV over the ADS lerp, the zoom levels, the hybrid's alt scope), `scope.rs`
   (the reticle zoom: when a 2D-overlay scope is looked through), `idle_sway.rs` (BO2's idle sway
   and hold breath), `gunpos.rs` (the client-side gun position: offsets, bob, sway), `loadout.rs`, `rng.rs` (xorshift),
+  `pickup.rs` (a weapon off a player, `Carried`, with the options it wears, `WeaponOptions`; which
+  weapon a death drops, the ammo a walk-over takes, the use key's swap — BO2's item rules),
   `weapon_state.rs` (one weapon's WeaponState: ammo, fire-cycle timers, the Reload in
   progress, the dual-wield hands), `arsenal.rs` (Offhand, Arsenal with HasSpecialty and the
   perk-timed weapon states, WeaponAction).
 - `sim/`: `mod.rs` (Sim, PlayerSim, Event, the top-level `step` orchestration),
   `hack.rs` (Black Hat), `build.rs` (hammer/site), `plant.rs` (BO2's plant check for planted
-  equipment), `deploy.rs` (the deployed Assault Shield), `rts.rs` (the overhead General:
+  equipment), `deploy.rs` (the deployed Assault Shield), `drops.rs` (dropped weapons: the death drop,
+  the fall, the 60 s expiry, the `g_maxDroppedWeapons` cleanup, the walk-over's ammo, the use list and
+  the swap, and the step's kill witness that tells a suicide or team kill, which drops nothing), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`, `fire_round` (one bullet, to its end and through penetration),
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
@@ -155,7 +159,8 @@ to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts.
 `zhbo-core`. After Phase 2.5 the module is split into `textures.rs` (the texture pipeline),
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `props.rs` (thrown,
 launched and placed weapons as `ZHBO_Proj_<id>` objects at the General's drawn scale, the planted
-shield in its deploy pose), `shield.rs` (the shield's collision-surface boxes), `generals.rs`
+shield in its deploy pose, and each droppable weapon's world model lying on its side as
+`ZHBO_Drop_<base>`), `shield.rs` (the shield's collision-surface boxes), `generals.rs`
 (the Zero Hour names, factions and the `files()` orchestrator), `camo.rs` (the camo art and the
 `.zcm` recipes for every `WeaponCamo` a def or attachment unique points at) and `paks.rs` (pack-file access, the shrinker
 and `load_zone`, over the shared `zhbo_formats::t6zone::load_file`). `thirdperson.rs` groups the weapons held in hand into animation sets by what BO2's

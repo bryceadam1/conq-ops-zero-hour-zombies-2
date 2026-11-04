@@ -32,6 +32,12 @@
 #                                      into the Overlord, then a frag; every health change is logged
 #                                      and the neighbours must take the blast, the frag's strike on
 #                                      the Overlord its whole impact damage (MOD_IMPACT)
+#   scripts/autotest-mac.sh --drops    weapon drops (BO2's dropweaponfordeath and pickups): the profile
+#                                      holds two AN-94 customs (grenade launcher, reflex sight); the
+#                                      first General wears the first, picks the second for his next
+#                                      spawn and is killed past the grace period: his rifle drops as
+#                                      its ground prop; the next General walks onto it (its stock is
+#                                      his, the same base weapon) and swaps for it with the use key
 #   scripts/autotest-mac.sh --replay   spectating a replay: records a fresh skirmish (started from the
 #                                      main menu by ZHBO_AUTOTEST_SKIRMISH: a loaded save records no
 #                                      replay) with the scripted first-person run, then plays the replay
@@ -76,6 +82,7 @@ mode=autopilot
 [[ "${1:-}" == "--w3d-ads" ]] && mode=w3d-ads
 [[ "${1:-}" == "--replay" ]] && mode=replay
 [[ "${1:-}" == "--splash" ]] && mode=splash
+[[ "${1:-}" == "--drops" ]] && mode=drops
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -449,6 +456,49 @@ EOF
     # iDamage (15 x 1.5), which the tuning pack's [MeansOfDeath] sends as EXPLOSION (TankArmor
     # 100 %), not as small arms (25 %: 5.6).
     check "the frag struck it as an impact" "autopilot splash: ChinaTankOverlord [0-9]+ took 22.5 "
+    echo "screenshots and log: $out"
+    exit $ok
+fi
+if [[ $mode == drops ]]; then
+    # Two AN-94 customs (the autopilot picks them by their computed row keys; see the autopilot
+    # mode below for the format): the dropped rifle and the one that walks over it share a base.
+    profile="$userdata/ConquerOps.profile"
+    rm -f "$profile"
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+Drop GL
+primary=an94_mp+gl;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity;camo=camo_gold
+end
+class
+Drop Reflex
+primary=an94_mp+reflex;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
+    export ZHBO_AUTOPILOT=drops GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-75}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 85); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    check() { # name, pattern
+        if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-34s PASS\n' "$1"; else printf '%-34s FAIL\n' "$1"; ok=1; fi
+    }
+    grep -E "drops|dropped|picked up|took ammo|next spawn" "$out/ConquerOps.log" || true
+    check "class for the next spawn" "comes in at the next spawn"
+    check "the General was killed" "autopilot drops: killing General"
+    check "his rifle dropped" "General dropped his an94_mp\+gl at"
+    check "  ...as its ground prop" "drops: an94_mp\+gl down at .* as ZHBO_Drop_an94_mp object [1-9]"
+    # The native third person (ZHBO_NATIVE_BODY, on by default) draws the combination on the
+    # ground in its camo and hides the W3D prop.
+    check "  ...drawn natively in its camo" "native body: General [0-9]+ weapon [0-9]+ camo camo_gold composed"
+    check "  ...lying, its prop hidden" "native body: dropped weapon [0-9]+ \(weapon [0-9]+\) drawn lying"
+    check "the next took its stock" "took ammo from a dropped an94_mp\+gl"
+    check "  ...and swapped for it" "picked up the an94_mp\+gl"
+    check "  ...putting his own down" "drops: an94_mp\+reflex down at .* as ZHBO_Drop_an94_mp object [1-9]"
     echo "screenshots and log: $out"
     exit $ok
 fi

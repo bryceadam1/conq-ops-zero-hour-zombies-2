@@ -627,6 +627,19 @@ typedef struct ZhboNativeBodyIn
 } ZhboNativeBodyIn;
 #define ZHBO_BODY_WEAPON 1 /* the weapon only: the W3D body draws */
 #define ZHBO_BODY_FULL 2   /* the body and the weapon: the bridge hides the W3D body */
+#define ZHBO_BODY_LYING 3  /* a dropped weapon on the ground (ABI 32): general = its object, pos/yaw where it lies, no tag */
+/* A dropped weapon the native pass draws lying on the ground (ABI 32; ffi.rs, sim/drops.rs): its Zero
+   Hour object (the draw's key; the bridge hides that object's W3D prop while the native draw
+   succeeds), its world weapon (the combination: attachments; the camo is the drop's own), where it
+   lies (world units) and its yaw. */
+typedef struct ZhboDroppedWeapon
+{
+	uint32_t object;
+	int32_t vm;
+	float pos[3];
+	float yaw;
+} ZhboDroppedWeapon;
+int32_t zhbo_client_dropped_weapons(ZhboDroppedWeapon *out, int32_t cap);
 int32_t zhbo_client_native_poses(ZhboNativePose *out, int32_t cap, uint32_t local_general, int32_t local_moving);
 int32_t zhbo_native_body_enabled(void); /* ZHBO_NATIVE_BODY's mode; the bridge skips its work at 0 */
 int32_t zhbo_native_body(const ZhboNativeBodyIn *in);
@@ -725,5 +738,6 @@ static_assert(sizeof(ZhboNativeLight) == 24, "ZhboNativeLight layout must match 
 static_assert(sizeof(ZhboNativeIn) == 168, "ZhboNativeIn layout must match nativevm/ffi.rs");
 static_assert(sizeof(ZhboNativePose) == 28, "ZhboNativePose layout must match nativebody/ffi.rs");
 static_assert(sizeof(ZhboNativeBodyIn) == 204, "ZhboNativeBodyIn layout must match nativebody/ffi.rs");
+static_assert(sizeof(ZhboDroppedWeapon) == 24, "ZhboDroppedWeapon layout must match ffi.rs");
 static_assert(sizeof(ZhboContentCrc) == 32, "ZhboContentCrc layout must match content.rs");
 #endif

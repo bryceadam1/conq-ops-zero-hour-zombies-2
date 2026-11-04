@@ -108,6 +108,18 @@ impl Client {
                     self.cues.play_at(cue, p.body.eye());
                 }
             }
+            // A pickup's third-person sound where the weapon lay (`pickupSound`/`ammoPickupSound`).
+            EventKind::WeaponPickedUp { def, at } => {
+                if let Some(cue) = sounds::some(def.npc_pickup_sound.as_str()) {
+                    self.cues.play_at(cue, at);
+                }
+            }
+            EventKind::AmmoPickedUp { def, at } => {
+                if let Some(cue) = sounds::some(def.npc_ammo_pickup_sound.as_str()) {
+                    self.cues.play_at(cue, at);
+                }
+            }
+            EventKind::WeaponDropped { .. } => {}
             // His alone, or heard through `remote` (the swing, the knife's hit, the pin, his reload's
             // notetracks, his voice: the third-person versions). The C4 trigger is his `*Player`
             // sound.
@@ -367,6 +379,21 @@ impl Client {
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),
                 EventKind::ShieldPickedUp => self.vm_events.swapped = true,
+                // BO2's EV_ITEM_PICKUP: the weapon's `pickupSoundPlayer`; the new weapon's first
+                // raise is the arsenal's (EV_RAISE_PICKUP_WEAPON plays nothing, `FUN_00534f20`).
+                EventKind::WeaponPickedUp { def, .. } => {
+                    self.vm_events.swapped = true;
+                    if let Some(cue) = sounds::some(def.pickup_sound.as_str()) {
+                        self.cues.play(cue);
+                    }
+                }
+                // EV_AMMO_PICKUP: `ammoPickupSoundPlayer`.
+                EventKind::AmmoPickedUp { def, .. } => {
+                    if let Some(cue) = sounds::some(def.ammo_pickup_sound.as_str()) {
+                        self.cues.play(cue);
+                    }
+                }
+                EventKind::WeaponDropped { .. } => {}
                 EventKind::DestroyedEquipment => {}
                 // BO2's weapon hint ("Cannot Plant Here"): set afresh, drawn by the HUD.
                 // BO2's `iprintlnbold` hints: the plant refusal, and a mid-life class pick that

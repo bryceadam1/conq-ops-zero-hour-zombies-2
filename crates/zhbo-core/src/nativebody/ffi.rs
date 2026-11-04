@@ -55,6 +55,10 @@ pub const NOT_NATIVE: i32 = 0;
 pub const DRAWN: i32 = 1;
 pub const LOADING: i32 = 2;
 
+/// `ZhboNativeBodyIn.mode` for a dropped weapon lying on the ground (`ZHBO_BODY_LYING`, appended
+/// for ABI 32): `general` is its Zero Hour object, `pos`/`yaw` where it lies; no tag.
+pub const LYING: i32 = 3;
+
 /// What the bridge asks the core for each General: which weapon and which body clip. Presentation
 /// only (`Sim::native_poses`).
 #[repr(C)]
@@ -118,6 +122,20 @@ impl State {
         self.rigs.len()
     }
 
+    /// Drop the rigs of dropped weapons no longer lying (picked up, expired, cleaned up): each drop
+    /// is a new object, so its rig would otherwise outlive it until the game resets.
+    pub(crate) fn retain_dropped(&mut self, lying: &[u32]) {
+        let gone: Vec<u32> = self.rigs.iter().filter(|(g, r)| r.loaded.key.2 == Mode::Lying as u8 && !lying.contains(g)).map(|(g, _)| *g).collect();
+        for g in gone {
+            if let Some(mut r) = self.rigs.remove(&g) {
+                r.release();
+            }
+            if self.last == Some(g) {
+                self.last = None;
+            }
+        }
+    }
+
     fn release_all(&mut self) {
         for r in self.rigs.values_mut() {
             r.release();
@@ -169,6 +187,7 @@ impl State {
         }
         let mode = match inp.mode {
             2 => Mode::Body,
+            LYING => Mode::Lying,
             _ => Mode::Weapon,
         };
         // The weapon-only mode is placed by the engine's tag: without one there is nowhere to draw.
@@ -405,8 +424,7 @@ pub extern "C" fn zhbo_native_body_enabled() -> i32 {
 pub unsafe extern "C" fn zhbo_native_body_ready(inp: *const ZhboNativeBodyIn) -> i32 {
     match unsafe { inp.as_ref() } {
         Some(inp) => {
-            let mode = if inp.mode == 2 { Mode::Body } else { Mode::Weapon };
-            (mode == Mode::Body || inp.tag_valid != 0) as i32
+            (inp.mode == 2 || inp.mode == LYING || inp.tag_valid != 0) as i32
         }
         None => 0,
     }
@@ -485,6 +503,12 @@ pub unsafe extern "C" fn zhbo_native_body_bone(name: *const c_char, out: *mut f3
         unsafe { std::ptr::copy_nonoverlapping(flat.as_ptr(), out, 12) };
         1
     })
+}
+
+/// Keep only the dropped weapons' rigs still lying (`objects`): the core calls this with every
+/// frame's list (`zhbo_client_dropped_weapons`).
+pub(crate) fn retain_dropped(objects: &[u32]) {
+    with(|s| s.retain_dropped(objects));
 }
 
 /// Forget everything (a game reset tears the scene down).

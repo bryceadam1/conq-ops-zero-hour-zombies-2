@@ -94,7 +94,7 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
         // (`reticle_color_1` is Red). Without a choice, the red dot.
         let reticle = p.held_reticle();
         let art = crate::weapons::optic_of(&wpn.def.attachments).and_then(|o| crate::weapons::reticle_art(o, reticle).into_iter().next());
-        let rgb = reticle_color_rgb(&p.reticle_color).unwrap_or((1.0, 1.0, 1.0));
+        let rgb = reticle_color_rgb(p.held_reticle_color()).unwrap_or((1.0, 1.0, 1.0));
         let col = argb(rgb, 1.0);
         let name = art.unwrap_or_else(|| sprites::RED_DOT.to_string());
         prims.push(Prim::Image {

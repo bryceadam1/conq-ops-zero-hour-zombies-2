@@ -257,6 +257,18 @@ tuning! {
     riotshield_deploy_limit_radius: "riotshield_deploy_limit_radius" = 100.0, "Deploy: the least distance to any other deployed shield, inches (dvar default).";
     riotshield_destroyed_cleanup_time: "riotshield_destroyed_cleanup_time" = 10.0, "Seconds a destroyed shield's model stays (dvar default; it stops blocking at once).";
     riotshield_placement_zoffset: "riotshield_placement_zoffset" = 26.0, "Height of the deployed shield's origin over the ground, inches (`_riotshield.gsc` init).";
+    // ---- Dropped weapons (`_weapons.gsc` dropweaponfordeath; t6mp's item code) ------------------
+    g_max_dropped_weapons: "g_maxDroppedWeapons" = 16.0, "Dropped weapons lying at once: one more frees the one farthest from every player, sparing `avoidDropCleanup` weapons (dvar default, registered in `FUN_005fcb40`, min 2 max 32; `FUN_005f9230`).";
+    player_use_radius: "player_useRadius" = 128.0, "How far from the eye, inches, a dropped weapon can be used (swapped for): t6mp's use list `FUN_00676d50` (dvar default).";
+    use_list_dot_scale: "UseListDotScale" = 256.0, "The use list's facing term: an item scores its distance plus this times `1 - (dot + 1) / 2` of the view and the way to it, the lowest first (`FUN_00676d50`, the constant at `0x00c73548`).";
+    dropped_weapon_lifetime: "deletepickupafterawhile" = 60.0, "Seconds a weapon dropped at death lies before it is deleted (`_weapons.gsc:544-551`, `wait 60`); one put down by a pickup's swap has no timer (the engine's `FUN_005fb0e0`).";
+    dropped_item_owner_time: "DroppedItemOwnerTime" = 1.0, "Seconds before the one who put a weapon down may pick it up again: the item's think clears its owner 1000 ms after the drop (`FUN_005fab50`; `FUN_008bbb00` refuses the owner).";
+    drop_item_forward_speed: "DropItemForwardSpeed" = 10.0, "A dropped weapon's toss along the dropper's facing, inches/s (`FUN_005fae60`, `0x00b4a278`).";
+    drop_item_random_speed: "DropItemRandomSpeed" = 100.0, "Its random horizontal toss, inches/s on each axis, times a random -1..1 (`FUN_005fae60`, `0x00b4a27c`).";
+    drop_item_up_speed: "DropItemUpSpeed" = 10.0, "Its upward toss, inches/s (`FUN_005fae60`, `0x00b4a278`).";
+    drop_item_random_up_speed: "DropItemRandomUpSpeed" = 5.0, "Its random upward toss, inches/s times -1..1 (`FUN_005fae60`, `0x00b4a284`).";
+    dropped_item_half_size: "DroppedItemHalfSize" = 1.0, "A dropped weapon's touch box, half its size in inches (`FUN_005fab50`: mins -1, maxs 1).";
+    player_box_height: "PlayerBoxHeight" = 70.0, "The standing player's box top over his feet, inches: what a dropped weapon's box must touch to be walked over (`0x00bd2448`, the use list's player box; its half width is the movement radius, 15).";
     class_change_grace_period: "ClassChangeGracePeriod" = 15.0, "Seconds from the match start during which a class picked mid-life replaces the kit at once if the General has not fought yet (BO2's `level.ingraceperiod && !self.hasdonecombat` in `_globallogic_ui.gsc` `menuclass`); after it the pick waits for the next spawn. BO2 sets `level.graceperiod` in the base `_globallogic.gsc`, which the dump lacks; 15 is the CoD MP default (unverified for BO2).";
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";

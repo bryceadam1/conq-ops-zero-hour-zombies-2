@@ -81,11 +81,15 @@ pub struct WeaponState {
     /// `ps+0x71` the hand): its own magazine and timers. The spare rounds are shared — both guns
     /// name the same `szAmmoName` — so `reserve` serves both. `None` for a single gun.
     pub left: Option<Hand>,
+    /// A weapon picked up off the ground wears the options it was dropped with (its camo and
+    /// reticle, [`super::WeaponOptions`]); `None`: a class weapon, which wears the class's.
+    pub options: Option<super::WeaponOptions>,
 }
 
 crate::statehash::state_hash!(struct WeaponState {
     def, main, alt_mode, ammo, reserve, cooldown, reload, burst_left, bloom, spin, raised_once, alt_ammo, alt_reserve,
     string, recoil_acc, since_shot, rechamber_pending, rechamber_shots, rechamber, reload_owed, zoom, quick_reload, left,
+    options,
 });
 
 /// One gun's own magazine and timers: what BO2 keeps per hand (`ammoCount[hand]`, the left hand's
@@ -170,6 +174,7 @@ impl WeaponState {
             // (`szDualWieldWeaponName`) carries the same `iClipSize` and reload times as its pair
             // for every dual-wield pistol, and is not a weapon the table converts.
             left: (gun && def.is_dual_wield()).then(|| Hand::full(def)),
+            options: None,
         }
         .with_alt_ammo()
     }

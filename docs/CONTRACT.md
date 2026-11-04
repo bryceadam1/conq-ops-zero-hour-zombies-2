@@ -20,6 +20,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
+| A dropped weapon (BO2's `dropweaponfordeath` item): which drops, where it lies, its rounds, attachments and camo, the walk-over's ammo, the use key's swap, its expiry | zhbo-core (`Sim::drops`, `sim/drops.rs`, `weapons::pickup`; the tuning pack's `[Drops]`) | Its Zero Hour object (`ZHBO_Drop_<base>`, `WeaponDef::drop_object`: the base weapon's world model at the General's scale, inert and unclickable) is spawned, moved and destroyed by the sim through `LogicHost::spawn`/`set_pose`/`destroy`; it is drawn only, nothing reads it back. Zero Hour's own infantry drop nothing (their weapons are Zero Hour's, not BO2's). |
 | A smoke screen (BO2's smoke grenade): where, how long, how wide its sight blocker is | zhbo-core (`Sim::smokes`, `crate::smoke`, the tuning pack's `[Smoke]`) | Zero Hour's units and pathfinder ask the core's lock-free mirror (host patch 0024, "Smoke screens in Zero Hour's targeting and pathing"); the cloud is the converted BO2 effect, an `AREA_EFFECT` FXList played at the blast. |
 
 ## Units
@@ -266,7 +267,7 @@ replicated messages alone. The rules, and what enforces each:
   human seat (the recording's local player in a skirmish) and its take-controls are not re-sent.
 * **The fingerprint.** `Sim::state_hash` (`sim/lockstep.rs`) hashes the deterministic state (the
   player records with each input's seen frame, chosen classes, projectiles, equipment that is
-  down, smokes, deployed shields, the antilag history of the last frames' first-person Generals
+  down, smokes, deployed shields, dropped weapons and the kills not yet read by a death, the antilag history of the last frames' first-person Generals
   and shields, the frame) and leaves out the presentation above, the step's scratch copies (the
   frame's shield bearers and guards, the shock hits) and the installed data the content CRC covers
   (tuning, the antilag rewind cap, penetration, hit bodies). The history is in the world's part
@@ -544,6 +545,15 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   base clip and its size is unchanged. The left clip id is the matching right slot with
   `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). Each hand's shot has its own fired flag
   (`viewmodel_fired`, `viewmodel_fired_left`; see the effects above).
+* **Dropped weapons.** Each frame, after the Generals, the bridge asks `zhbo_client_dropped_weapons`
+  and draws each drop through `zhbo_native_body` in `ZHBO_BODY_LYING` mode, keyed by its Zero Hour
+  object: the combination's world weapon (`ZW<vm>`: its attachments), the camo it was dropped with
+  (`Sim::third_person_camo` finds the drop by its object), at the General's drawn scale, a quarter
+  turn about its length onto its side, its lowest posed vertex on the ground at `pos`. While it
+  draws, the bridge hides that object's W3D prop (`ZHBO_Drop_<base>`, the base weapon's world model)
+  through its draw modules, and shows it again the frame a draw is refused or still loading;
+  with `ZHBO_NATIVE_BODY=0` (and on DX8) the prop is what shows. Its optic's lens reticle stays dark,
+  as on every BO2 world model (the reticle fade is the local viewmodel's only).
 * **The core cannot open the archive; it asks.** After each call the bridge answers every
   `zhbo_native_wanted(i)` path with `zhbo_native_provide(path, bytes, len)` (`len < 0`: not in the
   archive, after which that viewmodel is given up and logged once) and prints every
@@ -1264,7 +1274,7 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
 flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, `bulletrange` (how far a non-spread round is traced), the optic displays'
-`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the smoke screen's time and sight blocker (`[Smoke]`: `_smokegrenade.gsc`'s `spawntimedfx` time and `blocksight` radii, t6mp's always-seen distance; `smoke::Params`), the melee reach and the knife's lunge (`player_meleeRange`, `player_meleeCharge*`, `[Melee]`; the lunge distance and times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
+`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the dropped weapons (`[Drops]`: `g_maxDroppedWeapons`, `player_useRadius`, the use list's facing scale, `_weapons.gsc`'s 60 s `deletepickupafterawhile`, the item's owner second and `Drop_Item`'s toss, its touch box and the player box's height; `sim::drops`), the smoke screen's time and sight blocker (`[Smoke]`: `_smokegrenade.gsc`'s `spawntimedfx` time and `blocksight` radii, t6mp's always-seen distance; `smoke::Params`), the melee reach and the knife's lunge (`player_meleeRange`, `player_meleeCharge*`, `[Melee]`; the lunge distance and times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like
@@ -1440,6 +1450,14 @@ the flinch/jump/land torso actions (12 actions per set), `ZHBO_BO2_LandNpc` and 
 chatter events. Until the archive is rebuilt the core finds no
 torso picks and no new events (the engine logs a missing event once).
 
+
+**Pending for the next bump (ABI 32, weapon-drops; beside damage-rules' below):** the dropped
+weapon's native draw. Appended: `ZhboDroppedWeapon` (24 bytes: `object`, `vm`, `pos[3]`, `yaw`;
+size-asserted on both sides), `zhbo_client_dropped_weapons(out, cap)` (the sim's drops with a
+Zero Hour object, `Sim::dropped_poses`; it also releases the rigs of drops gone since) and the
+`ZhboNativeBodyIn.mode` value `ZHBO_BODY_LYING` (3: `general` is the drop's object, `pos`/`yaw`
+where it lies, no tag). No struct grows; an older core answers mode 3 as weapon-only without a tag
+(not native), so an older core with a newer bridge draws the W3D prop.
 
 **Pending for the next bump (ABI 32):** `ZhboLogicApi.damage`'s `kind` widens from three codes to
 one per Zero Hour `DamageType`: `ZHBO_DAMAGE_SMALL_ARMS`/`MELEE`/`EXPLOSION` keep 0–2 and

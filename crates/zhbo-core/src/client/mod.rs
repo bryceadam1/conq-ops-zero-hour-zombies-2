@@ -926,6 +926,13 @@ impl Client {
                 ap.log.push(format!("autopilot mp: first-person session {} (class {class})", ap.session));
             }
         }
+        if ap.drops {
+            ap.drop_aim = sim.player(inp.local_player).and_then(|p| {
+                let eye = p.body.eye();
+                let d = sim.drops.iter().map(|d| d.pos - eye).min_by(|a, b| a.length_xy().total_cmp(&b.length_xy()))?;
+                Some((wrap_angle(d.y.atan2(d.x) - off_aim.0), d.z.atan2(d.length_xy()) - off_aim.1, d.length_xy()))
+            });
+        }
         if ap.mp {
             ap.mp_aim = autopilot_aim(sim, inp.local_player).map(|(yaw, pitch)| (wrap_angle(yaw - off_aim.0), pitch - off_aim.1));
             // What his General shows in third person on the other machines: the weapon in hand and
