@@ -22,6 +22,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
 | A dropped weapon (BO2's `dropweaponfordeath` item): which drops, where it lies, its rounds, attachments and camo, the walk-over's ammo, the use key's swap, its expiry | zhbo-core (`Sim::drops`, `sim/drops.rs`, `weapons::pickup`; the tuning pack's `[Drops]`) | Its Zero Hour object (`ZHBO_Drop_<base>`, `WeaponDef::drop_object`: the base weapon's world model at the General's scale, inert and unclickable) is spawned, moved and destroyed by the sim through `LogicHost::spawn`/`set_pose`/`destroy`; it is drawn only, nothing reads it back. Zero Hour's own infantry drop nothing (their weapons are Zero Hour's, not BO2's). |
 | A smoke screen (BO2's smoke grenade): where, how long, how wide its sight blocker is | zhbo-core (`Sim::smokes`, `crate::smoke`, the tuning pack's `[Smoke]`) | Zero Hour's units and pathfinder ask the core's lock-free mirror (host patch 0024, "Smoke screens in Zero Hour's targeting and pathing"); the cloud is the converted BO2 effect, an `AREA_EFFECT` FXList played at the blast. |
+| Graphics detail (the static level, the particle cap, shadows, the dynamic LOD) | Zero Hour's `GameLODManager`, per machine | Presentation only and never a sim input: each machine picks its own level (host patch 0025 recommends High for hardware the 2002 presets cannot classify, CONFIG.md "Graphics detail"), and the dynamic level follows its own frame rate. Its two logic-side fields (`DebrisSkipMask`, `SlowDeathScale`) are pinned to no-ops by the data tests (`zhbo_assets::detail`). Not in the content CRC. |
 
 ## Units
 
@@ -107,7 +108,11 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   first-person eye and view kick are drawn between two logic frames at the render clock (the time
   since the frame's step, carried across steps so a render rate that does not divide 30 Hz stays
   even): the predicted record's last two frames while the client predicts (`client::predict`), the
-  sim record's last two otherwise.
+  sim record's last two otherwise. The render rate is independent of the logic's (host patch 0026,
+  CONFIG.md "The render rate"): by default the display's refresh rate, with the logic held at the
+  game's speed by the engine's logic time scale; Zero Hour's drawables are drawn between their last
+  two logic transforms (`Drawable::getRenderTransformMatrix`) and W3D animation advances every render
+  update. None of it reaches the sim: the core sends one input per logic frame whatever the render rate.
 
 ## Channels
 

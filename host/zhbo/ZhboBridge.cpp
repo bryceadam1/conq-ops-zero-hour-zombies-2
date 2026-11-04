@@ -494,6 +494,8 @@ void Zhbo_Init()
 		GGC_RequestBgfxFramebufferRebuild();
 	}
 
+	zhboLogGraphicsDetail();
+
 	s_lastTick = zhbo_platform::now();
 	s_ready = TRUE;
 }
@@ -512,6 +514,9 @@ void Zhbo_ControlBarRebuilt()
 
 void Zhbo_Reset()
 {
+	// Every game start passes here (GameLogic::startNewGame), a loaded save too, which sends no
+	// MSG_NEW_GAME: pace it at the speed its message noted, else Zero Hour's 30.
+	zhboPaceStartingGame();
 	if (!s_ready)
 		return;
 	// The shell create-a-class screen never survives a game transition (a new game, a loaded game
@@ -1015,6 +1020,7 @@ void Zhbo_ClientFrame()
 	}
 
 	autopilotFrame();
+	zhboDetailFrame();
 	// A General with no class shows the class set instead of his own commands; once he has one (or
 	// Create a Class opened it for a re-pick) the bar tracks that.
 	zhboUpdateClassBar();

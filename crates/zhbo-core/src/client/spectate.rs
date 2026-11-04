@@ -202,10 +202,12 @@ impl Client {
     }
 
     /// A line for the game log when the spectator's view changes hands, and once a second while it
-    /// follows: the view's angles beside the sim's (the in-game replay check reads them).
+    /// follows: the view's angles beside the sim's, and the previous logic frame's yaw the view
+    /// interpolates from (the in-game replay check reads them: above 30 Hz the view sits between the
+    /// two, so it may trail the sim's aim by up to one frame's turn).
     pub fn spectator_log(&mut self, sim: &Sim, logic_frame: u32) -> Option<String> {
         let following = self.is_following();
-        let (yaw, pitch, general) = (self.yaw, self.pitch, self.general);
+        let (yaw, pitch, general, prev_yaw) = (self.yaw, self.pitch, self.general, self.aim_prev.0);
         let s = self.spectator.as_mut()?;
         let target = s.target.filter(|_| following);
         let changed = s.reported != Some(target);
@@ -217,7 +219,7 @@ impl Client {
         s.reported_frame = logic_frame;
         Some(match target.and_then(|t| sim.player(t).map(|p| (t, p))) {
             Some((t, p)) => format!(
-                "spectator: {} seat {t}'s General {general}: view yaw {yaw:.3} pitch {pitch:.3}, sim aim yaw {:.3} pitch {:.3}",
+                "spectator: {} seat {t}'s General {general}: view yaw {yaw:.3} pitch {pitch:.3}, sim aim yaw {:.3} pitch {:.3}, from yaw {prev_yaw:.3}",
                 if changed { "following" } else { "still following" },
                 p.input.yaw,
                 p.input.pitch

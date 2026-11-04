@@ -75,3 +75,86 @@ mod update the launcher regenerates the archive. With a stale
 archive the native viewmodel logs `the camo art is not in the archive (reconvert the BO2 art)` and
 draws the stock finish; the class camo never reaches the W3D fallback or the third-person body
 (CONTRACT.md, "The native viewmodel").
+
+## Graphics detail (Zero Hour's `GameLOD`)
+
+Zero Hour's detail level is its own: `Data\INI\GameLODPresets.ini` decides which level a machine is
+recommended, `Data\INI\GameLOD.ini` what each level sets (the `StaticGameLOD` blocks: particle cap,
+shadows, texture reduction, …) and the dynamic levels the render frame rate picks (`DynamicGameLOD`).
+The mod overrides both from `ConquerOps.big`, in files loaded after the stock ones; a block there
+changes only the fields it names:
+
+| File | What it sets |
+|---|---|
+| `data/Data/INI/GameLODPresets/ZHBO_GameLODPresets.ini` | `UnclassifiedHardwareLOD = High`: the level recommended for hardware the 2002 presets cannot classify (host patch 0025; without the line the stock fallback, Low, stands). |
+| `data/Data/INI/GameLOD/ZHBO_GameLOD.ini` | The dynamic `Medium` and `Low` levels (below 20 fps) stop thinning at `AREA_EFFECT`, so the smoke screen looks whole at every frame rate. |
+
+**Why the stock detector says Low.** `GameLODPresets.ini` knows three CPUs, P3, P4 and K7, and
+classifies anything else by a benchmark that SuperHackers replaced with a stub (fixed scores of 10,
+below the P4 and K7 profiles' float scores of 15–21). Every CPU since about 2005 (CPUID family 6 with
+a newer model, AMD's later families) and every ARM CPU is none of the three, so on every platform the
+mod builds (Windows DX8 and wgpu, macOS, Linux) the detector fell back to Low: 500 particles, half-
+resolution textures, no shadows. The video side was never the cause (the wgpu backend reports a
+shader-model-2 card, a DX8 card is read from its caps or NVIDIA id). Host patch 0025 gives such
+hardware the data's level instead, with the stock 256 MB memory check still in force.
+
+**Detected versus chosen.** `Options.ini` holds `IdealStaticGameLOD` (the detector's pick) and
+`StaticGameLOD` (the level in use, written by the Options menu only when the player changes it), so
+it cannot say whether a level was chosen. With the patch, a `StaticGameLOD` equal to the
+`IdealStaticGameLOD` is treated as the detector's: the game detects again at start (and writes both),
+so a file holding the old detector's Low gets High. A level that differs from the recommendation
+(Low, Medium, Very High or Custom set in the Options menu) is the player's and is kept. The one case
+it cannot tell apart is a player who explicitly chose the very level the old detector had picked:
+he gets High once, and Low set again then persists (the recommendation is now High).
+
+**The dynamic levels** follow the average render frame rate (`MinimumFPS`: VeryHigh above 25, High
+above 20, Medium above 10): above 25 fps everything draws; from 25 down the lowest priorities stop
+drawing (the converted casings and blast dressing are `WEAPON_EXPLOSION`; blasts, impacts and
+muzzle flashes are `CRITICAL` and always draw, `fx::Role`), and below 20 fps the skip mask thins what
+is left under the skip priority. `DebrisSkipMask` and `SlowDeathScale` are read by the logic, so they
+must stay 0 and 1.0 at every level: the dynamic level is each machine's own. The thresholds are absolute
+frame rates, so with the render at the display's rate (below) they engage only on a machine that
+falls under 25 fps. Measured on an M1 Pro Mac at High (the `--splash` leg: a SMAW and two frags into
+an armour group) with the old 30 fps cap: a steady 30 fps, never leaving VeryHigh; uncapped
+(`-noFPSLimit -fixedLogicFPS 30`) 87–191 fps, against 103–247 at Low. The tests in
+`crates/zhbo-assets/src/detail.rs` hold the data to these rules (the real-install one over the
+player's own `GameLOD.ini`). The bridge logs the applied level once (`graphics detail: …`) and, in a
+game, the dynamic level's changes and the frame rate every 5 s (`frame rate: …`). Graphics detail is
+presentation only: it is not in the content CRC and never reaches the sim.
+
+## The render rate (host patches 0026, 0027)
+
+Zero Hour capped rendering at `FramesPerSecondLimit` (30) and, outside network games, ran one logic
+frame per rendered frame, so the render cap was also the game's speed. The mod separates them at
+every game start (`MSG_NEW_GAME` → `Zhbo_PaceNewGame`, `ZhboDetail.cpp`):
+
+* **The logic** runs at the game's own speed: the skirmish or replay's speed argument, else
+  `LOGICFRAMES_PER_SECOND` (30), through SuperHackers' logic time scale. A replay plays at its
+  recorded speed (`FramePacer::setGameLogicFps`; stock tied a replay's logic to the render update). A
+  network game's logic stays paced by the network. The sim steps exactly the frames it did.
+* **The render rate** follows the display: the refresh rate of the display the window is on (SDL3's
+  current display mode; `EnumDisplaySettings` on the DX8 build), at least 60. The player's
+  `Options.ini` can set it: `MaxRenderFPS = 144` caps there (never below the logic rate),
+  `MaxRenderFPS = Uncapped` removes the cap, and `0`, `Display` or no line follows the display. It is
+  a per-machine setting, like the detail level, and never reaches the sim. SuperHackers' in-game
+  render-rate keys still change it until the next game. Vsync stays off (the wgpu backend's
+  default): the engine's own limiter paces the frames on every build, DX8 windowed included.
+* **Between logic frames** what is drawn moves at the render rate: the first-person eye, view kick
+  and roll (the core, CONTRACT.md "Time"); every object's drawable, drawn between its last two logic
+  transforms at the render's logic-frame phase (`Drawable::getRenderTransformMatrix`, one logic frame
+  behind like the eye; a jump over 100 units in one frame is a teleport and snaps); the native
+  third-person weapon and body, placed from that transform; W3D animation, whose clock now steps every
+  render update by its share of the logic frame while the logic runs; particles (SuperHackers already
+  integrate them by the phase). The viewmodel, sway, bob, ADS, HUD and tracers run on the client's
+  real `dt`.
+
+* **A script's game speed.** A map script's `SET_FPS_LIMIT` (and `ScriptEngine::reset`, which put
+  the default back) set the render cap, which in stock *was* the game's speed. Host patch 0027 makes
+  it set the logic rate instead (`Zhbo_ScriptGameSpeed`; 0 restores the game's own speed, a replay
+  follows it), and leaves the render rate to the display.
+* **The autotest captures** (`GGC_BGFX_SCREENSHOT_AFTER`/`_INTERVAL`, a harness flag of the bgfx
+  backend) count logic frames since host patch 0027, so a capture schedule is the same game time at
+  any render rate. The DX8 backend's `GGC_DX8_SCREENSHOT_*` still count render frames.
+
+The bridge logs `render rate: up to N fps (<why>; display M Hz), logic L fps` when a game starts,
+and `game speed: N fps (a script's | the game's own)` when a script changes it.

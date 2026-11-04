@@ -517,6 +517,16 @@ static void drawDroppedWeapons()
 		in.pos[1] = d.pos[1];
 		in.pos[2] = d.pos[2];
 		in.yaw = d.yaw;
+		// The prop is posed where the sim lays the drop (cbSetPose), so its drawable's render
+		// transform is the same point between logic frames (host patch 0026): a toss in flight
+		// moves at the render rate, as the Generals and the prop itself do.
+		if (const Matrix3D *world = draw->getRenderTransformMatrix())
+		{
+			const Vector3 at = world->Get_Translation();
+			in.pos[0] = at.X;
+			in.pos[1] = at.Y;
+			in.pos[2] = at.Z;
+		}
 		fillNativeScene(in);
 		if (zhbo_native_body(&in) != ZHBO_NATIVE_DRAWN)
 			continue;
@@ -588,7 +598,8 @@ void applyWorldPoses()
 			in.time = np.time;
 			in.rate = np.rate;
 			fillNativeScene(in);
-			if (const Matrix3D *world = draw->getTransformMatrix())
+			// Where the drawable is drawn this frame (between logic frames, host patch 0026).
+			if (const Matrix3D *world = draw->getRenderTransformMatrix())
 			{
 				const Vector3 pos = world->Get_Translation();
 				in.pos[0] = pos.X;

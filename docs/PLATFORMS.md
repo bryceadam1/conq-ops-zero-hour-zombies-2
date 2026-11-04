@@ -50,6 +50,22 @@ The mod reads only Black Ops II's sound banks and image packs. BO2 is never run,
 connects to it. The step-by-step player instructions are in [INSTALL.md](INSTALL.md); a guided
 installer script that wraps this is still to do.
 
+## Graphics detail on every platform
+
+Zero Hour's detail detector (`GameLODPresets.ini`) recognises only 2002's CPUs (P3, P4, K7), so on
+every build here (Windows DX8 and wgpu, macOS on Apple silicon or Intel, Linux) it found no match and
+recommended **Low**: 500 particles, half-resolution textures, no shadows. Host patch 0025 and the
+mod's `UnclassifiedHardwareLOD = High` make **High** the default instead; the reason, and how a level
+the player chose is kept, are in [CONFIG.md](CONFIG.md), "Graphics detail". The Options menu still
+sets Low, Medium, High, Very High or Custom (Very High is SuperHackers' level: 5,000 particles).
+
+## The render rate on every platform
+
+Zero Hour rendered at 30 fps, its logic rate. Host patch 0026 renders at the display's refresh rate
+(at least 60) on every build, the logic staying at 30; `MaxRenderFPS` in `Options.ini` sets another
+cap (CONFIG.md, "The render rate"). Vsync stays off: the engine's limiter paces the frames, so the
+DX8 build (whose swap interval only applies in fullscreen) behaves like the wgpu builds.
+
 ## How the launcher starts the game
 
 `conquerops` (or `ConquerOps.exe`):

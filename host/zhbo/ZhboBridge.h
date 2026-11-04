@@ -150,6 +150,16 @@ AsciiString Zhbo_BuildCommandSet(const Object *builder);
 /// A printf-style line in ConquerOps.log.
 void Zhbo_Log(const char *fmt, ...);
 
+/// A game starts (MSG_NEW_GAME; host patch 0026): its logic runs at `gameLogicFps` (the message's
+/// speed argument; 0: Zero Hour's 30) and the render rate follows the display, or the player's
+/// Options.ini `MaxRenderFPS` (ZhboDetail.cpp). Applied now and again as the game starts
+/// (Zhbo_Reset), which also paces a loaded save. Presentation only: the logic steps the same frames.
+void Zhbo_PaceNewGame(Int gameLogicFps);
+/// A script's SET_FPS_LIMIT (and ScriptEngine::reset, with 0; host patch 0027): the game's speed,
+/// which stock set through the render cap. `fps` 0 restores the game's own speed. The render rate is
+/// untouched.
+void Zhbo_ScriptGameSpeed(Int fps);
+
 // --- Multiplayer content check (content.rs; host patches 0018, 0021) --------------------------
 /// This machine's content fingerprint parts (ZHBO_CONTENT_PARTS of them; `n` words written, zero
 /// past them or before Zhbo_Init): a LAN join request and a refusal carry them.

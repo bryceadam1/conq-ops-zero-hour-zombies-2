@@ -120,6 +120,13 @@ namespace zhbo_platform
 		return (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
 	}
 
+	int displayRefreshHz()
+	{
+		const SDL_DisplayID display = TheSDL3Window != nullptr ? SDL_GetDisplayForWindow(TheSDL3Window) : SDL_GetPrimaryDisplay();
+		const SDL_DisplayMode *mode = display != 0 ? SDL_GetCurrentDisplayMode(display) : nullptr;
+		return mode != nullptr && mode->refresh_rate > 0.0f ? (int)(mode->refresh_rate + 0.5f) : 0;
+	}
+
 	void errorBox(const char *title, const char *text)
 	{
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, text, TheSDL3Window);
@@ -237,6 +244,17 @@ namespace zhbo_platform
 		QueryPerformanceCounter(&t);
 		QueryPerformanceFrequency(&f);
 		return (double)t.QuadPart / (double)f.QuadPart;
+	}
+
+	int displayRefreshHz()
+	{
+		DEVMODEA mode;
+		ZeroMemory(&mode, sizeof(mode));
+		mode.dmSize = sizeof(mode);
+		// 0 and 1 mean the hardware's default rate.
+		if (EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
+			return (int)mode.dmDisplayFrequency;
+		return 0;
 	}
 
 	void errorBox(const char *title, const char *text)

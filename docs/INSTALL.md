@@ -170,5 +170,12 @@ screen of each.
   (`ConquerOps-launcher.log`, `zhbo-gfx.log` for the renderer). The Zero Hour user-data folder is
   `Documents\Command and Conquer Generals Zero Hour Data` on Windows and
   `~/Library/Application Support/Command and Conquer Generals Zero Hour Data` on macOS.
+* **The game is slow or stutters.** The mod starts at the **High** detail level. Open Options in
+  the main menu and set **Detail Level** to **Low** (or Medium, or Custom with fewer particles or no
+  shadows), then Accept; the game keeps that choice from then on. `ConquerOps.log` logs the level
+  in use (`graphics detail: …`) and, in a game, the frame rate every 5 s (`frame rate: …`).
+  The game renders at your display's refresh rate; to cap it lower (or lift the cap), add a line
+  such as `MaxRenderFPS = 60` (or `MaxRenderFPS = Uncapped`) to `Options.ini` in the Zero Hour
+  user-data folder.
 * **Build problems:** run `cargo xtask doctor` first. Platform details and macOS-specific fixes
   are in [PLATFORMS.md](PLATFORMS.md).
