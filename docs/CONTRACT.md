@@ -404,25 +404,32 @@ Ownership and rules:
   back in; the next Take Control puts the screen up again. Take Control on a General with no class,
   and a re-entry after a declined spawn, both go through this. A class picked overhead first
   spawns him straight into play. Escape on a classed General's forced re-open keeps playing.
-* **The class is the player's, the kit is the General's** (`sim/spawn.rs`). BO2 keeps
-  `pers["class"]`, the class the player chose, which survives his deaths, apart from `curclass`,
-  what this life was given. Here `Sim::chosen` (one per player seat, `ChosenClass`: id, name, kit,
-  the custom's per-slot options) is the first and `PlayerSim::class` (the record, which dies with
-  the General) the second. Every record is made by `Sim::new_record` wearing the chosen class, in
-  `take_control`, `rts_update` and `choose_class` alike, so after a death the next General comes
-  in armed, overhead and in first person, with no class screen. `zhbo_general_has_class` and the
-  command bar's class set still read the record, which now carries the class from its first frame.
+* **Every General is picked for** (`sim/spawn.rs`; a deliberate break from BO2, the user's
+  decision of 2026-11-03). BO2 keeps `pers["class"]`, the class the player chose, which survives
+  his deaths, apart from `curclass`, what this life was given, and a respawn wears the first with
+  no menu. Here `Sim::chosen` (one per player seat, `ChosenClass`: id, name, kit, the custom's
+  per-slot options) is the first and `PlayerSim::class` (the record, which dies with the General)
+  the second, but no record comes in wearing `chosen`: `Sim::new_record` makes every new General's
+  record (in `take_control` and `rts_update`: built after a death, or a General another seat's
+  owner handed over) unclassed and unarmed, like the player's first, and his player picks for
+  him — the spawn's class screen at his take-control, or the command bar's class set overhead
+  (it is up for any General without a class). `chosen` outlives his Generals as what the screen
+  opens on (`Client::class_pick_highlight` takes the worn class's row, else the chosen one's), so
+  the same class again is one press (Enter, a click, its number key). The pick is the same
+  replicated `MSG_ZHBO_CHOOSE_CLASS` as ever; the seat state the sim hashes is the record and
+  `chosen` (no new state: the old `class_waits` flag is gone). `zhbo_general_has_class` and the
+  command bar's class set read the record. A spectator never picks (`class_pick_wanted`), and a
+  replay replays the recorded picks.
 * **Mid-life picks follow `menuclass`.** A pick always becomes the chosen class (the same class
-  again does nothing). A General with no class wears it at once. A classed General wears it at once
-  only inside the grace period (the tuning pack's `ClassChangeGracePeriod`, seconds of sim frames
-  from the match start) and before his first combat (`PlayerSim::combat`, BO2's `hasdonecombat`:
-  a shot, a throw or plant, a launch, or damage taken, in first person or overhead, reset at each
-  spawn). Otherwise the kit stays, `ClassAtNextSpawn` shows BO2's `MP_CHANGE_CLASS_NEXT_SPAWN` hint
-  (a `UI_TEXT_KEYS` string), and his next General comes in with it: the seat's `Sim::class_waits`
-  (hashed with the seat) marks the class as waiting, and the record made for the next General
-  (`Sim::fresh_record`, in `take_control` and `rts_update`) emits `ClassChosen` as it wears it, so
-  both machines log "assumed the ... class" for him. Picking back the class he wears leaves nothing
-  waiting.
+  again does nothing to a classed General). A General with no class wears it at once, whatever
+  the match clock: it is his spawn. A classed General wears it at once only inside the grace
+  period (the tuning pack's `ClassChangeGracePeriod`, seconds of sim frames from the match start)
+  and before his first combat (`PlayerSim::combat`, BO2's `hasdonecombat`: a shot, a throw or
+  plant, a launch, or damage taken, in first person or overhead, reset at each spawn). Otherwise
+  the kit stays for this General, `ClassAtNextSpawn` shows BO2's `MP_CHANGE_CLASS_NEXT_SPAWN`
+  hint (a `UI_TEXT_KEYS` string), and the class is what his next General's screen opens on; that
+  General's pick emits `ClassChosen` as he wears it, so both machines log "assumed the ... class"
+  for him.
 * **The spawn is the first time in first person with a class** (`Sim::spawn_in`, run by
   `take_control` and at the top of each `step`): a Take Control on a classed General, or the pick
   that ends his wait behind the screen. That is when the player's Tactical Insertion is used (he is

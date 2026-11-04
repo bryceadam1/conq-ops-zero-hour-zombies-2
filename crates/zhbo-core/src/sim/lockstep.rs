@@ -69,7 +69,6 @@ impl Sim {
             smoke: _,
             frame,
             chosen,
-            class_waits,
             deployed,
             drops,
             kills,
@@ -94,7 +93,6 @@ impl Sim {
                 let mut h = Hasher::new();
                 p.hash(&mut h);
                 c.hash(&mut h);
-                class_waits.get(i).copied().unwrap_or(false).hash(&mut h);
                 *seat = Some(h.finish());
             }
         }

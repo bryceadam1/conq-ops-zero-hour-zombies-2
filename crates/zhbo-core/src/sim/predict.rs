@@ -130,7 +130,6 @@ impl Sim {
             hit_body: self.hit_body,
             frame: self.frame,
             chosen: self.chosen.clone(),
-            class_waits: self.class_waits.clone(),
             events: Vec::new(),
             tracers: Vec::new(),
             shields: self.shields.clone(),

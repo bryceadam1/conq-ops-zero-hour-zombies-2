@@ -4,11 +4,20 @@
 //! `pers["class"]`, the class the player chose, which belongs to the player and survives his
 //! deaths, and `curclass`, the class this life was given at its spawn (`giveloadout`). Here the
 //! first is [`Sim::chosen`] (per player seat) and the second is [`PlayerSim::class`] (per General
-//! record, which dies with him). A new General's record is made wearing the chosen class, so after a
-//! death the next General comes in with it and no class screen. A pick mid-life changes the chosen
-//! class at once but the worn kit only in the grace period, before he has done any combat
-//! (`level.ingraceperiod && !self.hasdonecombat`); otherwise BO2 prints
-//! `MP_CHANGE_CLASS_NEXT_SPAWN` and the kit follows at the next spawn.
+//! record, which dies with him).
+//!
+//! **Deliberate break from BO2 (the user's decision, 2026-11-03): every General is picked for.**
+//! In BO2 a respawn wears `pers["class"]` with no menu; here a new General's record is made with
+//! no class, like the player's first, and the player picks again: the spawn's class screen when he
+//! takes him into first person (it opens on the chosen class, so the same class again is one
+//! press), or the command bar's class set overhead. Until then he is unarmed
+//! ([`crate::weapons::Loadout::unarmed`]). The chosen class still outlives his Generals, as the
+//! screen's pre-selection.
+//!
+//! A pick mid-life changes the chosen class at once but the worn kit only in the grace period,
+//! before he has done any combat (`level.ingraceperiod && !self.hasdonecombat`); otherwise BO2
+//! prints `MP_CHANGE_CLASS_NEXT_SPAWN` and the kit stays for this General: the class is what the
+//! next General's screen opens on.
 //!
 //! "Spawned" is the General's first time in first person with a class: a Take Control on a classed
 //! General, or the pick that ends his wait behind the class screen
@@ -116,11 +125,11 @@ pub(crate) fn is_combat(kind: &EventKind) -> bool {
 }
 
 impl Sim {
-    /// A fresh record for `general`, wearing the player's chosen class if he has one (a new
-    /// General after a death comes in with it), else unarmed and unclassed.
-    pub(crate) fn new_record(&self, idx: usize, general: u32, mode: Mode, info: Option<&ObjInfo>) -> PlayerSim {
+    /// A fresh record for `general`: unarmed and unclassed. Every General is picked for (the
+    /// module doc): the player's chosen class is only what his class screen opens on.
+    pub(crate) fn new_record(&self, general: u32, mode: Mode, info: Option<&ObjInfo>) -> PlayerSim {
         let (pos, yaw, health, max_health) = info.map_or((Vec3::ZERO, 0.0, 0.0, 0.0), |i| (i.pos, i.yaw, i.health, i.max_health));
-        let mut p = PlayerSim {
+        PlayerSim {
             general,
             class: None,
             reticle: String::new(),
@@ -160,29 +169,11 @@ impl Sim {
             shock: Default::default(),
             combat: false,
             spawned: false,
-        };
-        if let Some(Some(c)) = self.chosen.get(idx) {
-            p.wear(c);
         }
-        p
     }
 
-    /// [`Sim::new_record`] for a General taking the place of the player's last (his first, or the
-    /// next after a death): a class that waited for him (picked mid-life, `ClassAtNextSpawn`) comes
-    /// in now, and the record says so with `ClassChosen` (the log's "assumed the ... class"), as
-    /// an at-once pick does.
-    pub(crate) fn fresh_record(&mut self, idx: usize, general: u32, mode: Mode, info: Option<&ObjInfo>) -> PlayerSim {
-        let p = self.new_record(idx, general, mode, info);
-        if std::mem::take(&mut self.class_waits[idx]) {
-            if let (Some(c), Some(_)) = (self.chosen[idx].as_ref(), p.class.as_ref()) {
-                let class = c.name;
-                self.emit(idx, EventKind::ClassChosen { general, class });
-            }
-        }
-        p
-    }
-
-    /// The player's chosen class (BO2's `pers["class"]`), which his next General spawns with.
+    /// The player's chosen class (BO2's `pers["class"]`): his last pick, which his next General's
+    /// class screen opens on.
     pub fn chosen_class(&self, player: i32) -> Option<&ChosenClass> {
         self.chosen.get(usize::try_from(player).ok()?)?.as_ref()
     }
@@ -222,7 +213,9 @@ impl Sim {
                 p.input = FpsInput { yaw: info.yaw, ..Default::default() };
                 p
             }
-            _ => self.fresh_record(idx, general, Mode::Fps, Some(&info)),
+            // A General new to this seat (built after a death, or handed over): no class until
+            // the player picks one for him.
+            _ => self.new_record(general, Mode::Fps, Some(&info)),
         };
         // The weapon can't fire or aim until the tablet is down and it is up again.
         // BO2's first raise, once the tablet is down.
@@ -266,9 +259,9 @@ impl Sim {
     /// * a General with no class yet takes it at once, and if he was waiting behind the class
     ///   screen in first person, that is his spawn (on the next step);
     /// * a classed General takes it at once only in the grace period before his first combat;
-    ///   otherwise he keeps his kit and is told `MP_CHANGE_CLASS_NEXT_SPAWN` (his next General
-    ///   comes in with it);
-    /// * choosing the class already chosen does nothing.
+    ///   otherwise he keeps his kit and is told `MP_CHANGE_CLASS_NEXT_SPAWN` (his next General's
+    ///   class screen opens on it);
+    /// * choosing the class already chosen does nothing to a classed General.
     pub fn choose_class(&mut self, player: i32, general: u32, index: usize, payload: &[u32]) {
         let Ok(idx) = usize::try_from(player) else { return };
         if idx >= MAX_PLAYERS {
@@ -289,8 +282,9 @@ impl Sim {
         // bar's class set, overhead): make his record, which wears it, ready for the field.
         // His position and health are filled in from the object when he takes the field.
         let Some(p) = self.players[idx].as_mut() else {
-            self.class_waits[idx] = false;
-            self.players[idx] = Some(self.new_record(idx, general, Mode::Rts, None));
+            let mut p = self.new_record(general, Mode::Rts, None);
+            p.wear(&chosen);
+            self.players[idx] = Some(p);
             self.emit(idx, EventKind::ClassChosen { general, class: name });
             return;
         };
@@ -298,11 +292,10 @@ impl Sim {
             // A wait behind the class screen ends with this: he spawns on the next step
             // (`Sim::spawn_in`, which needs the host for the Tactical Insertion).
             p.wear(&chosen);
-            self.class_waits[idx] = false;
             self.emit(idx, EventKind::ClassChosen { general, class: name });
         } else {
-            // Back to the class he wears: nothing waits (BO2 still prints the hint, `menuclass`).
-            self.class_waits[idx] = p.class.as_ref() != Some(&chosen.id);
+            // The kit stays for this General; the class is what his next one's screen opens on
+            // (BO2 prints the hint even for the class he wears, `menuclass`).
             self.emit(idx, EventKind::ClassAtNextSpawn { general, class: name });
         }
     }

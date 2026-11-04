@@ -659,11 +659,13 @@ fn declining_the_spawn_returns_the_unclassed_general_overhead_at_once() {
 }
 
 /// The spawn's pick in first person ends the wait: the class kit comes up and the General plays.
-/// The class is the player's (BO2's `pers["class"]`): after his death the next General comes in
-/// wearing it, with no wait behind the class screen, whether he is taken into first person
-/// first or made by the overhead update.
+/// Every General is picked for (the deliberate break from BO2, `spawn.rs`): after his death the
+/// next General comes in unclassed and unarmed, whether he is taken into first person first or
+/// made by the overhead update, and waits behind the class screen for his own pick. The player's
+/// chosen class (BO2's `pers["class"]`) outlives the death as what that screen opens on, and the
+/// same class picked again is worn at once, with its `ClassChosen`.
 #[test]
-fn a_first_person_pick_spawns_him_and_the_next_general_comes_in_with_it() {
+fn a_first_person_pick_spawns_him_and_every_next_general_is_picked_for() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
@@ -681,29 +683,47 @@ fn a_first_person_pick_spawns_him_and_the_next_general_comes_in_with_it() {
     run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
     assert!(sim.player(0).is_none(), "the record died with him");
     assert_eq!(sim.chosen_class(0).map(|c| Some(c.id.clone())), Some(class.clone()), "the choice did not");
-    // The next General, taken straight into first person.
+    // The next General, taken straight into first person: the class screen, unarmed.
     host.add(ObjInfo { pos: Vec3::new(100.0, 0.0, 0.0), ..general(2, 0) });
+    sim.events.clear();
     sim.take_control(&host, 0, 2);
     let p = sim.player(0).unwrap();
-    assert!(!p.awaiting_class(), "no class screen after a death");
-    assert_eq!((&p.class, &p.arsenal.loadout), (&class, &kit), "he wears the chosen class");
-    // And one the overhead update makes first (the game's own order): armed at once.
+    assert!(p.awaiting_class(), "a new General waits for his own pick");
+    assert!(p.class.is_none() && p.arsenal.is_unarmed(), "he does not wear the last one's class");
+    assert!(!events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { .. })), "{:?}", events(&sim));
+    // The same class again (the screen's pre-selection, one press): worn at once, said so.
+    sim.choose_class(0, 2, 2, &[]);
+    let p = sim.player(0).unwrap();
+    assert!(!p.awaiting_class());
+    assert_eq!((&p.class, &p.arsenal.loadout), (&class, &kit), "he wears the pick");
+    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { general: 2, .. })), "{:?}", events(&sim));
+    // And one the overhead update makes first (the game's own order): unarmed overhead too, until
+    // the command bar's pick (or the screen at his take-control).
     host.objects.borrow_mut()[1].flags |= objflags::DEAD;
     run(&mut sim, &host, 0, 2, FpsInput::default(), 1);
     host.add(general(3, 0));
     let r = sim.rts_update(&host, 0, 3, 0, [0, 0, 0], None);
-    assert!(r.ammo[0] > 0, "his class guns overhead: {r:?}");
-    assert_eq!(sim.player(0).unwrap().class, class);
+    assert!(r.ammo.iter().chain(&r.reserve).all(|&n| n == 0), "no guns overhead before a pick: {r:?}");
+    assert!(sim.player(0).unwrap().class.is_none());
     sim.take_control(&host, 0, 3);
-    assert!(!sim.player(0).unwrap().awaiting_class());
+    assert!(sim.player(0).unwrap().awaiting_class(), "his take-control puts the screen up");
+    run(&mut sim, &host, 0, 3, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
+    assert!(!sim.player(0).unwrap().is_first_person(), "declined: back overhead, still unclassed");
+    sim.choose_class(0, 3, 1, &[]);
+    let r = sim.rts_update(&host, 0, 3, 0, [0, 0, 0], None);
+    assert!(r.ammo[0] > 0, "the bar's pick arms him overhead: {r:?}");
+    sim.take_control(&host, 0, 3);
+    assert!(!sim.player(0).unwrap().awaiting_class(), "picked overhead: straight into play");
 }
 
 /// BO2's `menuclass` mid-life: in the grace period, before he has fought, a new pick replaces the
 /// kit at once; once he has fired (or been hurt, or the grace period is over) it becomes the
-/// player's class but the kit stays, he is told `MP_CHANGE_CLASS_NEXT_SPAWN`, and his next
-/// General comes in with it. The same class again does nothing.
+/// player's class but the kit stays and he is told `MP_CHANGE_CLASS_NEXT_SPAWN`. His next General
+/// is picked for like any other (`spawn.rs`): unclassed, the chosen class only the screen's
+/// pre-selection, and his pick is worn at once wherever the match clock is. The same class again
+/// does nothing to a classed General.
 #[test]
-fn a_mid_life_pick_applies_in_the_grace_period_before_combat_else_at_the_next_spawn() {
+fn a_mid_life_pick_applies_in_the_grace_period_before_combat_else_the_next_general_picks() {
     let id = |sim: &Sim| sim.player(0).unwrap().class.clone().unwrap();
     let preset = |i: usize| crate::classes::at(i).unwrap().id;
     // In the grace period, no combat: at once.
@@ -733,42 +753,35 @@ fn a_mid_life_pick_applies_in_the_grace_period_before_combat_else_at_the_next_sp
     let e = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).expect("told it waits");
     assert_eq!(event_hint(&e.kind), Some("MP_CHANGE_CLASS_NEXT_SPAWN"));
     assert!(describe_event(e).unwrap().contains("next spawn"));
-    // His next General comes in with it, and says so (the log's "assumed the ... class").
+    // His next General comes in unclassed: the change is the screen's pre-selection, and the pick
+    // there says so (the log's "assumed the ... class").
     host.objects.borrow_mut()[0].flags |= objflags::DEAD;
     run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
     host.add(general(2, 0));
     sim.events.clear();
     sim.take_control(&host, 0, 2);
+    assert!(sim.player(0).unwrap().awaiting_class(), "the next General picks");
+    assert_eq!(sim.chosen_class(0).unwrap().id, preset(2), "the screen opens on the changed class");
+    sim.choose_class(0, 2, 2, &[]);
     assert_eq!(id(&sim), preset(2), "the next spawn wears the new class");
     assert!(!sim.player(0).unwrap().combat, "a new life has not fought");
-    let worn = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassChosen { general: 2, .. })).expect("the waiting class comes in with a ClassChosen");
+    let worn = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassChosen { general: 2, .. })).expect("the pick's ClassChosen");
     let want = crate::classes::at(2).unwrap().name;
     assert!(describe_event(worn).unwrap().contains(&format!("General 2 assumed the {want} class")), "{:?}", describe_event(worn));
-    // A later General, the class unchanged: no second ClassChosen (it is the same pick).
+    // Past the grace period a new General's first pick is still worn at once (it is his spawn,
+    // not a change), and his mid-life change after it waits as BO2's does.
     host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2).for_each(|o| o.flags |= objflags::DEAD);
     run(&mut sim, &host, 0, 2, FpsInput::default(), 1);
+    sim.frame = frames(crate::tuning::get().class_change_grace_period + 1.0);
     host.add(general(3, 0));
     sim.events.clear();
-    sim.take_control(&host, 0, 3);
-    assert_eq!(id(&sim), preset(2));
-    assert!(!events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { .. })), "{:?}", events(&sim));
-    // A next General brought in overhead (the RTS report makes his record) says it too; picking
-    // back the class he wears leaves nothing waiting.
-    wait_until_ready(&mut sim, &host);
-    run(&mut sim, &host, 0, 3, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+    sim.rts_update(&host, 0, 3, 0, [0, 0, 0], None);
+    assert!(sim.player(0).unwrap().class.is_none(), "made overhead: unclassed");
     sim.choose_class(0, 3, 0, &[]);
-    assert!(sim.class_waits[0]);
-    sim.choose_class(0, 3, 2, &[]);
-    assert!(!sim.class_waits[0], "back to the class he wears: nothing waits");
+    assert_eq!(id(&sim), preset(0), "his first pick, past the grace period: at once");
     sim.choose_class(0, 3, 1, &[]);
-    host.objects.borrow_mut().iter_mut().filter(|o| o.id == 3).for_each(|o| o.flags |= objflags::DEAD);
-    run(&mut sim, &host, 0, 3, FpsInput::default(), 1);
-    host.add(general(4, 0));
-    sim.events.clear();
-    sim.rts_update(&host, 0, 4, 0, [0, 0, 0], None);
-    assert_eq!(id(&sim), preset(1));
-    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { general: 4, .. })), "{:?}", events(&sim));
-    assert!(!sim.class_waits[0]);
+    assert_eq!(id(&sim), preset(0), "a change past the grace period waits");
+    assert_eq!(sim.chosen_class(0).unwrap().id, preset(1));
 
     // Past the grace period, no combat: the next spawn too.
     let host = FakeHost::default();
@@ -794,6 +807,30 @@ fn a_mid_life_pick_applies_in_the_grace_period_before_combat_else_at_the_next_sp
     assert!(sim.player(0).unwrap().combat, "a hit overhead is combat");
     sim.choose_class(0, 1, 1, &[]);
     assert_eq!(id(&sim), preset(0));
+}
+
+/// A General handed to another seat (Zero Hour's ownership moves: an ally's unit given over, a
+/// defection) is new to that seat: its overhead update makes him an unclassed record of the new
+/// player's, who picks for him; the new owner's chosen class is only his screen's pre-selection.
+#[test]
+fn a_general_handed_to_another_seat_is_picked_for_by_his_new_player() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.choose_class(1, 9, 3, &[]); // the ally's own pick, for his own General 9
+    sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+    sim.choose_class(0, 1, 0, &[]);
+    assert!(sim.player(0).unwrap().class.is_some());
+    // Seat 1 now owns General 1.
+    host.objects.borrow_mut()[0].owner_player = 1;
+    let r = sim.rts_update(&host, 1, 1, 0, [0, 0, 0], None);
+    let p = sim.player(1).unwrap();
+    assert_eq!(p.general, 1);
+    assert!(p.class.is_none() && r.ammo[0] == 0, "unclassed for his new player: {r:?}");
+    sim.take_control(&host, 1, 1);
+    assert!(sim.player(1).unwrap().awaiting_class());
+    sim.choose_class(1, 1, 3, &[]);
+    assert_eq!(sim.player(1).unwrap().class, Some(crate::classes::at(3).unwrap().id));
 }
 
 /// The Tactical Insertion is used at the spawn: a take-control declined without a class leaves it

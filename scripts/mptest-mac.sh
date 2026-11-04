@@ -11,7 +11,9 @@
 # script seeds, with attachments and a camo; the joiner the first preset), step forward and aside,
 # swap to the sidearm and fire it, swap back, throw the lethal, fire the primary at the other
 # General (the host a long aimed burst, the joiner a short one), and open the field computer. The
-# joiner's General dies; a new one comes from his Command Center with the class and is taken again.
+# joiner's General dies; a new one comes from his Command Center and is taken again: every General
+# is picked for (the deliberate break from BO2's respawn, sim/spawn.rs), so his class screen is up,
+# opened on the last class, and the script's Enter re-picks it.
 #
 # Pass: both instances entered the network game with the same content CRC, every scripted step
 # shows in both logs (each machine logs every player's sim events), Zero Hour never reported a CRC
@@ -33,7 +35,7 @@
 # knifes and goes back overhead by the field computer, unless he dies (the host ends each round with a
 # long aimed burst). In his third life (his next-to-last when he has fewer than four: the first fight
 # for N = 2) the target changes class mid-life after his throw and stays for the bursts (the next
-# General wears it). In his last life he leaves the
+# General's screen opens on it, and his Enter wears it). Every life of both players picks. In his last life he leaves the
 # game in first person (the quit menu's Exit), and the host must carry on alone. The long run's own
 # checks: the decline, the rounds, the same shellshocks on both machines, the class change worn,
 # and the host past the leave (his General dies, the host's sim runs on, no mismatch).
@@ -196,7 +198,11 @@ both "threw a lethal" "threw a lethal"
 both "a General took fire" "General took [0-9]+ damage"
 both "a General died" "General [0-9]+ died"
 in_log "the target ordered the next General" "$j" "my General died; ordering the next one"
-in_log "the next General came in with the class" "$j" "first-person session 2"
+in_log "the next General was taken" "$j" "first-person session 2"
+# Every General is picked for: the joiner's log names a class worn for two Generals at least (the
+# script logs "General N wears class C" as each record's class lands).
+picked=$( (grep -oE "autopilot mp: General [0-9]+ wears class" "$j" 2>/dev/null || true) | awk '{print $4}' | sort -u | wc -l | tr -d ' ')
+if [[ $picked -ge 2 ]]; then pass "the next General picked his class ($picked Generals)"; else fail "the next General picked his class" "$picked Generals classed"; fi
 both "opened the field computer" "opened the field computer"
 # The long run's host plays until the target has left and Zero Hour has ended the won game.
 (( long )) || in_log "the host's run finished" "$h" "autopilot mp: done"
@@ -299,10 +305,10 @@ if (( long )); then
         fail "the same shellshocks on both machines" "$(wc -l <"$out/host-shocks.txt" | tr -d ' ') vs $n"
     fi
     in_log "the target changed class mid-life" "$j" "changing class mid-life after combat"
-    # Both machines told him; his next General came in wearing it (the session line after the
-    # change names the record's class).
+    # Both machines told him; his next General's pick wore it (his screen opened on it: the first
+    # class line after the change is the next General's, since the kit stays for this one).
     next=$( (grep -oE "the [A-Za-z0-9 ]+ class comes in at the next spawn" "$j" || true) | tail -1 | sed -E 's/^the (.*) class comes in.*/\1/')
-    worn=$(awk '/class comes in at the next spawn/ {after = 1} after && /first-person session [0-9]+ \(class / {sub(/.*\(class /, ""); sub(/\).*/, ""); print; exit}' "$j")
+    worn=$(awk '/class comes in at the next spawn/ {after = 1} after && /autopilot mp: General [0-9]+ wears class / {sub(/.*wears class /, ""); print; exit}' "$j")
     if [[ -n "$next" ]] && grep -q "the $next class comes in at the next spawn" "$h" && [[ "$(tr '[:upper:]' '[:lower:]' <<<"$worn")" == "$(tr '[:upper:]' '[:lower:]' <<<"$next")" ]]; then
         pass "the next General wore the new class ($next)"
     else

@@ -898,10 +898,11 @@
     /// Every way into first person: Take Control on a fresh General meets the screen (Escape sends
     /// him back overhead, selected again); a class from the command bar overhead spawns him
     /// straight into play; Escape on a classed General's re-open keeps playing (BO2's mid-life
-    /// Back); and after his death the next General comes in with the player's class and no screen
-    /// (BO2's `pers["class"]`), the dead one never selected.
+    /// Back); and after his death the next General meets the screen again (every General is picked
+    /// for: the deliberate break from BO2's `pers["class"]` respawn), opened on the last class so
+    /// Enter re-picks it, the dead one never selected.
     #[test]
-    fn every_entry_meets_the_screen_only_without_a_class() {
+    fn every_entry_meets_the_screen_only_without_a_class_and_every_general_picks() {
         let _g = crate::profile::lock();
         crate::profile::reset();
         let host = FakeHost::default();
@@ -960,13 +961,25 @@
         let selected = until_overhead(&mut client, &mut sim, &mut inp);
         assert!(sim.player(0).is_none());
         assert!(selected.is_empty(), "a dead General is not selected: {selected:?}");
-        // The next General comes in with the class: no screen, his gun up, playing.
+        // The next General is picked for (every General is, `sim/spawn.rs`): the screen is up,
+        // opened on the player's last class, and Enter re-picks it in one press.
         host.add(general(2, 0));
         sim.take_control(&host, 0, 2);
         let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        assert_eq!((client.view, out.menu_open, out.capture_mouse), (ViewMode::Fps, 0, 1), "no screen after a death");
+        assert_eq!((client.view, out.menu_open, out.capture_mouse), (ViewMode::Fps, 1, 0), "the screen for a new General");
+        assert_eq!(out.viewmodel, viewmodel::NONE, "no gun before his pick");
+        let last = crate::classes::at(0).unwrap().id;
+        let row = crate::classui::pick_rows(false).iter().position(|r| *r == crate::classui::PickRow::Preset(0)).expect("the preset's row");
+        assert_eq!(client.class_pick_highlight, row, "opened on the last class, not row 0");
+        inp.keys.set_down(Key::Enter, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Enter, false);
+        assert_eq!((out.choose_class, out.choose_class_general), (1, 2), "Enter picks the pre-selected class for General 2");
+        sim.choose_class(0, out.choose_class_general, (out.choose_class - 1) as usize, &[]);
+        let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!((client.view, out.menu_open, out.capture_mouse), (ViewMode::Fps, 0, 1), "playing after the pick");
         assert_ne!(out.viewmodel, viewmodel::NONE, "his gun is up");
-        assert_eq!(sim.player(0).unwrap().class.as_deref(), Some(crate::classes::at(0).unwrap().id.as_str()));
+        assert_eq!(sim.player(0).unwrap().class.as_deref(), Some(last.as_str()));
         // The field computer hands him back selected.
         inp.keys.set_down(Key::F, true);
         frame_with(&mut client, &mut sim, &host, &mut inp, 2);
@@ -987,7 +1000,9 @@
     /// spawn screen (the classless General goes back overhead, never playing the knife), then on
     /// the next take-control picks the seeded custom class by its row key (5 presets + AB), leaves
     /// first person, and after the host takes control again forces the screen open and Escapes it,
-    /// then plays on. A pick never writes the profile.
+    /// then plays on. Then the host kills him and stands a new General in his place: every General
+    /// is picked for, so the fourth session meets the spawn screen, opened on AB, and the script's
+    /// Enter re-picks it; he walks. A pick never writes the profile.
     #[cfg(feature = "autopilot")]
     #[test]
     fn the_classpick_autopilot_picks_the_seeded_class_and_escapes_a_second_offer() {
@@ -1012,19 +1027,43 @@
         let mut declined_unclassed = false;
         let mut reopened = false;
         let mut closed_after_escape = false;
-        for i in 0..(30 * 30) {
-            // The C++ autopilot takes control again (twice for this run) a while after the General
-            // is handed back; the fake host does the same when the script has left first person.
+        let mut seat_general = 1;
+        let mut third_since = None;
+        let mut fourth_screen = false;
+        let mut fourth_pick: Option<ClientOut> = None;
+        let mut fourth_start = None;
+        for i in 0..(30 * 45) {
+            // The C++ autopilot takes control again (three times for this run) a while after the
+            // General is handed back; the fake host does the same when the script has left first
+            // person. In the third session it kills him and stands General 2 in his place.
             if client.view == ViewMode::Rts && i > 60 {
                 let since = *overhead_since.get_or_insert(i);
-                if retakes < 2 && i - since > 30 {
+                if retakes < 3 && i - since > 30 && (retakes < 2 || seat_general == 2) {
                     if retakes == 0 {
                         let p = sim.player(0).unwrap();
                         declined_unclassed = p.class.is_none() && !p.is_first_person();
                     }
-                    sim.take_control(&host, 0, 1);
+                    sim.take_control(&host, 0, seat_general);
                     retakes += 1;
                     overhead_since = None;
+                }
+            }
+            if retakes == 2 && seat_general == 1 && sim.player(0).is_some_and(|p| p.is_first_person()) {
+                let since = *third_since.get_or_insert(i);
+                if i - since > 180 {
+                    host.objects.borrow_mut()[0].flags |= crate::host::objflags::DEAD;
+                    host.add(crate::host::ObjInfo { pos: host.get(1).pos, ..general(2, 0) });
+                    seat_general = 2;
+                }
+            }
+            if retakes == 3 && client.view == ViewMode::Fps {
+                if client.class_pick_open && fourth_pick.is_none() {
+                    fourth_screen = true;
+                    let row = crate::classui::pick_rows(false).iter().position(|r| *r == crate::classui::PickRow::Custom(0)).unwrap();
+                    assert_eq!(client.class_pick_highlight, row, "General 2's screen opens on the last class");
+                }
+                if fourth_start.is_none() && sim.player(0).is_some_and(|p| p.class.is_some()) {
+                    fourth_start = Some(host.get(2).pos);
                 }
             }
             let out = client.frame(&mut sim, &inp);
@@ -1045,6 +1084,8 @@
                 }
                 if pick.is_none() {
                     pick = Some(out);
+                } else if retakes == 3 {
+                    fourth_pick = Some(out);
                 }
             }
             // The third session's forced re-open (the second session's screen is the pick's).
@@ -1064,7 +1105,6 @@
         }
         assert!(reached_fps, "the script runs in first person");
         assert!(declined_unclassed, "the first session's Escape sent the classless General back overhead");
-        assert_eq!(retakes, 2, "three first-person sessions");
         let out = pick.expect("the script picks the seeded class");
         assert_eq!(out.choose_class, CHOOSE_CLASS_CUSTOM);
         let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
@@ -1079,6 +1119,16 @@
         assert!(closed_after_escape, "Escape closes it and first-person play continues");
         assert!(!any_save, "a pick must not write the profile");
         assert_eq!(crate::profile::classes().len(), 1, "the seeded profile is untouched");
+        // The fourth session, General 2: the screen, the one-press re-pick, the kit, the walk.
+        assert_eq!(retakes, 3, "General 2 was taken into first person");
+        assert!(fourth_screen, "General 2 met the spawn screen");
+        let out = fourth_pick.expect("the script re-picked for General 2");
+        assert_eq!((out.choose_class, out.choose_class_general), (CHOOSE_CLASS_CUSTOM, 2));
+        let p = sim.player(0).expect("General 2's record");
+        assert_eq!((p.general, p.class.as_deref()), (2, Some("custom:AB")), "he wears the re-pick");
+        assert_eq!(p.arsenal.weapons[0].main.id, "mp7_mp");
+        let start = fourth_start.expect("he was classed in first person");
+        assert!((host.get(2).pos - start).length_xy() > 10.0, "he walked after the pick");
         crate::profile::reset();
     }
 

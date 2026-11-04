@@ -44,6 +44,8 @@ Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not fi
 
 ## The General in the overhead view
 
+Every General you build needs a class first: his command bar's class buttons pick one overhead,
+and Take Control on a General with none puts the class screen up (opened on your last class).
 Until you take control, the General is an ordinary unit that fights with his class's guns: their
 BO2 fire rate, magazine, reload and sound. His command bar has **Take Control**, his **Primary** and
 **Secondary** (switched like the Ranger's weapons), and orders:
@@ -148,8 +150,11 @@ The two scripts take `-Dist` to test a given build.
 * Weapons are BO2's own: every multiplayer weapon's definition (fire mode and rate, damage curve,
   spread, kick, reload/raise/ADS timings, grenade fuses and blasts), every attachment's numbers, the
   and alt modes they add are converted into `Data\ConquerOps\weapons.ini`.
-  Until he picks a class the General carries BO2's default class, the Assault premade: the MTAR,
-  the SMAW, a frag, a concussion and the knife; Lightweight, Toughness, Dexterity.
+  Every General is picked for: each new one (the first, and every one built after a death) is
+  unarmed until his player picks a class for him, on the class screen that comes up when he is
+  taken into first person (it opens on the class picked last, so the same one again is a single
+  Enter or click) or from his command bar overhead. This is a deliberate break from BO2, where a
+  respawn keeps the class with no menu.
   Every weapon's art is converted (about 420 MB; `ZHBO_CONVERT_ALL_WEAPONS=0` converts only the
   loadout's). `ZHBO_LOADOUT` tries another kit, e.g.
   `lethal=claymore_mp;tactical=trophy_system_mp;primary=dsr50_mp+acog` (every

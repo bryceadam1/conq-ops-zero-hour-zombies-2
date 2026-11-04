@@ -54,6 +54,11 @@ fn second_preset_key() -> Key {
         .unwrap_or(Key::Key2)
 }
 
+/// The key a script re-picks with on a later General's class screen: every General is picked for
+/// (`sim/spawn.rs`), and the screen opens on the player's last class, so Enter takes it again in
+/// one press (and wears a class changed mid-life, which is what the screen opens on).
+const REPICK_KEY: Key = Key::Enter;
+
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
 /// changes stance, jumps, glances at the map, swaps to the pistol and fires it aimed, swaps back, knifes,
 /// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, then opens the
@@ -150,6 +155,9 @@ pub struct Autopilot {
     pub(crate) eq_tactical_from: Option<f32>,
     /// What his own General holds in third person, last logged (general, viewmodel, camo).
     pub(crate) mp_holds: Option<(u32, i32, Option<String>)>,
+    /// The General and class his record last wore (logged on a change: every General is picked
+    /// for, and the scripts check that each one got his class, and which).
+    pub(crate) mp_worn: Option<(u32, String)>,
     /// Log lines for `ConquerOps.log` (drained by the FFI layer after the frame).
     pub log: Vec<String>,
 }
@@ -320,7 +328,10 @@ impl Autopilot {
     /// Phase two presses the custom's number key and the sim assumes it (no editor and no profile
     /// write), then opens the field computer to return overhead. Phase three, on the next
     /// take-control, forces the screen open (the command-bar path) and Escapes it, proving
-    /// first-person play continues for a classed General.
+    /// first-person play continues for a classed General (it walks after). Phase four is the next
+    /// General's (the host kills this one and stands a new one in his place): every General is
+    /// picked for, so his spawn screen is up, opened on the class picked last, and Enter takes it
+    /// in one press; he walks after.
     ///
     /// The schedule is a list of actions rather than time windows: a render hitch can jump the
     /// logic clock past a window (the macOS runs do), so each due action is emitted on a frame of
@@ -332,15 +343,18 @@ impl Autopilot {
         let custom_key = custom_class_key();
         // Each action, its earliest time in its session, and whether it ends the session (the
         // General leaves first person, so the next action waits for the next take-control).
-        let schedule: [(f32, ClasspickAction, bool); 5] = [
+        let schedule: [(f32, ClasspickAction, bool); 6] = [
             // Phase one: decline the spawn.
             (0.6, Press(Key::Escape), true),
             // Phase two: pick the seeded class, then leave overhead.
             (0.3, Press(custom_key), false),
             (1.6, Press(b.field_computer), true),
-            // Phase three: force the screen open and Escape it.
+            // Phase three: force the screen open and Escape it (the session ends with his death).
             (0.3, Reopen, false),
-            (0.9, Press(Key::Escape), false),
+            (0.9, Press(Key::Escape), true),
+            // Phase four, the next General: re-pick the pre-selected class (after a couple of
+            // seconds on the screen, so the logs and captures see him waiting behind it).
+            (2.0, Press(REPICK_KEY), false),
         ];
         // A held key gets one frame on its own, then one released frame, so the next action's
         // fresh-press edge is never merged with it.
@@ -353,8 +367,19 @@ impl Autopilot {
             self.classpick_wait_reset = false;
         }
         self.classpick_last_t = self.t;
+        // After phase three's Escape and after phase four's pick, walk forward for a couple of
+        // seconds: the autotest checks the position changes, proving first-person play resumed (a
+        // still-open screen would eat the input).
+        let walk = |from: f32, t: f32| {
+            let mut s = Scripted::default();
+            if (from..from + 1.8).contains(&t) {
+                s.keys.set_down(b.forward, true);
+            }
+            s
+        };
         if self.classpick_wait_reset {
-            return Scripted::default();
+            // Phase three's walk (its Escape ends the script's session; the death ends his).
+            return if self.classpick_step == 5 { walk(1.2, self.t) } else { Scripted::default() };
         }
         let mut scripted = Scripted::default();
         if let Some((when, action, ends)) = schedule.get(self.classpick_step).copied() {
@@ -371,10 +396,8 @@ impl Autopilot {
                 self.classpick_release = true;
             }
         }
-        // After Escape, walk forward for a couple of seconds: the autotest checks the position
-        // changes, proving first-person play resumed (a still-open screen would eat the input).
-        if self.classpick_step >= schedule.len() && (1.2..3.0).contains(&self.t) {
-            scripted.keys.set_down(b.forward, true);
+        if self.classpick_step >= schedule.len() && scripted.keys == KeySet::default() {
+            return walk(2.6, self.t);
         }
         scripted
     }
@@ -387,12 +410,13 @@ impl Autopilot {
     /// back, throws the lethal wide of him (so the throw is covered without settling the fight),
     /// fires the primary at him (the shooter a long aimed burst, the target a short one from the
     /// hip), and opens the field computer. A General who died comes back from the Command Center:
-    /// his second session must arrive with the class (no pick screen), walks, and leaves overhead.
+    /// his second session meets the class screen again (every General is picked for), opened on the
+    /// last class: Enter re-picks it; he walks and leaves overhead.
     /// Every time is measured from the take-control; the fight's from its start.
     pub fn mp_input(&mut self, b: &Bindings) -> Scripted {
         let t = self.t;
         let mut keys = KeySet::default();
-        // Only pressed while the spawn's pick is really up: a respawned General has his class.
+        // The pick keys are only pressed while the spawn's pick is really up (the client gates them).
         let long = self.mp_rounds > 1;
         // The long run's target declines his first spawn: Escape on the spawn's class screen sends
         // the classless General back overhead (BO2 never spawns a player without a class), and
@@ -413,7 +437,9 @@ impl Autopilot {
         if long && life >= 2 {
             return self.mp_round(b, life);
         }
-        let pick = (0.3..0.4).contains(&t).then(custom_class_key);
+        // The first General picks the custom by its row; a later one re-picks the last class (the
+        // screen opens on it).
+        let pick = (0.3..0.4).contains(&t).then(|| if life >= 2 { REPICK_KEY } else { custom_class_key() });
         if life >= 2 {
             if (0.6..1.6).contains(&t) {
                 keys.set_down(b.forward, true);
@@ -486,7 +512,8 @@ impl Autopilot {
             keys.set_down(b.fire, true);
         }
         // A long run of two lives changes class here, in the first fight, after the target's throw
-        // (before his burst; he stays in the fight until he is down, so his next General wears it).
+        // (before his burst; he stays in the fight until he is down, so his next General's screen
+        // opens on it).
         let (pick_force, change_pick) = if long { self.mp_class_change(life, c, 4.2) } else { (0, None) };
         // Out by the field computer once the fight is over: the shooter when the target is down
         // (or the time is up), the target only if he outlived it.
@@ -532,6 +559,9 @@ impl Autopilot {
     pub fn mp_round(&mut self, b: &Bindings, life: u32) -> Scripted {
         let t = self.t;
         let mut keys = KeySet::default();
+        // Every General is picked for: this one's screen opens on the last class (the changed one
+        // after the mid-life change), and Enter takes it.
+        let repick = (0.3..0.4).contains(&t).then_some(REPICK_KEY);
         let fight = match self.mp_fight {
             Some(_) if self.mp_fight_alone && self.mp_aim.is_some() => {
                 self.mp_fight_alone = false;
@@ -546,12 +576,12 @@ impl Autopilot {
                 self.log.push(format!("autopilot mp: round {life} starts ({})", if self.mp_aim.is_some() { "the other General is in first person" } else { "nobody to aim at" }));
                 t
             }
-            None => return Scripted::default(),
+            None => return Scripted { class_pick: repick, ..Default::default() },
         };
         let c = t - fight;
         let mut look = self.mp_aim;
         let mut pick_force = 0;
-        let mut class_pick = None;
+        let mut class_pick = repick;
         // The tactical, thrown at his feet (the throw leaves above the crosshair and flies far).
         if (0.2..1.4).contains(&c) {
             look = self.mp_aim.map(|(yaw, pitch)| (yaw, pitch - MP_TACTICAL_DIP));
@@ -583,7 +613,7 @@ impl Autopilot {
             class_pick = pick;
         }
         // The shooter ends each round with a long aimed burst at him; the target stays for it in
-        // the life he changed class in (the new class comes in with his next General).
+        // the life he changed class in (his next General's screen opens on the new class).
         let changing = !self.mp_shooter && life == self.mp_change_life();
         if self.mp_shooter && (14.0..19.0).contains(&c) {
             keys.set_down(b.ads, true);
@@ -666,7 +696,7 @@ impl Autopilot {
     /// AN-94 with a grenade launcher), fires a burst, and past the grace period re-opens the class
     /// screen and picks the second custom (the AN-94 with a reflex sight): it waits for the next
     /// spawn. The bridge then kills him (his rifle drops) and stands the next General behind the
-    /// spot; he fires and reloads (room for spare rounds), walks onto the dropped rifle (its stock
+    /// spot; his class screen opens on the second custom and Enter takes it; he fires and reloads (room for spare rounds), walks onto the dropped rifle (its stock
     /// is his: the same base weapon) and presses the use key over it: the swap.
     pub fn drops_input(&mut self, b: &Bindings) -> Scripted {
         let t = self.t;
@@ -682,6 +712,9 @@ impl Autopilot {
             }
             return Scripted { keys, class_pick: pick, pick_force: force, ..Default::default() };
         }
+        // The next General is picked for: his screen opens on the class changed for him (the
+        // second custom), and Enter takes it.
+        let pick = (0.3..0.4).contains(&t).then_some(REPICK_KEY);
         if (2.0..2.5).contains(&t) {
             keys.set_down(b.fire, true);
         }
@@ -703,7 +736,7 @@ impl Autopilot {
         if self.drop_used.is_some_and(|u| t < u + 0.1) {
             keys.set_down(b.field_computer, true);
         }
-        Scripted { keys, look, ..Default::default() }
+        Scripted { keys, look, class_pick: pick, ..Default::default() }
     }
 
     /// Each step waits for the state it needs, not a clock: the lethal goes once the class is

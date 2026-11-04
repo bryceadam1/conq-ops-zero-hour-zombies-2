@@ -444,9 +444,7 @@ fn populated_sim() -> Sim {
 /// Change the `n`-th leaf of the hashed state (the parts [`Sim::fingerprint`] streams).
 fn perturb_state(sim: &mut Sim, n: &mut usize) -> bool {
     use crate::statehash::StateHash;
-    // A seat's class wait is hashed with the seat, so only the seats in use (a record or a class).
-    let in_use: Vec<usize> = (0..MAX_PLAYERS).filter(|&i| sim.players[i].is_some() || sim.chosen[i].is_some()).collect();
-    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || in_use.into_iter().any(|i| sim.class_waits[i].perturb(n)) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
+    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
 }
 
 /// Sensitivity: every leaf of the state (every scalar, string and definition of every player
@@ -670,8 +668,9 @@ fn mp_autopilot_match(rounds: u32, frames: u32) -> (Vec<Event>, Vec<String>, boo
 /// player only (the shooter and the target), a third that never renders, and the engine side the
 /// bridge plays in game (take control once each General stands at the meeting point; a fresh
 /// General from the Command Center when one dies). The script must reach every step it claims —
-/// the picks, the sidearm, the throw, the fight, a death, the respawned General coming back with
-/// his class and no pick, the field computer — with every machine agreeing on every frame.
+/// the picks, the sidearm, the throw, the fight, a death, the respawned General's own pick (every
+/// General is picked for: his screen opens on the last class and Enter takes it), the field
+/// computer — with every machine agreeing on every frame.
 #[cfg(feature = "autopilot")]
 #[test]
 fn the_multiplayer_autopilot_fights_in_lockstep() {
@@ -688,9 +687,16 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
     assert!(count(1, &|k| matches!(k, EventKind::GeneralDied { .. })) >= 1, "the shooter killed the target's General");
     assert_eq!(count(0, &|k| matches!(k, EventKind::GeneralDied { .. })), 0, "the target's short burst did not kill the shooter");
     assert!(count(0, &|k| matches!(k, EventKind::FieldComputerOpened)) >= 1, "the shooter left through the field computer");
-    // The target's next General came in with his class (a pick is only offered to the classless).
+    // The target's next General was picked for: one pick per General, the second the same class
+    // (the screen's pre-selection, taken with one press).
     assert_eq!(count(1, &|k| matches!(k, EventKind::EnteredFps { .. })), 2, "the target's second General was taken into first person");
-    assert_eq!(count(1, &|k| matches!(k, EventKind::ClassChosen { .. })), 1, "his class came back with him: no second pick");
+    let picks: Vec<(u32, ClassName)> = seen.iter().filter(|e| e.player == 1).filter_map(|e| match e.kind {
+        EventKind::ClassChosen { general, class } => Some((general, class)),
+        _ => None,
+    }).collect();
+    assert_eq!(picks.len(), 2, "one pick per General: {picks:?}");
+    assert!(picks[0].0 != picks[1].0 && picks[0].1 == picks[1].1, "the second General re-picked the last class: {picks:?}");
+    assert!(lines.iter().filter(|l| l.contains("wears class")).count() >= 3, "each General logged his class: {lines:?}");
     assert!(count(1, &|k| matches!(k, EventKind::FieldComputerOpened)) >= 1, "the respawned General left through the field computer");
     assert!(lines.iter().any(|l| l.contains("the fight starts (the other General is in first person)")), "the fight waited for the other General: {lines:?}");
     // One line per General at least (headless every viewmodel index is -1, so a swap logs nothing
@@ -702,7 +708,8 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
 /// The long two-instance run (`ZHBO_AUTOPILOT_ROUNDS`, `mptest-mac.sh` with
 /// `ZHBO_MPTEST_ROUNDS`), headless: the target declines his first spawn and is taken again, both
 /// play rounds of tacticals (a shellshock), bursts, reloads and knives, the target changes class
-/// mid-life after combat and his next General wears it — every machine agreeing on every frame.
+/// mid-life after combat and his next General's screen opens on it (he takes it with Enter);
+/// every General of both players is picked for — every machine agreeing on every frame.
 #[cfg(feature = "autopilot")]
 #[test]
 fn the_long_multiplayer_autopilot_run_fights_in_lockstep() {
@@ -722,8 +729,14 @@ fn the_long_multiplayer_autopilot_run_fights_in_lockstep() {
     assert!(shocked, "a concussion stunned a General");
     assert!(count(1, &|k| matches!(k, EventKind::ClassAtNextSpawn { .. })) >= 1, "the target's mid-life change waited for his next spawn: {lines:?}");
     let change = lines.iter().position(|l| l.contains("changing class mid-life")).expect("the change was made");
-    assert!(lines[change..].iter().any(|l| l.contains("first-person session") && l.contains("(class cqb)")), "his next General wore it: {lines:?}");
-    // And the sim said so for that General, on every machine: the waiting class came in with a
+    assert!(lines[change..].iter().any(|l| l.contains("wears class cqb")), "his next General wore it: {lines:?}");
+    // Every General either player took into first person was picked for (a ClassChosen naming him).
+    for player in [0, 1] {
+        let entered: std::collections::BTreeSet<u32> = seen.iter().filter(|e| e.player == player).filter_map(|e| match e.kind { EventKind::EnteredFps { general } => Some(general), _ => None }).collect();
+        let picked: std::collections::BTreeSet<u32> = seen.iter().filter(|e| e.player == player).filter_map(|e| match e.kind { EventKind::ClassChosen { general, .. } => Some(general), _ => None }).collect();
+        assert!(entered.len() >= 3 && entered.is_subset(&picked), "player {player}: every General picked for: entered {entered:?}, picked {picked:?}");
+    }
+    // And the sim said so for that General, on every machine: the changed class came in with a
     // ClassChosen naming it.
     let waited = seen.iter().rposition(|e| e.player == 1 && matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).unwrap();
     let EventKind::ClassAtNextSpawn { general: old, class } = seen[waited].kind else { unreachable!() };
@@ -733,7 +746,8 @@ fn the_long_multiplayer_autopilot_run_fights_in_lockstep() {
 
 /// The long run is meaningful for any number of lives from two: the target's class change falls in
 /// a life that has a next one ([`crate::client::Autopilot::mp_change_life`]: the first fight for two
-/// lives, the first round for three), and his next General wears it, on every machine.
+/// lives, the first round for three), and his next General's pick (the screen opens on it) wears
+/// it, on every machine.
 #[test]
 fn the_long_run_changes_class_in_a_life_with_a_next_one() {
     let _g = crate::profile::lock();
@@ -741,7 +755,7 @@ fn the_long_run_changes_class_in_a_life_with_a_next_one() {
         crate::profile::reset();
         let (seen, lines, _) = mp_autopilot_match(rounds, 30 * 150);
         let change = lines.iter().position(|l| l.contains("changing class mid-life")).unwrap_or_else(|| panic!("{rounds} lives: the change was made: {lines:?}"));
-        assert!(lines[change..].iter().any(|l| l.contains("first-person session") && l.contains("(class cqb)")), "{rounds} lives: his next General wore it: {lines:?}");
+        assert!(lines[change..].iter().any(|l| l.contains("wears class cqb")), "{rounds} lives: his next General wore it: {lines:?}");
         let waited = seen.iter().rposition(|e| e.player == 1 && matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).unwrap_or_else(|| panic!("{rounds} lives: the change waited"));
         assert!(seen[waited..].iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::ClassChosen { .. })), "{rounds} lives: the next General's ClassChosen");
     }
@@ -825,9 +839,12 @@ fn a_dropped_weapon_plays_alike_on_every_machine() {
                 net.send(frame, 0, Cmd::TakeControl(100));
                 net.send(frame, 1, Cmd::TakeControl(101));
             }
-            // Mid-life past the grace period: his next General wears it (`MP_CHANGE_CLASS_NEXT_SPAWN`).
+            // Mid-life past the grace period: the kit stays (`MP_CHANGE_CLASS_NEXT_SPAWN`), and his
+            // next General's class screen opens on it; he takes it there (every General is picked
+            // for, `sim/spawn.rs`).
             f if f == late - 50 => net.send(frame, 1, Cmd::ChooseClass(101, 0, sniper.to_wire_words())),
             f if f == late + 104 => net.send(frame, 1, Cmd::TakeControl(102)),
+            f if f == late + 106 => net.send(frame, 1, Cmd::ChooseClass(102, 0, sniper.to_wire_words())),
             _ => {}
         }
         let cmds = net.take(frame);
