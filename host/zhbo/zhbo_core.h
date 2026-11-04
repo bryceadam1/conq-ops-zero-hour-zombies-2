@@ -157,10 +157,51 @@ typedef struct ZhboLogicApi
 	int32_t (*surface_at)(float x, float y);
 } ZhboLogicApi;
 
-/* zhbo_core::host::damage_kind and disable_kind. */
+/* The damage kinds of ZhboLogicApi.damage (zhbo_core::damage::ZH_DAMAGE_TYPES): Zero Hour's
+   DamageTypes by their INI names, the first three since the ABI's start, the rest appended by
+   ABI 32 (pending) in Zero Hour's order; the bridge maps each to its DamageType. The core sends
+   the kind its tuning pack's [MeansOfDeath] table names for each BO2 means of death. The
+   shield hook (zhbo_logic_shield_damage) reports only the first three. Then
+   zhbo_core::host::disable_kind. */
 #define ZHBO_DAMAGE_SMALL_ARMS 0
 #define ZHBO_DAMAGE_MELEE 1
 #define ZHBO_DAMAGE_EXPLOSION 2
+#define ZHBO_DAMAGE_CRUSH 3
+#define ZHBO_DAMAGE_ARMOR_PIERCING 4
+#define ZHBO_DAMAGE_GATTLING 5
+#define ZHBO_DAMAGE_RADIATION 6
+#define ZHBO_DAMAGE_FLAME 7
+#define ZHBO_DAMAGE_LASER 8
+#define ZHBO_DAMAGE_SNIPER 9
+#define ZHBO_DAMAGE_POISON 10
+#define ZHBO_DAMAGE_HEALING 11
+#define ZHBO_DAMAGE_UNRESISTABLE 12
+#define ZHBO_DAMAGE_WATER 13
+#define ZHBO_DAMAGE_DEPLOY 14
+#define ZHBO_DAMAGE_SURRENDER 15
+#define ZHBO_DAMAGE_HACK 16
+#define ZHBO_DAMAGE_KILL_PILOT 17
+#define ZHBO_DAMAGE_PENALTY 18
+#define ZHBO_DAMAGE_FALLING 19
+#define ZHBO_DAMAGE_DISARM 20
+#define ZHBO_DAMAGE_HAZARD_CLEANUP 21
+#define ZHBO_DAMAGE_PARTICLE_BEAM 22
+#define ZHBO_DAMAGE_TOPPLING 23
+#define ZHBO_DAMAGE_INFANTRY_MISSILE 24
+#define ZHBO_DAMAGE_AURORA_BOMB 25
+#define ZHBO_DAMAGE_LAND_MINE 26
+#define ZHBO_DAMAGE_JET_MISSILES 27
+#define ZHBO_DAMAGE_STEALTHJET_MISSILES 28
+#define ZHBO_DAMAGE_MOLOTOV_COCKTAIL 29
+#define ZHBO_DAMAGE_COMANCHE_VULCAN 30
+#define ZHBO_DAMAGE_SUBDUAL_MISSILE 31
+#define ZHBO_DAMAGE_SUBDUAL_VEHICLE 32
+#define ZHBO_DAMAGE_SUBDUAL_BUILDING 33
+#define ZHBO_DAMAGE_SUBDUAL_UNRESISTABLE 34
+#define ZHBO_DAMAGE_MICROWAVE 35
+#define ZHBO_DAMAGE_KILL_GARRISONED 36
+#define ZHBO_DAMAGE_STATUS 37
+#define ZHBO_DAMAGE_COUNT 38
 #define ZHBO_DISABLE_PARALYZED 0
 #define ZHBO_DISABLE_EMP 1
 
@@ -549,8 +590,8 @@ int32_t zhbo_native_bone(const char *name, float *out12); /* world 3x4 rows of t
 void zhbo_native_reset(void);
 
 /* The native third person (Track R7; nativebody/ffi.rs, CONTRACT.md "The native third person").
-   ZHBO_NATIVE_BODY=1 draws the weapon in the General's hand while the W3D body stays; 2 draws the
-   body too. Each frame: zhbo_client_native_poses, then zhbo_native_body for each General, then
+   ZHBO_NATIVE_BODY=2 (the default) draws the body and the weapon; 1 the weapon in the General's
+   hand while the W3D body stays. Each frame: zhbo_client_native_poses, then zhbo_native_body for each General, then
    answer every zhbo_native_body_wanted path with zhbo_native_body_provide (len < 0: not in the
    archive) and log each zhbo_native_body_take_log line. */
 typedef struct ZhboNativePose

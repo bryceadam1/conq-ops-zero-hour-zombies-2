@@ -99,6 +99,9 @@ pub(crate) struct State {
     last: Option<u32>,
     failed: HashSet<super::RigKey>,
     pub(crate) posed: Posed,
+    /// The torso clips played so far, shared by every General's rig (the body manifests name the
+    /// same blobs).
+    torso: HashMap<u16, super::AnimClip>,
     pub(crate) log: VecDeque<String>,
     logged: HashSet<String>,
 }
@@ -129,6 +132,26 @@ impl State {
         self.logged.iter().map(String::as_str)
     }
 
+    /// Ask for torso clip `id` (`rig`'s body names its blob) until it has loaded.
+    fn want_torso(&mut self, rig: &Loaded, id: u16) {
+        if self.torso.contains_key(&id) {
+            return;
+        }
+        let Some(path) = rig.torso_path(id).map(str::to_string) else { return };
+        if self.files.is_missing(&path) {
+            return;
+        }
+        if let Some(bytes) = self.files.get(&path) {
+            match super::AnimClip::from_bytes(&bytes) {
+                Ok(a) => {
+                    self.torso.insert(id, a);
+                }
+                Err(e) => self.log_once(format!("{path}: {e}")),
+            }
+            self.files.forget(&path);
+        }
+    }
+
     pub(crate) fn log_once(&mut self, msg: String) {
         if self.logged.len() < 256 && self.logged.insert(msg.clone()) {
             self.log.push_back(format!("native body: {msg}"));
@@ -138,6 +161,9 @@ impl State {
     /// One general's frame. `enabled` is `ZHBO_NATIVE_BODY != 0`; without the renderer it loads and
     /// poses, then answers "not native".
     pub(crate) fn frame(&mut self, inp: &ZhboNativeBodyIn, enabled: i32, camo: Option<&str>) -> i32 {
+        if (1..=255).contains(&inp.faction) {
+            note_faction(inp.general, inp.faction as u8);
+        }
         if enabled <= 0 || inp.vm < 0 || inp.faction <= 0 {
             return NOT_NATIVE;
         }
@@ -152,12 +178,17 @@ impl State {
         }
         let faction = inp.faction as u8;
         let stowed = if mode == Mode::Body { stowed_of(inp.general) } else { -1 };
-        let key = (faction, inp.vm, mode as u8, stowed);
+        let offhands = if mode == Mode::Body { offhands_of(inp.general) } else { [-1; 2] };
+        let key = (faction, inp.vm, mode as u8, stowed, offhands);
         if self.failed.contains(&key) {
             return NOT_NATIVE;
         }
         let general = inp.general;
-        if self.rigs.get(&general).is_none_or(|r| r.loaded.key != key || r.loaded.camo.as_deref() != camo) {
+        // A corpse keeps the rig he died with: his record (and with it his stowed weapon, offhands
+        // and camo) is gone, and recomposing would show the W3D body while it loads.
+        let corpse = torso_of(general).is_some_and(|a| a.action == zhbo_native::thirdperson::torso::DEATH);
+        let keep = corpse && self.rigs.get(&general).is_some_and(|r| (r.loaded.key.0, r.loaded.key.1, r.loaded.key.2) == (key.0, key.1, key.2));
+        if !keep && self.rigs.get(&general).is_none_or(|r| r.loaded.key != key || r.loaded.camo.as_deref() != camo) {
             // His weapon or camo changed: drop his old rig (another General's stays).
             if let Some(mut old) = self.rigs.remove(&general) {
                 old.release();
@@ -193,7 +224,24 @@ impl State {
         // The body clip for this movement state, or the bind pose when the weapon-only mode (or a
         // body with no clip) is drawing.
         let clip = rig.loaded.clip_for(inp.state as u16);
-        rig.loaded.pose(&req, clip, &mut self.posed);
+        // The upper body's action over it, while the client times one for him (`client::remote`).
+        // Its clip loads the first time anyone plays it; until then the body runs without it.
+        let action = torso_of(general).filter(|_| mode == Mode::Body);
+        if let Some(a) = action {
+            self.want_torso(&rig.loaded, a.clip);
+        }
+        // A death is played through and held (the corpse); every other action fades out at its end.
+        let torso = action.and_then(|a| self.torso.get(&a.clip).map(|c| (c, a.t, a.action == zhbo_native::thirdperson::torso::DEATH)));
+        rig.loaded.pose(&req, clip, torso, &mut self.posed);
+        // A grenade's pin and throw: BO2 draws the offhand on `tag_inhand` as the entity's one
+        // weapon (t6mp `FUN_0052a4c0` attaches only the entity's current weapon; `FUN_0052a470`
+        // puts a grenade on `tag_inhand`), so the gun in hand is not drawn meanwhile.
+        let in_hand = action.filter(|a| matches!(a.action, zhbo_native::thirdperson::torso::THROW | zhbo_native::thirdperson::torso::PRIME));
+        // A corpse has dropped his gun (BO2's `dropweaponfordeath`).
+        if in_hand.is_some() || action.is_some_and(|a| a.action == zhbo_native::thirdperson::torso::DEATH) {
+            rig.loaded.hide_weapon(&mut self.posed);
+        }
+        rig.loaded.show_offhand(&mut self.posed, in_hand.map(|a| if a.lethal { 0 } else { 1 }));
         self.last = Some(general);
         #[cfg(feature = "renderer")]
         let answer = super::gpu::draw(self, &mut rig, inp);
@@ -218,12 +266,30 @@ fn request(inp: &ZhboNativeBodyIn, mode: Mode) -> Request {
         yaw: inp.yaw,
         tag,
         stowed: if mode == Mode::Body { stowed_of(inp.general) } else { -1 },
+        offhands: if mode == Mode::Body { offhands_of(inp.general) } else { [-1; 2] },
     }
 }
 
 /// Lock-free per-General stowed weapon (`general << 32 | vm + 1`), published by the core after each
 /// logic step (`Sim::stowed_weapons`): presentation only, read by the third-person frame.
 static STOWED: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+/// Each General's lethal and tactical (`general << 32 | (lethal vm + 1) << 16 | tactical vm + 1`),
+/// published with the stowed weapon (`Sim::offhand_weapons`). Presentation only.
+static OFFHANDS: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+pub fn publish_offhands(rows: &[(u32, [i32; 2])]) {
+    use std::sync::atomic::Ordering;
+    for (i, slot) in OFFHANDS.iter().enumerate() {
+        let v = rows.get(i).map_or(0, |&(g, [l, t])| ((g as u64) << 32) | (((l + 1) as u64 & 0xffff) << 16) | ((t + 1) as u64 & 0xffff));
+        slot.store(v, Ordering::Relaxed);
+    }
+}
+
+fn offhands_of(general: u32) -> [i32; 2] {
+    use std::sync::atomic::Ordering;
+    OFFHANDS.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or([-1; 2], |v| [((v >> 16) & 0xffff) as i32 - 1, (v & 0xffff) as i32 - 1])
+}
 
 pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
     use std::sync::atomic::Ordering;
@@ -236,6 +302,67 @@ pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
 fn stowed_of(general: u32) -> i32 {
     use std::sync::atomic::Ordering;
     STOWED.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or(-1, |v| (v & 0xffff_ffff) as i32 - 1)
+}
+
+/// Each General's faction letter as the bridge names it to [`zhbo_native_body`] (`general << 8 |
+/// letter`): the client's voice for him (`sounds::voice_event`). Presentation only.
+static FACTIONS: [std::sync::atomic::AtomicU64; 64] = [const { std::sync::atomic::AtomicU64::new(0) }; 64];
+
+fn note_faction(general: u32, letter: u8) {
+    use std::sync::atomic::Ordering;
+    if general == 0 || letter == 0 || faction_of(general) == Some(letter) {
+        return;
+    }
+    let slot = &FACTIONS[general as usize % FACTIONS.len()];
+    slot.store(((general as u64) << 8) | letter as u64, Ordering::Relaxed);
+}
+
+/// General `general`'s faction letter, once the bridge has drawn him.
+pub fn faction_of(general: u32) -> Option<u8> {
+    use std::sync::atomic::Ordering;
+    let v = FACTIONS[general as usize % FACTIONS.len()].load(Ordering::Relaxed);
+    ((v >> 8) as u32 == general && v != 0).then_some((v & 0xff) as u8)
+}
+
+/// Each General's torso action this frame (`general << 32 | action << 28 | lethal << 27 | clip
+/// << 14 | milliseconds in`), published by the client (`client::remote`; the headless third-person
+/// render's `--torso` too): the body pass layers it. Presentation only.
+static TORSO: [std::sync::atomic::AtomicU64; 2 * crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; 2 * crate::sim::MAX_PLAYERS];
+
+/// One General's torso action as the body pass takes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TorsoAction {
+    pub general: u32,
+    /// `zhbo_native::thirdperson::torso`'s action (`RELOAD`, `THROW`, ...).
+    pub action: u8,
+    /// The body manifest's clip id and seconds into it.
+    pub clip: u16,
+    pub t: f32,
+    /// A pin or throw's offhand: the lethal (else the tactical).
+    pub lethal: bool,
+}
+
+pub fn publish_torso(torsos: impl Iterator<Item = TorsoAction>) {
+    use std::sync::atomic::Ordering;
+    let mut it = torsos;
+    for slot in TORSO.iter() {
+        let v = it.next().map_or(0, |a| {
+            ((a.general as u64) << 32) | (((a.action & 0xf) as u64) << 28) | ((a.lethal as u64) << 27) | (((a.clip & 0x1fff) as u64) << 14) | (a.t * 1000.0).clamp(0.0, 16383.0) as u64
+        });
+        slot.store(v, Ordering::Relaxed);
+    }
+}
+
+/// General `general`'s torso action, if he is in one.
+pub(crate) fn torso_of(general: u32) -> Option<TorsoAction> {
+    use std::sync::atomic::Ordering;
+    TORSO.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| TorsoAction {
+        general,
+        action: ((v >> 28) & 0xf) as u8,
+        lethal: (v >> 27) & 1 != 0,
+        clip: ((v >> 14) & 0x1fff) as u16,
+        t: (v & 0x3fff) as f32 / 1000.0,
+    })
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

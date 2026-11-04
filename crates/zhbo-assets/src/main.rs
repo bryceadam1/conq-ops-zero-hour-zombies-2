@@ -428,6 +428,10 @@ fn cmd_weapons(args: &[String]) -> Result<(), String> {
                 w.projectile_speed, w.projectile_speed_up, w.proj_explosion, w.projectile_impact_explode, w.projectile_sentient_impact_explode, w.stickiness, w.spawned_grenade_weapon, w.projectile_activate_dist
             );
             println!("    raise {:?} first {:?} putaway {:?} alt switch {:?}", w.raise_sound_player, w.first_raise_sound_player, w.putaway_sound_player, w.alt_switch_sound_player);
+            println!(
+                "    npc swipe {:?} plr swipe {:?} hit {:?} miss {:?} pullback {:?} raise {:?} first {:?} putaway {:?} alt {:?} reload {:?}/{:?} empty {:?}",
+                w.melee_swipe_sound, w.melee_swipe_sound_player, w.melee_hit_sound, w.melee_miss_sound, w.pullback_sound, w.raise_sound, w.first_raise_sound, w.putaway_sound, w.alt_switch_sound, w.reload_sound, w.reload_sound_player, w.empty_fire_sound
+            );
             println!("    overlay {:?} low {:?} reticle {} size {:?}", w.overlay_material, w.overlay_material_low_res, w.overlay_reticle, w.overlay_size);
             println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
             println!(

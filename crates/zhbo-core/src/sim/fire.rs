@@ -11,6 +11,7 @@ use crate::impacts::Surface;
 use crate::weapons::FireMode;
 use crate::math::det;
 use crate::penetration;
+use crate::damage::MeansOfDeath;
 
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
@@ -143,8 +144,12 @@ impl Sim {
         // scorestreak bonus, `damage + damage * level.cac_armorpiercing_data`
         // (`_class.gsc:859`, `killstreaks/_ai_tank.gsc:292-293`).
         let pierce = if !infantry && p.arsenal.has_specialty(Specialty::ArmorPiercing) { 1.0 + p.arsenal.tuning.perk_armorpiercing / 100.0 } else { 1.0 };
-        let amount = def.damage_at(distance) * mult * at * pierce * BO2_TO_ZH_DAMAGE;
-        let kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
+        // A pistol's or a rifle's round, a headshot on a soldier (`MOD_HEAD_SHOT`); on anything but
+        // a soldier BO2's vehicle rule for a bullet (`level.vehicledamagescalar` alone).
+        let how = crate::damage::bullet(def, infantry, location);
+        let rule = victim.map_or(1.0, |v| crate::damage::scale_on(&p.arsenal.tuning, &def.id, how, &v));
+        let amount = def.damage_at(distance) * mult * at * pierce * rule * BO2_TO_ZH_DAMAGE;
+        let kill = host.damage(p.general, id, amount, how);
         // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
         // surface comes from what was hit.
         let surface = Surface::of_object(victim.as_ref());
@@ -177,10 +182,14 @@ const MELEE_QUERY_SLACK: f32 = 12.0;
 const MELEE_FACING_COS: f32 = 0.6;
 
 impl MeleeReach {
+    /// Whether a blow from `from` (the General's feet) reaches `o`: a soldier within the reach of
+    /// his BO2-sized body, anything else within the reach of its Zero Hour footprint (a box's
+    /// side, not a circle of its length: BO2's melee trace meets the entity's bounds).
     fn reaches(self, from: Vec3, o: &ObjInfo) -> bool {
         let d = (o.pos - from).length_xy();
         match self {
-            MeleeReach::Body => d <= MELEE_RANGE + reach_radius(o),
+            MeleeReach::Body if o.has(objflags::INFANTRY) => d <= MELEE_RANGE + reach_radius(o),
+            MeleeReach::Body => crate::hitscan::distance_to(&crate::hitscan::solid(o), Vec3::new(from.x, from.y, o.pos.z)) <= MELEE_RANGE,
             MeleeReach::Footprint(own) => d <= MELEE_RANGE + own + o.major_radius,
         }
     }
@@ -308,7 +317,8 @@ impl Sim {
             }
             host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
             self.emit(idx, EventKind::MeleeHit);
-            let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
+            let rule = crate::damage::scale_on(&p.arsenal.tuning, &p.arsenal.melee_weapon().id, MeansOfDeath::Melee, &v);
+            let kill = host.damage(p.general, v.id, damage * rule * BO2_TO_ZH_DAMAGE, MeansOfDeath::Melee);
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
             if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
                 p.arsenal.scavenge();

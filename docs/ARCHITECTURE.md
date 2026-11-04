@@ -80,7 +80,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   the MMS's characters, the target finder's spotting and marks), `guard.rs` (the victim's class
   perks against another General's blasts — Flak Jacket, Tactical Mask — applied where the damage
   reaches the host, as BO2's damage callback does), `shock.rs` (which shellshock a first-person
-  General gets from a blast: the GSC's `shellshock()` sources), `lockstep.rs` (the state's
+  General gets from a blast: the GSC's `shellshock()` sources), `score.rs` (BO2's assists: the
+  step's damage recorded through a pass-through host, each General's attackers this life, the
+  assists a seat's kill credits), `lockstep.rs` (the state's
   fingerprint, `Sim::fingerprint`/`state_hash`: per-seat and world sub-hashes, the multiplayer
   gate's and Zero Hour's logic CRC's share), `antilag.rs` (BO2's antilag: the first-person
   Generals of the last frames, and the frame a shot is resolved against), `predict.rs` (the
@@ -119,7 +121,11 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
 - `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
   impact effect), `terrain.rs` (the ground's surface per height-map cell, parsed from the map
   file the bridge hands it: the logic-side answer under the sim's ground query),
-  `soundlayers.rs` (third-person shots' per-layer distance curves).
+  `soundlayers.rs` (third-person shots' per-layer distance curves), `torso.rs` (the third-person
+  upper body's action table: which `mp/playeranim.script` torso clip a weapon's reload, knife,
+  throw, shot or weapon change plays, and the clip's sound notetracks; `client/remote.rs` times it
+  per General, plays its sounds and the third-person def sounds and voices, and `nativebody` layers
+  it).
 - `math.rs` (the world-space vector math, and `math::det`: the sim's transcendental functions through the pure-Rust `libm` crate, the one external dependency of the sim, so every lockstep peer computes the same bits — `the_sim_calls_no_platform_libm` keeps sim-reachable code off the platform libm), `config.rs` (env vars parsed once at init), `content.rs` (the multiplayer content fingerprint:
   the weapon table's `Role::Sim` fields, the class-pick vocabulary, tuning, classes, settings and
   build, in parts the lobbies compare and name on a mismatch), `names.rs` (the naming registry),
@@ -155,7 +161,8 @@ shield in its deploy pose), `shield.rs` (the shield's collision-surface boxes), 
 and `load_zone`, over the shared `zhbo_formats::t6zone::load_file`). `thirdperson.rs` groups the weapons held in hand into animation sets by what BO2's
 `mp/playeranim.script` plays for their `weapClass` and `playerAnimType` (`playeranim.rs`, its
 first-match picker, which also reads the `EVENTS` torso clips), resolves each set's clip per movement
-state and poses the soldier's hit boxes in each.
+state and poses the soldier's hit boxes in each; it also groups every weapon (offhands too) into
+torso sets by the `EVENTS` clip each action plays and writes the torso table (`torso_table`).
 
 ### `crates/zhbo-conformance`
 BO2 parity conformance (see [TESTING.md](TESTING.md) "BO2 conformance"): the shared CSV schema

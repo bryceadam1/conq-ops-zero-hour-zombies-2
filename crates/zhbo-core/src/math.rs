@@ -196,7 +196,7 @@ mod tests {
     /// class with them (`classrepair`).
     const PRESENTATION: &[&str] = &[
         "client/", "hud/", "classui/", "lui/", "nativevm/", "nativebody/", "conformance/",
-        "menu.rs", "ffi.rs", "sounds.rs", "soundlayers.rs",
+        "menu.rs", "ffi.rs", "sounds.rs", "soundlayers.rs", "torso.rs",
     ];
 
     /// The lockstep's cross-platform guard: no sim-reachable source calls an `f32` transcendental

@@ -11619,3 +11619,275 @@ no `zhbo_native` blob format changed.
   his second General was also shot entering before his round began, so his log had one round and
   no shellshock. The same run with 5 passes 34/34 (8,365 common frames, 5 shellshocks on both
   machines, CQB worn). TESTING.md and the script's header now say so.
+
+## Other players look and sound like BO2 third-person players (2026-11-03, branch `v1/remote-presentation`)
+
+Round 3 left another player's knife, knife hit and reload silent, his upper body frozen through a
+reload, throw or knife in the native body, nobody's death voice, and ASSISTS always 0. Notes, the
+weapon sweep and the probes are in `~/.opencode/plan/remote-presentation/`.
+
+**BO2's ground truth.**
+* *Torso.* `mp/playeranim.script`'s `EVENTS` pick an upper-body clip per action: `reload`,
+  `knife_melee` (and `knife_melee_charge` for the lunge), `meleeattack` (the shield's bash, the only
+  event with a riotshield entry), `fireweapon` (with an offhand as the weapon: the throw),
+  `prime_grenade`, `raiseweapon`, `dropweapon`, `firstraiseweapon`, each by `playerAnimType`,
+  `weaponclass` (with the script's own defines: `autofire` = mg and smg), stance, gait and aim. The
+  `pt_*` xanims track only the bones from `j_spinelower` up (checked for all 173 the converted
+  weapons reach), so they layer over the legs' clip.
+* *Reload sounds.* No MP weapon names a `reloadSound`/`reloadSoundPlayer` (sweep of all 172
+  `common_mp` weapon files, `weapons_more.txt`). Another player's reload foley is the torso clip's
+  own notetracks: `pt_reload_stand_rifle` carries `sndnt#fly_assault_reload_npc_mag_out`,
+  `_mag_in`, `_charge`; the pistol, SMG, LMG, shotgun, launcher, crossbow and ballistic-knife
+  reloads have theirs (35 aliases), the grenade prime `wpn_grenade_pull_pin`.
+* *Third-person def sounds.* `meleeSwipeSound` (`wpn_melee_whoosh_npc` on `knife_mp`,
+  `wpn_tac_knife_whoosh_npc` on the pistols, the shield's own), `raiseSound`/`firstRaiseSound`/
+  `putawaySound` (`fly_generic_*_npc`, the launchers' own), `pullbackSound` (Semtex, Shock Charge,
+  Sensor Grenade). `meleeHitSound` has no `Player` twin: `CG_EntityEvent` (t6mp `FUN_004c1590`,
+  case 0x35) plays it on the entity for everyone; cases 0x2a–0x2c pick the field without `Player`
+  when the event's entity is not the local player.
+* *Voices.* `_battlechatter_mp.gsc` `painvox`/`deathvox`: `level.teamprefix[team] + bcvoicenumber +
+  "_pain_small"` / `"_pain_death"`, `playsoundontag(…, "J_Head")` for everyone in a team game;
+  `bcVoiceNumber = randomintrange(0, 3)`; `snd_pain_player` is notified only when `self.health !=
+  self.maxhealth` as the damage arrives (`_globallogic_player.gsc:790`), so the first hit from full
+  health is silent; the pain probability dvar is 0 and `bcmp_pain_delay` reads as int 0. The team
+  prefixes (`teams/_teamset_multiteam.gsc`) are `vox_st` (SEALs), `vox_ch` (PLA), `vox_pm` (PMC):
+  the mod's USA, China, GLA bodies' factions; their aliases are in `en_faction_<team>_mp`'s
+  `mpl_vox_*` bank (150..1200").
+* *Assists.* `trackattackerdamage` (enemy player damage only, the friendly branch tracks none),
+  `playerkilled_awardassists` (every attacker but the killer on the killer's team, team games only;
+  `lpattackteam` is the victim's own team for a suicide and `world` for the world, so neither
+  credits anybody), `processassist` (`assist_` + `int(ceil(damage/25))` clamped 1..3 × 25),
+  `decayplayerdamages` (regeneration decays each attacker's damage by the health regained);
+  `mp/scoreinfo.csv` tdm score: kill 100, `assist_25` 25, `assist_50` 25, `assist_75` 50.
+
+**What changed.**
+* *Assists (sim, `sim/score.rs`).* The step and `rts_update` run through a pass-through host
+  (`score::Tally`) that records every `damage` call in order; afterwards an enemy seat's damage to a
+  seat's General joins his attacker list (BO2 health), regeneration decays it, and a seat's killing
+  blow credits every other attacker allied with the killer and not with the victim (Zero Hour's
+  alliance is BO2's team; a free-for-all credits none). `EventKind::Assist { level }` and
+  `Score::assists` per seat; a hit from a General whose seat record is gone (his grenade landed
+  after he died) is his seat's (`Score::generals`, each seat's last four). Hashed in the world part.
+  The scoreboard's ASSISTS is the sim's count; SCORE adds `client::ASSIST_POINTS`; the own HUD's
+  score popup shows the assist's points. Not carried: the weapon-keyed assist events
+  (concussion/flash/EMP/proximity, 50): the recorded damage names no weapon.
+* *Third-person def sounds.* The format reads the fields without `Player`; the weapon table carries
+  them as `NpcSounds` (`moment=event`, presentation), each a positional `ZHBO_BO2_SndNpc_<alias>`
+  event apart from the owner's 2D one (the shield names one alias for both); a gun's swing and hit
+  are the class knife's.
+* *Torso (`crate::torso`, `client/remote.rs`, `nativebody`).* The converter asks the script for
+  every weapon's (offhands too) every action × 12 contexts, groups identical answers into torso
+  sets (`TorsoAnims`; 28 sets, 173 clips on this install), puts the clips in each faction's body
+  manifest from id `torso::BASE`, and writes `torso`/`torso_clip`/`torso_note` rows into
+  `sound_layers.txt` (installed by the same `zhbo_load_sound_layers`). The client's `Remote` starts a
+  seat's torso on his `ReloadStarted`, `Melee` (the charge's when lunging), `OffhandReady`, `Thrown`,
+  `Shot`/`Launched` and his weapon change (the putaway's, raise's and first raise's moments, now one
+  stepper, `WeaponCues::step`, shared with the own 2D sounds), times it, plays its notetracks at him
+  (`ZHBO_NTN_<alias>`, positional) and the def sounds' third-person events, and publishes each
+  General's clip and time to a lock-free mirror the native body reads (no ABI). The native body
+  loads a torso clip the first time anyone plays it (one copy for every rig), samples it over the
+  bones it tracks and fades it over 0.2 s at both ends.
+* *Voices.* 18 events (`ZHBO_BO2_PainSmall_<F><n>`, `ZHBO_BO2_PainDeath_<F><n>`) from each
+  faction's language zone. The client plays pain on a `Damaged` from below full health and death on
+  `GeneralDied` where the General was last seen, in voice `seat % 3` (BO2's random draw, made
+  per seat so every machine agrees) and the faction the bridge names to `zhbo_native_body` (the USA
+  voice while none has: `ZHBO_NATIVE_BODY=0`). The General INI drops Zero Hour's hero death voice
+  (`FX_ColonelBurtonDie` & co.).
+* *Who hears.* Everything of a General's plays at him for everyone except a presented first-person
+  General's own (his viewmodel's 2D versions play); the voice plays for him too, as BO2 plays it on
+  his head.
+
+**Gotcha: the first raise is armed by the first frame seen.** `WeaponCues::step` treats a raise
+running when a seat is first seen as a new raise, so a General already up when this machine first
+sees him plays one raise; the own cues always did the same.
+
+**Tests.** `every_weapon_action_plays_the_torso_bo2_gives_it` (real install: every weapon × action
+× context through the table equals the script's pick, 15 BO2 spot picks, torso clips track no leg
+bone, combinations keep their base's set, the rifle reload's three `_npc_` notes);
+`others_hear_the_third_person_def_sounds`; the real-install sfx test checks the 18 voices;
+`client::remote::tests` (reload/knife/hit/pin/throw/raise at him, the presented first-person seat
+not heard, pain from below full health, death where he fell); `a_torso_clip_moves_the_upper_body_over_the_legs`;
+`sim::score::tests` (the rule, friendly/suicide/world/free-for-all none, decay, a dead attacker's
+seat, two machines agree, the step's damage reaches it); the lockstep leaf walk covers the score.
+`another_players_world_events_play_here_as_for_their_owner` compares voices by line, not speaker.
+
+**Verified in game** (build of this branch, own dist): `scripts/mptest-mac.sh` (short) 25/25 — the
+state hash agreed on all 2,809 common frames, 22 CRC frames alike, no mismatch; both logs played
+the new events at the other player (`ZHBO_NTN_fly_assault_reload_npc_mag_out`/`_mag_in`,
+`ZHBO_NTN_wpn_grenade_pull_pin`, `ZHBO_BO2_SndNpc_fly_generic_raise_npc`/`_down_npc`/`_first_raise_npc`,
+`ZHBO_BO2_PainSmall_*`, `ZHBO_BO2_PainDeath_*` in the China and GLA voices). The short run has no
+knife and no team, so the swing and the assists are covered by the tests, not the run.
+`autotest-mac.sh --rts` with `ZHBO_NATIVE_BODY=2`: 16/16. The torso was checked headlessly through
+the game's own body pass: `render_world_weapons --torso <id>` (new) draws the General idle, then
+mid-reload, -knife, -shot, -raise and -throw (`~/.opencode/plan/remote-presentation/render/`).
+**Open:** in the throw, the weapon in hand follows `tag_weapon_right` where the throw clip puts it
+(the pistol hangs off the hand); BO2 may draw the offhand there instead.
+
+
+## Damage rules: every hit carries BO2's means of death (round 4, damage-rules)
+
+The splash item left four BO2 damage-rule gaps; all come from one root cause: the sim had no notion
+of BO2's **means of death** (`MOD_*`) and the ABI only three Zero Hour kinds, so every non-blast hit
+(a dud, a frag or Semtex striking, the crossbow's bolt, a ballistic knife, a combat axe) went to
+Zero Hour as `SMALL_ARMS` and met `TankArmor`'s 25 %, and BO2's per-means vehicle rules
+(`_globallogic_vehicle.gsc`) could not be told apart.
+
+**BO2 (t6mp Ghidra, plan dir `damage-rules/g/`).**
+* `meansOfDeath_t`: `FUN_00678440` registers the 21 names in order (0 UNKNOWN … 5 PROJECTILE …
+  16 IMPACT … 20 GAS); `FUN_0063a1a0`/`FUN_00639ff0` push `badMOD` past 0x15.
+* Missile handlers: table `0x00c8c0e4 + type*0x30`, `+0x14` direct / `+0x18` splash means; type 10
+  (set by `FUN_00607730`, the grenade spawner) 3/4, type 12 (`FUN_0060d330`, the rocket's) 5/6.
+  `FUN_00604240` renames a grenade splash of `projExplosion` heavy (6) `MOD_EXPLOSIVE`; no MP player
+  weapon has it (the install test holds that).
+* Strike (`FUN_00608c10`): a dud (`FUN_00604280`) or `!bProjImpactExplode` (WeaponDef `+0x72c`) →
+  `MOD_IMPACT` with the trace's hit location; else the handler's direct means (`customBool0` +0x984
+  forces PROJECTILE).
+* Explode (`FUN_0060a480`): `stickiness` all/all_orient (+0x730 1|2) and the ground entity a
+  vehicle → `G_Damage(vehicle, iExplosionInnerDamage, handler direct means)`, and that vehicle is the
+  radius damage's skip entity.
+* Radius on a vehicle goes `callback_vehicleradiusdamage` → `finishvehicleradiusdamage`
+  (`FUN_0066a3e0`) → `G_Damage` (`FUN_005f0a30`) → `G_VehicleDamage` (`FUN_005f0810`) →
+  `callback_vehicledamage`. So C4's `MOD_GRENADE_SPLASH` gets `getvehicleunderneathsplashscalar`'s
+  ×30 on **any** vehicle it reaches, despite the name (`damagefromunderneath`, computed by
+  `FUN_00664ef0`, is passed but the script never reads it). C4 *stuck* to the vehicle strikes it
+  by `MOD_GRENADE` instead and gets no ×30.
+* `FUN_0079b2d0`/`FUN_0079ab10` (per-piece bullet/explosive/melee/impact scales, the
+  `*DamageScaleN` strings) are **destructibles**, not vehicles: not ported.
+* Player side: Flak Jacket is `isexplosivedamage` (EXPLOSIVE, GRENADE, GRENADE_SPLASH,
+  PROJECTILE_SPLASH: not a rocket's direct hit, not an impact); the blast shellshock
+  `_shellshock.gsc:19` (those plus PROJECTILE); `isheadshot` head/helmet.
+* `level.vehicledamagescalar` is set in the base `_globallogic.gsc`, which the dump lacks: tuning
+  `vehicledamagescalar = 1` (unverified, the series' default).
+
+**Fix.** `zhbo_core::damage`: `MeansOfDeath` (BO2's order), the strike/splash/direct/bullet means
+of a def, `vehicle_scale` (projectile-splash, projectile, underneath scalars and
+`vehicledamagescalar`, all tuning keys by weapon name, `Tuning::per_weapon`), and the tuning
+pack's `[MeansOfDeath]` table (MOD → Zero Hour `DamageType` name; in the content fingerprint's
+tuning part). `LogicHost::damage` takes the means; the FFI host sends the table's code. The ABI's
+kind is now one code per Zero Hour `DamageType` (`ZHBO_DAMAGE_*` 0–37, the old three first;
+`ZhboLogicApi.cpp`'s `s_zhboDamageTypes`; a core test reads the header and the bridge) — pending
+ABI 32. Every damage site picks the means: bullets RIFLE/PISTOL/HEAD_SHOT, the knife MELEE,
+strikes/duds/blades IMPACT, direct hits PROJECTILE/GRENADE, blasts the splash means, a sticky
+grenade stuck to a vehicle its inner damage by the direct means without the radius
+(`projectiles::Hit`). `sim::guard`'s Flak Jacket and shellshock go by the means. A flying
+projectile strikes an object's real solid (`projectiles::struck_solid`: box/cylinder/sphere, grown
+by half its radius; soldiers keep the thin cylinder), and the knife reaches a vehicle's footprint
+(`MeleeReach::reaches`). The built-in table got `WeapType` lines (it defaulted grenades to bullet).
+
+**Decision: the armour row per means.** Zero Hour's armour stands in for BO2's per-killstreak
+rules. Bullets → `SMALL_ARMS` (BO2 vehicles cut them: AI tank ×0.3 ≈ TankArmor 25 %); grenades,
+rockets, splash **and impacts** → `EXPLOSION` (callback_vehicledamage has no rule for MOD_IMPACT,
+every killstreak's default branch takes it whole; EXPLOSION is 100 % on tank/truck armour);
+MELEE → `MELEE` (BO2 turrets ignore knives; Zero Hour vehicles 0 %). Not ported: the AI tank's
+`hatchet_mp`-as-bullet and the helicopters'/spy plane's one-shot rocket rules — they belong to
+BO2 entities with their own damage pools. So an axe now deals 187.5 to a tank (BO2's generic
+vehicle: 125 whole), a ballistic knife 375, a GL dud 202.5, a frag's strike 22.5 (was 5.6).
+
+**Gotcha: `cargo xtask build` without `--dist`/`ZHBO_WORK_DIR` stages into the shared per-user
+`~/Library/Application Support/ConquerOps/{work,dist}`.** An item agent's build there overwrites
+the player's staged game; pass `--dist <worktree>/target/dist` and set `ZHBO_WORK_DIR`.
+
+**Verification.** `cargo test --workspace` green (zhbo-core 817 passed); clippy `--workspace
+--all-targets` and zhbo-core `--features harness` clean; real install (`--ignored --skip
+conformance`) 71 passed, the roster lockstep gate, the splash sweep (now with `check_strikes`
+over every flown def) and the per-def means-of-death check included; conformance byte-identical
+to integration8 (1,979 weapon cells / 11 clusters; cac 0, 4 BO2-only rows; 12 gap clusters). In
+game: `--splash` 5/5 — the SMAW's strike on the Overlord 300, each Crusader beside it 132.9 (was
+136.1: the rocket now meets the Overlord's box face), the rebels killed; the frag's strike on the
+Overlord **22.5** (was 5.6, `MOD_IMPACT` as `EXPLOSION`), its blast then 249.3 on the Overlord and
+148.8 on each Crusader (it now bounces off the real box and comes to rest elsewhere); default 16/16;
+`mptest-mac.sh` (short) 25/25, the state hash equal on all 2,918 common frames, no CRC mismatch,
+content CRC D6FEF2AC on both.
+
+## Follow-up: the native BO2 body by default, the throw, more of another player, tactical assists (2026-11-03, branch `v1/remote-presentation`)
+
+* **Merged `origin/v1/damage-rules`** so the assists' recording host takes its `MeansOfDeath`
+  `LogicHost::damage` (the MODLOG and CONTRACT pending notes are unions).
+* **Weapon-specific assists.** `processassist` switches on the attacker's *last* weapon. The
+  concussion, flashbang, EMP grenade and Shock Charge reach a first-person General through the
+  sim's shock hits, which name the weapon and its owner, so each is also an attacker entry (BO2's
+  1-damage tactical blast, `idamage` floored at 1) tagged `score::Tactical`; a later plain hit
+  clears the tag. The tag is hashed; `Assist { level, tactical }`; 50 tdm points. Not reached: a
+  tactical on an overhead General (Zero Hour's paralysis has no owner in the host call).
+* **The throw.** t6mp `FUN_0052a4c0` attaches only the entity's current weapon and `FUN_0052a470`
+  puts a grenade (weapType 1) on `tag_inhand`: during the pin and throw BO2 draws the grenade, not
+  the gun. The gun dangled off `tag_weapon_right` where `pt_grenade_stand_throw` moves it; the body
+  pass now collapses the weapon's parts for `PRIME`/`THROW` (the client publishes each action with
+  its clip). The grenade itself is not drawn in the hand: offhands have no native world manifest.
+* **More of another player.** His dry fire (`emptyFireSound`: `wpn_generic_dryfire_npc` and the
+  pistols', launchers', crossbow's own; once per pull), his jump and landing (`_footsteps.csc`
+  `playerjump` plays the step alias, `playerland` `fly_land_npc_<surface>`), the script's `flinch`
+  (asked from the front: the sim's damage has no direction) and its whole-body `legs` clips for
+  `jump`/`land` as torso actions (the parser now takes `legs` lines in `EVENTS`), and BO2's battle
+  chatter: `reloadtracking` (`reloading_gen`, 40 %, not the `checkweaponreload` launchers) and
+  `grenadetracking` (each offhand's `attack_*`, 80 %, the Betty 20 %), in the speaker's voice. GSC
+  plays these through `mpsaylocalsound` → `dosound` → `playsoundontag`, i.e. **to everyone** on
+  his head (only `dolocationalsound` is team-only), so the mod does too. The roll is hashed from the
+  seat and his chatter count: every machine agrees. Not carried: `isspeakerinrange` (a teammate
+  already talking nearby) and the team-game gate (`level.teambased`).
+* **The native body is the default third person (`ZHBO_NATIVE_BODY=2`).** Checked:
+  * every faction's body manifest composes (in game `ZW…U`, and the mp run's G bodies);
+  * locomotion and stance: the sim's states through each weapon's animation set (unchanged);
+  * **scale (fixed):** `root_from_object` used the art scale alone, so the native General stood
+    1/1.15 of the W3D one, below the first-person eye line and inside the hit boxes the sim traces
+    at his drawn size (`HitBodies::body` already scales Generals by `GENERAL_SCALE`); now drawn at
+    `GENERAL_SCALE`. Hit boxes against the drawn body then agree (no sim change);
+  * **the tablet (fixed):** the native pass drew the gun over the W3D tablet (weapon mode) or hid
+    the W3D body and its tablet (body mode); `native_poses` reports no weapon while it is up;
+  * deaths: the sim drops the record, the W3D body's own death clip plays (no native death clip;
+    BO2 ragdolls);
+  * the shield on the back, the camo, attachments: body mode composes them (existing tests);
+  * overhead: selection stays (draw-module hide), the health bar draws, the size matches the W3D
+    body; neither body carries a team colour (unchanged);
+  * DX8 has no native pass: `zhbo_native_body` answers "not native" and the W3D body draws;
+  * cost: `render_world_weapons --torso` benchmarks the body pass: 16 Generals 0.22 ms of core and
+    0.68 ms per frame with the GPU (headless, Apple M1 Pro).
+  `1`/`weapon` and `0` stay as opt-outs.
+
+**Gotcha: the long run's leaver steps past the game.** The first long run of this follow-up failed
+one check: 7,750 common frames, only frame 7749 differing, and only seat 2's part (the host's;
+the world equal). The joiner had quit at 7743 and turned spectator at 7748; his machine stepped one
+more frame without the host's commands. `mptest-mac.sh` now compares the leaver's hashes only up
+to the frame he turned spectator after leaving (on that run: 7,748 frames, all equal).
+
+**Verified (this follow-up).** `cargo test --workspace` green; clippy clean (workspace, the renderer
+example); real-install suite 72/72; conformance byte-identical to integration8. In game, with the
+native body as the default: autotest default 16/16, `--rts` 16/16, `--classpick` 12/12 (the death
+voice `ZHBO_BO2_PainDeath_U2` played), `mptest-mac.sh` short 25/25 (state hash on 2,727 frames),
+long (`ZHBO_MPTEST_ROUNDS=5`) 34/34 (8,365 frames equal, 76 CRC frames alike, 5 shellshocks on both
+machines, the host on alone to frame 13,814). The logs played another player's knife
+(`ZHBO_BO2_SndNpc_wpn_melee_whoosh_npc`), reloads (`ZHBO_NTN_fly_smg_npc_reload_*`,
+`fly_assault_reload_npc_*`), pins, raises and putaways, pain and death voices, and battle chatter
+(`ZHBO_BO2_Bc_G2_reloading_gen`, `_attack_grenade`, `_attack_concussion`) on both machines.
+Images: `~/.opencode/plan/remote-presentation/render/` (`torso_*.png`: idle, reload, knife, shot,
+raise, throw with the gun hidden; `overhead_native_body.png`). No assist in the runs (a 1v1 has no
+teammate); the rule is the unit tests'.
+
+## Follow-up 2: the grenade in the hand, the native body's death, an overhead General's shots (2026-11-03, branch `v1/remote-presentation`)
+
+* **The grenade in the hand.** Every class offhand is already converted with a world manifest (the
+  real-install sweep `every_offhand_has_a_world_model_for_the_hand`: all 15 resolve). The body rig
+  composes the General's lethal and tactical on `tag_inhand` and shows the one primed or thrown,
+  the gun hidden, as BO2's `FUN_0052a470` attaches a grenade there as the entity's one weapon.
+* **Death.** BO2 MP: `callback_playerkilled` clones the player (`cloneplayer( deathanimduration )`,
+  `_globallogic_player.gsc:2008`), the clone plays a death clip from `mp/playeranim.script`'s
+  `DEATH` section (stance, gait, `dmgType`, `dmgDirection`, alternatives) and `delaystartragdoll`
+  hands it to the ragdoll 0.2 s plus 35 % of the clip (or its `start_ragdoll` notetrack) in. Zero
+  Hour has no ragdoll, so the native body plays the clip through and holds its last frame until the
+  body is removed. The sim emits `KilledBy { how, from }` (presentation) at the killing hit;
+  `client::remote` picks the clip and keeps the corpse; the body pass draws it without the gun.
+  Not told apart: `normal_shotgun` and `meleebash` (they key on the weapon; the hit names none).
+* **Overhead shots.** Zero Hour fires an overhead General's guns; the sim only spends the rounds.
+  The client starts the gun's shot torso when a slot's rounds drop.
+* **Gotcha: the script's `DEATH` block sits among the `EVENTS`.** `dtp_takeoff`, `dtp_land`,
+  `flared` and `prime_grenade` come after it; the parser returns to the events after the block.
+* **A corpse keeps the rig he died with.** The first showcase run recomposed the dead General's rig
+  6 frames after his death (his record, and with it the published stowed weapon, offhands and
+  camo, was gone), showing the W3D body while it loaded; the body pass now keeps the rig while the
+  DEATH action plays. The rerun composed once.
+* **Verified.** `cargo test --workspace`, clippy clean; real-install torso sweep (deaths: BO2's
+  own picks, every context has one; 283 clips) and the offhand sweep (15/15); in game
+  `--showcase` (the General falls by `pb_stand_death_*` and lies until Zero Hour removes the body:
+  `render/showcase_death_sheet.png`), `--rts` 16/16, `mptest-mac.sh` short 25/25 (state hash on
+  2,778 frames). Headless renders: `render/torso_an94_mp.png`, `torso_fnp45_mp.png` (the frag in the
+  hand during the throw, the corpse).

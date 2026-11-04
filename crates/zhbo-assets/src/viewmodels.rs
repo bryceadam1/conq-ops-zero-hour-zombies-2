@@ -1025,6 +1025,29 @@ pub(crate) fn number(meshes: &mut [w3d::SkinMesh], name: impl Fn(usize) -> Strin
 
 #[cfg(test)]
 mod tests {
+    /// Every offhand a class can carry is converted with a world model the third-person body can
+    /// hold on `tag_inhand` while it is primed or thrown (`zhbo_core::nativebody::OFFHAND_TAG`): its
+    /// `worldModel` resolves in the multiplayer pool.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_offhand_has_a_world_model_for_the_hand() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let roster = crate::weapons::Roster::read(&mp.patch);
+        let table = crate::weapons::table(&bo2, &atts, None, &Default::default(), &roster);
+        let converted = crate::weapons::converted_base(&bo2, &roster);
+        let mut swept = Vec::new();
+        for d in table.weapons.iter().filter(|d| d.class.is_offhand() && converted.contains(&d.id)) {
+            let w = bo2.iter().find(|w| w.name == d.id).unwrap();
+            let model = w.world_model.as_deref().unwrap_or_else(|| panic!("{} has no world model", d.id));
+            assert!(super::find_model(&mp.zones(), model).is_ok(), "{}: {model} does not resolve", d.id);
+            swept.push(format!("{}={model}", d.id));
+        }
+        eprintln!("{swept:?}");
+        assert!(swept.len() >= 12, "{} offhands", swept.len());
+    }
+
     use super::{attachment_parts, base_part_note, finish, left_gun, mount_tag, number, w3d, BasePart, Looks};
     use zhbo_formats::weapon::{inventory, Attachment, AttachmentUnique, Weapon};
 

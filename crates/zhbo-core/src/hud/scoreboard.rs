@@ -14,10 +14,11 @@
 //!
 //! The board lists every player who has played in first person, as BO2's team deathmatch does:
 //! the local player's side (his row and his allies') first under his army's colour, then the
-//! enemies under theirs, each block sorted by score. A row's score is kills × `KILL_POINTS`; the
-//! local player's row is the HUD's own tally, everyone else's what this machine saw of the sim's
-//! events (`client::SeatTally`), so every machine's board agrees. ASSISTS stays 0: the sim
-//! credits no assists.
+//! enemies under theirs, each block sorted by score. A row's score is kills × `KILL_POINTS` plus
+//! its assists' points (`client::ASSIST_POINTS`); the local player's kills and deaths are the
+//! HUD's own tally, everyone else's what this machine saw of the sim's events
+//! (`client::SeatTally`), and ASSISTS is the sim's own count (`sim::score`, BO2's assist rule), so
+//! every machine's board agrees.
 
 use super::frame::Lui;
 use super::*;

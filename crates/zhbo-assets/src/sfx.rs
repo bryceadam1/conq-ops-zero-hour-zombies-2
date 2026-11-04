@@ -97,6 +97,8 @@ pub const SFX: &[Sfx] = &[
     // third-person aliases (`_footsteps.csc`, `firstperson = 0`), positional for everyone.
     Sfx { event: "ZHBO_BO2_StepNpc", from: From::World, layers: &["fly_step_run_npc_grass"], kind: Kind::World, limit: 4 },
     Sfx { event: "ZHBO_BO2_SprintStepNpc", from: From::World, layers: &["fly_step_sprint_npc_grass"], kind: Kind::World, limit: 4 },
+    // ... and their landings (`_footsteps.csc` `playerland`, `fly_land_npc_<surface>`).
+    Sfx { event: "ZHBO_BO2_LandNpc", from: From::World, layers: &["fly_land_npc_grass"], kind: Kind::World, limit: 4 },
     // Hold breath: `clientscripts/mp/_audio.csc` plays `<teamclientprefix>_sinper_*` (`vox_gen` by
     // default) on the engine's `playerbreath*sound` notifies (`FUN_0052e3d0`).
     Sfx { event: "ZHBO_BO2_BreathIn", from: From::Voice, layers: &["vox_gen_sinper_hold"], kind: Kind::Player, limit: 1 },
@@ -163,7 +165,22 @@ pub const UI_ZONES: &[(&str, &str)] =
     &[("code_post_gfx_mp", "mpl_code_post_gfx"), ("patch_ui_mp", "mpl_patch_ui"), ("patch_mp", "mpl_patch")];
 /// The zone whose `SndDriverGlobals` holds BO2's mixer tables (groups, curves, pans, snapshots).
 pub const MIXER_ZONE: &str = "code_post_gfx_mp";
-const NOTETRACK_PREFIX: &str = "sndnt#";
+pub(crate) const NOTETRACK_PREFIX: &str = "sndnt#";
+
+/// The team's voice alias for voice number `n` ending in `suffix` in a faction's voice bank:
+/// `vox_<team><n><suffix>` (the bank holds one team's).
+fn voice_alias(src: &Source, n: usize, suffix: &str) -> Option<String> {
+    let mut names: Vec<&str> = src
+        .banks
+        .iter()
+        .flat_map(|b| b.aliases.iter().map(|a| a.name.as_str()))
+        .filter(|a| a.starts_with("vox_") && a.ends_with(suffix))
+        .filter(|a| a[..a.len() - suffix.len()].ends_with(&n.to_string()))
+        .filter(|a| a[4..a.len() - suffix.len() - 1].chars().all(|c| c.is_ascii_alphabetic()))
+        .collect();
+    names.sort_unstable();
+    names.first().map(|s| s.to_string())
+}
 
 /// 16-bit PCM.
 #[derive(Clone)]
@@ -422,6 +439,7 @@ pub fn files(
     bo2_dir: &Path,
     viewmodel_clips: &[(i32, i32, xanim::Anim)],
     extra: &[DynSfx],
+    factions: &[(u8, &str)],
 ) -> Result<(crate::generals::Files, String), String> {
     let lib = Library::open(bo2_dir)?;
     let pick = |zone: &Zone, prefix: &str| -> Option<Source> {
@@ -541,6 +559,39 @@ pub fn files(
         }
     }
 
+    // Each faction's voice (`zhbo_core::sounds::voice_event`): its language zone's `mpl_vox_*`
+    // bank names the team's aliases `<teamprefix><n>_pain_small` / `_pain_death` for voice
+    // numbers 0..2 (`_battlechatter_mp.gsc`; the prefix is the team's, `vox_st` for the SEALs).
+    let mut voices_made = 0;
+    for &(letter, zone) in factions {
+        let Some(f) = zhbo_core::sounds::VOICE_FACTIONS.iter().position(|&x| x == letter) else { continue };
+        let lang = load_language_zone(bo2_dir, zone).ok();
+        let src = lang.as_ref().and_then(|z| pick(z, "mpl_vox"));
+        for (v, suffix) in [(zhbo_core::sounds::Voice::Pain, "_pain_small"), (zhbo_core::sounds::Voice::Death, "_pain_death")] {
+            for n in 0..zhbo_core::sounds::VOICES {
+                let event = zhbo_core::sounds::VOICE_EVENTS[v as usize][f][n];
+                let alias = src.as_ref().and_then(|s| voice_alias(s, n, suffix));
+                if alias.is_some_and(|a| add(event, src.as_ref().expect("an alias has a bank"), &[a.as_str()], Kind::World, 2)) {
+                    voices_made += 1;
+                } else {
+                    missing.push(event.to_string());
+                }
+            }
+        }
+        // The battle chatter's lines (`zhbo_core::sounds::CHATTER_LINES`), each voice's own.
+        for n in 0..zhbo_core::sounds::VOICES {
+            for line in zhbo_core::sounds::CHATTER_LINES {
+                let event = zhbo_core::sounds::chatter_event_name(letter, n, line);
+                let alias = src.as_ref().and_then(|s| voice_alias(s, n, &format!("_{line}")));
+                if alias.is_some_and(|a| add(&event, src.as_ref().expect("an alias has a bank"), &[a.as_str()], Kind::World, 2)) {
+                    voices_made += 1;
+                } else {
+                    missing.push(event);
+                }
+            }
+        }
+    }
+
     let mut ui_made = 0;
     for cue in zhbo_core::sounds::UiCue::ALL {
         if ui_srcs.iter().any(|src| add(cue.event(), src, &[cue.alias()], Kind::Player, 2)) {
@@ -608,7 +659,7 @@ pub fn files(
     );
     let wavs = out.keys().filter(|k| k.ends_with(".wav")).count();
     let summary = format!(
-        "{wavs} sounds, {} events, {ui_made} menu events, {} notetrack events, loudest {loudest_event}{}",
+        "{wavs} sounds, {} events, {ui_made} menu events, {voices_made} voice events, {} notetrack events, loudest {loudest_event}{}",
         SFX.len() + extra_made - missing.iter().filter(|m| SFX.iter().any(|s| s.event == m.as_str())).count(),
         nt_events.values().filter(|v| **v).count(),
         if missing.is_empty() { String::new() } else { format!(", missing {missing:?}") }
@@ -706,7 +757,8 @@ mod tests {
         assert!(shot > 2.0 * tail, "{shot} {tail}");
 
         let extra = [DynSfx { event: zhbo_core::names::npc_fire_event("an94_mp"), layers: vec!["wpn_an94_fire_npc".into()], kind: Kind::Remote, limit: 3 }];
-        let (files, summary) = files(&common, &world, &dir, &[], &extra).unwrap();
+        let factions: Vec<(u8, &str)> = crate::generals::FACTIONS.iter().map(|f| (f.letter as u8, f.zone)).collect();
+        let (files, summary) = files(&common, &world, &dir, &[], &extra, &factions).unwrap();
         // The layers ship keyed by the gun's FX weapon: the close shot, the distant layer and the
         // tail (not the LFE-only low end), each with its own curves; the client's rule on them
         // crossfades as BO2's does.
@@ -738,6 +790,22 @@ mod tests {
         assert_eq!(field("ZHBO_BO2_FireNpc_an94_mp_L2", "MinRange"), field("ZHBO_BO2_FireNpc_an94_mp_L2", "MaxRange"), "no Zero Hour falloff on a layer");
         let vol = |name: &str| field(name, "Volume");
         assert!(vol("ZHBO_BO2_Fire") > vol("ZHBO_BO2_Step"), "the shot over a footstep");
+        // Every faction's pain and death voice, for every voice number (`_battlechatter_mp.gsc`):
+        // positional, heard at BO2's 150..1200" (the alias's own distances).
+        for v in zhbo_core::sounds::VOICE_EVENTS.iter().flatten().flatten() {
+            assert!(event(v).contains("world shrouded everyone"), "{v}");
+            assert_eq!(field(v, "MaxRange"), zhbo_core::units::inches(1200.0).round(), "{v}");
+        }
+        // ... and every battle chatter line in each voice (`_battlechatter_mp.gsc`).
+        for &f in &zhbo_core::sounds::VOICE_FACTIONS {
+            for n in 0..zhbo_core::sounds::VOICES {
+                for line in zhbo_core::sounds::CHATTER_LINES {
+                    let e = zhbo_core::sounds::chatter_event_name(f, n, line);
+                    assert!(event(&e).contains("world shrouded everyone"), "{e}");
+                }
+            }
+        }
+        assert!(event("ZHBO_BO2_LandNpc").contains("world shrouded everyone"));
     }
 
     /// Needs the player's BO2 install. The menu cues the converter leaves missing are in no bank

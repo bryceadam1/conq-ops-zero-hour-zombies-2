@@ -90,6 +90,13 @@ pub fn rts_weapon(id: &str) -> String {
     let base = id.split(['+', '~']).next().unwrap_or(id);
     format!("{RTS_WEAPON_PREFIX}{base}")
 }
+/// A third-person (torso) clip's notetrack sound event (`sndnt#fly_assault_reload_npc_mag_out`
+/// plays `ZHBO_NTN_fly_assault_reload_npc_mag_out`): positional, heard at the General
+/// (`crate::torso`), apart from the viewmodel's 2D `ZHBO_NT_*` events.
+pub const NPC_NOTETRACK_PREFIX: &str = "ZHBO_NTN_";
+pub fn npc_notetrack_event(alias: &str) -> String {
+    format!("{NPC_NOTETRACK_PREFIX}{alias}")
+}
 /// A viewmodel notetrack sound event (`sndnt#reload` plays `ZHBO_NT_reload`).
 pub const NOTETRACK_PREFIX: &str = "ZHBO_NT_";
 pub fn notetrack_event(alias: &str) -> String {
@@ -103,9 +110,16 @@ pub const DEF_SOUND_PREFIX: &str = "ZHBO_BO2_Snd_";
 pub fn def_sound_event(alias: &str) -> String {
     format!("{DEF_SOUND_PREFIX}{alias}")
 }
-/// The BO2 alias a def-sound event plays, if `event` is one.
+/// A def-level sound's third-person event (`ZHBO_BO2_SndNpc_<alias>`): what everyone hears at
+/// another player (`WeaponDef::npc_sounds`), positional, apart from the owner's own 2D event even
+/// where BO2 names one alias for both (the shield's swing).
+pub const NPC_DEF_SOUND_PREFIX: &str = "ZHBO_BO2_SndNpc_";
+pub fn npc_def_sound_event(alias: &str) -> String {
+    format!("{NPC_DEF_SOUND_PREFIX}{alias}")
+}
+/// The BO2 alias a def-sound event (own or third-person) plays, if `event` is one.
 pub fn def_sound_alias(event: &str) -> Option<&str> {
-    event.strip_prefix(DEF_SOUND_PREFIX)
+    event.strip_prefix(DEF_SOUND_PREFIX).or_else(|| event.strip_prefix(NPC_DEF_SOUND_PREFIX))
 }
 
 /// A converted BO2 effect's Zero Hour FXList (`ZHBO_BO2FX_weapon_shellejects_fx_rifle`): BO2's

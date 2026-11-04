@@ -291,7 +291,7 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
 ## The W3D fallback (kept on purpose)
 
 The native pass draws the first-person viewmodel and the third-person General's weapon by default
-(`ZHBO_NATIVE_VIEWMODEL`; `ZHBO_NATIVE_BODY` = 1, and 2 moves his body to it too — CONFIG.md). The W3D conversion of the base weapons is
+(`ZHBO_NATIVE_VIEWMODEL`; `ZHBO_NATIVE_BODY` = 2, his body too; 1 keeps the W3D body — CONFIG.md). The W3D conversion of the base weapons is
 still built (`zhbo-assets/src/viewmodels.rs`, `write_w3d` for the base set) and stays as the
 fallback: it draws when the native pass is switched off (`ZHBO_NATIVE_VIEWMODEL=0`), when a mesh is
 refused (above), and on the DX8 reference build that has no native pass. It is tested by the W3D
