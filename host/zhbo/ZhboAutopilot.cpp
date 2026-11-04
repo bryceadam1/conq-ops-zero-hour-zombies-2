@@ -1072,6 +1072,14 @@ void autopilotFrame()
 		showcaseFrame(frame);
 		return;
 	}
+	// The rest acts on the game (take control, kill, spawn, order) and counts logic frames: once per
+	// logic frame. The client frame runs at the render rate (host patch 0026), several times a logic
+	// frame, and a request made on one client frame lands only on the next logic frame — a retake
+	// would be counted (and sent) once per client frame in between.
+	static UnsignedInt s_lastLogicFrame = ~0u;
+	if (frame == s_lastLogicFrame)
+		return;
+	s_lastLogicFrame = frame;
 	if (s_config.autopilot_mp)
 	{
 		mpAutopilotFrame(frame);
