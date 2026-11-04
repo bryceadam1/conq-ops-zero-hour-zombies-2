@@ -27,7 +27,9 @@ pub fn boxes(l: &Lui) -> (Rect, Rect) {
 
 /// Rotating minimap: you at the centre facing up, friendlies blue, enemies red (your army acts as
 /// a permanent UAV), structures as squares. Returns its bottom edge.
-pub(super) fn draw_minimap(host: &dyn ClientHost, prims: &mut Vec<Prim>, l: &Lui, yaw: f32, p: &PlayerSim, reveal: &dyn Fn(Vec3) -> bool) {
+/// `marks` are the enemies his Sensor Grenades put on his compass ([`crate::sensor`]) with their
+/// strength: a detonation's mark shows the enemy where he is; a scan ping where he was, fading.
+pub(super) fn draw_minimap(host: &dyn ClientHost, prims: &mut Vec<Prim>, l: &Lui, yaw: f32, p: &PlayerSim, marks: &[(crate::sensor::Mark, f32)]) {
     let (m, _) = boxes(l);
     let s = l.root.scale;
     let size = m.w;
@@ -49,12 +51,28 @@ pub(super) fn draw_minimap(host: &dyn ClientHost, prims: &mut Vec<Prim>, l: &Lui
         (cx + rx * scale, cy - ry * scale)
     };
     let inside = |x: f32, y: f32, r: f32| x - r >= x0 && x + r <= x0 + size && y - r >= y0 && y + r <= y0 + size;
+    let dot = |prims: &mut Vec<Prim>, (x, y): (f32, f32), r: f32, argb: u32| {
+        if inside(x, y, r) {
+            prims.push(Prim::Image {
+                name: sprites::DOT.to_string(),
+                x: x - r,
+                y: y - r,
+                w: r * 2.0,
+                h: r * 2.0,
+                argb,
+                fallback: vec![Prim::Rect { x: x - r * 0.6, y: y - r * 0.6, w: r * 1.2, h: r * 1.2, argb }],
+            });
+        }
+    };
+    let live = |id: u32| marks.iter().any(|(m, _)| m.live && m.target == id);
+    let mut drawn = Vec::new();
     for o in objs.iter().filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)) {
-        // Zero Hour's radar rule: enemies under your shroud don't show, unless one of your Sensor
-        // Grenades sees them, or (BO2's rule) they are firing.
-        if o.has(objflags::ENEMY) && o.has(objflags::SHROUDED) && !o.has(objflags::FIRING) && !reveal(o.pos) {
+        // Zero Hour's radar rule: enemies under your shroud don't show, unless (BO2's rules) they
+        // are firing or a Sensor Grenade's detonation marked them.
+        if o.has(objflags::ENEMY) && o.has(objflags::SHROUDED) && !o.has(objflags::FIRING) && !live(o.id) {
             continue;
         }
+        drawn.push(o.id);
         let (x, y) = to_screen(o.pos);
         // Zero Hour's radar rule: everything in its owner's team colour.
         let team = o.color & 0x00FF_FFFF;
@@ -66,18 +84,15 @@ pub(super) fn draw_minimap(host: &dyn ClientHost, prims: &mut Vec<Prim>, l: &Lui
         } else {
             // BO2's minimap dot, tinted.
             let r = if o.has(objflags::INFANTRY) { 3.5 * s } else { 4.5 * s };
-            if inside(x, y, r) {
-                prims.push(Prim::Image {
-                    name: sprites::DOT.to_string(),
-                    x: x - r,
-                    y: y - r,
-                    w: r * 2.0,
-                    h: r * 2.0,
-                    argb: team | 0xFF00_0000,
-                    fallback: vec![Prim::Rect { x: x - r * 0.6, y: y - r * 0.6, w: r * 1.2, h: r * 1.2, argb: team | 0xFF00_0000 }],
-                });
-            }
+            dot(prims, (x, y), r, team | 0xFF00_0000);
         }
+    }
+    // A sensor scan's pings: where the enemy was, fading (`compassSatellitePingFadeTime`), in his
+    // team colour while he is in the query, else BO2's enemy red.
+    for (m, alpha) in marks.iter().filter(|(m, _)| !m.live && !drawn.contains(&m.target)) {
+        let team = objs.iter().find(|o| o.id == m.target).map_or(0x00FF_2020, |o| o.color & 0x00FF_FFFF);
+        let a = ((*alpha).clamp(0.0, 1.0) * 255.0) as u32;
+        dot(prims, to_screen(m.pos), 3.5 * s, team | (a << 24));
     }
     // You: BO2's player arrow, pointing up.
     let a = 18.0 * s;

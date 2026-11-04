@@ -12826,3 +12826,161 @@ ABI 32 paragraph. No `zhbo_native` format moves (`BODY_VERSION` 1, `WEAPON_VERSI
   launcher and camo with "Press F for AN-94 Launcher" and its HUD icon (`shot-dropped-weapon-hint.png`),
   the SMAW's blast (`shot-explosion-flipbook*.png`), the low-ammo "[R] Reload" (`shot-low-ammo.png`),
   the planted shield standing (`shot-planted-shield.png`).
+
+## The last weapon gaps: who aims, the ADS layer that never runs, the Sensor Grenade's fuse (2026-11-03, `v1/conformance-final`)
+
+The weapons report's last 22 cells (integration9): `anim_ads_up`/`anim_ads_down` on ten offhands
+and the knife, `projectile_explosion_effect` on the Sensor Grenade and the Trophy System. Read-only
+Ghidra (t6mp; raw C in the plan dir's `ghidra/`) settled all three, and one sweep found the same
+root cause in the sim.
+
+* **The ADS layer runs only for a def that aims, or one that names its own `ads_down` (expected
+  side, cited).** `FUN_0052bb10`, the only caller of the ADS clip driver `FUN_0052b750` (G12), drives
+  slots 0x55-0x57 by the ADS fraction when `aimDownSight` (WeaponDef+0x638) is set; otherwise only
+  when the variant's own `szXAnims[0x56]` (variant+0x20, +0x158) is a non-empty name, at fraction 0
+  (`ads_down` at full weight: the hip pose's layer — the Assault Shield's, C4's, the Trophy System's).
+  The registration (`FUN_0052d3e0`) does put IDLE in an empty slot, but for the frag, Semtex,
+  flashbang, concussion, EMP, smoke, Sensor, Claymore, hatchet and knife (`aimDownSight` 0, no
+  `ads_down`) nothing ever plays it. The expected side had reported the registered IDLE for the two
+  ADS-layer slots; it now reports them empty when the layer never runs (`resolve::ads_layer_runs`,
+  `weapons::is_ads_layer_slot`; the oracle test
+  `the_ads_layer_runs_for_a_def_that_aims_or_names_its_own_ads_down`). The mod already matched:
+  `Loaded::ads_clip` reads the manifest without the IDLE fallback, and these offhands have no ADS
+  clip. `ads_up_other_scope` (0x57) rides the same driver but its column stays the registered clip.
+* **Only a def with `aimDownSight` aims (sim, the sweep).** `FUN_008e4470` (G3's ADS lerp) moves
+  `fWeaponPosFrac` only when `aimDownSight` is set and otherwise sets it to 0 (the one other path is
+  a turret link, playerState+0x484 bit 4, set and cleared by the link/unlink pair `FUN_00676290` /
+  `FUN_00675f90`). Probe of the pool: `aimDownSight` 0 on every offhand, knife, `_dw`/`_lh`,
+  `riotshield_mp`, `knife_ballistic_mp`, `explosive_bolt_mp` and the nine `gl_*` launcher modes. The
+  mod gated ADS by class (`is_slot_weapon` and not dual-wield), so the Assault Shield, the Ballistic
+  Knife and the launcher modes aimed (and zoomed). The weapon table gains `Aims` (BO2's
+  `aimDownSight`, `WeaponDef::aims`), `wants_ads` requires it and a def without it sets the fraction
+  straight to 0, as BO2 does. The shield's raise was the mod's inference from its `ads_up` clip, not
+  BO2 behaviour; its `ads_down` is the hip layer it already shows. Tests: the shield test now holds
+  ADS and stays at 0; the every-weapon conformance sim (`conformance::check`) fails any non-aiming def
+  that aims; the real-install `the_install_says_who_aims_whose_fuse_is_timed_and_which_is_the_laser_sensor`
+  (which also holds the stand-in catalog's `Aims` to the install).
+* **The Sensor Grenade goes off on its timed fuse (sim + converter).** `FUN_00607c00` (called by the
+  grenade launch `FUN_00607cb0`) sets the explode think from `fuseTime` only for a def with
+  `timedDetonation`; the planted items lack it, the Sensor Grenade has it (fuse 4.5 s, `projExplosion`
+  smoke, `isLaserSensor`). The explode think `FUN_0060a480` runs the radius damage (`FUN_005f2130`,
+  for any `iExplosionInnerDamage` ≠ 0: the sensor's 15), `G_SensorGrenadeDetonate` (`FUN_005f26c0`,
+  the enemies' ping event) for a laser sensor, raises the smoke-type event 0x4c, then frees the entity
+  (`FUN_0064b950`). `CG_EntityEvent` (`FUN_004c1590`) case 0x4c plays the impact table's sound, its
+  effect unless `isLaserSensor`, the def's `projExplosionEffect` and `projExplosionSound`. Its script
+  waits for exactly that (`_sensor_grenade.gsc:56-64`, `waittill( "explode", origin )`). The mod set
+  every landing piece's fuse to infinity and its converter kept `projExplosionEffect` only for an
+  Effect allowlist, so the sensor never went off and its scan effect was never converted. Now: the
+  table's `TimedDetonation` and `LaserSensor`; a landing piece keeps a timed throw's fuse
+  (`Placed::fuse`, hashed); when it runs out the piece goes off where it lies (`Placed::explode`:
+  its own effect, no table cell for a laser sensor, radius damage for an Effect-less def with inner
+  damage, the `Exploded` event and its sounds) and is gone. Tests:
+  `a_landing_piece_keeps_only_a_timed_fuse`,
+  `a_timed_piece_goes_off_where_it_lies_when_its_fuse_runs_out`.
+* **The Trophy System's `projExplosionEffect` is carried, never played (converter).** It has no timed
+  fuse, no impact explosion and no activation distance, and its script never `detonate()`s it
+  (`trophysystemdetonate`, `_trophy_system.gsc:251-266`: `playfx` of `level._equipment_explode_fx_lg`
+  and `delete`), so in BO2 the def field never plays. The converter now carries every def's
+  `projExplosionEffect` (the allowlist was the only reason the mod's def lacked it); the sim plays it
+  wherever a def goes off, which for the Trophy System is never, as in BO2. Its destruction effect
+  stays the script's (`equipment::EQUIPMENT_LG_FX`, the same asset).
+
+**Not modelled (noted).** BO2 also pings the enemies within the sensor's explosion radius at its
+detonation (event 0x4e) and, while the sensor flies and lies, scans every 800 ms with team-coloured
+runners and a targeting effect on enemies in range (`CG_Missile` `FUN_004bcac0` → `FUN_004bc570`). The
+mod keeps its own reveal (enemies inside `SENSOR_RANGE` of a down sensor) for as long as the sensor
+lies; it now lies until its fuse. The explode think also postpones a run-out fuse while an entity
+field at +0x60 is set (up to 60 s from the launch); what sets it for a grenade was not found.
+
+**Measured** (conformance CLI vs integration9): weapons 22 → 0 cells (3 → 0 clusters); cac unchanged
+(0 cells, 4 BO2-only MTX rows); gap clusters 4 → 1. The expected side moved only in
+`anim_ads_up`/`anim_ads_down` (the 10 rows), the actual side only in `projectile_explosion_effect`
+(sensor, Trophy).
+
+**In game** (this branch's build, own dist): `--equipment` 12/12 — the Sensor run: thrown at frame
+423, put down at 456, gone off at 557 (134 frames, BO2's 4.5 s fuse), `wpn_sensor_grenade_explode`
+played, the General beside it took its 15 (×1.5) and BO2's shellshock; default 16/16, `--splash` 5/5,
+`--smoke` 7/7, `--drops` 9/9, `--w3d-ads` 2/2, `scripts/mptest-mac.sh` (`ZHBO_MPTEST_ROUNDS=3`)
+34/34. The equipment leg now files each run's captures in its own folder; `finish`'s capture loop
+uses `if`, so a leg with no capture left no longer exits 1 under `set -e` (it did once here with all
+checks passing). The scan effect's conversion against BO2's own: `zhbo-assets fx-sheet <dir>
+--effects weapon/sensor_grenade/fx_sensor_exp_scan_friendly`.
+
+**Follow-up: does the Sensor Grenade persist? (review question, same branch).** The objection: in BO2
+the sensor sticks, keeps scanning and stays until destroyed, and the explode think postpones a fuse
+while the entity's +0x60 is set. More read-only Ghidra (t6mp; the scripts `RefsTo`, `FindDword` and
+`Dump` are in the plan dir's `ghidra/`):
+* *The grenade's think is the explode think.* `FUN_0060a480` has no code reference from a think
+  dispatcher, but the entity handler table holds it: rows of 0x30 bytes from 0x00c8c0d0 (the
+  `methodOfDeath` field the explode think reads, `&DAT_00c8c0f8 + handler * 0x30`, is +0x28). Row 10
+  holds think 0x0060a480 and MODs 3/4, and `FUN_00607730` (the grenade spawn, called by
+  `G_FireGrenade` `FUN_00607cb0`) sets handler 10 (0x0060794c). So the timed fuse's nextthink runs the
+  explode think.
+* *Landing keeps only a timed fuse.* `FUN_00607fa0`'s landing branch (the one that notifies
+  "stationary") zeroes nextthink (+0x1a4) when the def lacks `timedDetonation` (C4, Claymore, Trophy:
+  they persist) and leaves it otherwise; `bProjExplodeWhenStationary` (0 on the sensor) would set it
+  to the next frame.
+* *+0x60 is never set on a grenade.* Every store to `[reg + 0x60]` in the game module
+  (0x005c0000-0x0068ffff), byte, word, dword or 16-byte, was listed: the server stores are the
+  spawn-time zeroing in `G_FireGrenade` (0x00607d01) and the rocket spawn (0x0060db0c); the rest are
+  the client's own struct (`FUN_00607c00`, `FUN_005d2140`: the cooked-grenade time), a turret's
+  settings, or the client entity's lerp copy (`FUN_005c8eb0`). The postponement there is for an entity
+  that is never a thrown grenade in practice, and it ends in a free *without* an explosion
+  (0x0060a514 → 0x0060a4c4) after 60 s from +0x234.
+* *It does not stick.* The install's `sensor_grenade_mp` has `stickiness` 0 (`WEAPSTICKINESS_NONE`;
+  the Semtex 1, C4 2, the Trophy 3, the Claymore 4); it bounces and comes to rest.
+* *Everything else agrees with a timer:* the script waits for `"explode"` (`_sensor_grenade.gsc:56-64`,
+  and `watchforstationary` ends on it), the engine has a sensor-only detonation event
+  (`G_SensorGrenadeDetonate` `FUN_005f26c0`, the ping of enemies in the blast radius), the def names an
+  explosion effect (`fx_sensor_exp_scan`) and sound, and the client's 800 ms scan
+  (`FUN_004bc570`) runs from `CG_Missile` (`FUN_004bcac0`) only while the missile exists. A sensor
+  that persisted would never reach any of these.
+So BO2's sensor goes off on its timed fuse, 4.5 s from the throw, plays its scan effect then and is
+freed; the mod keeps that. What reveals enemies after it is BO2's ping (event 0x4e, enemies in its
+256-inch blast radius marked on the compass by `FUN_004ab320`), which the mod still does not model
+(noted above). No code changed; the in-game legs and the gates above stand.
+
+### The Sensor Grenade's compass reveal: BO2's scan and its detonation's ping (same branch)
+
+The mod stood the sensor in for BO2 with Zero Hour sight: its prop cleared the fog and detected
+stealth for 750 inches (the challenge script's tracking radius, `_sensor_grenade.gsc:79`), and the
+minimap showed every enemy inside that range for as long as it lay. BO2 reveals on the client, for
+the thrower alone, two ways (read-only Ghidra, t6mp; decompiles in the plan dir's `ghidra/`):
+* **The scan** — `CG_Missile` (`FUN_004bcac0`) runs `FUN_004bc570` for a missile whose def is a
+  laser sensor, so from the throw until it goes off. Period 800 ms from the entity's spawn time
+  (`(time - es.time) % 800`); in its first 400 ms it lists the live enemies within `sqrt(1e6)` =
+  1000 inches (`DAT_00b12548`, 3D, not the sensor's team, in client order) and reaches them one by
+  one, `400 / n` ms apart, pinging each on the thrower's compass (only when the local client is the
+  owner) if a trace from the sensor to his chest (+35 standing, +25 crouched, +5 prone:
+  `DAT_00b130d4`/`d8`/`3110c`) reaches him or nothing. The ping is `FUN_004ab320` without its flag →
+  `FUN_004a95f0`: the enemy's compass "static image" moves to where he is, at most once per
+  `compassStaticImageUpdateTime` (4000 ms), and the minimap (`FUN_0069ab00`) fades it over
+  `compassSatellitePingFadeTime` (8 s).
+* **The detonation** — `G_SensorGrenadeDetonate` (`FUN_005f26c0`, from the explode think) raises
+  event 0x4e for the owner's client; `CG_EntityEvent` (`FUN_004c1590`) marks every live enemy within
+  `iExplosionRadius` (256) in sight (the same chest trace) with `FUN_004ab320` *with* its flag: the
+  actor's compass deadline `time + 6000`.
+Both are the thrower's alone (the scan's `*piVar4 == owner`, the event's local-client test), not his
+team's.
+
+Port: a new module `zhbo_core::sensor` (the `Marks` the `Equipment` keeps, hashed; the numbers in
+the tuning pack: `sensor_scan_cycle_ms` 800, `sensor_scan_sweep_ms` 400, `sensor_scan_range` 1000,
+`sensor_scan_target_height` 35, `sensor_ping_time_ms` 6000, `compassStaticImageUpdateTime` 4000,
+`compassSatellitePingFadeTime` 8). The sim decides each ping (the period from the throw, read off
+the timed fuse; the sweep order by object id; the line of sight over the terrain and the solids,
+ignoring one the line starts inside, from 4 inches above where the sensor lies) and each detonation
+mark; `Sim::sensor_marks` hands the local player's to the minimap, which draws a scan ping where
+the enemy was, fading, and shows a detonation-marked enemy where he is for its 6 s. The prop gives
+no Zero Hour sight any more, and `equipment::SENSOR_RANGE`, `Equipment::sensed` and
+`Sim::reveals` are gone. The mod scans only once the sensor has landed (its flight is a projectile
+with no scan), uses the standing height for every enemy (Zero Hour units have no stance), and plays
+neither the scan's runner nor its targeting effect: both are per-viewer presentation BO2 colours by
+team. Tests: `sensor::tests` (`the_scan_reaches_the_enemies_in_range_one_by_one_every_period`,
+`the_scan_needs_a_clear_line_to_the_enemy`, `the_detonation_marks_the_enemies_in_its_blast_for_six_seconds`),
+the equipment fuse test now also holds the detonation mark, and the lockstep perturbation state
+carries a mark and a fuse.
+
+Verified: `cargo test --workspace`, clippy clean; real-install suite 78/78 (the roster lockstep gate
+included); in game on this build `--equipment` 12/12 and `scripts/mptest-mac.sh`
+(`ZHBO_MPTEST_ROUNDS=3`) 34/34, the per-frame state hashes (now carrying the marks) equal on both
+machines. The marks have no log line; the in-game legs show the minimap unchanged in look.

@@ -202,6 +202,13 @@ tuning! {
     trophy_intercept_max_damage: "trophy_intercept_max_damage" = 105.0, "Trophy System: that blast's damage at its centre (BO2's 100-HP scale; `_trophy_system.gsc:233`).";
     trophy_intercept_min_damage: "trophy_intercept_min_damage" = 10.0, "Trophy System: that blast's damage at its edge (`_trophy_system.gsc:233`).";
     trophy_system_ammo: "trophy_system_ammo" = 2.0, "Trophy System: projectiles it shoots down before it is spent (`_trophy_system.gsc:62`, `self.ammo = 2`).";
+    sensor_scan_cycle_ms: "sensor_scan_cycle_ms" = 800.0, "Sensor Grenade: its scan's period, ms, from the throw (`CG_Missile` `FUN_004bcac0` → `FUN_004bc570`: `(time - spawnTime) % 800`).";
+    sensor_scan_sweep_ms: "sensor_scan_sweep_ms" = 400.0, "Sensor Grenade: the part of each period its scan sweeps, ms: the n enemies in range are reached one by one, `400 / n` apart (`FUN_004bc570`).";
+    sensor_scan_range: "sensor_scan_range" = 1000.0, "Sensor Grenade: how near an enemy its scan reaches, inches (`FUN_004bc570`: distance squared below `DAT_00b12548` = 1e6).";
+    sensor_scan_target_height: "sensor_scan_target_height" = 35.0, "Sensor Grenade: how high on a standing enemy its line of sight ends, inches (`FUN_004bc570`: +35 standing, +25 crouched, +5 prone; the same at its detonation, `FUN_004c1590` case 0x4e).";
+    sensor_ping_time_ms: "sensor_ping_time_ms" = 6000.0, "Sensor Grenade: how long its detonation keeps the enemies it caught on the thrower's compass, ms (`FUN_004ab320` with its flag set: the actor's compass deadline `time + 6000`).";
+    compass_static_image_update_ms: "compassStaticImageUpdateTime" = 4000.0, "Compass: the least ms between two scan pings of the same enemy (dvar default; `FUN_004a95f0` moves the ping only when it is older).";
+    compass_satellite_ping_fade_time: "compassSatellitePingFadeTime" = 8.0, "Compass: seconds a scan ping fades over (dvar default; the minimap draw `FUN_0069ab00`).";
     perk_armorpiercing: "perk_armorpiercing" = 40.0, "`armorpiercing` (FMJ): percent extra bullet damage on scorestreaks — Zero Hour's vehicles and structures (`gametypes/_class.gsc:859`, `cac_get_dvar_int( \"perk_armorpiercing\", \"40\" ) / 100`; applied as `damage + int(damage * data)`, `killstreaks/_ai_tank.gsc:292-293`).";
     perk_delay_explosive_time: "perk_delayExplosiveTime" = 0.9, "`delayexplosive` (Engineer): extra seconds a tripped explosive waits (dvar default, `dvars-t6mp.tsv`; `gametypes/_weaponobjects.gsc:1550-1551`).";
     equipment_hacker_tool_time_ms: "equipmenthackertooltimems" = 50.0, "Black Hat: the lock on equipment, milliseconds of sight (`_hacker_tool.gsc:20`; the lock loop `:293-301`).";

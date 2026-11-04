@@ -19,6 +19,7 @@ pub mod content;
 pub mod conformance;
 pub mod damage;
 pub mod equipment;
+pub mod sensor;
 pub mod ffi;
 pub mod hitloc;
 pub mod hitscan;

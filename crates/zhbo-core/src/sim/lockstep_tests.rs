@@ -424,7 +424,9 @@ fn populated_sim() -> Sim {
     ));
     let mut placed = crate::equipment::Placed::new(def("claymore_mp"), 0, 100, 901, Vec3::new(5.0, 5.0, 0.0), 0.5, Some(503));
     placed.triggered = Some(0.25);
+    placed.fuse = Some(1.5);
     sim.equipment.placed.push(placed);
+    sim.equipment.marks.marks.push(crate::sensor::Mark { owner: 1, target: 100, pos: Vec3::new(2.0, 3.0, 0.0), age: 0.5, live: true });
     sim.smokes.push(crate::smoke::Smoke { at: Vec3::new(9.0, 9.0, 0.0), born: 7 });
     let shield = def("riotshield_mp");
     let bearer = crate::shield::Bearer::of(0, Vec3::new(3.0, 3.0, 0.0), 0.5, shield, true).expect("the shield's box");

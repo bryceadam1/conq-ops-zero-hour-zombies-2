@@ -879,6 +879,7 @@ Attachment dw
 End
 
 Weapon gl_an94_mp
+  Aims = 0
   DisplayName = Grenade Launcher
   Inventory = altmode
   WeapType = projectile
@@ -969,6 +970,8 @@ Weapon fnp45_mp
 End
 
 Weapon frag_grenade_mp
+  Aims = 0
+  TimedDetonation = 1
   DisplayName = Grenade
   Inventory = offhand
   WeapType = grenade
@@ -993,6 +996,7 @@ Weapon frag_grenade_mp
 End
 
 Weapon claymore_mp
+  Aims = 0
   DisplayName = Claymore
   Inventory = item
   WeapType = grenade
@@ -1018,6 +1022,7 @@ End
 ; C4 (BO2's `satchel_charge_mp`): thrown and stuck; with none left in hand its button is the
 ; detonator (`hasDetonator`). Generic offhand times.
 Weapon satchel_charge_mp
+  Aims = 0
   DisplayName = C4
   Inventory = item
   WeapType = grenade
@@ -1041,6 +1046,8 @@ Weapon satchel_charge_mp
 End
 
 Weapon concussion_grenade_mp
+  Aims = 0
+  TimedDetonation = 1
   DisplayName = Concussion
   Inventory = offhand
   WeapType = grenade
@@ -1066,6 +1073,7 @@ End
 
 ; Placed tactical equipment (BO2's `specialgrenade` slot lists it beside the grenades).
 Weapon trophy_system_mp
+  Aims = 0
   DisplayName = Trophy System
   Inventory = item
   WeapType = grenade
@@ -1086,6 +1094,7 @@ Weapon trophy_system_mp
 End
 
 Weapon knife_held_mp
+  Aims = 0
   DisplayName = Knife
   HudIcon = menu_mp_weapons_ballistic_knife
   Class = melee
@@ -1101,6 +1110,7 @@ End
 ; 72-inch body, and planted, at generic values; the converted table poses BO2's own collision
 ; surfaces on the BO2 body and in the deploy animation.
 Weapon riotshield_mp
+  Aims = 0
   DisplayName = Assault Shield
   HudIcon = menu_mp_weapons_riot_shield
   Class = shield
@@ -1120,6 +1130,7 @@ End
 ; The class melee weapon every class gets (BO2's `knife_mp`): a gun's melee strikes with it.
 ; Generic values, slower than the held knife's so the tests tell the two apart.
 Weapon knife_mp
+  Aims = 0
   DisplayName = Knife
   Class = melee
   Inventory = melee
@@ -1189,6 +1200,7 @@ End
 
 ; A pistol by class that BO2 lists under SPECIALS (its statstable group, `CacGroup`).
 Weapon knife_ballistic_mp
+  Aims = 0
   DisplayName = Ballistic Knife
   WeapType = projectile
   HudIcon = menu_mp_weapons_ballistic_knife
@@ -1199,6 +1211,7 @@ End
 
 ; What a class with the Five-seven and Dual Wield gets: no CaC item of its own.
 Weapon fiveseven_dw_mp
+  Aims = 0
   DisplayName = Five-Seven Dual Wield
   HudIcon = menu_mp_weapons_five_seven
   Class = pistol

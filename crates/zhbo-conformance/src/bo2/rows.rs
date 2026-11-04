@@ -499,8 +499,11 @@ impl<'a> Expected<'a> {
 
         // Animations.
         let table = resolve::anims(w, left);
+        let ads_layer = resolve::ads_layer_runs(w);
         for (s, name) in cols::ANIM_SLOTS.iter().enumerate().skip(1) {
-            let clip = if cols::is_left_slot(s) && !dw { None } else { table.get(s).cloned().flatten() };
+            // The ADS-in/out slots play only through the ADS layer (`resolve::ads_layer_runs`).
+            let unplayed = (cols::is_left_slot(s) && !dw) || (cols::is_ads_layer_slot(s) && !ads_layer);
+            let clip = if unplayed { None } else { table.get(s).cloned().flatten() };
             b.opt_text(&format!("anim_{name}"), clip);
         }
         debug_assert_eq!(table.len(), ANIMS);

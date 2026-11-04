@@ -70,13 +70,8 @@ pub(crate) fn prop(
     let mut meshes = character::skin(&rig, &shown, "P", &tex);
     finish(&mut meshes, looks);
     let object = projectile_object(&d.id.replace(['+', '~'], "_"));
-    // A Sensor Grenade sees for its owner (and finds stealthed units).
-    let sight = if base_id(&d.id) == "sensor_grenade_mp" {
-        let r = zhbo_core::equipment::SENSOR_RANGE;
-        format!("  VisionRange = {r}\n  ShroudClearingRange = {r}\n  Behavior = StealthDetectorUpdate ModuleTag_03\n    DetectionRate = 500\n    DetectionRange = {r}\n  End\n")
-    } else {
-        String::new()
-    };
+    // No prop gives sight: a Sensor Grenade reveals by its scan's and its detonation's compass
+    // pings ([`zhbo_core::sensor`]), not by clearing the fog.
     // The deployed Assault Shield is cover Zero Hour's units can shoot: solid, attackable, a box of
     // its collision surfaces (x is its facing) at its drawn size. The engine never applies the
     // damage — the bridge's hook hands it to the core's wear-down (`zhbo_logic_shield_damage`) —
@@ -87,14 +82,14 @@ pub(crate) fn prop(
         let half = |a: usize| (hi[a] - lo[a]) * 0.5 * k;
         let health = crate::shield::deployed_health_zh();
         format!(
-            "  KindOf = IMMOBILE\n  Body = ActiveBody ModuleTag_02\n    MaxHealth = {health:.1}\n    InitialHealth = {health:.1}\n  End\n{sight}  \
+            "  KindOf = IMMOBILE\n  Body = ActiveBody ModuleTag_02\n    MaxHealth = {health:.1}\n    InitialHealth = {health:.1}\n  End\n  \
              Geometry = Box\n  GeometryMajorRadius = {:.2}\n  GeometryMinorRadius = {:.2}\n  GeometryHeight = {:.2}\n  GeometryIsSmall = No\n",
             half(0),
             half(1),
             (hi[2] - lo[2]) * k
         )
     } else {
-        format!("  KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n{sight}  Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\n")
+        "  KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n  Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\n".to_string()
     };
     let ini = format!(
         "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = Yes\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n  \

@@ -227,8 +227,9 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
             }
         }
 
-        // ADS time. A dual-wield weapon has no sights (BO2's `aimDownSight` 0): its ADS button is
-        // the left gun's trigger, and the aim stays down.
+        // ADS time. A def without `aimDownSight` (a dual-wield pair, whose ADS button is the left
+        // gun's trigger, the Assault Shield, the Ballistic Knife, a launcher mode) never aims
+        // (`FUN_008e4470`).
         let mut a = arsenal(def);
         let mut out = Vec::new();
         let mut f = 0;
@@ -236,9 +237,9 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
             step(&mut a, buttons::ADS, 0, &mut out, &mut rng);
             f += 1;
         }
-        if def.is_dual_wield() {
+        if def.is_dual_wield() || !def.aims {
             if a.ads > 0.0 {
-                fail("a dual-wield weapon aimed".to_string());
+                fail("a weapon without sights aimed".to_string());
             }
         } else if !near(f, def.ads_in_time, 0) {
             fail(format!("aiming took {f} frames, BO2 says {:.1}", def.ads_in_time / LOGIC_DT));

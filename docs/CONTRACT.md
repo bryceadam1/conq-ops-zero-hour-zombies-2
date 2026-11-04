@@ -1624,3 +1624,14 @@ What would need serializing before the feature is possible:
 Open questions for a feature agent: how ZH migrates `Xfer` blocks across game versions
 (engine save compat), whether a save/load must also replay `Client` timers to keep HUD state
 coherent, and whether dead players (spectator between respawn) need a serializable form.
+
+**Pending for the next bump** (conformance-final; no ABI change): archive `hud::VERSION` for the
+weapon table's `TimedDetonation`, `LaserSensor` and `Aims` keys (172 fields; a table converted
+before them parses with `Aims` 1 and the other two 0, so the archive must be rebuilt for the
+Assault Shield, the Ballistic Knife and the launcher modes to stop aiming and for the Sensor
+Grenade's fuse) and the `ExplosionFx` now converted for every def that names a
+`projExplosionEffect` (the Sensor Grenade's `fx_sensor_exp_scan_friendly`, the Trophy System's
+`fx_exp_equipment_lg`), the tuning pack's seven Sensor Grenade and compass keys
+(`sensor_scan_cycle_ms` … `compassSatellitePingFadeTime`; the content CRC's tuning part changes) and
+the Sensor Grenade's prop INI without its Zero Hour sight (`VisionRange`, `ShroudClearingRange`,
+the stealth detector: it reveals by its compass pings, `zhbo_core::sensor`).

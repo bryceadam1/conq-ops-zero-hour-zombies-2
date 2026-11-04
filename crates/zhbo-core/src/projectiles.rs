@@ -63,7 +63,7 @@ pub struct Projectile {
     /// The thrower's own share of this stun (`stunprotection`: x0.1, `_weapons.gsc:1375-1376`).
     pub self_stun_scale: f32,
     /// Becomes placed equipment where it comes to rest or sticks (C4, Shock Charge, Sensor
-    /// Grenade) instead of going off.
+    /// Grenade) instead of going off; a timed one's fuse carries over to the piece.
     pub lands: bool,
     /// Path length flown so far (BO2's `G_RunMissile` sums each frame's move), against the def's
     /// `activate_dist`.
@@ -110,7 +110,10 @@ impl Projectile {
         let vel = dir * speed + Vec3::new(0.0, 0.0, def.projectile_speed_up);
         let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, owner, from, yaw) };
         let lands = crate::equipment::Kind::of(def) != crate::equipment::Kind::Other;
-        let fuse = if lands || def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
+        // A piece that lands is set down with no fuse, unless its throw armed a timed one
+        // (`timedDetonation`, t6mp `FUN_00607c00`): the Sensor Grenade's runs on where it lies.
+        let untimed_piece = lands && !def.timed_detonation;
+        let fuse = if untimed_piece || def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
         let flight = Flight::from_tuning(&crate::tuning::get());
         Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands, travelled: 0.0, bounced: None, struck: None, last_struck: None, flight }
     }
@@ -474,9 +477,11 @@ pub fn blast_surface(host: &dyn LogicHost, at: Vec3, direct: Option<&ObjInfo>) -
 /// The effects BO2 plays for `def` going off on `surface`: the impact table's cell for the def's
 /// `impactType` and the surface, then the def's own `projExplosionEffect` on top
 /// (`FUN_004c0ac0`), then a smoke grenade's screen (`screen_fx`, its script's cloud, which water
-/// never raises). None of the first two -> the stand-in (no converted table, or a mod-only def).
+/// never raises). A laser sensor (the Sensor Grenade) plays no table cell: the client's smoke-type
+/// explosion skips it for `isLaserSensor` (`FUN_004c1590`, case 0x4c). None of the first two ->
+/// the stand-in (no converted table, or a mod-only def).
 pub fn blast_fx(def: &WeaponDef, surface: Surface) -> (Option<String>, Option<&str>, Option<&str>) {
-    let table = crate::impacts::fx_name(def.impact_type, surface, false, false);
+    let table = if def.laser_sensor { None } else { crate::impacts::fx_name(def.impact_type, surface, false, false) };
     let own = (!def.explosion_fx.is_empty()).then_some(def.explosion_fx.as_str());
     let screen = (def.effect == Effect::Smoke && !def.screen_fx.is_empty() && crate::smoke::raised_on(surface)).then_some(def.screen_fx.as_str());
     if table.is_none() && own.is_none() && (def.effect != Effect::Smoke || def.screen_fx.is_empty()) {
@@ -521,7 +526,9 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, hit: H
     let d = def;
     let direct = hit.direct;
     let surface = blast_surface(host, at, direct.as_ref());
-    if d.effect != Effect::None {
+    // A def with no blast of its own plays its effects only when it names one (the Sensor
+    // Grenade's scan): the stand-in is for explosives.
+    if d.effect != Effect::None || !d.explosion_fx.is_empty() {
         let (table, own, screen) = blast_fx(d, surface);
         for fx in table.as_deref().into_iter().chain(own).chain(screen) {
             host.fx(fx, at);
@@ -559,7 +566,10 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, hit: H
         }
         let own = o.id == owner;
         match d.effect {
-            Effect::Explode => {
+            // A def with no other effect still deals its radius damage when it has one: t6mp
+            // `FUN_0060a480` runs the radius damage (`FUN_005f2130`) for any def whose
+            // `iExplosionInnerDamage` is not 0 (the Sensor Grenade's 15).
+            Effect::Explode | Effect::None if d.effect == Effect::Explode || d.explosion_inner_damage > 0.0 => {
                 // What it struck takes the impact damage (`iDamage`) and is spared the radius: t6mp
                 // `FUN_00608c10` damages the struck entity first, then passes it to the radius
                 // damage (`FUN_005f2130`) as the one to skip. Each by its means of death, under
@@ -621,7 +631,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, hit: H
                     hit_enemy = true;
                 }
             }
-            Effect::Smoke | Effect::None | Effect::Impact => {}
+            Effect::Explode | Effect::Smoke | Effect::None | Effect::Impact => {}
         }
     }
     Blast { hit_enemy, kill, surface }
@@ -857,6 +867,28 @@ mod tests {
     }
 
     /// A smoke grenade (`bExplodeOnGround`, fuse 10 ms) goes off where it comes to rest, not as it
+    /// A piece that lands keeps a timed throw's fuse (`timedDetonation`, t6mp `FUN_00607c00`: the
+    /// Sensor Grenade) and lands with the rest of it; an untimed one (C4, the Claymore) has none.
+    #[test]
+    fn a_landing_piece_keeps_only_a_timed_fuse() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let piece = |timed: bool, kind: crate::weapons::Kind| -> &'static WeaponDef {
+            let mut d = weapon("frag_grenade_mp").clone();
+            (d.fuse_time, d.timed_detonation, d.equipment_kind, d.effect) = (4.5, timed, kind, crate::weapons::Effect::None);
+            Box::leak(Box::new(d))
+        };
+        let from = Vec3::new(0.0, 0.0, 40.0);
+        let dir = Vec3::new(1.0, 0.0, 0.2).normalized_or_zero();
+        let mut sensor = Projectile::launch(piece(true, crate::weapons::Kind::Sensor), 1, from, dir, 4.5, &host, 0.0);
+        let c4 = Projectile::launch(piece(false, crate::weapons::Kind::C4), 1, from, dir, 4.5, &host, 0.0);
+        assert!(c4.fuse.is_infinite(), "an untimed piece is set down with no fuse");
+        assert_eq!(sensor.fuse, 4.5);
+        let outcome = (0..2000).find_map(|_| sensor.step(&host)).expect("lands");
+        assert!(matches!(outcome, Outcome::Landed { .. }), "{outcome:?}");
+        assert!(sensor.fuse > 0.0 && sensor.fuse < 4.5, "the rest of the fuse lands with it: {}", sensor.fuse);
+    }
+
     /// leaves the hand; a frag (no flag) still goes off in the air on its fuse.
     #[test]
     fn an_explode_on_ground_grenade_waits_until_it_rests() {

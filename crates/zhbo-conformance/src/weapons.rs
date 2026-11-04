@@ -70,6 +70,14 @@ pub fn is_left_slot(s: usize) -> bool {
     (0x4e..=0x54).contains(&s)
 }
 
+/// Whether slot `s` is one the ADS layer plays (`ADS_UP`, `ADS_DOWN`): a column only a weapon
+/// whose ADS layer runs fills (`FUN_0052bb10` drives them for a def that aims, or one whose
+/// variant names its own `ads_down`; G12). `ADS_UP_OTHER_SCOPE` rides the same driver, but its
+/// column stays the registered clip like every other slot's.
+pub fn is_ads_layer_slot(s: usize) -> bool {
+    s == 0x55 || s == 0x56
+}
+
 /// The order both sides list parts in: by model, then tag. Which part an engine composes first is
 /// not a fact either game shows, so the part columns hold the parts sorted (models, tags, offsets
 /// and rotations stay index-aligned).
@@ -296,8 +304,11 @@ pub fn schema() -> Schema {
 
     // The animation each slot plays (G14 §5; an empty slot plays IDLE).
     for name in &ANIM_SLOTS[1..] {
-        let doc = if is_left_slot(ANIM_SLOTS.iter().position(|n| n == name).unwrap_or(0)) {
+        let slot = ANIM_SLOTS.iter().position(|n| n == name).unwrap_or(0);
+        let doc = if is_left_slot(slot) {
             "the dual-wield left gun's xanim for this slot (G14 §5); empty for a single gun"
+        } else if is_ads_layer_slot(slot) {
+            "the ADS layer's xanim for this slot (G14 §5, G12); empty when the layer never runs: no aimDownSight and no ads_down of the variant's own (FUN_0052bb10)"
         } else {
             "the xanim this weapAnimFiles_t slot plays (G14 §5)"
         };

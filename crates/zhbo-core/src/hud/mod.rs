@@ -316,8 +316,8 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             draw_build(host, prims, w, h, s, client, p, !tablet_up && !map_open);
         }
         if !scoped {
-            let reveal = |pos: Vec3| sim.reveals(local_player, pos);
-            draw_minimap(host, prims, &l, client.yaw, p, &reveal);
+            let marks = sim.sensor_marks(local_player);
+            draw_minimap(host, prims, &l, client.yaw, p, &marks);
             draw_compass(prims, &l, client.yaw);
         }
         score::draw(&l, prims, team_color(host, p), host.cash(local_player).max(0) as u32);
