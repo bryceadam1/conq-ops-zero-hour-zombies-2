@@ -12939,3 +12939,43 @@ So BO2's sensor goes off on its timed fuse, 4.5 s from the throw, plays its scan
 freed; the mod keeps that. What reveals enemies after it is BO2's ping (event 0x4e, enemies in its
 256-inch blast radius marked on the compass by `FUN_004ab320`), which the mod still does not model
 (noted above). No code changed; the in-game legs and the gates above stand.
+
+### The Sensor Grenade's compass reveal: BO2's scan and its detonation's ping (same branch)
+
+The mod stood the sensor in for BO2 with Zero Hour sight: its prop cleared the fog and detected
+stealth for 750 inches (the challenge script's tracking radius, `_sensor_grenade.gsc:79`), and the
+minimap showed every enemy inside that range for as long as it lay. BO2 reveals on the client, for
+the thrower alone, two ways (read-only Ghidra, t6mp; decompiles in the plan dir's `ghidra/`):
+* **The scan** — `CG_Missile` (`FUN_004bcac0`) runs `FUN_004bc570` for a missile whose def is a
+  laser sensor, so from the throw until it goes off. Period 800 ms from the entity's spawn time
+  (`(time - es.time) % 800`); in its first 400 ms it lists the live enemies within `sqrt(1e6)` =
+  1000 inches (`DAT_00b12548`, 3D, not the sensor's team, in client order) and reaches them one by
+  one, `400 / n` ms apart, pinging each on the thrower's compass (only when the local client is the
+  owner) if a trace from the sensor to his chest (+35 standing, +25 crouched, +5 prone:
+  `DAT_00b130d4`/`d8`/`3110c`) reaches him or nothing. The ping is `FUN_004ab320` without its flag →
+  `FUN_004a95f0`: the enemy's compass "static image" moves to where he is, at most once per
+  `compassStaticImageUpdateTime` (4000 ms), and the minimap (`FUN_0069ab00`) fades it over
+  `compassSatellitePingFadeTime` (8 s).
+* **The detonation** — `G_SensorGrenadeDetonate` (`FUN_005f26c0`, from the explode think) raises
+  event 0x4e for the owner's client; `CG_EntityEvent` (`FUN_004c1590`) marks every live enemy within
+  `iExplosionRadius` (256) in sight (the same chest trace) with `FUN_004ab320` *with* its flag: the
+  actor's compass deadline `time + 6000`.
+Both are the thrower's alone (the scan's `*piVar4 == owner`, the event's local-client test), not his
+team's.
+
+Port: a new module `zhbo_core::sensor` (the `Marks` the `Equipment` keeps, hashed; the numbers in
+the tuning pack: `sensor_scan_cycle_ms` 800, `sensor_scan_sweep_ms` 400, `sensor_scan_range` 1000,
+`sensor_scan_target_height` 35, `sensor_ping_time_ms` 6000, `compassStaticImageUpdateTime` 4000,
+`compassSatellitePingFadeTime` 8). The sim decides each ping (the period from the throw, read off
+the timed fuse; the sweep order by object id; the line of sight over the terrain and the solids,
+ignoring one the line starts inside, from 4 inches above where the sensor lies) and each detonation
+mark; `Sim::sensor_marks` hands the local player's to the minimap, which draws a scan ping where
+the enemy was, fading, and shows a detonation-marked enemy where he is for its 6 s. The prop gives
+no Zero Hour sight any more, and `equipment::SENSOR_RANGE`, `Equipment::sensed` and
+`Sim::reveals` are gone. The mod scans only once the sensor has landed (its flight is a projectile
+with no scan), uses the standing height for every enemy (Zero Hour units have no stance), and plays
+neither the scan's runner nor its targeting effect: both are per-viewer presentation BO2 colours by
+team. Tests: `sensor::tests` (`the_scan_reaches_the_enemies_in_range_one_by_one_every_period`,
+`the_scan_needs_a_clear_line_to_the_enemy`, `the_detonation_marks_the_enemies_in_its_blast_for_six_seconds`),
+the equipment fuse test now also holds the detonation mark, and the lockstep perturbation state
+carries a mark and a fuse.

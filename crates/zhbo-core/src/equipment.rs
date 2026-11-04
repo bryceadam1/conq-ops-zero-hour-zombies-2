@@ -21,10 +21,6 @@ use crate::units::{inches, LOGIC_DT};
 use crate::weapons::WeaponDef;
 
 
-/// Sensor Grenade: enemies inside this range show on its owner's minimap: BO2's tracking radius
-/// (`_sensor_grenade.gsc:79`, `distancesquared < 562500` = 750 in). A constant, not a tuning key:
-/// the converter bakes it into the sensor's Zero Hour object (its vision and stealth detection).
-pub const SENSOR_RANGE: f32 = inches(750.0);
 /// How big equipment is to bullets.
 pub const HIT_RADIUS: f32 = inches(8.0);
 /// Black Hat: the aim cone (cosine) for equipment and Zero Hour drones. BO2 tests the target's
@@ -310,12 +306,16 @@ pub struct Equipment {
     pub shock_hits: std::cell::RefCell<Vec<crate::sim::guard::ShockHit>>,
     /// The tuning pack's equipment numbers.
     pub tuning: EquipTuning,
+    /// The enemies the Sensor Grenades put on their throwers' compasses ([`crate::sensor`]).
+    pub marks: crate::sensor::Marks,
+    /// The tuning pack's sensor numbers.
+    pub sensor: crate::sensor::SensorTuning,
 }
 
 // `shields` and `guards` are the frame's snapshots of the hashed players and deployed shields,
 // rebuilt at the start of every step; `shock_hits` is filled and drained inside the step;
-// `tuning` is the tuning pack (the content CRC covers it).
-crate::statehash::state_hash!(struct Equipment { placed } skip { shields, guards, shock_hits, tuning });
+// `tuning` and `sensor` are the tuning pack (the content CRC covers it).
+crate::statehash::state_hash!(struct Equipment { placed, marks } skip { shields, guards, shock_hits, tuning, sensor });
 
 impl Equipment {
     pub fn add(&mut self, mut p: Placed) {
@@ -340,6 +340,9 @@ impl Equipment {
         let guards = &self.guards;
         let hits = &self.shock_hits;
         let tn = self.tuning;
+        let st = self.sensor;
+        self.marks.step(&st);
+        let marks = &mut self.marks;
         for (i, p) in self.placed.iter_mut().enumerate() {
             p.age += LOGIC_DT;
             // Riding on what it stuck to; gone with it.
@@ -359,11 +362,21 @@ impl Equipment {
             if let Some(f) = p.fuse.as_mut() {
                 *f -= LOGIC_DT;
                 if *f <= 0.0 {
+                    // A laser sensor's detonation pings the enemies in its blast on its thrower's
+                    // compass (`G_SensorGrenadeDetonate`, event 0x4e).
+                    if p.def.laser_sensor {
+                        marks.detonated(host, p.viewer(), p.owner, p.pos, p.def.explosion_radius, &st);
+                    }
                     events.push(p.explode(host, shields, guards, hits));
                     blasts.push((p.owner, p.general, p.pos, p.def.explosion_radius, p.def.effect));
                     gone.push(i);
                     continue;
                 }
+            }
+            // The Sensor Grenade's scan runs from the throw (its fuse tells how long ago).
+            if p.kind == Kind::Sensor {
+                let since = p.fuse.map_or(p.age, |f| p.def.fuse_time - f);
+                marks.scan(host, p.viewer(), p.owner, p.pos, since, &st);
             }
             if let Some(t) = p.triggered.as_mut() {
                 *t -= LOGIC_DT;
@@ -562,10 +575,6 @@ impl Equipment {
         Some((p.pos, p.yaw))
     }
 
-    /// Whether one of `owner`'s Sensor Grenades sees `pos`.
-    pub fn sensed(&self, owner: usize, pos: Vec3) -> bool {
-        self.placed.iter().any(|p| p.owner == owner && p.kind == Kind::Sensor && p.is_armed(&self.tuning) && (p.pos - pos).length_xy() <= SENSOR_RANGE)
-    }
 
     /// Remove everything a player put down but his Tactical Insertion (his General died: the next
     /// one comes in at it).
@@ -578,6 +587,7 @@ impl Equipment {
     /// `_tacticalinsertion.gsc` `watchdisconnect` destroys his insertion).
     pub fn clear_leaver(&mut self, host: &dyn LogicHost, owner: usize) {
         self.clear(host, owner, false);
+        self.marks.clear_owner(owner);
     }
 
     fn clear(&mut self, host: &dyn LogicHost, owner: usize, keep_insertion: bool) {
@@ -701,6 +711,8 @@ mod tests {
         assert!(host.destroyed.borrow().contains(&50), "the piece is gone");
         assert_eq!(eq.placed.len(), 1, "the untimed piece stays down");
         assert!(host.damage_log.borrow().iter().any(|d| d.1 == 7), "its radius damage: {:?}", host.damage_log.borrow());
+        // Its detonation put the enemy in its blast on the thrower's compass (event 0x4e).
+        assert!(eq.marks.of(0).any(|m| m.live && m.target == 7), "{:?}", eq.marks);
         step_n(&mut eq, &host, 300, &mut events);
         assert_eq!(events.len(), 1, "it went off once");
     }

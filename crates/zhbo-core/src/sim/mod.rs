@@ -646,6 +646,7 @@ impl Sim {
         sim.bullet_range = crate::units::inches(t.bulletrange);
         sim.penetration = crate::penetration::Penetration::from_tuning(t);
         sim.equipment.tuning = crate::equipment::EquipTuning::from_tuning(t);
+        sim.equipment.sensor = crate::sensor::SensorTuning::from_tuning(t);
         sim.antilag_frames = antilag::max_rewind_frames(t.antilag_max_rewind);
         sim.smoke = crate::smoke::Params::from_tuning(t);
         sim
@@ -1181,11 +1182,11 @@ impl Sim {
         self.players.iter().flatten().map(|p| (p.general, p.body_state(false, run_speed))).collect()
     }
 
-    /// Whether `player` sees enemies at `pos` on the minimap through the shroud: one of their
-    /// Sensor Grenades.
-    pub fn reveals(&self, player: i32, pos: Vec3) -> bool {
-        let Ok(idx) = usize::try_from(player) else { return false };
-        self.equipment.sensed(idx, pos)
+    /// The enemies `player`'s Sensor Grenades put on his compass ([`crate::sensor`]), and how
+    /// strongly the minimap draws each.
+    pub fn sensor_marks(&self, player: i32) -> Vec<(crate::sensor::Mark, f32)> {
+        let Ok(idx) = usize::try_from(player) else { return Vec::new() };
+        self.equipment.marks.of(idx).map(|m| (*m, m.alpha(&self.equipment.sensor))).collect()
     }
 
     /// The health he has and BO2's regeneration (`_healthoverlay.gsc` `playerhealthregen`): a hit

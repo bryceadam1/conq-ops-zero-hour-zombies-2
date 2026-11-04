@@ -1631,4 +1631,7 @@ before them parses with `Aims` 1 and the other two 0, so the archive must be reb
 Assault Shield, the Ballistic Knife and the launcher modes to stop aiming and for the Sensor
 Grenade's fuse) and the `ExplosionFx` now converted for every def that names a
 `projExplosionEffect` (the Sensor Grenade's `fx_sensor_exp_scan_friendly`, the Trophy System's
-`fx_exp_equipment_lg`).
+`fx_exp_equipment_lg`), the tuning pack's seven Sensor Grenade and compass keys
+(`sensor_scan_cycle_ms` … `compassSatellitePingFadeTime`; the content CRC's tuning part changes) and
+the Sensor Grenade's prop INI without its Zero Hour sight (`VisionRange`, `ShroudClearingRange`,
+the stealth detector: it reveals by its compass pings, `zhbo_core::sensor`).
