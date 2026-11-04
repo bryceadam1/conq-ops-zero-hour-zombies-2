@@ -64,7 +64,7 @@ pub fn drain(sim: &mut crate::sim::Sim) {
 }
 
 /// Zero Hour applied damage of `ZHBO_DAMAGE_*` kind `kind` to object `victim`, travelling along
-/// `(dir_x, dir_y, dir_z)` (zero: unknown). Lock-free; safe inside any core callback. Pending ABI.
+/// `(dir_x, dir_y, dir_z)` (zero: unknown). Lock-free; safe inside any core callback. ABI 33.
 #[no_mangle]
 pub extern "C" fn zhbo_logic_engine_damage(victim: u32, kind: i32, dir_x: f32, dir_y: f32, dir_z: f32) {
     report(victim, kind, Vec3::new(dir_x, dir_y, dir_z));

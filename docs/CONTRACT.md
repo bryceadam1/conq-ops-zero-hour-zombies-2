@@ -1128,6 +1128,12 @@ from xyz, from height, source known, kind, amount)` for the share to apply (it s
   (64), drained into `Sim::engine_damage_to_deployed` before the next step — the script's
   wear-down scales on Zero Hour damage ÷ `BO2_TO_ZH_DAMAGE`.
 * `zhbo_logic_shield_damage` is part of ABI 27 (`zhbo_core.h`, see "Versioning").
+* **Every damage Zero Hour applies is reported back** (after the shield's share):
+  `zhbo_logic_engine_damage(victim, kind, dir)` with the full `DamageType` as its `ZHBO_DAMAGE_*`
+  code and the way it travelled (the blast's shock-wave vector, else the victim less the source),
+  queued lock-free (`crate::enginedamage`) and handed to the sim before the next step: a General's
+  hurt and death to Zero Hour's weapons by BO2's rules (the tuning pack's `[ZeroHourDamage]`). The
+  sim's own damage is muted around `LogicApi.damage`. Presentation only; ABI 33.
 
 ## Smoke screens in Zero Hour's targeting and pathing
 
@@ -1538,18 +1544,7 @@ millisecond `LightPulse`, the four equipment-breaking effects, and the smoke gre
 and death clips are new ids in the body's clip list, an alt mode's world weapon and an offhand's are
 ordinary `.zbw` files at their own index).
 
-**Pending for the next bump (archive `hud::VERSION`, death-anims):** the `death` rows of
-`sound_layers.txt` are keyed by the new death context (`torso::death_context`: stance × `movestatus`
-3 × `direction` 5 × BO2's ten `dmgType`s × `dmgDirection` 5 = 2,250 contexts, was 144); an archive
-converted before reads as the wrong deaths (never a crash: every context still finds a clip or
-none). The tuning pack gains `player_runThreshhold`, `player_moveThreshhold` and
-`player_strafeAnimCosAngle` and the `[ZeroHourDamage]` table (the content CRC moves with them).
-The torso rows are keyed by the new action context (`torso::context`: stance × `movestatus` 3 ×
-`direction` 5 × aimed = 90, was 12) and three new actions (the flinch's back, left and right sides;
-`torso::DEATH` is now 15), so the archive's torso table and body clips change too (340 torso and
-death clips on this install, was 283).
-
-**Pending for the next bump (ABI, death-anims):** the free function
+**ABI 33** (round 5's integration, one bump for the round): the free function
 `zhbo_logic_engine_damage(victim, kind, dir_x, dir_y, dir_z)` is appended (`zhbo_core.h`; the
 header test holds it exported). The bridge's damage hook (`Zhbo_ShieldDamage`, host patch 0017)
 calls it for every damage Zero Hour applies after the shield's share: `kind` the `DamageType` as
@@ -1559,7 +1554,27 @@ lock-free (`crate::enginedamage`) and hands it to the sim before the next step (
 a seat's General's hurt gets its side and a death to Zero Hour's weapons its `KilledBy`, BO2's
 means of death from the tuning pack's `[ZeroHourDamage]` table. The sim's own damage is not
 reported back (`enginedamage::dealing` around `LogicApi.damage`). Presentation only; an older
-bridge never calls it (no flinch side or report for Zero Hour's damage). No struct moves.
+bridge never calls it (no flinch side or report for Zero Hour's damage). No struct or API table
+moves.
+
+Archive `hud::VERSION` 87 at the same point: the weapon table's `TimedDetonation`, `LaserSensor`
+and `Aims` keys (172 fields; a table converted before them parses with `Aims` 1 and the other two
+0, so the Assault Shield, the Ballistic Knife and the launcher modes would aim and the Sensor
+Grenade would never go off), the `ExplosionFx` converted for every def that names a
+`projExplosionEffect` (the Sensor Grenade's `fx_sensor_exp_scan_friendly`, the Trophy System's
+`fx_exp_equipment_lg`), the Sensor Grenade's prop INI without its Zero Hour sight (`VisionRange`,
+`ShroudClearingRange`, the stealth detector: it reveals by its compass pings, `zhbo_core::sensor`),
+the `death` rows of `sound_layers.txt` keyed by the new death context (`torso::death_context`:
+stance × `movestatus` 3 × `direction` 5 × BO2's ten `dmgType`s × `dmgDirection` 5 = 2,250
+contexts, was 144; an older archive reads as the wrong deaths, never a crash), and the torso rows
+keyed by the new action context (`torso::context`: stance × `movestatus` 3 × `direction` 5 × aimed
+= 90, was 12) with three new actions (the flinch's back, left and right sides; `torso::DEATH` is now
+15), so the faction body manifests carry more clips (340 torso and death clips on this install, was
+283). The tuning pack (the content CRC's tuning part, not the archive) gains the seven Sensor
+Grenade and compass keys (`sensor_scan_cycle_ms` … `compassSatellitePingFadeTime`),
+`player_runThreshhold`, `player_moveThreshhold`, `player_strafeAnimCosAngle` and the
+`[ZeroHourDamage]` table. The native blob formats are unchanged (`BODY_VERSION` 1,
+`WEAPON_VERSION` 3: the new torso clips are new ids in the body's clip list).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
@@ -1668,14 +1683,3 @@ What would need serializing before the feature is possible:
 Open questions for a feature agent: how ZH migrates `Xfer` blocks across game versions
 (engine save compat), whether a save/load must also replay `Client` timers to keep HUD state
 coherent, and whether dead players (spectator between respawn) need a serializable form.
-
-**Pending for the next bump** (conformance-final; no ABI change): archive `hud::VERSION` for the
-weapon table's `TimedDetonation`, `LaserSensor` and `Aims` keys (172 fields; a table converted
-before them parses with `Aims` 1 and the other two 0, so the archive must be rebuilt for the
-Assault Shield, the Ballistic Knife and the launcher modes to stop aiming and for the Sensor
-Grenade's fuse) and the `ExplosionFx` now converted for every def that names a
-`projExplosionEffect` (the Sensor Grenade's `fx_sensor_exp_scan_friendly`, the Trophy System's
-`fx_exp_equipment_lg`), the tuning pack's seven Sensor Grenade and compass keys
-(`sensor_scan_cycle_ms` … `compassSatellitePingFadeTime`; the content CRC's tuning part changes) and
-the Sensor Grenade's prop INI without its Zero Hour sight (`VisionRange`, `ShroudClearingRange`,
-the stealth detector: it reveals by its compass pings, `zhbo_core::sensor`).

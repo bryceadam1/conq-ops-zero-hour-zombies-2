@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 32u
+#define ZHBO_ABI_VERSION 33u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -658,7 +658,7 @@ float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, f
    DamageType as a ZHBO_DAMAGE_* code (every one), `dir_*` the way it travelled (BO2's vDir: the
    blast's shock-wave vector when Zero Hour has one, else from the source to the victim; zero when
    unknown). The core shows a General's hurt and death by it (zhbo_core::enginedamage); the core's
-   own damage is not reported back. Lock-free. Pending for the next ABI bump. */
+   own damage is not reported back. Lock-free. ABI 33. */
 void zhbo_logic_engine_damage(uint32_t victim, int32_t kind, float dir_x, float dir_y, float dir_z);
 /* The first-person sim's share of Zero Hour's logic CRC (host patch 0020, GameLogic::getCRC after
    MARKER:TheAI): Sim::state_hash (the multiplayer gate's fingerprint) and its parts. Returns 1 when
