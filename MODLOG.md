@@ -12979,3 +12979,8 @@ team. Tests: `sensor::tests` (`the_scan_reaches_the_enemies_in_range_one_by_one_
 `the_scan_needs_a_clear_line_to_the_enemy`, `the_detonation_marks_the_enemies_in_its_blast_for_six_seconds`),
 the equipment fuse test now also holds the detonation mark, and the lockstep perturbation state
 carries a mark and a fuse.
+
+Verified: `cargo test --workspace`, clippy clean; real-install suite 78/78 (the roster lockstep gate
+included); in game on this build `--equipment` 12/12 and `scripts/mptest-mac.sh`
+(`ZHBO_MPTEST_ROUNDS=3`) 34/34, the per-frame state hashes (now carrying the marks) equal on both
+machines. The marks have no log line; the in-game legs show the minimap unchanged in look.
