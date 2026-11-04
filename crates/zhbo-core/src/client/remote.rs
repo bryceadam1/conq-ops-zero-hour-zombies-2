@@ -80,9 +80,12 @@ pub struct Remote {
     corpses: Vec<Corpse>,
 }
 
-/// The torso context of a General now: his stance, whether he is moving, whether he aims.
+/// The torso context of a General now, as the engine sets the script's conditions: his stance,
+/// `movestatus` by his speed and `direction` by his movement keys (`crate::death`), whether he aims.
 fn context_of(p: &PlayerSim) -> u8 {
-    torso::context(p.stance_index() as u8, p.body.horizontal_speed() > 0.2, p.arsenal.ads > 0.5)
+    let t = &p.arsenal.tuning;
+    let (forward, right) = p.input.move_axes();
+    torso::context(p.stance_index() as u8, crate::death::move_status(p.body.horizontal_speed(), t), crate::death::move_direction(forward, right, t), p.arsenal.ads > 0.5)
 }
 
 impl Remote {
@@ -139,7 +142,7 @@ impl Remote {
     /// Whether seat `seat` is in an action a shot's recoil or a flinch does not interrupt (his
     /// reload, knife, throw, weapon change, jump or landing).
     fn busy(&self, seat: usize) -> bool {
-        self.seats.get(seat).and_then(|s| s.torso).is_some_and(|t| !matches!(t.action, torso::FIRE | torso::FLINCH))
+        self.seats.get(seat).and_then(|s| s.torso).is_some_and(|t| !(t.action == torso::FIRE || torso::is_flinch(t.action)))
     }
 
     /// Seat `seat`'s battle chatter for `kind` (`_battlechatter_mp.gsc`): BO2's line for a reload
@@ -174,7 +177,7 @@ impl Remote {
         match *kind {
             // Hurt while not at full health already (BO2 notifies `snd_pain_player` only when
             // `self.health != self.maxhealth` as the damage arrives, `_globallogic_player.gsc:790`).
-            EventKind::Damaged { amount } => {
+            EventKind::Damaged { amount, .. } => {
                 if let Some(p) = p.filter(|p| p.health + amount < p.max_health - 1e-3) {
                     cues.play_at(sounds::voice_event(sounds::Voice::Pain, crate::nativebody::ffi::faction_of(p.general), seat), p.body.eye());
                 }
@@ -231,8 +234,9 @@ impl Remote {
                 npc(cues, offhand(lethal), NpcSound::Pullback);
             }
             EventKind::Thrown { lethal } => self.start_offhand(seat, offhand(lethal), torso::THROW, ctx, lethal),
-            // Hurt: the flinch, unless a longer action is on.
-            EventKind::Damaged { .. } if !self.busy(seat) => self.start(seat, held, torso::FLINCH, ctx),
+            // Hurt: the flinch for the side the blow came from (the script's `flinch` by
+            // `dmgDirection`, `crate::death::dmg_direction`), unless a longer action is on.
+            EventKind::Damaged { dir, .. } if !self.busy(seat) => self.start(seat, held, torso::flinch(crate::death::dmg_direction(dir, p.yaw)), ctx),
             // A shot's recoil, unless a longer action is on (BO2 fires from none of them).
             EventKind::Shot { left: false, .. } | EventKind::Launched if !self.busy(seat) => self.start(seat, held, torso::FIRE, ctx),
             _ => {}
@@ -331,7 +335,7 @@ impl Remote {
                     let now = ammo as u32 + spare as u32;
                     let fired = last.is_some_and(|l| now < l);
                     *last = Some(now);
-                    let busy = s.torso.is_some_and(|t| !matches!(t.action, torso::FIRE | torso::FLINCH));
+                    let busy = s.torso.is_some_and(|t| !(t.action == torso::FIRE || torso::is_flinch(t.action)));
                     if fired && !busy {
                         if let Some(clip) = table.pick(w.def.torso_anims, torso::FIRE, ctx) {
                             s.torso = Some(Torso { action: torso::FIRE, clip, t: 0.0, lethal: false });
@@ -375,7 +379,8 @@ mod tests {
         torso_clip 4096 2.0 pt_reload_stand_rifle\ntorso_note 4096 0.1 ZHBO_NTN_mag_out\ntorso_note 4096 1.0 ZHBO_NTN_mag_in\n\
         torso_clip 4097 0.9 p_knife_stand_rifle_swipe\ntorso_clip 4098 0.9 pt_grenade_stand_throw\ntorso_clip 4099 0.5 pt_rifle_stand_raise\n\
         torso 7 9 0 4100\ntorso 7 10 0 4101\ntorso 7 11 0 4102\ntorso 7 5 0 4103\n\
-        torso_clip 4100 0.4 pt_stand_flinch_forward\ntorso_clip 4101 0.3 pb_standjump_takeoff\ntorso_clip 4102 0.4 pb_standjump_land\ntorso_clip 4103 0.3 pt_stand_shoot\n";
+        torso_clip 4100 0.4 pt_stand_flinch_forward\ntorso_clip 4101 0.3 pb_standjump_takeoff\ntorso_clip 4102 0.4 pb_standjump_land\ntorso_clip 4103 0.3 pt_stand_shoot\n\
+        torso 7 12 0 4104\ntorso 7 13 0 4105\ntorso_clip 4104 0.4 pt_stand_flinch_back\ntorso_clip 4105 0.4 pt_stand_flinch_left\n";
 
     fn def() -> &'static WeaponDef {
         Box::leak(Box::new(WeaponDef {
@@ -493,14 +498,31 @@ mod tests {
         r.update(&players, 0, 0.0, &mut c);
         c.queue.clear();
         let eye = p.body.eye();
-        r.event(1, &EventKind::Damaged { amount: 30.0 }, Some(&p), true, &mut c);
+        r.event(1, &EventKind::Damaged { amount: 30.0, dir: Vec3::ZERO }, Some(&p), true, &mut c);
         assert!(played(&mut c).is_empty(), "from full health: no pain");
-        r.event(1, &EventKind::Damaged { amount: 10.0 }, Some(&p), true, &mut c);
+        r.event(1, &EventKind::Damaged { amount: 10.0, dir: Vec3::ZERO }, Some(&p), true, &mut c);
         assert_eq!(played(&mut c), [(sounds::voice_event(sounds::Voice::Pain, crate::nativebody::ffi::faction_of(2), 1), Some(eye))]);
         r.event(1, &EventKind::GeneralDied { general: 2 }, None, true, &mut c);
         let death = played(&mut c);
         assert_eq!(death, [(sounds::voice_event(sounds::Voice::Death, crate::nativebody::ffi::faction_of(2), 1), Some(eye))]);
         assert!(death[0].0.starts_with("ZHBO_BO2_PainDeath_") && death[0].0.ends_with('1'), "seat 1's voice");
+    }
+
+    /// The torso's context is the script's conditions as the engine sets them: `movestatus` walk
+    /// or run by his speed (110 in/s), `direction` by his keys, not "run" for any movement.
+    #[test]
+    fn the_torso_asks_by_walk_or_run_and_the_keys() {
+        let mut p = soldier(2);
+        let at = |p: &PlayerSim| torso::split(context_of(p));
+        assert_eq!(at(&p), (0, 0, 0, false), "standing still, no keys");
+        p.body.vel = Vec3::new(crate::units::inches(60.0), 0.0, 0.0);
+        p.input.move_packed = crate::input::pack_move(1.0, 0.0);
+        assert_eq!(at(&p), (0, 1, 1, false), "walking forward");
+        p.body.vel = Vec3::new(-crate::units::inches(150.0), 0.0, 0.0);
+        p.input.move_packed = crate::input::pack_move(-1.0, 0.0);
+        assert_eq!(at(&p), (0, 2, 2, false), "running backward");
+        p.input.move_packed = crate::input::pack_move(0.0, -1.0);
+        assert_eq!(at(&p).2, 3, "strafing left");
     }
 
     /// His jump and landing play the script's whole-body clips; a hit his flinch (not over his
@@ -531,13 +553,23 @@ mod tests {
         assert_eq!(r.torso(1).map(|t| t.action), Some(torso::LAND));
         // A flinch does not cut the landing; after it ends it plays.
         let p = players[1].clone().unwrap();
-        r.event(1, &EventKind::Damaged { amount: 1.0 }, Some(&p), true, &mut c);
+        r.event(1, &EventKind::Damaged { amount: 1.0, dir: Vec3::ZERO }, Some(&p), true, &mut c);
         assert_eq!(r.torso(1).map(|t| t.action), Some(torso::LAND));
         for _ in 0..20 {
             r.update(&players, 0, 1.0 / 30.0, &mut c);
         }
-        r.event(1, &EventKind::Damaged { amount: 1.0 }, Some(&p), true, &mut c);
-        assert_eq!(r.torso(1).map(|t| t.action), Some(torso::FLINCH));
+        // The flinch by the side the blow came from (`dmgDirection`): from in front (it travels
+        // against his facing), from the left, and with no direction from behind
+        // (`finishplayerdamage`'s rule).
+        let yaw = p.yaw;
+        let along = |deg: f32| Vec3::new((yaw + deg.to_radians()).cos(), (yaw + deg.to_radians()).sin(), 0.0);
+        for (dir, want) in [(along(180.0), torso::FLINCH), (along(270.0), torso::FLINCH_LEFT), (Vec3::ZERO, torso::FLINCH_BACK)] {
+            for _ in 0..20 {
+                r.update(&players, 0, 1.0 / 30.0, &mut c);
+            }
+            r.event(1, &EventKind::Damaged { amount: 1.0, dir }, Some(&p), true, &mut c);
+            assert_eq!(r.torso(1).map(|t| t.action), Some(want), "{dir:?}");
+        }
         c.queue.clear();
         // Dry fire: once per pull, only on an empty magazine.
         {

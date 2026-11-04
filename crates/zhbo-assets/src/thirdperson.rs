@@ -264,20 +264,20 @@ fn death_picks(script: &crate::playeranim::Script, names: &[String]) -> Vec<Vec<
 fn torso_picks(script: &crate::playeranim::Script, names: &[String], k: &Key, shield: bool) -> Vec<Option<String>> {
     use zhbo_native::thirdperson::torso;
     let have = |c: &str| names.iter().find(|n| n.eq_ignore_ascii_case(c)).map(|n| n.to_ascii_lowercase());
-    let mut out = Vec::with_capacity((torso::ACTIONS * torso::CONTEXTS) as usize);
+    let mut out = Vec::with_capacity(torso::ACTIONS as usize * torso::CONTEXTS as usize);
     for action in 0..torso::ACTIONS {
         let ev = if action == torso::MELEE && shield { "meleeattack" } else { torso::EVENTS[action as usize] };
         for c in 0..torso::CONTEXTS {
-            let (stance, moving, ads) = torso::split(c);
+            let (stance, move_status, direction, ads) = torso::split(c);
             let ctx = [
                 ("stance", ["stand", "crouch", "prone"][stance as usize]),
                 ("weapon_position", if ads { "ads" } else { "hip" }),
                 ("weaponclass", k.class.as_str()),
-                ("movestatus", if moving { "run" } else { "stationary" }),
-                ("direction", if moving { "forward" } else { "none" }),
+                ("movestatus", torso::MOVE_STATUSES[move_status as usize]),
+                ("direction", torso::DIRECTIONS[direction as usize]),
                 ("playeranimtype", k.anim_type.as_str()),
-                // A flinch from the front: the sim's damage carries no direction.
-                ("dmgdirection", "front"),
+                // Each flinch its own side (`zhbo_core::death::dmg_direction` of the blow).
+                ("dmgdirection", torso::action_dmg_direction(action)),
             ];
             out.push(script.event(ev, &ctx).and_then(have));
         }
@@ -305,7 +305,7 @@ pub(crate) fn assign_torso_sets(common: &Zone, bo2: &[zhbo_formats::weapon::Weap
     clips.dedup();
     let index = |n: &Option<String>| n.as_ref().and_then(|n| clips.binary_search(n).ok()).map(|i| i as u16);
     // Set 0 is the empty one (a def the script says nothing for).
-    let mut sets: Vec<Vec<Option<u16>>> = vec![vec![None; (zhbo_native::thirdperson::torso::ACTIONS * zhbo_native::thirdperson::torso::CONTEXTS) as usize]];
+    let mut sets: Vec<Vec<Option<u16>>> = vec![vec![None; zhbo_native::thirdperson::torso::ACTIONS as usize * zhbo_native::thirdperson::torso::CONTEXTS as usize]];
     for (d, p) in defs.iter_mut().zip(&picks) {
         let Some(p) = p else { continue };
         let row: Vec<Option<u16>> = p.iter().map(index).collect();
@@ -593,7 +593,7 @@ mod tests {
             for a in 0..torso::ACTIONS {
                 for c in 0..torso::CONTEXTS {
                     let got = t.pick(d.torso_anims, a, c).and_then(|id| t.clip(id)).map(|c| c.name.clone());
-                    assert_eq!(got, want[(a * torso::CONTEXTS + c) as usize], "{} action {a} context {c}", d.id);
+                    assert_eq!(got, want[a as usize * torso::CONTEXTS as usize + c as usize], "{} action {a} context {c}", d.id);
                 }
             }
             weapons += 1;
@@ -601,7 +601,7 @@ mod tests {
         assert!(weapons >= 100, "{weapons} weapons");
         let at = |id: &str, action: u8, stance: u8| {
             let d = table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
-            t.pick(d.torso_anims, action, torso::context(stance, false, false)).and_then(|c| t.clip(c)).map(|c| c.name.clone()).unwrap_or_default()
+            t.pick(d.torso_anims, action, torso::context(stance, 0, 0, false)).and_then(|c| t.clip(c)).map(|c| c.name.clone()).unwrap_or_default()
         };
         // BO2's own picks (`mp/playeranim.script` EVENTS), the playtest's weapons.
         for (id, action, stance, want) in [
@@ -628,6 +628,26 @@ mod tests {
         ] {
             assert_eq!(at(id, action, stance), want, "{id} action {action} stance {stance}");
         }
+        // The conditions the engine sets: each flinch's side (`dmgDirection`), the jump by
+        // `movestatus` (walk is not run) and the keys (`direction`), the crouched pistol reload by
+        // `movestatus stationary`.
+        let in_ctx = |id: &str, action: u8, c: u8| {
+            let d = table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+            t.pick(d.torso_anims, action, c).and_then(|c| t.clip(c)).map(|c| c.name.clone()).unwrap_or_default()
+        };
+        for (id, action, c, want) in [
+            ("an94_mp", torso::FLINCH_BACK, torso::context(0, 0, 0, false), "pt_stand_flinch_back"),
+            ("an94_mp", torso::FLINCH_LEFT, torso::context(0, 0, 0, false), "pt_stand_flinch_left"),
+            ("an94_mp", torso::FLINCH_RIGHT, torso::context(0, 0, 0, false), "pt_stand_flinch_right"),
+            ("an94_mp", torso::JUMP, torso::context(0, 2, 1, false), "pb_runjump_takeoff"),
+            ("an94_mp", torso::JUMP, torso::context(0, 1, 1, false), "pb_standjump_takeoff"),
+            ("an94_mp", torso::JUMP, torso::context(0, 2, 3, false), "pb_rifle_stand_leftjump_takeoff"),
+            ("an94_mp", torso::JUMP, torso::context(0, 2, 2, false), "pb_standjump_takeoff"),
+        ] {
+            assert_eq!(in_ctx(id, action, c), want, "{id} action {action} context {:?}", torso::split(c));
+        }
+        assert_eq!(in_ctx("fnp45_mp", torso::RELOAD, torso::context(1, 0, 0, false)), "pt_reload_crouch_pistol", "crouched, stationary");
+        assert_eq!(in_ctx("fnp45_mp", torso::RELOAD, torso::context(1, 1, 1, false)), "pt_reload_crouchwalk_pistol", "crouched, walking");
         // A torso clip moves the upper body only (the jump and the landing are whole-body clips).
         let whole: Vec<u16> = (0..sets.sets.len())
             .flat_map(|set| (0..torso::CONTEXTS).flat_map(move |c| [torso::JUMP, torso::LAND].map(|a| (set, a, c))))

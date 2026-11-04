@@ -195,6 +195,10 @@ impl Sim {
             // him this step (his seat may have been stepped after the blow that killed him).
             let Some(victim_seat) = self.score.seat_of(&self.players, h.victim) else { continue };
             let shooter = self.score.seat_of(&self.players, h.shooter);
+            // Where it came from and what it was, for his hurt and death (presentation).
+            let airborne = self.players[victim_seat].as_ref().is_some_and(|p| !p.body.on_ground);
+            let dmg = crate::death::DmgType::of(h.blow.how, h.blow.weapon, airborne);
+            self.blows.push(super::Struck { victim: h.victim, dir: h.blow.dir, dmg, engine: false });
             if let Some(seat) = shooter.filter(|&s| s != victim_seat) {
                 self.score.track(host, seat, h.shooter, h.victim, h.amount / crate::units::BO2_TO_ZH_DAMAGE, None);
             }
@@ -204,8 +208,6 @@ impl Sim {
                 }
                 self.score.forget(h.victim);
                 // How he died, for his death animation (presentation: the script's `DEATH`).
-                let airborne = self.players[victim_seat].as_ref().is_some_and(|p| !p.body.on_ground);
-                let dmg = crate::death::DmgType::of(h.blow.how, h.blow.weapon, airborne);
                 self.emit(victim_seat, EventKind::KilledBy { dmg, dir: h.blow.dir });
             }
         }
@@ -286,6 +288,9 @@ impl LogicHost for Tally<'_> {
         let kill = self.host.damage(shooter, victim, amount, blow);
         self.hits.borrow_mut().push(Hit { shooter, victim, amount, kill, blow });
         kill
+    }
+    fn last_blow(&self, victim: u32) -> Option<crate::damage::Blow> {
+        self.hits.borrow().iter().rev().find(|h| h.victim == victim).map(|h| h.blow)
     }
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)

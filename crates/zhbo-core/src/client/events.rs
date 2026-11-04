@@ -357,8 +357,11 @@ impl Client {
                     self.vm_kick = Some(gun_kick);
                     self.hud.muzzle = 0.05;
                 }
-                EventKind::Flinch { pitch_deg } => self.hud.flinch_pitch += pitch_deg,
-                EventKind::Damaged { amount } => {
+                EventKind::Flinch { yaw_deg, pitch_deg } => {
+                    self.hud.flinch_yaw += yaw_deg;
+                    self.hud.flinch_pitch += pitch_deg;
+                }
+                EventKind::Damaged { amount, .. } => {
                     self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }

@@ -398,8 +398,10 @@ pub struct HudTimers {
     pub hitmarker_head: bool,
     pub damage_flash: f32,
     pub death_banner: f32,
-    /// The damage flinch's view pitch (degrees, G7), settling back. The weapon's view kick is the
-    /// sim's (`PlayerSim::view_kick`).
+    /// The damage flinch's view yaw and pitch (degrees, G7: by the blow's side,
+    /// `weapons::recoil::flinch_kick`), settling back. The weapon's view kick is the sim's
+    /// (`PlayerSim::view_kick`).
+    pub flinch_yaw: f32,
     pub flinch_pitch: f32,
     pub muzzle: f32,
     pub score_popup: f32,
@@ -1226,7 +1228,7 @@ impl Client {
                     };
                     out.camera_override = 1;
                     out.eye = eye;
-                    let kick_yaw = kick.0;
+                    let kick_yaw = kick.0 + self.hud.flinch_yaw.to_radians();
                     let kick_pitch = kick.1 + self.hud.flinch_pitch.to_radians();
                     let kick_roll = kick.2;
                     // A shellshock's view kick turns the view only (t6mp `FUN_00510270` turns the
@@ -1468,6 +1470,7 @@ impl Client {
         h.hack_shown = (h.hack_shown - dt).max(0.0);
         let decay = (1.0 - dt * 12.0).max(0.0);
         h.flinch_pitch *= decay;
+        h.flinch_yaw *= decay;
     }
 }
 

@@ -99,3 +99,82 @@ fn a_blasts_kill_reports_explosive_from_where_it_went_off() {
     // Every blow that landed named the frag.
     assert!(host.damage_blows.borrow().iter().all(|(_, b)| b.weapon.is_some_and(|w| w.id == "frag_grenade_mp")));
 }
+
+/// A hurt that does not kill: the victim's flinch kicks by the side the blow came from
+/// (`flinch_kick`, BO2's `FUN_005d1800`/`FUN_004e8ab0`) and his hurt carries the blow's way (the
+/// third-person flinch's `dmgDirection`), whichever of the two seats steps first.
+#[test]
+fn a_hurt_flinches_by_the_side_the_blow_came_from() {
+    // Seat 0 knifes seat 1 (stepped after him: the step's own blow) facing him: from the front,
+    // the view kicks up.
+    let (host, mut sim) = duel(Loadout::test_kit(), 8.0, FACING);
+    for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2) {
+        o.health = 1000.0;
+    }
+    sim.players[1].as_mut().unwrap().health = 1000.0;
+    step(&mut sim, &host, FpsInput { pressed: buttons::MELEE, ..Default::default() }, FACING, 1);
+    step(&mut sim, &host, FpsInput::default(), FACING, 20);
+    let hurt: Vec<EventKind> = sim.events.iter().filter(|e| e.player == 1).map(|e| e.kind).filter(|k| matches!(k, EventKind::Damaged { .. } | EventKind::Flinch { .. })).collect();
+    let (dir, (yaw, pitch)) = match hurt[..] {
+        [EventKind::Damaged { dir, .. }, EventKind::Flinch { yaw_deg, pitch_deg }] => (dir, (yaw_deg, pitch_deg)),
+        _ => panic!("{hurt:?}"),
+    };
+    assert_eq!(dmg_direction(dir, FACING), 1, "from the front: {dir:?}");
+    assert!(pitch > 0.0 && yaw.abs() < 1e-3, "kicked up: {yaw} {pitch}");
+}
+
+/// Zero Hour's own weapons: the engine's damage hook's blow gives the hurt its side and the death
+/// its report — a tank's shell (`ARMOR_PIERCING`, `MOD_EXPLOSIVE`) explosive from where it came.
+#[test]
+fn zero_hours_own_weapons_hurt_and_kill_by_bo2s_rules() {
+    let (host, mut sim) = duel(Loadout::test_kit(), 60.0, 0.0);
+    for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2) {
+        o.health = 200.0;
+    }
+    sim.players[1].as_mut().unwrap().health = 200.0;
+    step(&mut sim, &host, FpsInput::default(), 0.0, 1);
+    sim.events.clear();
+    // A Ranger's round from his left (+Y: it travels -Y): his view turns left.
+    let rifle = crate::damage::zh_code("SMALL_ARMS").unwrap() as i32;
+    sim.engine_blow(2, rifle, Vec3::new(0.0, -1.0, 0.0));
+    host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2).for_each(|o| o.health -= 30.0);
+    step(&mut sim, &host, FpsInput::default(), 0.0, 1);
+    let flinch = sim.events.iter().find_map(|e| match e.kind {
+        EventKind::Flinch { yaw_deg, .. } if e.player == 1 => Some(yaw_deg),
+        _ => None,
+    });
+    assert!(flinch.is_some_and(|y| y > 0.0), "{flinch:?}");
+    assert!(sim.blows.is_empty(), "read by the step");
+    // A tank's shell from behind kills him: the report is Zero Hour's, explosive from the back.
+    let shell = crate::damage::zh_code("ARMOR_PIERCING").unwrap() as i32;
+    sim.engine_blow(2, shell, Vec3::new(1.0, 0.0, 0.0));
+    host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2).for_each(|o| {
+        o.health = 0.0;
+        o.flags |= crate::host::objflags::DEAD;
+    });
+    step(&mut sim, &host, FpsInput::default(), 0.0, 1);
+    assert_eq!(killed(&sim, 0.0), Some((DmgType::Explosive, 2)));
+}
+
+/// A blow scored after the victim's seat stepped (his seat before his attacker's) gives his hurt
+/// its side at the next step.
+#[test]
+fn a_blow_scored_after_his_step_gives_the_next_steps_hurt_its_side() {
+    let (host, mut sim) = duel(Loadout::test_kit(), 60.0, 0.0);
+    for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2) {
+        o.health = 200.0;
+    }
+    sim.players[1].as_mut().unwrap().health = 200.0;
+    step(&mut sim, &host, FpsInput::default(), 0.0, 1);
+    sim.events.clear();
+    let knife = crate::weapons::catalog().get("knife_mp").expect("knife");
+    sim.scored(&host, |_, h| {
+        h.damage(1, 2, 30.0, crate::damage::Blow::new(crate::damage::MeansOfDeath::Melee, knife, Vec3::new(1.0, 0.0, 0.0)));
+    });
+    step(&mut sim, &host, FpsInput::default(), 0.0, 1);
+    let dir = sim.events.iter().find_map(|e| match e.kind {
+        EventKind::Damaged { dir, .. } if e.player == 1 => Some(dir),
+        _ => None,
+    });
+    assert_eq!(dir, Some(Vec3::new(1.0, 0.0, 0.0)), "from behind, the blow's own way");
+}

@@ -86,6 +86,8 @@ impl Sim {
             emitted: _,
             antilag_hits: _,
             antilag_frames: _,
+            // Presentation: the blows only give the events a side and a death report.
+            blows: _,
         } = self;
         let mut seats = [None; MAX_PLAYERS];
         for (i, seat) in seats.iter_mut().enumerate() {

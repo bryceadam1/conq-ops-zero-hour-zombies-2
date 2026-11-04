@@ -260,7 +260,7 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
     let frag = table.weapons.iter().find(|d| d.id == "frag_grenade_mp");
     zhbo_core::config::init(zhbo_core::config::Config { native_body: 2, ..Default::default() });
     let shot = open_renderer()?;
-    let stand = torso::context(0, false, false);
+    let stand = torso::context(0, 0, 0, false);
     let mut poses: Vec<(String, Option<(u8, u16)>)> = vec![("idle".into(), None)];
     for (name, d, action) in [("reload", Some(def), torso::RELOAD), ("knife", Some(def), torso::MELEE), ("fire", Some(def), torso::FIRE), ("raise", Some(def), torso::RAISE), ("throw", frag, torso::THROW)] {
         if let Some(c) = d.and_then(|d| torso::pick_for(d, action, stand)) {

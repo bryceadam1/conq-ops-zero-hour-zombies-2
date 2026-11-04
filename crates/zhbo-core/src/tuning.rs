@@ -30,11 +30,14 @@ macro_rules! tuning {
             /// The `[MeansOfDeath]` table: the Zero Hour damage type each BO2 means of death
             /// reaches the engine as (`MOD_IMPACT = EXPLOSION`; [`crate::damage`]).
             pub means_of_death: crate::damage::MeansOfDeathTable,
+            /// The `[ZeroHourDamage]` table: the BO2 means of death each Zero Hour damage type
+            /// stands for when Zero Hour's weapons hurt a General ([`crate::damage::ZhDamageTable`]).
+            pub zh_damage: crate::damage::ZhDamageTable,
         }
 
         impl Default for Tuning {
             fn default() -> Self {
-                Tuning { $($field: $default,)* means_of_death: Default::default() }
+                Tuning { $($field: $default,)* means_of_death: Default::default(), zh_damage: Default::default() }
             }
         }
 
@@ -335,6 +338,7 @@ pub fn parse(text: &str) -> Tuning {
         t.set(&k, v);
     }
     t.means_of_death.parse_over(text);
+    t.zh_damage.parse_over(text);
     t
 }
 
@@ -381,6 +385,9 @@ mod tests {
         }
         for m in crate::damage::MeansOfDeath::ALL {
             assert!(present.contains(&normalize(m.name())), "{} is in tuning.ini's [MeansOfDeath]", m.name());
+        }
+        for zh in crate::damage::ZH_DAMAGE_TYPES {
+            assert!(SHIPPED.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == zh)), "{zh} is in tuning.ini's [ZeroHourDamage]");
         }
     }
 

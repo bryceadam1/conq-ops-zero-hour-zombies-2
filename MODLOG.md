@@ -12915,3 +12915,40 @@ on both), `--rts` 16/16, `--classpick` 12/12, `--drops` 9/9, `--splash` 5/5, `--
 `--showcase` (the default standing death held). Images in `~/.opencode/plan/death-anims/shots/`
 (the headless sheet draws a corpse per kind: default, headshot front, shotgun front/back, shield
 bash front, knife back, explosive front, crouched shotgun left, running backward, prone).
+
+## Follow-up: the torso by walk or run, the flinch by side, Zero Hour's weapons as BO2 blows (2026-11-04, branch `v1/death-anims`)
+
+The three "found elsewhere" items of the death work, by the same evidence.
+
+* **The torso asks by walk or run and the keys.** The upper-body actions asked the script with
+  `movestatus run` for any movement and `direction forward`. The engine's updaters
+  (`FUN_008ad980`, `FUN_008adb70`, see the entry above) set `movestatus` walk above 2 in/s and run
+  above 110 in/s, and `direction` from the movement keys; the `EVENTS` read them (`reload`'s crouched
+  `movestatus stationary` entries, `jump`/`land`'s `movestatus run` and `direction
+  backward/left/right`). The action context is now stance × movestatus × direction × aimed (90, was
+  12), read through `crate::death::move_status`/`move_direction`.
+* **The flinch by side.** BO2: `finishplayerdamage` (`FUN_005ed360`) keeps the blow's `vDir` as the
+  damage direction (none: "from the world"); `P_DamageFeedback` (`FUN_005d1800`) and
+  `CG_DamageFeedback` (`FUN_004e8ab0`) kick the view yaw `-(vDir · left) × kick` and pitch
+  `(vDir · forward) × kick` (engine angles, pitch down), straight up with no direction. The sim's
+  `Flinch` now carries yaw and pitch (`weapons::recoil::flinch_kick`); the client adds both to the
+  camera. The third-person flinch is the script's `flinch` by `dmgDirection` (ps `+0xec`, the same
+  `vDir` sectors as the death): four actions (`torso::FLINCH`, `FLINCH_BACK`, `FLINCH_LEFT`,
+  `FLINCH_RIGHT`) picked from `Damaged { dir }`. The blow's way reaches the health-diff hurt through
+  `LogicHost::last_blow` (the step's scoring host) and `Sim::blows` (blows scored after the
+  victim's seat stepped, and Zero Hour's): presentation, not hashed (`blows: _` with its reason).
+* **Zero Hour's own weapons as BO2 blows.** The engine's damage hook (`Zhbo_ShieldDamage`, host
+  patch 0017) now reports every damage it applies to a new, appended ABI function
+  `zhbo_logic_engine_damage(victim, kind, dir)`: the full `DamageType` as its `ZHBO_DAMAGE_*` code
+  (`zhboDamageKind`), the way it travelled (Zero Hour's shock-wave vector when the blast has one,
+  `Weapon.cpp`'s victim less the exploding object, else victim less the source unit). The core queues
+  it lock-free and hands it to the sim before the next step, in the engine's order
+  (`crate::enginedamage`); the sim's own damage is muted around `LogicApi.damage`. The tuning pack's
+  new `[ZeroHourDamage]` table maps every one of the 38 types to a BO2 means of death (rounds
+  `MOD_RIFLE_BULLET`, the blow `MOD_MELEE`, blasts and shells `MOD_EXPLOSIVE`, missiles
+  `MOD_PROJECTILE_SPLASH`, crushing and toppling `MOD_CRUSH`, falling, fire/lasers/particle
+  beam/microwave `MOD_BURNED`, radiation/poison `MOD_GAS`, water `MOD_DROWN`, the unconditional kill
+  `MOD_TRIGGER_HURT`, the harmless and non-weapon types `MOD_UNKNOWN`); a General killed by them gets
+  `KilledBy` with `DmgType::of` (no BO2 weapon) and the blow's way, his hurt its flinch side.
+  **Decision:** no BO2 weapon for Zero Hour's damage, so an overhead General's own shotgun fired by
+  Zero Hour reads `normal`, not `normal_shotgun` (the engine's report names no weapon).

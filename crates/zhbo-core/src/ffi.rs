@@ -613,6 +613,7 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
     with_state(|s| {
         let before = s.sim.emitted;
         drain_shield_hits(s);
+        crate::enginedamage::drain(&mut s.sim);
         s.sim.step(&s.logic, frame);
         // The step's tracer bullets, as this machine's viewer sees them (client-only FX).
         s.client.tracers.play(&s.logic, &mut s.sim.tracers);

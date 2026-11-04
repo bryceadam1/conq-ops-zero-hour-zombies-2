@@ -137,6 +137,7 @@ impl Sim {
             deployed: self.deployed.clone(),
             drops: self.drops.clone(),
             kills: self.kills.clone(),
+            blows: self.blows.clone(),
             combat_seen: 0,
             emitted: 0,
             antilag_hits: Vec::new(),

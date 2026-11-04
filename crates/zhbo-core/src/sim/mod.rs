@@ -159,10 +159,13 @@ pub enum EventKind {
     /// A shot's gun kick spring impulse (`weapons::recoil::GunKickSpring`). The view kick is the
     /// sim's own (`PlayerSim::view_kick`): it moves the aim.
     Recoil { gun_kick: (f32, f32) },
-    /// Damage flinch (G7): the view kicks this far, the engine's no-direction branch (the sim
-    /// carries no damage direction), and settles over `FlinchTime`.
-    Flinch { pitch_deg: f32 },
-    Damaged { amount: f32 },
+    /// Damage flinch (G7): the view kicks this far (degrees, yaw counter-clockwise and pitch up)
+    /// by the side the blow came from (`weapons::recoil::flinch_kick`), and settles over
+    /// `FlinchTime`.
+    Flinch { yaw_deg: f32, pitch_deg: f32 },
+    /// Hurt by `amount`; `dir` the last blow's way (BO2's `vDir`, zero when no blow is known): the
+    /// third-person flinch's `dmgDirection`.
+    Damaged { amount: f32, dir: Vec3 },
     ReloadStarted,
     Swapped,
     GeneralDied { general: u32 },
@@ -238,6 +241,16 @@ pub enum EventKind {
     /// This player's round or strike met an Assault Shield (held, stowed or deployed) at `at`:
     /// no damage to its bearer; drawn as a metal impact, heard as the shield's.
     ShieldHit { at: Vec3, dir: Vec3, knife: bool, impact_type: i32 },
+}
+
+/// A blow a seat's General took ([`Sim::blows`]): BO2's `vDir` and `dmgType` of it, and whether
+/// Zero Hour's own weapons dealt it (the engine's damage hook) rather than the sim.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Struck {
+    pub victim: u32,
+    pub dir: Vec3,
+    pub dmg: crate::death::DmgType,
+    pub engine: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -557,6 +570,12 @@ pub struct Sim {
     /// Kills of seat Generals not yet read by their death, and whether each was friendly (a
     /// suicide or a teammate's: no drop).
     pub kills: Vec<drops::Kill>,
+    /// The blows the seats' Generals took since the last step read them ([`Struck`]): the sim's
+    /// own (scored after a step: a seat stepped before the blow sees his hurt next step) and Zero
+    /// Hour's (the engine's damage hook, [`Sim::engine_blow`], before the step). Presentation
+    /// only: they give a hurt its side (`Damaged`, `Flinch`) and a death to Zero Hour's weapons its
+    /// `KilledBy`; nothing in the step reads them otherwise. Cleared as each step ends.
+    pub blows: Vec<Struck>,
     /// The players (bit per seat) whose step emitted a combat event (`spawn::is_combat`, BO2's
     /// `hasdonecombat`), set by [`Sim::emit`]. The step reads this, never [`Sim::events`]: the
     /// events are presentation that each client drains at its own render cadence (a headless
@@ -608,6 +627,7 @@ impl Sim {
             deployed: Vec::new(),
             drops: Vec::new(),
             kills: Vec::new(),
+            blows: Vec::new(),
             combat_seen: 0,
             emitted: 0,
             antilag_hits: Vec::new(),
@@ -754,7 +774,37 @@ impl Sim {
             host.smoke(s.at, s.radius(frame, &smoke));
         }
         self.record_history();
+        // The blows were read by this step's hurts and deaths (the step's own are scored next).
+        self.blows.clear();
         died
+    }
+
+    /// The last blow `general` took: this step's own (the scoring host's record), else the ones
+    /// since the last step ([`Sim::blows`]).
+    fn last_blow(&self, host: &dyn LogicHost, general: u32) -> Option<Struck> {
+        if let Some(b) = host.last_blow(general) {
+            return Some(Struck { victim: general, dir: b.dir, dmg: crate::death::DmgType::of(b.how, b.weapon, false), engine: false });
+        }
+        self.blows.iter().rev().find(|b| b.victim == general).copied()
+    }
+
+    /// Seat `idx`'s General died: when Zero Hour's own weapons dealt his last blow, report it as
+    /// the sim reports its own kills (`KilledBy`, `score`), for his death animation.
+    fn engine_kill(&mut self, host: &dyn LogicHost, idx: usize, general: u32) {
+        if let Some(b) = self.last_blow(host, general).filter(|b| b.engine) {
+            self.emit(idx, EventKind::KilledBy { dmg: b.dmg, dir: b.dir });
+        }
+    }
+
+    /// Zero Hour's own damage to object `victim` (the engine's damage hook, between steps, in the
+    /// engine's order): ABI damage kind `kind` ([`crate::damage::ZH_DAMAGE_TYPES`]) travelling along
+    /// `dir`. A seat's General keeps it as a blow ([`Sim::blows`]): BO2's means of death for it from
+    /// the tuning pack's `[ZeroHourDamage]` table, no BO2 weapon.
+    pub fn engine_blow(&mut self, victim: u32, kind: i32, dir: Vec3) {
+        let Some(p) = self.players.iter().flatten().find(|p| p.general == victim) else { return };
+        let how = p.arsenal.tuning.zh_damage.means(kind);
+        let dmg = crate::death::DmgType::of(how, None, !p.body.on_ground);
+        self.blows.push(Struck { victim, dir, dmg, engine: true });
     }
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
@@ -914,6 +964,7 @@ impl Sim {
     fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, died: &mut Vec<u32>) -> bool {
         let Some(info) = host.object(p.general, p.general) else {
             self.drop_for_death(host, idx, p, None);
+            self.engine_kill(host, idx, p.general);
             died.push(p.general);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
@@ -922,6 +973,7 @@ impl Sim {
             host.set_controlled(p.general, false);
             self.equipment.clear_owner(host, idx);
             self.drop_for_death(host, idx, p, Some(info.pos));
+            self.engine_kill(host, idx, p.general);
             died.push(p.general);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
@@ -1215,10 +1267,12 @@ impl Sim {
         if info.health < p.health - 1e-3 {
             p.regen_wait = if p.very_hurt { t.regen_delay.max(t.very_hurt_time) } else { t.regen_delay };
             let amount = p.health - info.health;
-            self.emit(idx, EventKind::Damaged { amount });
+            let dir = self.last_blow(host, p.general).map_or(Vec3::ZERO, |b| b.dir);
+            self.emit(idx, EventKind::Damaged { amount, dir });
             let toughness = p.arsenal.class_specialties().has(Specialty::BulletFlinch);
             let flinch = crate::weapons::recoil::flinch_degrees(amount / crate::units::BO2_TO_ZH_DAMAGE, toughness, &p.arsenal.tuning);
-            self.emit(idx, EventKind::Flinch { pitch_deg: flinch });
+            let (yaw_deg, pitch_deg) = crate::weapons::recoil::flinch_kick(flinch, dir, p.yaw, p.pitch);
+            self.emit(idx, EventKind::Flinch { yaw_deg, pitch_deg });
         } else {
             p.regen_wait = (p.regen_wait - LOGIC_DT).max(0.0);
             if p.regen_wait <= 0.0 && info.health < info.max_health {
@@ -1268,7 +1322,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         GeneralDied { general } => format!("player {}'s General {general} died", e.player),
         Assist { level, tactical } => format!("player {} scored an assist ({})", e.player, tactical.map_or_else(|| (level as u32 * 25).to_string(), |t| format!("{t:?}").to_ascii_lowercase())),
         HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
-        Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
+        Damaged { amount, .. } => format!("player {}'s General took {amount:.0} damage", e.player),
         Swapped => format!("player {} swapped weapons", e.player),
         Melee => format!("player {} meleed", e.player),
         MeleeHit => format!("player {}'s melee landed", e.player),

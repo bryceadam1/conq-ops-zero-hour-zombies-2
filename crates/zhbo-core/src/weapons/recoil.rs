@@ -193,6 +193,27 @@ pub fn flinch_degrees(damage: f32, toughness: bool, t: &Tuning) -> f32 {
     kick.clamp(t.bg_view_kick_min, t.bg_view_kick_max)
 }
 
+/// The damage flinch's view kick, `(yaw, pitch)` in degrees in the mod's view convention (yaw
+/// counter-clockwise, pitch up), for a kick of `kick` degrees ([`flinch_degrees`]) by a blow that
+/// travelled along `dir` (BO2's `vDir`; zero: none) into a view at `view_yaw`/`view_pitch`
+/// (radians). BO2: `finishplayerdamage` (t6mp `FUN_005ed360`) keeps the blow's `vDir` as the
+/// damage direction (none: "from the world"); `P_DamageFeedback` (`FUN_005d1800`) and
+/// `CG_DamageFeedback` (`FUN_004e8ab0`) kick the view by it against the view's axes:
+/// `yaw = -(dir · left) × kick`, `pitch = (dir · forward) × kick` in the engine's angles (pitch
+/// down), and `pitch = -kick` (straight up) with no direction. So a blow from in front kicks the
+/// view up, one from behind down, one from the left turns it left.
+pub fn flinch_kick(kick: f32, dir: crate::math::Vec3, view_yaw: f32, view_pitch: f32) -> (f32, f32) {
+    let d = dir.normalized_or_zero();
+    if d == crate::math::Vec3::ZERO {
+        return (0.0, kick);
+    }
+    let forward = crate::math::dir_from_angles(view_yaw, view_pitch);
+    let (_, right) = crate::math::basis_xy(view_yaw);
+    let left = right * -1.0;
+    // BO2's pitch grows downward; the mod's upward.
+    (-d.dot(left) * kick, -d.dot(forward) * kick)
+}
+
 /// The hip spread cone's min and max (degrees) at an eye height (inches; `FUN_008e41a0`): blended
 /// prone -> crouched below the crouched height and crouched -> standing above it, x
 /// `stackFireAccuracyDecay ^ (clip - 1)` for a stacked weapon with more than one round in its
@@ -313,6 +334,19 @@ mod tests {
         assert!((flinch_degrees(40.0, false, &t) - 7.0).abs() < 1e-4, "40 x 0.175");
         assert!((flinch_degrees(40.0, true, &t) - 1.75).abs() < 1e-4, "Toughness x0.25");
         assert_eq!(flinch_degrees(1.0, false, &t), 0.5, "floor");
+        // The kick's direction (`FUN_005d1800`/`FUN_004e8ab0`): facing +X level, a blow from in
+        // front (travelling -X) kicks the view up, from behind down, from the left (+Y side,
+        // travelling -Y) turns it left, from the right right; none kicks it straight up.
+        use crate::math::Vec3;
+        let k = |d: Vec3| flinch_kick(10.0, d, 0.0, 0.0);
+        let near = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4;
+        assert!(near(k(Vec3::ZERO), (0.0, 10.0)));
+        assert!(near(k(Vec3::new(-1.0, 0.0, 0.0)), (0.0, 10.0)), "front: up, as with no direction");
+        assert!(near(k(Vec3::new(1.0, 0.0, 0.0)), (0.0, -10.0)), "behind: down");
+        assert!(near(k(Vec3::new(0.0, -1.0, 0.0)), (10.0, 0.0)), "left: turns left");
+        assert!(near(k(Vec3::new(0.0, 1.0, 0.0)), (-10.0, 0.0)), "right: turns right");
+        // Turned to face +Y, a blow from +Y is from in front.
+        assert!(near(flinch_kick(10.0, Vec3::new(0.0, -1.0, 0.0), std::f32::consts::FRAC_PI_2, 0.0), (0.0, 10.0)));
         let d = WeaponDef { hip_spread: [(3.0, 6.0), (2.0, 5.0), (1.0, 4.0)], ..Default::default() };
         assert_eq!(spread_range(&d, 60.0, false, &t), (3.0, 6.0));
         assert_eq!(spread_range(&d, 40.0, false, &t), (2.0, 5.0));

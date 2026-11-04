@@ -660,8 +660,11 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `PlayerSim::view_kick`: BO2 adds it to every user command's angles, so the sim's aim — the
   ray — is the input's view angles plus the kick the previous logic frame left, and the camera
   axis is the client's mouse aim plus the same kick, interpolated across the logic frame like the
-  eye. Only the damage flinch, `hud.flinch_pitch`, is camera-only; the crosshair is drawn on the
-  camera axis.)
+  eye. Only the damage flinch, `hud.flinch_yaw`/`flinch_pitch`, is camera-only; the crosshair is
+  drawn on the camera axis. The flinch turns by the last blow's way, BO2's `vDir`
+  (`weapons::recoil::flinch_kick`: `P_DamageFeedback` `FUN_005d1800` and `CG_DamageFeedback`
+  `FUN_004e8ab0` kick yaw `-(dir · left) × kick` and pitch `(dir · forward) × kick`, straight up
+  with no direction).)
   - **The engine cross-fades 0x55/0x56 by the fraction (Ghidra G12, answered).** `FUN_0052b750`
     weights slot 0x55 by `fWeaponPosFrac` and 0x56 by its complement — no time-scale into the
     def's ADS times (those live in the fraction integrator, G3), and a direction flip passes no
@@ -1533,7 +1536,23 @@ ordinary `.zbw` files at their own index).
 3 × `direction` 5 × BO2's ten `dmgType`s × `dmgDirection` 5 = 2,250 contexts, was 144); an archive
 converted before reads as the wrong deaths (never a crash: every context still finds a clip or
 none). The tuning pack gains `player_runThreshhold`, `player_moveThreshhold` and
-`player_strafeAnimCosAngle` (the content CRC moves with it). No ABI change.
+`player_strafeAnimCosAngle` and the `[ZeroHourDamage]` table (the content CRC moves with them).
+The torso rows are keyed by the new action context (`torso::context`: stance × `movestatus` 3 ×
+`direction` 5 × aimed = 90, was 12) and three new actions (the flinch's back, left and right sides;
+`torso::DEATH` is now 15), so the archive's torso table and body clips change too (340 torso and
+death clips on this install, was 283).
+
+**Pending for the next bump (ABI, death-anims):** the free function
+`zhbo_logic_engine_damage(victim, kind, dir_x, dir_y, dir_z)` is appended (`zhbo_core.h`; the
+header test holds it exported). The bridge's damage hook (`Zhbo_ShieldDamage`, host patch 0017)
+calls it for every damage Zero Hour applies after the shield's share: `kind` the `DamageType` as
+its `ZHBO_DAMAGE_*` code (`zhboDamageKind`, the inverse of `s_zhboDamageTypes`), `dir` the blast's
+shock-wave vector when Zero Hour has one, else the victim less the source unit. The core queues it
+lock-free (`crate::enginedamage`) and hands it to the sim before the next step (`Sim::engine_blow`):
+a seat's General's hurt gets its side and a death to Zero Hour's weapons its `KilledBy`, BO2's
+means of death from the tuning pack's `[ZeroHourDamage]` table. The sim's own damage is not
+reported back (`enginedamage::dealing` around `LogicApi.damage`). Presentation only; an older
+bridge never calls it (no flinch side or report for Zero Hour's damage). No struct moves.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
@@ -1579,8 +1598,9 @@ none). The tuning pack gains `player_runThreshhold`, `player_moveThreshhold` and
   longer plays Zero Hour's hero death voice.
 * **More of another player** (follow-up): his dry fire (`NpcSounds` `empty_fire`, BO2's
   `emptyFireSound`, once per trigger pull on an empty magazine), his jump and landing
-  (`_footsteps.csc`: the step alias and `ZHBO_BO2_LandNpc`), the script's `flinch` (asked from the
-  front: the sim's damage has no direction) and its whole-body `jump`/`land` clips as torso
+  (`_footsteps.csc`: the step alias and `ZHBO_BO2_LandNpc`), the script's `flinch` (per
+  `dmgDirection` since death-anims: `torso::FLINCH`, `FLINCH_BACK`, `FLINCH_LEFT`, `FLINCH_RIGHT`,
+  by the last blow's way, `Damaged { dir }`) and its whole-body `jump`/`land` clips as torso
   actions (`torso::FLINCH`, `JUMP`, `LAND`; the last two replace every bone while they run), and
   BO2's battle chatter (`_battlechatter_mp.gsc` `reloadtracking`/`grenadetracking`:
   `ZHBO_BO2_Bc_<F><n>_<line>`, `sounds::CHATTER_LINES`; at the dvars' odds by a roll hashed from

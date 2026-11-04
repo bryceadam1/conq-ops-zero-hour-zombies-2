@@ -30,6 +30,9 @@
 //! or right, running, standing (8 alternatives). The converter asks the script in every context
 //! ([`crate::torso::death_context`]); the client picks from the answers.
 //!
+//! The same `movestatus`, `direction` and `dmgDirection` rules ask the script's `EVENTS` for the
+//! upper body's actions (`client::remote`'s torso context, each flinch's side).
+//!
 //! **Presentation only.** The sim reports the killing blow (`EventKind::KilledBy`); the client
 //! reads stance, gait and keys off the seat's last record. Nothing here feeds the sim.
 

@@ -755,6 +755,18 @@ void Zhbo_ShieldDamage(Object *obj, DamageInfo *info)
 		shieldDamageKind(info->in.m_damageType), info->in.m_amount);
 	if (scale < 1.0f)
 		info->in.m_amount *= scale < 0.0f ? 0.0f : scale;
+	// What reached him, for his hurt and death (BO2's vDir): the blast's own direction when it
+	// carries a shock wave (Weapon.cpp: victim less the exploding object), else from the source.
+	if (info->in.m_amount > 0.0f)
+	{
+		Coord3D dir = info->in.m_shockWaveVector;
+		if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f && from)
+		{
+			dir = *obj->getPosition();
+			dir.sub(*from);
+		}
+		zhbo_logic_engine_damage((uint32_t)obj->getID(), zhboDamageKind(info->in.m_damageType), dir.x, dir.y, dir.z);
+	}
 }
 
 // Gather this frame's input for zhbo_client_frame: timing, keys, mouse, camera.

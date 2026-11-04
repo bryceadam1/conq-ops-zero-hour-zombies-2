@@ -351,10 +351,10 @@ mod tests {
         let mut p = Predictor::default();
         let owed = vec![shot(), EventKind::HitMarker { headshot: false, kill: false }, EventKind::ReloadStarted];
         let impact = EventKind::Impact { at: Vec3::ZERO, dir: Vec3::ZERO, surface: Surface::Dirt, head: false, fatal: false, impact_type: 0, exit: false };
-        let auth = vec![shot(), shot(), EventKind::HitMarker { headshot: true, kill: true }, EventKind::Damaged { amount: 5.0 }, impact];
+        let auth = vec![shot(), shot(), EventKind::HitMarker { headshot: true, kill: true }, EventKind::Damaged { amount: 5.0, dir: crate::math::Vec3::ZERO }, impact];
         let r = p.reconcile(auth, owed);
         // The second shot and the impact were not predicted (late); the damage is never predicted.
-        assert_eq!(r.present, vec![shot(), EventKind::Damaged { amount: 5.0 }, impact]);
+        assert_eq!(r.present, vec![shot(), EventKind::Damaged { amount: 5.0, dir: crate::math::Vec3::ZERO }, impact]);
         assert_eq!(r.kills, vec![true], "the predicted marker's kill, confirmed");
         assert_eq!((p.stats.late, p.stats.unconfirmed), (2, 1), "the reload was predicted and never came");
     }
