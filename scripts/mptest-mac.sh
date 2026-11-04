@@ -43,7 +43,8 @@
 #
 # Environment: ZHBO_ZH_DIR / ZHBO_BO2_DIR as for the launcher; DIST for a staged build other
 # than the default dist; OUT for the results folder; ZHBO_MPTEST_MAP (default Tournament Desert);
-# ZHBO_MPTEST_ROUNDS (default 1, the short run); ZHBO_MPTEST_SHOTS=1 captures both screens; ZHBO_MPTEST_SECONDS, the wall-clock limit (default
+# ZHBO_MPTEST_ROUNDS (default 1, the short run); ZHBO_MPTEST_SHOTS=1 captures both screens (every
+# ZHBO_MPTEST_SHOT_INTERVAL logic frames, default 150); ZHBO_MPTEST_SECONDS, the wall-clock limit (default
 # 480, the long run 1800).
 set -euo pipefail
 
@@ -80,9 +81,13 @@ finish() {
     cp "$host_log" "$out/host.log" 2>/dev/null || true
     cp "$join_log" "$out/join.log" 2>/dev/null || true
     rm -f "$host_profile" "$join_profile"
+    # (Without captures the glob matches nothing: the loop must not end on a failed test, or
+    # `set -e` ends the script here, before any check.)
     for f in "$out"/*-shot.bmp.*.bmp; do
-        [[ -f "$f" ]] && sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null 2>&1 && rm "$f"
+        [[ -f "$f" ]] || continue
+        sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null 2>&1 && rm "$f"
     done
+    return 0
 }
 stop_games
 rm -f "$host_log" "$join_log"
@@ -121,9 +126,11 @@ wait_for() { # file, pattern, seconds
 
 # ZHBO_MPTEST_SHOTS=1: each instance captures its own screen every few seconds (the engine's
 # capture, as the autotest's), host-shot.* and join-shot.*: what each machine drew of the other.
+# ZHBO_MPTEST_SHOT_INTERVAL sets the logic frames between captures (default 150, 5 s; host patch
+# 0027 counts logic frames).
 shots() { # name
     if [[ -n "${ZHBO_MPTEST_SHOTS:-}" ]]; then
-        echo GGC_BGFX_SCREENSHOT_AFTER=300 GGC_BGFX_SCREENSHOT_INTERVAL=150 "GGC_BGFX_SCREENSHOT_PATH=$out/$1-shot.bmp"
+        echo GGC_BGFX_SCREENSHOT_AFTER=300 GGC_BGFX_SCREENSHOT_INTERVAL="${ZHBO_MPTEST_SHOT_INTERVAL:-150}" "GGC_BGFX_SCREENSHOT_PATH=$out/$1-shot.bmp"
     fi
 }
 rm -f "$out"/*-shot.*
