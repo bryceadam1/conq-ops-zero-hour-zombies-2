@@ -108,10 +108,10 @@ impl LogicHost for Witness<'_> {
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3) {
         self.host.fire_fx(shooter, fx_weapon, target, pos)
     }
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: crate::damage::MeansOfDeath) -> bool {
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, blow: crate::damage::Blow) -> bool {
         // The relation as the blow lands (the shooter may be gone by the time the death is read).
         let friendly = shooter == victim || self.host.object(shooter, victim).is_some_and(|o| o.has(objflags::ALLY));
-        let kill = self.host.damage(shooter, victim, amount, how);
+        let kill = self.host.damage(shooter, victim, amount, blow);
         if kill {
             self.kills.borrow_mut().push(Kill { victim, friendly });
         }
@@ -486,7 +486,7 @@ mod tests {
         sim.frame = LATE;
         armed(&mut sim, &host, 0, 1, 0.0, "primary=an94_mp;secondary=fnp45_mp");
         let w = Witness::new(&host);
-        assert!(w.damage(1, 1, 1000.0, crate::damage::MeansOfDeath::GrenadeSplash));
+        assert!(w.damage(1, 1, 1000.0, crate::damage::Blow::bare(crate::damage::MeansOfDeath::GrenadeSplash)));
         sim.note_kills(w.take());
         assert_eq!(sim.kills, [Kill { victim: 1, friendly: true }]);
         step(&mut sim, &host, 1);
@@ -499,7 +499,7 @@ mod tests {
         armed(&mut sim, &host, 0, 1, 0.0, "primary=an94_mp;secondary=fnp45_mp");
         host.add(general(9, 1));
         let w = Witness::new(&host);
-        assert!(w.damage(9, 1, 1000.0, crate::damage::MeansOfDeath::RifleBullet));
+        assert!(w.damage(9, 1, 1000.0, crate::damage::Blow::bare(crate::damage::MeansOfDeath::RifleBullet)));
         sim.note_kills(w.take());
         step(&mut sim, &host, 1);
         assert_eq!(sim.drops.len(), 1, "an enemy's kill drops the weapon");

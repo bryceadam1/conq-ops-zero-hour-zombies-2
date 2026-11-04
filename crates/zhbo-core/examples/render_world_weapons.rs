@@ -267,9 +267,23 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
             poses.push((name.into(), Some((action, c))));
         }
     }
-    // And dead: the script's default standing death, held as the corpse.
-    if let Some(&c) = torso::get().death(torso::death_context(0, false, 0, 0)).first() {
-        poses.push(("death".into(), Some((torso::DEATH, c))));
+    // And dead: the corpse BO2's `DEATH` gives each kind of death (`zhbo_core::death`), held.
+    use zhbo_core::death::DmgType as D;
+    for (name, stance, ms, dir, dmg, from) in [
+        ("death", 0, 0, 0, D::Normal, 2),
+        ("death_headshot_front", 0, 0, 0, D::HeadShot, 1),
+        ("death_shotgun_front", 0, 0, 0, D::NormalShotgun, 1),
+        ("death_shotgun_back", 0, 0, 0, D::NormalShotgun, 2),
+        ("death_shieldbash_front", 0, 0, 0, D::MeleeBash, 1),
+        ("death_knife_back", 0, 0, 0, D::Melee, 2),
+        ("death_explosive_front", 0, 0, 0, D::Explosive, 1),
+        ("death_crouch_shotgun_left", 1, 0, 0, D::NormalShotgun, 3),
+        ("death_run_backward", 0, 2, 2, D::Normal, 2),
+        ("death_prone", 2, 0, 0, D::HeadShot, 1),
+    ] {
+        if let Some(&c) = torso::get().death(torso::death_context(stance, ms, dir, dmg as u8, from)).first() {
+            poses.push((name.into(), Some((torso::DEATH, c))));
+        }
     }
     let mut tiles = Vec::new();
     for (k, (name, clip)) in poses.iter().enumerate() {
@@ -283,7 +297,7 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
         println!("{id} {name}: {clip_name} at {t:.2} s");
         tiles.push(to_rgb(&px));
     }
-    write_sheet_cols(&out.join(format!("torso_{}.png", id.replace(['+', '~'], "_"))), &tiles, tiles.len() as u32)?;
+    write_sheet_cols(&out.join(format!("torso_{}.png", id.replace(['+', '~'], "_"))), &tiles, tiles.len().min(8) as u32)?;
     // The cost of several Generals at once: `n` bodies (each his own rig, half of them reloading),
     // drawn and presented `FRAMES` times; the core's pose and submit per General, and the frame.
     for n in [1u32, 4, 8, 16] {

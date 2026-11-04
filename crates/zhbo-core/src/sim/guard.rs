@@ -23,7 +23,6 @@
 //!   `_proximity_grenade.gsc:118-124` `proximitygrenadedamageplayer`) a Shock Charge's zap does not
 //!   reach him at all.
 
-use crate::damage::MeansOfDeath;
 use crate::host::{disable_kind, LogicHost, ObjInfo};
 use crate::impacts::Surface;
 use crate::math::Vec3;
@@ -152,7 +151,8 @@ impl LogicHost for Guarded<'_> {
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3) {
         self.host.fire_fx(shooter, fx_weapon, target, pos)
     }
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: MeansOfDeath) -> bool {
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, blow: crate::damage::Blow) -> bool {
+        let how = blow.how;
         let flak = how.is_explosive_damage() && self.def.effect == Effect::Explode && victim != shooter && self.stuck_to != Some(victim);
         let scale = if flak { self.guard(victim).map_or(1.0, |g| g.blast) } else { 1.0 };
         // `_shellshock.gsc:19`: the explosive causes shake him (a rocket's direct hit too, not an
@@ -160,7 +160,7 @@ impl LogicHost for Guarded<'_> {
         if how.shellshocks() && self.first_person(victim) {
             self.hit(victim, ShockHitKind::Damage(amount * scale / crate::units::BO2_TO_ZH_DAMAGE));
         }
-        self.host.damage(shooter, victim, amount * scale, how)
+        self.host.damage(shooter, victim, amount * scale, blow)
     }
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)
@@ -239,17 +239,18 @@ mod tests {
         let guards = [Guard { general: 2, blast: flak, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false }, Guard { general: 3, blast: 1.0, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false }];
         let frag = def(Effect::Explode);
         let g = |def: &'static WeaponDef, stuck_to: Option<u32>| Guarded { host: &host, guards: &guards, def, stuck_to, thrown: true, owner: 1, at: None, hits: &hits };
-        use MeansOfDeath::*;
-        g(frag, None).damage(1, 2, 100.0, GrenadeSplash);
-        g(frag, None).damage(1, 3, 100.0, GrenadeSplash);
-        g(frag, None).damage(2, 2, 100.0, GrenadeSplash);
-        g(frag, Some(2)).damage(1, 2, 100.0, GrenadeSplash);
-        g(def(Effect::Stun), None).damage(1, 2, 100.0, GrenadeSplash);
-        g(frag, None).damage(1, 2, 100.0, RifleBullet);
+        use crate::damage::MeansOfDeath::*;
+        let bare = crate::damage::Blow::bare;
+        g(frag, None).damage(1, 2, 100.0, bare(GrenadeSplash));
+        g(frag, None).damage(1, 3, 100.0, bare(GrenadeSplash));
+        g(frag, None).damage(2, 2, 100.0, bare(GrenadeSplash));
+        g(frag, Some(2)).damage(1, 2, 100.0, bare(GrenadeSplash));
+        g(def(Effect::Stun), None).damage(1, 2, 100.0, bare(GrenadeSplash));
+        g(frag, None).damage(1, 2, 100.0, bare(RifleBullet));
         // A rocket's direct hit and a grenade's strike are not `isexplosivedamage`; its splash is.
-        g(frag, None).damage(1, 2, 100.0, Projectile);
-        g(frag, None).damage(1, 2, 100.0, Impact);
-        g(frag, None).damage(1, 2, 100.0, ProjectileSplash);
+        g(frag, None).damage(1, 2, 100.0, bare(Projectile));
+        g(frag, None).damage(1, 2, 100.0, bare(Impact));
+        g(frag, None).damage(1, 2, 100.0, bare(ProjectileSplash));
         let log: Vec<f32> = host.damage_log.borrow().iter().map(|d| d.2).collect();
         assert_eq!(log, [100.0 * flak, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0 * flak]);
     }

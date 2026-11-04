@@ -307,6 +307,12 @@ impl Projectile {
         (first, touching)
     }
 
+    /// A blow of this projectile's by `how`: its weapon, travelling the way it flies (BO2's missile
+    /// passes its velocity as `vDir`).
+    fn blow(&self, how: MeansOfDeath) -> crate::damage::Blow {
+        crate::damage::Blow::new(how, self.def, self.vel)
+    }
+
     /// The impact damage (`iDamage`) of a strike on `o` that does not end the flight (BO2's
     /// `MOD_IMPACT`: the def does not go off on impact); notes the hit for the client
     /// ([`Self::struck`]).
@@ -314,7 +320,7 @@ impl Projectile {
         let how = crate::damage::strike(self.def, dud);
         let amount = impact_damage(self.def, o, how);
         if amount > 0.0 {
-            self.struck = Some(host.damage(self.owner, o.id, amount, how));
+            self.struck = Some(host.damage(self.owner, o.id, amount, self.blow(how)));
         }
     }
 
@@ -328,7 +334,7 @@ impl Projectile {
             let how = crate::damage::strike(self.def, dud);
             let amount = impact_damage(self.def, o, how);
             if amount > 0.0 {
-                kill = host.damage(self.owner, o.id, amount, how);
+                kill = host.damage(self.owner, o.id, amount, self.blow(how));
                 hit_enemy = true;
             }
         }
@@ -354,7 +360,7 @@ impl Projectile {
     fn impact(&mut self, host: &dyn LogicHost, o: ObjInfo, dud: bool) -> Outcome {
         self.remove_object(host);
         let how = crate::damage::strike(self.def, dud);
-        let kill = host.damage(self.owner, o.id, impact_damage(self.def, &o, how), how);
+        let kill = host.damage(self.owner, o.id, impact_damage(self.def, &o, how), self.blow(how));
         Outcome::Hit { at: self.pos, kill }
     }
 
@@ -387,7 +393,7 @@ impl Projectile {
             let how = crate::damage::strike(self.def, true);
             let amount = impact_damage(self.def, &o, how);
             if amount > 0.0 {
-                kill = host.damage(self.owner, o.id, amount, how);
+                kill = host.damage(self.owner, o.id, amount, self.blow(how));
                 hit_enemy = true;
             }
         }
@@ -516,7 +522,7 @@ impl Hit {
 /// General with a shield keeps `1 − protection` of the damage
 /// ([`crate::shield::Bearer::blast_protection`]).
 #[allow(clippy::too_many_arguments)]
-pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, hit: Hit, self_blast_scale: f32, self_stun_scale: f32, shields: &[crate::shield::Bearer]) -> Blast {
+pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3, hit: Hit, self_blast_scale: f32, self_stun_scale: f32, shields: &[crate::shield::Bearer]) -> Blast {
     let tuning = crate::tuning::get();
     let d = def;
     let direct = hit.direct;
@@ -581,7 +587,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, hit: H
                     amount *= 1.0 - b.blast_protection(at, &tuning);
                 }
                 if amount > 0.0 {
-                    let k = host.damage(owner, o.id, amount, how);
+                    let k = host.damage(owner, o.id, amount, crate::damage::Blow::from_to(how, d, at, o.pos));
                     if !own {
                         hit_enemy = true;
                         kill |= k;
@@ -610,7 +616,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, hit: H
                     let how = crate::damage::splash(d);
                     let amount = d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE;
                     if amount > 0.0 && d.explosion_inner_damage > 10.0 {
-                        kill |= host.damage(owner, o.id, amount, how);
+                        kill |= host.damage(owner, o.id, amount, crate::damage::Blow::from_to(how, d, at, o.pos));
                     }
                     hit_enemy = true;
                 }

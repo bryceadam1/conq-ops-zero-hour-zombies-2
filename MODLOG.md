@@ -12826,3 +12826,79 @@ ABI 32 paragraph. No `zhbo_native` format moves (`BODY_VERSION` 1, `WEAPON_VERSI
   launcher and camo with "Press F for AN-94 Launcher" and its HUD icon (`shot-dropped-weapon-hint.png`),
   the SMAW's blast (`shot-explosion-flipbook*.png`), the low-ammo "[R] Reload" (`shot-low-ammo.png`),
   the planted shield standing (`shot-planted-shield.png`).
+
+## A player falls by every death BO2 tells apart (2026-11-03, branch `v1/death-anims`)
+
+Round 4's corpses picked the `DEATH` clip by a guessed `dmgType` (no shotgun, no shield bash), the
+killer's position for `dmgDirection`, "moving" for any speed and always `forward`. Notes, the
+extracted script and the decompiles are in `~/.opencode/plan/death-anims/`.
+
+**BO2 (t6mp, read-only Ghidra).**
+* `mp/playeranim.script`'s `DEATH` (this install) reads five conditions: `stance` (prone first:
+  `pb_prone_death_quickdeath` whatever hit him), `dmgType` (`explosive` per side plus a no-side
+  fallback, `normal_shotgun`, `headshot`, `meleebash`, `melee`, each per side with crouched clips
+  except the explosive), `dmgDirection`, and for the rest `movestatus run` (crouched; `direction
+  backward`/`left`/`right`; forward) and the stance; gas and last stand are commented out.
+* `BG_AnimScriptEvent` (`FUN_008acce0`) runs the 25 condition updaters at `0x00f6afe8` before it
+  picks. The value tables: `dmgType` `NORMAL, NORMAL_SHOTGUN, EXPLOSIVE, MELEE, MELEEBASH, HEADSHOT,
+  FIRE, SUICIDE, GAS, FALLING` (`0x00f6a6f8`), `dmgDirection` `NONE, FRONT, BACK, LEFT, RIGHT`,
+  `direction` `NONE, FORWARD, BACKWARD, LEFT, RIGHT`, `movestatus` `STATIONARY, WALK, RUN`; the
+  condition table (`0x00f6ab28`) PLAYERANIMTYPE 0 … MOVESTATUS 5, DIRECTION 7, DMGDIRECTION 8,
+  DMGTYPE 9, STANCE 10.
+* `dmgType` (`FUN_008ade60` maps the player-state value `player_die` `FUN_005effe0` stores, after
+  `finishplayerdamage` `FUN_005ed360`): `MOD_BURNED` fire; grenade, grenade splash, projectile,
+  projectile splash, explosive → explosive; melee/bayonet → `meleebash` when the weapon's weapType
+  is `riotshield`, else `melee`; `MOD_HEAD_SHOT` headshot (before the class test: a shotgun's
+  headshot is a headshot); suicide → explosive by a grenade, else suicide; falling with no ground
+  entity → falling; anything else `normal_shotgun` for weapClass spread/pistol spread, else
+  `normal`. Gas is set by no branch.
+* `dmgDirection` (`finishplayerdamage`): `vectoyaw(vDir)` less his whole-degree view yaw in
+  [0, 360): [135, 225) front, [45, 135) right, [225, 315) left, else back; no `vDir`: back. `none`
+  only when no damage preceded the death (a suicide on a fresh life).
+* `direction` (`FUN_008adb70`): the movement keys normalised, forward past
+  `player_strafeAnimCosAngle` (0.5) forward, past -0.5 backward, else the strafe's side.
+  `movestatus` (`FUN_008ad980`): speed past `player_runThreshhold` (110) run, past
+  `player_moveThreshhold` (2) walk.
+* The alternatives are random (`FUN_008aca50` with the level's random state).
+
+**The mod.** `damage::Blow` (means, weapon, direction: BO2's `G_Damage` `mod`/`weapon`/`vDir`)
+replaces the means in `LogicHost::damage`, so every site names its weapon and the blow's way: a
+round along its trace, the knife or the held shield (`melee_weapon`) along the striker's facing, a
+missile along its flight, radius damage from the blast to the victim. `crate::death` holds BO2's
+rules (`DmgType::of`, `dmg_direction`, `move_status`, `move_direction`); the sim reports
+`KilledBy { dmg, dir }`; the client reads stance, speed and keys off the seat's last record. The
+death context is stance × movestatus × direction × dmgType × dmgDirection (2,250, BO2's own value
+orders); the converter asks the script in each. Tuning: `player_runThreshhold`,
+`player_moveThreshhold`, `player_strafeAnimCosAngle` (the dvars' defaults). The built-in table's
+shield carries `WeapType = riotshield`. Presentation only: nothing of `crate::death` reaches the sim
+state (`DmgType::of` runs in the score pass only to fill the event).
+
+**Bug found: a kill in the step was lost when the victim's seat stepped after the killer's.** The
+step's blows are scored after every seat has stepped, but a dead General's record (and his
+attacker list) ended in his own seat's step: when his seat came later the same frame, the kill
+found no victim seat — no `KilledBy` (the corpse fell by the default clip) and **no assists**. The
+victim's seat is now found among each seat's last Generals and `Sim::step` forgets the dead
+Generals' lists only after the scoring. Sim behaviour change (assists now awarded in that order),
+the same on every machine. The client builds the corpse in its update, so the report may follow the
+death event.
+
+**Ragdoll (assessed, left out).** BO2 clones the player (`cloneplayer`), plays the clip and starts
+the physics ragdoll 0.2 s + 35 % of the clip in (`delaystartragdoll`; the clip's `start_ragdoll`
+notetrack if any, none if `ignore_ragdoll`), at once in the air, on a ladder or mantle, for a crush
+or a hit-by-object, with an explosive push for an explosive kill (`_globallogic_player.gsc:2243-2400`).
+The mod would need jointed bodies per bone with BO2's limits, collision against Zero Hour's terrain
+and objects, the hand-off from the clip's pose and a pose override in the native body pass: client
+side (no lockstep risk), but far from small. The held last pose stays (Zero Hour's way, the user's
+call).
+
+**Tests.** `death::tests` (every means × every weapClass × every weapType × airborne against
+`player_die`'s rule; every 45° sector edge of the direction, turned; gait and keys);
+`every_death_context_splits_back_into_its_parts`; `sim::death_tests` (the knife and the held
+shield: melee/meleebash from the front and from behind; a round normal, a spread class
+normal_shotgun, from the shooter's side; a blast explosive from where it went off, every blow naming
+the frag); `a_kill_in_the_step_scores_when_the_victim_steps_after_his_killer` (fails on the old
+lookup); `a_killed_general_falls_by_the_scripts_death` (headshot, shotgun side, bash, running back,
+default; report before and after the death). Real install (`every_weapon_action_plays_the_torso_bo2_gives_it`):
+all 2,250 contexts equal the script asked directly and have a death, every `DEATH` entry is reached
+by some context, 20 BO2 spot picks, every converted shield bashes `meleebash`, every shotgun's round
+`normal_shotgun` and its headshot `headshot`.

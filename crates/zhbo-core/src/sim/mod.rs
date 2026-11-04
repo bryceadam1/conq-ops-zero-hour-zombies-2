@@ -33,6 +33,8 @@ pub mod fakehost;
 pub mod harness;
 pub mod predict;
 #[cfg(test)]
+mod death_tests;
+#[cfg(test)]
 mod hit_tests;
 #[cfg(test)]
 mod lockstep_tests;
@@ -172,10 +174,11 @@ pub enum EventKind {
     /// or 3 for `assist_25`, `assist_50`, `assist_75`, or the tactical his last hit was
     /// (`assist_concussion`, ...).
     Assist { level: u8, tactical: Option<score::Tactical> },
-    /// This player's General was killed by a seat's damage: BO2's means of death and where the
-    /// killer stood (presentation: the death animation's `dmgType` and `dmgDirection`). A death to
-    /// anything else (Zero Hour's own weapons) has none.
-    KilledBy { how: crate::damage::MeansOfDeath, from: Option<Vec3> },
+    /// This player's General was killed by a seat's damage: BO2's `dmgType` of the killing blow
+    /// (its means of death and weapon, [`crate::death::DmgType::of`]) and the way it travelled
+    /// (BO2's `vDir`; zero: none). Presentation: the death animation's `dmgType` and
+    /// `dmgDirection` (`crate::death`). A death to anything else (Zero Hour's own weapons) has none.
+    KilledBy { dmg: crate::death::DmgType, dir: Vec3 },
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },
@@ -708,11 +711,19 @@ impl Sim {
     pub fn step(&mut self, host: &dyn LogicHost, frame: u32) {
         // Every kill the step deals is noted, so a death knows whether it drops its weapon.
         let witness = drops::Witness::new(host);
-        self.scored(&witness, |sim, host| sim.step_frame(host, frame));
+        let died = self.scored(&witness, |sim, host| sim.step_frame(host, frame));
+        // A General whose record ended this step: his attacker list ends only now, after the
+        // step's kills were scored. His record goes as his seat is stepped, which may be after
+        // the seat that killed him in the same frame; scoring that kill needs his list.
+        for general in died {
+            self.score.forget(general);
+        }
         self.note_kills(witness.take());
     }
 
-    fn step_frame(&mut self, host: &dyn LogicHost, frame: u32) {
+    /// The frame's step; returns the Generals whose records ended in it (died).
+    fn step_frame(&mut self, host: &dyn LogicHost, frame: u32) -> Vec<u32> {
+        let mut died = Vec::new();
         self.frame = frame;
         self.shields = self.shield_bearers();
         self.equipment.shields.clone_from(&self.shields);
@@ -724,7 +735,7 @@ impl Sim {
             self.spawn_in(host, idx);
             let Some(mut p) = self.players[idx].take() else { continue };
             self.combat_seen = 0;
-            let keep = self.step_player(host, idx, &mut p);
+            let keep = self.step_player(host, idx, &mut p, &mut died);
             if self.combat_seen & (1 << idx) != 0 {
                 p.combat = true;
             }
@@ -743,6 +754,7 @@ impl Sim {
             host.smoke(s.at, s.radius(frame, &smoke));
         }
         self.record_history();
+        died
     }
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
@@ -898,10 +910,11 @@ impl Sim {
         self.emit(idx, EventKind::ReturnedToRts { general: p.general });
     }
 
-    fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
+    /// One seat's step; false when his record ends (his General `died`, noted in `died`).
+    fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, died: &mut Vec<u32>) -> bool {
         let Some(info) = host.object(p.general, p.general) else {
             self.drop_for_death(host, idx, p, None);
-            self.score.forget(p.general);
+            died.push(p.general);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         };
@@ -909,7 +922,7 @@ impl Sim {
             host.set_controlled(p.general, false);
             self.equipment.clear_owner(host, idx);
             self.drop_for_death(host, idx, p, Some(info.pos));
-            self.score.forget(p.general);
+            died.push(p.general);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         }

@@ -234,24 +234,26 @@ pub(crate) struct TorsoSets {
     pub deaths: Vec<Vec<u16>>,
 }
 
+/// The conditions the engine sets before a death (`zhbo_core::death`), as the script reads them,
+/// for death context `c` (`torso::split_death`).
+pub(crate) fn death_conditions(c: u16) -> [(&'static str, &'static str); 5] {
+    use zhbo_native::thirdperson::torso;
+    let (stance, move_status, direction, ty, dir) = torso::split_death(c);
+    [
+        ("stance", ["stand", "crouch", "prone"][stance as usize]),
+        ("movestatus", torso::MOVE_STATUSES[move_status as usize]),
+        ("direction", torso::DIRECTIONS[direction as usize]),
+        ("dmgtype", torso::DMG_TYPES[ty as usize]),
+        ("dmgdirection", torso::DMG_DIRECTIONS[dir as usize]),
+    ]
+}
+
 /// The `DEATH` section's alternatives for each death context (`torso::DEATH_CONTEXTS`), the
 /// zone's clips only.
 fn death_picks(script: &crate::playeranim::Script, names: &[String]) -> Vec<Vec<String>> {
     use zhbo_native::thirdperson::torso;
     let have = |c: &str| names.iter().find(|n| n.eq_ignore_ascii_case(c)).map(|n| n.to_ascii_lowercase());
-    (0..torso::DEATH_CONTEXTS)
-        .map(|c| {
-            let (stance, moving, ty, dir) = torso::split_death(c);
-            let ctx = [
-                ("stance", ["stand", "crouch", "prone"][stance as usize]),
-                ("movestatus", if moving { "run" } else { "stationary" }),
-                ("direction", if moving { "forward" } else { "none" }),
-                ("dmgtype", torso::DMG_TYPES[ty as usize]),
-                ("dmgdirection", torso::DMG_DIRECTIONS[dir as usize]),
-            ];
-            script.death(&ctx).iter().filter_map(|n| have(n)).collect()
-        })
-        .collect()
+    (0..torso::DEATH_CONTEXTS).map(|c| script.death(&death_conditions(c)).iter().filter_map(|n| have(n)).collect()).collect()
 }
 
 /// What the torso of a soldier holding a weapon with key `k` plays for each action and context
@@ -636,19 +638,69 @@ mod tests {
             let legs: Vec<&str> = c.anim.bones.iter().map(|b| b.name.as_str()).filter(|b| ["j_hip", "j_knee", "j_ankle", "j_ball", "j_mainroot", "pelvis"].iter().any(|l| b.starts_with(l))).collect();
             assert!(legs.is_empty(), "{} tracks the legs: {legs:?}", c.anim.name);
         }
-        // The deaths (`DEATH`): a headshot from the front, a blast from behind, prone, the default.
-        let death = |stance, moving, ty: &str, dir: &str| {
-            let ty = torso::DMG_TYPES.iter().position(|x| *x == ty).unwrap() as u8;
-            let dir = torso::DMG_DIRECTIONS.iter().position(|x| *x == dir).unwrap() as u8;
-            let mut names: Vec<String> = t.death(torso::death_context(stance, moving, ty, dir)).iter().map(|&c| t.clip(c).unwrap().name.clone()).collect();
+        // The deaths (`DEATH`): every context's clips are the script's own answer (as installed),
+        // every entry of the section is reached by some context (no case BO2 tells apart is
+        // lost), and BO2's own picks for each kind of death.
+        let script = crate::playeranim::Script::parse(&String::from_utf8_lossy(&zhbo_formats::havok_lua::rawfile(&mp.common, crate::playeranim::PATH).unwrap()));
+        let mut reached = std::collections::HashSet::new();
+        for c in 0..torso::DEATH_CONTEXTS {
+            let ctx = death_conditions(c);
+            let mut want: Vec<String> = script.death(&ctx).iter().map(|n| n.to_ascii_lowercase()).collect();
+            let mut got: Vec<String> = t.death(c).iter().map(|&id| t.clip(id).unwrap().name.clone()).collect();
+            want.sort();
+            got.sort();
+            assert_eq!(got, want, "death context {c} {ctx:?}");
+            assert!(!got.is_empty(), "death context {c} {ctx:?} has a death");
+            reached.insert(script.death_entry(&ctx).unwrap());
+        }
+        let unreached: Vec<usize> = (0..script.death_entries()).filter(|e| !reached.contains(e)).collect();
+        assert!(unreached.is_empty(), "DEATH entries no context reaches: {unreached:?}");
+        let death = |stance: u8, ms: &str, dir: &str, ty: &str, from: &str| {
+            let at = |list: &[&str], v: &str| list.iter().position(|x| *x == v).unwrap_or_else(|| panic!("{v}")) as u8;
+            let c = torso::death_context(stance, at(&torso::MOVE_STATUSES, ms), at(&torso::DIRECTIONS, dir), at(&torso::DMG_TYPES, ty), at(&torso::DMG_DIRECTIONS, from));
+            let mut names: Vec<String> = t.death(c).iter().map(|&c| t.clip(c).unwrap().name.clone()).collect();
             names.sort();
             names
         };
-        assert_eq!(death(0, false, "headshot", "front"), ["pb_death_headshot_front", "pb_death_headshot_front_v2"]);
-        assert_eq!(death(0, false, "explosive", "back"), ["pb_death_faceplant", "pb_death_forwardtoface"]);
-        assert_eq!(death(2, false, "headshot", "front"), ["pb_prone_death_quickdeath"], "prone comes first");
-        assert!(death(0, false, "none", "front").contains(&"pb_stand_death_neckdeath".to_string()));
-        assert!((0..torso::DEATH_CONTEXTS).all(|c| !t.death(c).is_empty()), "every context has a death");
+        for (stance, ms, dir, ty, from, want) in [
+            (0, "stationary", "none", "headshot", "front", &["pb_death_headshot_front", "pb_death_headshot_front_v2"][..]),
+            (1, "stationary", "none", "headshot", "left", &["pb_crouch_death_headshot_left"]),
+            (0, "stationary", "none", "explosive", "back", &["pb_death_faceplant", "pb_death_forwardtoface"]),
+            (1, "run", "forward", "explosive", "left", &["pb_death_jackiespin_right", "pb_death_legsout_right"]),
+            (0, "stationary", "none", "explosive", "none", &["pb_death_jackiespin_inplace", "pb_death_jackiespin_vertical"]),
+            (0, "stationary", "none", "normal_shotgun", "front", &["pb_death_shotgun_front"]),
+            (0, "run", "forward", "normal_shotgun", "right", &["pb_death_shotgun_right"]),
+            (1, "stationary", "none", "normal_shotgun", "back", &["pb_crouch_death_shotgun_back"]),
+            (0, "stationary", "none", "meleebash", "front", &["pb_death_shieldbash_front"]),
+            (1, "walk", "left", "meleebash", "right", &["pb_crouch_death_shieldbash_right"]),
+            (0, "stationary", "none", "melee", "back", &["pb_death_melee_back", "pb_death_melee_back_v2"]),
+            (1, "stationary", "none", "melee", "front", &["pb_crouch_death_melee_front"]),
+            (2, "run", "forward", "headshot", "front", &["pb_prone_death_quickdeath"]),
+            (2, "stationary", "none", "explosive", "back", &["pb_prone_death_quickdeath"]),
+            (1, "run", "forward", "normal", "back", &["pb_crouchrun_death_crumple", "pb_crouchrun_death_drop"]),
+            (0, "run", "backward", "normal", "front", &["pb_death_run_back"]),
+            (0, "run", "left", "suicide", "front", &["pb_death_run_left"]),
+            (0, "run", "right", "fire", "front", &["pb_death_run_right"]),
+            (0, "run", "forward", "normal", "back", &["pb_death_run_forward_crumple", "pb_death_run_onfront", "pb_death_run_stumble"]),
+            (0, "walk", "backward", "normal", "back", &["pb_stand_death_frontspin", "pb_stand_death_head_collapse", "pb_stand_death_headchest_topple", "pb_stand_death_legs", "pb_stand_death_lowerback", "pb_stand_death_neckdeath", "pb_stand_death_neckdeath_thrash", "pb_stand_death_nervedeath"]),
+        ] {
+            assert_eq!(death(stance, ms, dir, ty, from), want, "{stance} {ms} {dir} {ty} {from}");
+        }
+        // What tells the shield's bash and a shotgun's kill apart reaches the converted defs: the
+        // shield's weapType, each shotgun's spread class (`zhbo_core::death::DmgType::of`).
+        use zhbo_core::damage::MeansOfDeath as M;
+        use zhbo_core::death::DmgType;
+        let shields: Vec<&zhbo_core::weapons::WeaponDef> = table.weapons.iter().filter(|d| d.is_shield()).collect();
+        assert!(!shields.is_empty());
+        for d in shields {
+            assert_eq!(DmgType::of(M::Melee, Some(d), false), DmgType::MeleeBash, "{}", d.id);
+        }
+        let shotguns: Vec<&zhbo_core::weapons::WeaponDef> = table.weapons.iter().filter(|d| d.class == zhbo_core::weapons::Class::Shotgun).collect();
+        assert!(shotguns.len() >= 4, "{}", shotguns.len());
+        for d in shotguns {
+            assert_eq!(DmgType::of(M::RifleBullet, Some(d), false), DmgType::NormalShotgun, "{}", d.id);
+            assert_eq!(DmgType::of(M::HeadShot, Some(d), false), DmgType::HeadShot, "{}", d.id);
+        }
         // The rifle reload is heard: BO2's third-person reload foley rides its notetracks.
         let reload = t.clip(t.pick(table.weapons.iter().find(|d| d.id == "an94_mp").unwrap().torso_anims, torso::RELOAD, 0).unwrap()).unwrap();
         let notes: Vec<&str> = reload.notes.iter().map(|n| n.1).collect();

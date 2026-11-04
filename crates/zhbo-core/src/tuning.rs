@@ -101,6 +101,10 @@ tuning! {
     bg_view_kick_min: "bg_viewKickMin" = 0.5, "Flinch floor, degrees (G7).";
     bg_view_kick_max: "bg_viewKickMax" = 90.0, "Flinch cap, degrees (G7).";
     flinch_time: "FlinchTime" = 0.5, "Seconds a flinch lasts (`cg->damageTime = now + 500`; G7).";
+    // ---- The body's animation conditions (`mp/playeranim.script`; `crate::death`) -------------
+    player_run_threshhold: "player_runThreshhold" = 110.0, "`movestatus run` above this speed, inches/s (`FUN_008ad980`; `dvars-t6mp.tsv`).";
+    player_move_threshhold: "player_moveThreshhold" = 2.0, "`movestatus walk` above this speed, inches/s (`FUN_008ad980`; `dvars-t6mp.tsv`).";
+    player_strafe_anim_cos_angle: "player_strafeAnimCosAngle" = 0.5, "The normalised forward key past which `direction` is forward (backward past its negative), else the strafe's side (`FUN_008adb70`; `dvars-t6mp.tsv`).";
     // ---- Spread and the view (G4, G6) ----------------------------------------------------------
     player_standing_view_height: "player_standingViewHeight" = 60.0, "Standing eye height, inches: spread blends crouched->standing up to it (G2, G6).";
     view_height_crouch: "ViewHeightCrouch" = 40.0, "Crouched eye height, inches (the engine's 40; G6).";

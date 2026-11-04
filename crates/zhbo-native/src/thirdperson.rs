@@ -127,19 +127,26 @@ pub mod torso {
         matches!(action, JUMP | LAND | DEATH)
     }
 
-    /// The `DEATH` section's damage types (`dmgType`) and directions (`dmgDirection`) the mod asks
-    /// in; `none` matches no `dmgType` entry (a death the script keys on stance and gait only).
-    pub const DMG_TYPES: [&str; 6] = ["none", "explosive", "normal_shotgun", "headshot", "meleebash", "melee"];
-    pub const DMG_DIRECTIONS: [&str; 4] = ["front", "back", "left", "right"];
-    pub const DEATH_CONTEXTS: u16 = 3 * 2 * 6 * 4;
-    /// A death's context: stance (0 stand, 1 crouch, 2 prone), moving, a [`DMG_TYPES`] index and a
-    /// [`DMG_DIRECTIONS`] index.
-    pub const fn death_context(stance: u8, moving: bool, dmg_type: u8, dmg_dir: u8) -> u16 {
-        (if stance > 2 { 2 } else { stance }) as u16 * 48 + (moving as u16) * 24 + (dmg_type % 6) as u16 * 4 + (dmg_dir % 4) as u16
+    /// The `DEATH` section's conditions, each in BO2's own value order (t6mp's value tables:
+    /// `dmgType` at `0x00f6a6f8`, `dmgDirection` at `0x00f6a6c8`, `direction` and `movestatus`
+    /// beside them), as the engine sets them before the death (`BG_AnimScriptEvent`,
+    /// `FUN_008acce0`, runs one updater per condition). `dmgDirection` is `none` only for a death
+    /// no damage preceded (a suicide on a fresh life): `finishplayerdamage` names a side for every
+    /// blow, `back` for one with no direction.
+    pub const DMG_TYPES: [&str; 10] = ["normal", "normal_shotgun", "explosive", "melee", "meleebash", "headshot", "fire", "suicide", "gas", "falling"];
+    pub const DMG_DIRECTIONS: [&str; 5] = ["none", "front", "back", "left", "right"];
+    pub const MOVE_STATUSES: [&str; 3] = ["stationary", "walk", "run"];
+    pub const DIRECTIONS: [&str; 5] = ["none", "forward", "backward", "left", "right"];
+    pub const DEATH_CONTEXTS: u16 = 3 * 3 * 5 * 10 * 5;
+    /// A death's context: stance (0 stand, 1 crouch, 2 prone), a [`MOVE_STATUSES`], a
+    /// [`DIRECTIONS`], a [`DMG_TYPES`] and a [`DMG_DIRECTIONS`] index.
+    pub const fn death_context(stance: u8, move_status: u8, direction: u8, dmg_type: u8, dmg_dir: u8) -> u16 {
+        let stance = if stance > 2 { 2 } else { stance } as u16;
+        (((stance * 3 + (move_status % 3) as u16) * 5 + (direction % 5) as u16) * 10 + (dmg_type % 10) as u16) * 5 + (dmg_dir % 5) as u16
     }
-    /// A death context's parts.
-    pub const fn split_death(c: u16) -> (u8, bool, u8, u8) {
-        ((c / 48) as u8, (c / 24) % 2 == 1, ((c / 4) % 6) as u8, (c % 4) as u8)
+    /// A death context's parts, as [`death_context`] takes them.
+    pub const fn split_death(c: u16) -> (u8, u8, u8, u8, u8) {
+        ((c / 750) as u8, ((c / 250) % 3) as u8, ((c / 50) % 5) as u8, ((c / 5) % 10) as u8, (c % 5) as u8)
     }
 
     /// The contexts an action is asked in: stance (0 stand, 1 crouch, 2 prone) × moving × aimed.
@@ -271,6 +278,26 @@ impl Weapon {
 mod tests {
     use super::*;
     use crate::math::IDENTITY;
+
+    #[test]
+    fn every_death_context_splits_back_into_its_parts() {
+        use torso::*;
+        let mut seen = vec![false; DEATH_CONTEXTS as usize];
+        for stance in 0..3 {
+            for ms in 0..MOVE_STATUSES.len() as u8 {
+                for dir in 0..DIRECTIONS.len() as u8 {
+                    for ty in 0..DMG_TYPES.len() as u8 {
+                        for dd in 0..DMG_DIRECTIONS.len() as u8 {
+                            let c = death_context(stance, ms, dir, ty, dd);
+                            assert_eq!(split_death(c), (stance, ms, dir, ty, dd));
+                            assert!(!std::mem::replace(&mut seen[c as usize], true));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seen.iter().all(|&s| s));
+    }
 
     fn body() -> Body {
         Body {

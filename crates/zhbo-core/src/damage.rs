@@ -61,6 +61,42 @@ pub enum MeansOfDeath {
     Gas,
 }
 
+/// One blow as BO2's damage call takes it (`G_Damage`'s `mod`, `weapon` and `vDir`): the means of
+/// death, the weapon that dealt it, and the direction it travelled (zero: none). The armour and the
+/// sim's rules read the means; the weapon and the direction are the victim's death animation's
+/// (`crate::death`, presentation only, read off `EventKind::KilledBy`).
+#[derive(Clone, Copy, Debug)]
+pub struct Blow {
+    pub how: MeansOfDeath,
+    pub weapon: Option<&'static WeaponDef>,
+    pub dir: crate::math::Vec3,
+}
+
+impl PartialEq for Blow {
+    /// The same means, the same weapon (by its id) and direction.
+    fn eq(&self, o: &Blow) -> bool {
+        self.how == o.how && self.weapon.map(|w| w.id.as_str()) == o.weapon.map(|w| w.id.as_str()) && self.dir == o.dir
+    }
+}
+
+impl Blow {
+    /// A blow by `weapon` travelling along `dir`.
+    pub fn new(how: MeansOfDeath, weapon: &'static WeaponDef, dir: crate::math::Vec3) -> Blow {
+        Blow { how, weapon: Some(weapon), dir }
+    }
+
+    /// A blow by `weapon` from `from` into a victim at `to` (BO2's radius damage: `vDir` is the
+    /// victim's origin less the blast's).
+    pub fn from_to(how: MeansOfDeath, weapon: &'static WeaponDef, from: crate::math::Vec3, to: crate::math::Vec3) -> Blow {
+        Blow::new(how, weapon, to - from)
+    }
+
+    /// A blow by no weapon, from no direction (tests, and hosts that read only the means).
+    pub fn bare(how: MeansOfDeath) -> Blow {
+        Blow { how, weapon: None, dir: crate::math::Vec3::ZERO }
+    }
+}
+
 /// How many means of death BO2 has (`0x15`: `FUN_0063a1a0` pushes `badMOD` past it).
 pub const MOD_COUNT: usize = 21;
 
