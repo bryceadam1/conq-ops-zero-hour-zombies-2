@@ -469,7 +469,7 @@ mod tests {
         let patch = crate::paks::load_zone(&bo2, "patch_mp").unwrap();
         let faction = crate::paks::load_zone(&bo2, crate::generals::FACTIONS[0].zone).unwrap();
         let hands = xmodel::find(&faction, crate::generals::FACTIONS[0].hands).unwrap();
-        let weapons = zhbo_formats::weapon::all(&common).unwrap();
+        let (weapons, _) = crate::paks::MpPool::load(&bo2).unwrap().weapons().unwrap();
         for (id, slot) in [("kard_mp", 1usize), ("kard_mp", 0x17), ("an94_mp", 1), ("an94_mp", 0x10)] {
             let w = weapons.iter().find(|w| w.name == id).unwrap();
             let gun = crate::viewmodels::find_model(&[&patch, &common], w.view_model.as_deref().unwrap()).unwrap();

@@ -342,7 +342,9 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
 /// his class primary's (the class stores one camo, which only the primary inherits — the same rule
 /// as the first-person `nativevm::choice_for`), else none.
 pub fn camo_for(primary: &crate::weapons::WeaponDef, camo: &str, vm: i32) -> Option<String> {
-    crate::nativevm::choice_for(primary, camo).filter(|c| c.vm == vm).map(|c| c.option)
+    // The primary's alt mode drawn with its own third-person weapon wears the class camo too.
+    let alt_of_primary = || crate::weapons::catalog().all().iter().any(|d| d.world_weapon == vm && d.id.split_once('~').is_some_and(|(_, parent)| parent == primary.id));
+    crate::nativevm::choice_for(primary, camo).filter(|c| c.vm == vm || (vm >= 0 && alt_of_primary())).map(|c| c.option)
 }
 
 impl Loaded {

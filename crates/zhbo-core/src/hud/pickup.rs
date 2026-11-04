@@ -92,12 +92,15 @@ pub(super) fn draw(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, key
         l.text(prims, r, Family::Condensed, text, Some(Align::Left), (true, false), *rgb, 1.0);
         x += w;
     }
-    let (ws, hs) = icon_scale(def.hud_icon_ratio);
+    // BO2's hint draws the weapon's `hudIcon` by its `hudIconRatio`: both the base gun's (an attached
+    // variant names its gun's icon, `classicons::weapon_icon`).
+    let base = crate::weapons::weapon_or_none(def.id.split('+').next().unwrap_or(&def.id)).unwrap_or(def);
+    let (ws, hs) = icon_scale(base.hud_icon_ratio);
     let (iw, ih) = (size * ws, size * hs);
     let icon_top = top + height * 2.0 - size * 0.5 * hs;
     let r = Place::new((false, false, -iw * 0.5, iw * 0.5), (false, false, icon_top, icon_top + ih)).resolve(l.screen());
     let px = l.px(r);
-    prims.push(Prim::Image { name: crate::classicons::weapon_icon(&def.id), x: px.x, y: px.y, w: px.w, h: px.h, argb: argb((1.0, 1.0, 1.0), 1.0), fallback: Vec::new() });
+    prims.push(Prim::Image { name: base.hud_icon_image(), x: px.x, y: px.y, w: px.w, h: px.h, argb: argb((1.0, 1.0, 1.0), 1.0), fallback: Vec::new() });
 }
 
 #[cfg(test)]
@@ -135,8 +138,11 @@ mod tests {
         let weapon = Carried { def: weapon("svu_mp"), clip: 1, stock: 0, alt_clip: 0, alt_stock: 0, options: Default::default() };
         sim.drops.push(Dropped { weapon, pos: Vec3::new(crate::units::inches(50.0), 0.0, 0.0), vel: Vec3::ZERO, resting: true, yaw: 0.0, expires: None, owner: 0, owner_until: 0, object: 0 });
         draw(&l, &mut prims, &sim, &p, "F");
+        // The def's HUD icon (`HudIcon`), the sprite the class screens draw for it.
+        let svu_icon = crate::weapons::weapon("svu_mp").hud_icon_image();
+        assert!(!svu_icon.is_empty() && svu_icon == crate::classicons::weapon_icon("svu_mp"));
         let icon = prims.iter().find_map(|q| match q {
-            Prim::Image { name, x, y, w, h, .. } if name == "ZHBO_BO2_Icon_svu_mp" => Some((*x, *y, *w, *h)),
+            Prim::Image { name, x, y, w, h, .. } if *name == svu_icon => Some((*x, *y, *w, *h)),
             _ => None,
         });
         let (x, y, w, h) = icon.expect("the icon");

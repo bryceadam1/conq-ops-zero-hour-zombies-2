@@ -377,11 +377,9 @@ fn cmd_material(args: &[String]) -> Result<(), String> {
 
 /// `zhbo-assets weapons`.
 fn cmd_weapons(args: &[String]) -> Result<(), String> {
-    // weapons [name filter]: BO2 multiplayer weapon definitions (common_mp).
-    use zhbo_formats::weapon;
-    let zone = load_full_zone("common_mp.ff")?;
+    // weapons [name filter]: BO2 multiplayer weapon definitions (the weapon pool).
     let filter = args.get(1).map(String::as_str);
-    for w in weapon::all(&zone).map_err(|e| e.to_string())? {
+    for w in pool_weapons()?.0 {
         if filter.is_some_and(|f| !w.name.contains(f)) {
             continue;
         }
@@ -453,10 +451,9 @@ fn cmd_weapons(args: &[String]) -> Result<(), String> {
 /// `zhbo-assets attachments`.
 fn cmd_attachments(args: &[String]) -> Result<(), String> {
     // attachments [weapon filter]: BO2's attachments, and which ones each weapon allows.
-    use zhbo_formats::weapon;
-    let zone = load_full_zone("common_mp.ff")?;
-    let all = weapon::attachments(&zone).map_err(|e| e.to_string())?;
     if args.iter().any(|a| a == "--raw") {
+        // The raw words of `common_mp`'s own attachment assets (the launch definitions).
+        let zone = load_full_zone("common_mp.ff")?;
         use zhbo_formats::t6zone::layouts::WeaponAttachment as WA;
         let kind = zhbo_formats::fastfile::asset_type_id("attachment").unwrap();
         for a in zone.assets.iter().filter(|a| a.kind == kind) {
@@ -481,11 +478,12 @@ fn cmd_attachments(args: &[String]) -> Result<(), String> {
         }
         return Ok(());
     }
+    let all = pool_weapons()?.1;
     for a in &all {
         println!("{a:?}");
     }
     if let Some(f) = args.get(1) {
-        for w in weapon::all(&zone).map_err(|e| e.to_string())?.into_iter().filter(|w| w.name.contains(f.as_str())) {
+        for w in pool_weapons()?.0.into_iter().filter(|w| w.name.contains(f.as_str())) {
             let names: Vec<&str> = all.iter().filter(|a| w.allowed_attachments & (1 << a.kind) != 0).map(|a| a.name.as_str()).collect();
             println!("{} allows {:#x}: {names:?}\n  variants {:?} hide {:?} alt {:?}", w.name, w.allowed_attachments, w.attachment_variants, w.hide_tags, w.alt_weapon);
             for u in &w.attachment_uniques {
@@ -512,7 +510,7 @@ fn cmd_fx_sheet(args: &[String]) -> Result<(), String> {
 /// `zhbo-assets fx`.
 fn cmd_fx(args: &[String]) -> Result<(), String> {
     // fx <weapon>: the BO2 effect a weapon's projectile makes when it goes off.
-    use zhbo_formats::{fx, weapon};
+    use zhbo_formats::fx;
     let zone = load_full_zone("common_mp.ff")?;
     let name = args.get(1).ok_or("fx <weapon>")?;
     if name == "--list" {
@@ -537,7 +535,7 @@ fn cmd_fx(args: &[String]) -> Result<(), String> {
             let cells: Vec<String> = (0..32).map(|s| format!("{s}={}", fx::impact_cell(&zone, row, s).map(|e| e.name).unwrap_or_else(|| "-".into()))).collect();
             println!("row {row} cells: {}", cells.join(" "));
         }
-        for w in weapon::all(&zone).map_err(|e| e.to_string())?.iter().filter(|w| !fx::is_bullet(w.impact_type)) {
+        for w in pool_weapons()?.0.iter().filter(|w| !fx::is_bullet(w.impact_type)) {
             let own = w.explosion_effect.as_ref().map(|e| e.name.as_str()).unwrap_or("-");
             println!("{} impact type {} own effect {own} own sound {}", w.name, w.impact_type, w.projectile_explosion_sound.as_deref().unwrap_or("-"));
             // The bounce and dud fields (`FUN_004c1590` events 0x47 and 0x51).
@@ -555,7 +553,7 @@ fn cmd_fx(args: &[String]) -> Result<(), String> {
         }
         return Ok(());
     }
-    let w = weapon::all(&zone).map_err(|e| e.to_string())?.into_iter().find(|w| &w.name == name).ok_or("no such weapon")?;
+    let w = pool_weapons()?.0.into_iter().find(|w| &w.name == name).ok_or("no such weapon")?;
     fn dump(e: &fx::Effect, indent: &str) {
         println!("{indent}effect {} life {} looping {} elems {}", e.name, e.life_msec, e.looping_life_msec, e.elems.len());
         for el in &e.elems {
@@ -1183,6 +1181,17 @@ fn load_zone(zones: &mut ZoneCache, name: &str) -> Result<(), String> {
 }
 
 /// Decrypt a fastfile and load every asset in it.
+/// BO2's multiplayer weapons and attachments as its asset pool resolves them
+/// (`zhbo_formats::weapon::MP_POOL`: `patch_mp` over `common_patch_mp` over `common_mp`), what the
+/// converter converts: `common_mp` alone holds launch stats and lacks the Peacekeeper.
+fn pool_weapons() -> Result<(Vec<zhbo_formats::weapon::Weapon>, Vec<zhbo_formats::weapon::Attachment>), String> {
+    let zones = zhbo_formats::weapon::MP_POOL.iter().map(|n| load_full_zone(&format!("{n}.ff"))).collect::<Result<Vec<_>, _>>()?;
+    let pool: Vec<&zhbo_formats::t6zone::Zone> = zones.iter().collect();
+    let weapons = zhbo_formats::weapon::pooled(&pool).map_err(|e| e.to_string())?;
+    let attachments = zhbo_formats::weapon::pooled_attachments(&pool).map_err(|e| e.to_string())?;
+    Ok((weapons, attachments))
+}
+
 fn load_full_zone(name: &str) -> Result<zhbo_formats::t6zone::Zone, String> {
     zhbo_formats::t6zone::load_file(&resolve(name, &["zone", "all"])?)
 }

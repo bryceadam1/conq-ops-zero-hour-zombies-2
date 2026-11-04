@@ -621,11 +621,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     for id in &ids {
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = table.weapons.iter_mut().find(|d| &d.id == id) else { continue };
-        if let Some(f) = &w.world_flash_effect {
+        // A melee weapType never fires: BO2's fire step returns before the fire event for it
+        // (t6mp `FUN_008e1b80`: `weapType != 7`), so neither flash ever plays (the held knife's
+        // def names the pistol's).
+        let fires = w.weap_type != zhbo_formats::weapon::kind::MELEE;
+        if let Some(f) = w.world_flash_effect.as_ref().filter(|_| fires) {
             // Played at the muzzle bone with its matrix (X down the barrel), like BO2's.
             flashes.insert(id.clone(), effects.add_framed(f, crate::fx::Role::Flash, &|h| paks.image(h)));
         }
-        if let Some(f) = &w.view_flash_effect {
+        if let Some(f) = w.view_flash_effect.as_ref().filter(|_| fires) {
             // Only claim it when the converter can draw it (sprites or runner children). An effect
             // with only a light or a model would leave an empty FXList, and the bridge's generic
             // gas flash is better than nothing.
@@ -675,15 +679,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
                 let e = bo2.iter().find(|s| s.name == SMOKE_SCREEN_WEAPON).and_then(|s| s.explosion_effect.clone())?;
                 zhbo_formats::fx::find(&common, &e.name).or(Some(e))
             };
-            if let Some(e) = w.explosion_effect.clone().or_else(screen) {
-                d.explosion_fx = effects.add_area(&e, zhbo_core::tuning::get().smoke_duration, &|h| paks.image(h));
+            if let Some(e) = screen() {
+                d.screen_fx = effects.add_area(&e, zhbo_core::tuning::get().smoke_duration, &|h| paks.image(h));
             }
-            continue;
         }
         // The def's own `projExplosionEffect`, played on top of the impact table's cell (BO2's
         // `FUN_004c0ac0`); most explosives leave it empty and blow up with the table's alone.
         let Some(e) = &w.explosion_effect else { continue };
-        if matches!(d.effect, zhbo_core::weapons::Effect::Explode | zhbo_core::weapons::Effect::Stun | zhbo_core::weapons::Effect::Emp) {
+        use zhbo_core::weapons::Effect;
+        if matches!(d.effect, Effect::Explode | Effect::Stun | Effect::Emp | Effect::Smoke) {
             d.explosion_fx = effects.add(e, &|h| paks.image(h));
         }
     }
@@ -803,6 +807,7 @@ mod tests {
             assert!(shell(n), "{n} defines its own shell effect");
         }
         // Without the later zone the stub stays unbound: the pool, not the parse, decides.
+        // zone-local: `common_mp` alone, to show the stub the pool binds.
         let common_only = zhbo_formats::weapon::all(&common).unwrap();
         assert!(common_only.iter().find(|w| w.name == "an94_mp").unwrap().view_shell_eject_effect.is_none());
         for w in &bo2 {
@@ -866,7 +871,9 @@ mod tests {
         let (pooled, atts) = mp.weapons().unwrap();
         let crate::paks::MpPool { patch, common_patch, common } = mp;
         let names = crate::weapons::names(&bo2_dir);
+        // zone-local: the launch definitions and the patch zone's own, compared with the pool.
         let launch = zhbo_formats::weapon::all(&common).unwrap();
+        // zone-local: the patch zone's own definitions.
         let patched = zhbo_formats::weapon::all_in(&common_patch, &[&patch, &common]).unwrap();
         assert!(patched.len() > 70, "{} patched weapons", patched.len());
         let mut clip_changes = 0;
@@ -884,6 +891,7 @@ mod tests {
             }
         }
         assert!(clip_changes > 0, "the patch changes a magazine");
+        // zone-local: the patch zone's own attachments, compared with the pool.
         for a in zhbo_formats::weapon::attachments(&common_patch).unwrap().iter().filter(|a| !a.name.starts_with(',')) {
             assert_eq!(atts.iter().find(|x| x.name == a.name), Some(a), "{}: the patch's attachment", a.name);
         }
@@ -1453,7 +1461,8 @@ mod tests {
         // every dynamic LOD and never evicted by a fight's particles) whose looping parts stand the
         // tuning pack's screen time.
         let smoke = by_id("willy_pete_mp");
-        let body = fx_body(&smoke.explosion_fx).unwrap_or_else(|| panic!("no FXList {}", smoke.explosion_fx));
+        assert!(smoke.explosion_fx.is_empty(), "BO2's smoke grenade names no projExplosionEffect: the cloud is its script's");
+        let body = fx_body(&smoke.screen_fx).unwrap_or_else(|| panic!("no FXList {}", smoke.screen_fx));
         let systems: Vec<&str> = body.lines().filter_map(|l| l.trim().strip_prefix("Name = ")).collect();
         assert!(systems.len() >= 10, "the cloud's systems: {body}");
         let frames = (zhbo_core::tuning::get().smoke_duration * 30.0).round();
@@ -1497,9 +1506,7 @@ mod tests {
             }
         };
         for d in &table.weapons {
-            if d.effect != zhbo_core::weapons::Effect::Smoke {
-                check(&d.explosion_fx, "CRITICAL", "blast");
-            }
+            check(&d.explosion_fx, "CRITICAL", "blast");
             check(&d.dud_fx, "CRITICAL", "dud");
             check(&d.view_flash_fx, "CRITICAL", "flash");
             check(&d.silenced_view_flash_fx, "CRITICAL", "flash");

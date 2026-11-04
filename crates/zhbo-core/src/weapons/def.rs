@@ -228,6 +228,19 @@ pub struct Kick {
     pub yaw: (f32, f32),
 }
 
+
+/// Who hears a def-level sound event ([`WeaponDef::def_sound_events`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heard {
+    /// The player's own (2D).
+    Player,
+    /// Positional, for everyone where it happens (a blast, a bounce, another player's throw).
+    World,
+    /// Another player's shot cue, played by BO2's distance layers (`soundlayers`), keyed by its
+    /// own event.
+    Remote,
+}
+
 /// One BO2 weapon. Distances are Zero Hour units, times seconds, damage on BO2's 100 HP scale.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeaponDef {
@@ -382,8 +395,12 @@ pub struct WeaponDef {
     pub spawns: String,
     /// Zero Hour assets made for this weapon by the converter (empty when absent).
     pub fx_weapon: String,
-    /// Zero Hour FXList for the blast (grenades, rockets).
+    /// Zero Hour FXList for the def's own blast effect (`projExplosionEffect`), played on top of
+    /// the impact table's cell (grenades, rockets); empty when BO2 names none.
     pub explosion_fx: String,
+    /// A smoke grenade's screen: the cloud BO2's script plays where it goes off (`_smokegrenade.gsc`,
+    /// `smoke_center_mp`'s effect), not its def's `projExplosionEffect`; empty for everything else.
+    pub screen_fx: String,
     /// Zero Hour FXList for the first-person muzzle flash (`viewFlashEffect`).
     pub view_flash_fx: String,
     /// Zero Hour FXList for the first-person shell eject (`viewShellEjectEffect`).
@@ -401,6 +418,14 @@ pub struct WeaponDef {
     /// `fireSound` (`wpn_grenade_throw`, `fly_claymore_plant_npc`), as a converted event; empty
     /// for a gun (others hear a gun's shot through its FX weapon).
     pub npc_fire_sound: String,
+    /// What everyone else hears as this gun's fire string opens (`fireStartSound`, the B23R Dual
+    /// Wield's `_fire_npc_burst`), beside the shot (`FUN_005320e0`: the def's own, never an
+    /// attachment's), as a converted event; empty when BO2 names none.
+    pub npc_fire_start_sound: String,
+    /// What everyone else hears for the round that empties the magazine (`fireLastSound`, the
+    /// Strela's), in place of the shot (`FUN_005320e0`), as a converted event; empty when BO2
+    /// names none.
+    pub npc_fire_last_sound: String,
     /// The suppressed shot's player event (`AttachmentUnique.fire_sound_player`).
     pub silenced_fire_sound: String,
     /// The suppressed shot's third-person event (`AttachmentUnique.fire_sound`).
@@ -468,8 +493,13 @@ pub struct WeaponDef {
     /// Viewmodel clips are the BO2 slot plus this: an alt mode's clips sit after its weapon's on the
     /// same viewmodel ([`ALT_CLIPS`]).
     pub clip_base: i32,
-    /// Third-person meshes of this weapon on the soldier model (`W{viewmodel:02}{k:02}`).
+    /// Third-person meshes of this weapon on the soldier model (`W{index:02}{k:02}`, the index
+    /// [`WeaponDef::world_index`]).
     pub world_meshes: u8,
+    /// The third-person weapon's own index (`zhbo_native::world_weapon_path`, `W<index><k>`) when it
+    /// is not the viewmodel's: an alt mode BO2 draws with its own `worldModel` (the SMR's launcher
+    /// mode, `t6_wpn_ar_sa58_view`); -1 draws the viewmodel's.
+    pub world_weapon: i32,
     /// Attachments on this weapon (BO2's names: `grip`, `reflex`), sorted.
     pub attachments: Vec<String>,
     /// Base weapons: each attachment BO2's create-a-class offers, and which `Attachment` it uses
@@ -596,6 +626,11 @@ pub struct WeaponDef {
     /// launcher's alt mode, `hud_select_fire_bullet_stack` on select fire), empty when none. The HUD's
     /// alt-fire slot draws it (`hud::ammo::alt_slot_icon`).
     pub dpad_icon: String,
+    /// BO2's `WeaponDef.hudIcon`: the weapon's HUD icon material (`menu_mp_weapons_an94`,
+    /// `hud_grenadeicon`; an alt mode names its gun's, a launcher alt none), empty when none. Every
+    /// surface that draws a weapon's icon draws this material ([`WeaponDef::hud_icon_image`]): the
+    /// class buttons, the editor's weapon rows, the offhand counters.
+    pub hud_icon: String,
     /// The third-person shell eject (BO2's `worldShellEjectEffect` at the world model's
     /// `tag_brass`, `FUN_00531630`): the Zero Hour FX weapon whose `FireFX` plays it, fired once
     /// per shot at the shooter. Empty: the gun ejects nothing others see.
@@ -1018,6 +1053,7 @@ impl Default for WeaponDef {
             spawns: String::new(),
             fx_weapon: String::new(),
             explosion_fx: String::new(),
+            screen_fx: String::new(),
             view_flash_fx: String::new(),
             view_shell_fx: String::new(),
             view_last_shot_shell_fx: String::new(),
@@ -1026,6 +1062,8 @@ impl Default for WeaponDef {
             empty_fire_sound: String::new(),
             left_fire_sound: String::new(),
             npc_fire_sound: String::new(),
+            npc_fire_start_sound: String::new(),
+            npc_fire_last_sound: String::new(),
             silenced_fire_sound: String::new(),
             silenced_fire_sound_npc: String::new(),
             silenced_fx_weapon: String::new(),
@@ -1054,6 +1092,7 @@ impl Default for WeaponDef {
             anims: 0,
             clip_base: 0,
             world_meshes: 0,
+            world_weapon: -1,
             attachments: Vec::new(),
             allowed: Vec::new(),
             attributes: [0.0; 4],
@@ -1105,6 +1144,7 @@ impl Default for WeaponDef {
             no_partial_reload: false,
             ammo_counter: true,
             dpad_icon: String::new(),
+            hud_icon: String::new(),
             world_shell_fx_weapon: String::new(),
             world_last_shot_shell_fx_weapon: String::new(),
             tracer_fx_weapon: String::new(),
@@ -1130,6 +1170,25 @@ pub const MELEE_RANGE: f32 = inches(55.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// The third-person weapon's index: [`WeaponDef::world_weapon`], else the viewmodel's.
+    pub fn world_index(&self) -> i32 {
+        if self.world_weapon >= 0 {
+            self.world_weapon
+        } else {
+            self.viewmodel
+        }
+    }
+
+    /// The converted sprite of the def's HUD icon ([`WeaponDef::hud_icon`], under its material's
+    /// name, `lui::materials::image`); empty when the def names none.
+    pub fn hud_icon_image(&self) -> String {
+        if self.hud_icon.is_empty() {
+            String::new()
+        } else {
+            crate::lui::materials::image(&self.hud_icon)
+        }
+    }
+
     /// The name the class menus show: the Create-a-Class item's (`cac_name`, statstable column 3),
     /// else the HUD's `display_name` (a weapon no item names).
     pub fn menu_name(&self) -> &str {
@@ -1186,12 +1245,15 @@ impl WeaponDef {
     pub fn take_converted_assets(&mut self, from: &WeaponDef) {
         self.fx_weapon.clone_from(&from.fx_weapon);
         self.explosion_fx.clone_from(&from.explosion_fx);
+        self.screen_fx.clone_from(&from.screen_fx);
         self.view_flash_fx.clone_from(&from.view_flash_fx);
         self.view_shell_fx.clone_from(&from.view_shell_fx);
         self.view_last_shot_shell_fx.clone_from(&from.view_last_shot_shell_fx);
         self.fire_sound.clone_from(&from.fire_sound);
         self.empty_fire_sound.clone_from(&from.empty_fire_sound);
         self.npc_fire_sound.clone_from(&from.npc_fire_sound);
+        self.npc_fire_start_sound.clone_from(&from.npc_fire_start_sound);
+        self.npc_fire_last_sound.clone_from(&from.npc_fire_last_sound);
         self.silenced_fire_sound.clone_from(&from.silenced_fire_sound);
         self.silenced_fire_sound_npc.clone_from(&from.silenced_fire_sound_npc);
         self.silenced_fx_weapon.clone_from(&from.silenced_fx_weapon);
@@ -1236,35 +1298,37 @@ impl WeaponDef {
         self.bounce_sounds.iter().find(|(s, _)| s == surface.name()).map_or("", |(_, e)| e.as_str())
     }
 
-    /// Every def-level sound event this def plays (`names::def_sound_event`), with whether it is
-    /// positional (the blast) rather than the player's own; empty ones included.
-    pub fn def_sound_events(&self) -> impl Iterator<Item = (&str, bool)> + '_ {
+    /// Every def-level sound event this def plays (`names::def_sound_event`), with who hears it
+    /// (which picks how the converter mixes it); empty ones included.
+    pub fn def_sound_events(&self) -> impl Iterator<Item = (&str, Heard)> + '_ {
         [
-            (&self.fire_sound, false),
-            (&self.raise_sound, false),
-            (&self.first_raise_sound, false),
-            (&self.alt_switch_sound, false),
-            (&self.putaway_sound, false),
-            (&self.ads_zoom_sound, false),
-            (&self.melee_swipe_sound, false),
-            (&self.melee_hit_sound, false),
-            (&self.fire_start_sound, false),
-            (&self.fire_last_sound, false),
-            (&self.pullback_sound, false),
-            (&self.silenced_fire_start_sound, false),
-            (&self.explode_sound, true),
-            (&self.dud_sound, true),
-            (&self.npc_fire_sound, true),
-            (&self.pickup_sound, false),
-            (&self.ammo_pickup_sound, false),
-            (&self.npc_pickup_sound, true),
-            (&self.npc_ammo_pickup_sound, true),
+            (&self.fire_sound, Heard::Player),
+            (&self.raise_sound, Heard::Player),
+            (&self.first_raise_sound, Heard::Player),
+            (&self.alt_switch_sound, Heard::Player),
+            (&self.putaway_sound, Heard::Player),
+            (&self.ads_zoom_sound, Heard::Player),
+            (&self.melee_swipe_sound, Heard::Player),
+            (&self.melee_hit_sound, Heard::Player),
+            (&self.fire_start_sound, Heard::Player),
+            (&self.fire_last_sound, Heard::Player),
+            (&self.pullback_sound, Heard::Player),
+            (&self.silenced_fire_start_sound, Heard::Player),
+            (&self.explode_sound, Heard::World),
+            (&self.dud_sound, Heard::World),
+            (&self.npc_fire_sound, Heard::World),
+            (&self.npc_fire_start_sound, Heard::Remote),
+            (&self.npc_fire_last_sound, Heard::Remote),
+            (&self.pickup_sound, Heard::Player),
+            (&self.ammo_pickup_sound, Heard::Player),
+            (&self.npc_pickup_sound, Heard::World),
+            (&self.npc_ammo_pickup_sound, Heard::World),
         ]
         .into_iter()
-        .map(|(e, world)| (e.as_str(), world))
-        .chain(self.attachment_fire_start_sounds.iter().map(|(_, e)| (e.as_str(), false)))
-        .chain(self.npc_sounds.iter().map(|(_, e)| (e.as_str(), true)))
-        .chain(self.bounce_sounds.iter().map(|(_, e)| (e.as_str(), true)))
+        .map(|(e, heard)| (e.as_str(), heard))
+        .chain(self.attachment_fire_start_sounds.iter().map(|(_, e)| (e.as_str(), Heard::Player)))
+        .chain(self.npc_sounds.iter().map(|(_, e)| (e.as_str(), Heard::World)))
+        .chain(self.bounce_sounds.iter().map(|(_, e)| (e.as_str(), Heard::World)))
     }
 
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no

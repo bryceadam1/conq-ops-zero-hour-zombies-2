@@ -390,7 +390,7 @@ typedef struct ZhboClassButton
 	int32_t page;      /* 1 or 2 */
 	int32_t slot;      /* the command set's index: page one starts at 1 (0 is Take Control) */
 	char name[48];     /* the button's label, UTF-8 */
-	char primary[48];  /* converted MappedImage names (ZHBO_BO2_Icon_<id>) */
+	char primary[48];  /* converted MappedImage names (ZHBO_Mat_<hudIcon material>) */
 	char secondary[48];
 	char lethal[48];
 	char tactical[48];
@@ -529,7 +529,7 @@ void zhbo_client_rts_icons(uint32_t general, ZhboRtsIcons *out);
 int32_t zhbo_class_buttons(ZhboClassButton *out, int32_t cap);
 /* Non-zero once the General has assumed a class (the bar shows the class set until then). */
 int32_t zhbo_general_has_class(uint32_t general);
-int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
+int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet; -3: one past the highest index with meshes */
 int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit's viewmodels */
 /* The first-person FXList names for viewmodel `vm`'s weapon (Track R8): its muzzle flash and shell
    eject, converted from BO2's `viewFlashEffect`/`viewShellEjectEffect`. Non-zero when the weapon is

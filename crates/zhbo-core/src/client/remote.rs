@@ -279,7 +279,7 @@ impl Remote {
             s.yaw = p.yaw;
             s.stance = p.stance_index() as u8;
             s.moving = p.body.horizontal_speed() > 0.2;
-            s.vm = p.arsenal.current().def.viewmodel; // content: presentation (the corpse's draw)
+            s.vm = p.arsenal.current().def.world_index(); // content: presentation (the corpse's draw)
             s.body_anims = p.arsenal.current().def.body_anims;
             let heard = !(seat as i32 == presented && p.is_first_person());
             // The weapon change: the putaway's and the raise's torso and third-person sounds.

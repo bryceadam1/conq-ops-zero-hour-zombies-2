@@ -1148,7 +1148,7 @@ The functions the sections above do not cover, by when the bridge calls them (th
 | Every client frame | `zhbo_client_draw_hud(local_player)` | Draws the first-person HUD through the `ClientApi` draw callbacks. |
 | | `zhbo_client_rts_ammo(general, out)` | A General's weapon-slot ammo for the control bar (`ZhboRtsWeapons`). |
 | | `zhbo_client_world_poses(out, cap)` | The Generals' third-person weapon/tablet poses and the held weapon's animation set (`ZhboWorldPose`); returns how many. |
-| | `zhbo_world_mesh_count(vm)` | Third-person meshes of viewmodel `vm`'s weapon on the soldier model (-2: the tablet); cached by the bridge on first use. |
+| | `zhbo_world_mesh_count(vm)` | Third-person meshes of third-person index `vm`'s weapon on the soldier model (`WeaponDef::world_index`: the viewmodel's, or an alt mode's own past the converted viewmodels); -2: the tablet; -3: one past the highest index carrying meshes, which the bridge scans to (at least 160, so an older core answering 0 keeps the old range). Cached by the bridge on first use. **Pending for the next bump:** the -3 meaning (no signature change). |
 | | `zhbo_native_body_ready(in)` | 1 when the native third-person body frame can be drawn (see "The native third person"). |
 | Building | `zhbo_general_build_rate()` | A General's building speed as a share of a dozer's (`building::GENERAL_BUILD_RATE`). |
 | Engine sight and path hooks (patch 0024) | `zhbo_logic_smoke_blocks(a, b)`, `zhbo_logic_smoke_covers(x, y)`, `zhbo_logic_smoke_crosses(a, b, since)` | Lock-free questions to the mirror of the standing smoke screens (see "Smoke screens in Zero Hour's targeting and pathing"). |

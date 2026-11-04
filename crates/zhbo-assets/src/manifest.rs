@@ -42,14 +42,3 @@ pub fn named_effect(name: &str) -> Option<Effect> {
     }
 }
 
-
-
-/// A few weapons' own display keys have no text; BO2's menus use these instead.
-pub fn display_name_key(key: &str) -> &str {
-    match key {
-        "FLASH_GRENADE" => "WEAPON_FLASHBANG",
-        "EMP_GRENADE" => "WEAPON_EMPGRENADE",
-        "CONCUSSION_GRENADE" => "WEAPON_STUN_GRENADE",
-        _ => key,
-    }
-}

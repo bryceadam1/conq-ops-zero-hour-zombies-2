@@ -152,6 +152,40 @@ mod tests {
     use super::*;
     use zhbo_formats::ipak::r_hash_string;
 
+    /// Every reader of BO2's weapon or attachment definitions goes through the pool
+    /// ([`MpPool::weapons`], `zhbo_formats::weapon::pooled`): one zone alone holds the launch
+    /// stats, and only `common_patch_mp` defines the Peacekeeper and the patch's attachments. A
+    /// single-zone parse is allowed only where the line, or the comment line above it, says
+    /// `zone-local:` and why. The enumerator test once read `common_mp` alone and so missed every
+    /// Peacekeeper row the converter ships.
+    #[test]
+    fn weapon_definitions_are_read_through_the_pool() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = vec![src.clone()];
+        let mut hits = Vec::new();
+        while let Some(p) = files.pop() {
+            if p.is_dir() {
+                files.extend(std::fs::read_dir(&p).unwrap().flatten().map(|e| e.path()));
+                continue;
+            }
+            if p.extension().is_none_or(|x| x != "rs") || p.ends_with("paks.rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap();
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let parses = ["weapon::all(", "weapon::all_in(", "weapon::attachments(", "bo2::all(", "bo2::all_in(", "bo2::attachments("]
+                    .iter()
+                    .any(|f| line.contains(f) && !line.contains(&format!("fn {}", &f[f.find("::").unwrap() + 2..])));
+                let marked = line.contains("zone-local:") || i.checked_sub(1).is_some_and(|j| lines[j].trim_start().starts_with("//") && lines[j].contains("zone-local:"));
+                if parses && !marked {
+                    hits.push(format!("{}:{}: {}", p.display(), i + 1, line.trim()));
+                }
+            }
+        }
+        assert!(hits.is_empty(), "single-zone weapon parses outside the pool:\n{}", hits.join("\n"));
+    }
+
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn an_images_pack_entry_is_its_stream_hash_and_name_hash() {

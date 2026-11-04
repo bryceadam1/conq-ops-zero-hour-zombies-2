@@ -243,7 +243,7 @@ pub fn draw(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, since_ms: f32, clock:
         return;
     }
     for (slot, ofs) in [(&p.arsenal.lethal, 40.0), (&p.arsenal.tactical, 94.0)] {
-        draw_offhand(l, prims, ofs, &format!("ZHBO_BO2_Icon_{}", slot.def.id), slot.count);
+        draw_offhand(l, prims, ofs, &slot.def.hud_icon_image(), slot.count);
     }
     let w = p.arsenal.current();
     // A melee weapon in the hand (the held knife a one-gun class carries) has no ammo to count:
@@ -322,7 +322,7 @@ mod tests {
     fn offhands_stack_left_and_brighten() {
         let l = Lui::new(1280.0, 720.0);
         let mut prims = Vec::new();
-        draw_offhand(&l, &mut prims, 40.0, "ZHBO_BO2_Icon_frag_grenade_mp", 2);
+        draw_offhand(&l, &mut prims, 40.0, "ZHBO_Mat_hud_grenadeicon", 2);
         let r: Vec<_> = prims.iter().filter_map(|p| if let Prim::Image { x, y, argb, .. } = p { Some((*x, *y, *argb)) } else { None }).collect();
         // The box ends at Right - 40 = -68; icon 1 fills its right 24, icon 2 the 24 left of that.
         assert_eq!(r, vec![(1280.0 - 68.0 - 24.0, 720.0 - 31.0, 0xBFFF_FFFF), (1280.0 - 68.0 - 48.0, 720.0 - 31.0, 0xFFFF_FFFF)]);

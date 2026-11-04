@@ -178,6 +178,100 @@
         }
     }
 
+    /// The third-person layers the remote-sound tests share. `soundlayers` is one process-wide
+    /// table that `install` replaces, so every test installs the same rows (tests run in parallel).
+    fn install_test_layers() {
+        let row = |key: &str| {
+            let chain = format!("ZHBO_BO2_FireNpc_{}", key.trim_start_matches("ZHBO_FX_"));
+            let layer = crate::soundlayers::Layer { event: Box::leak(chain.clone().into_boxed_str()), min: 0.0, max: 1000.0, min_curve: crate::soundlayers::FLAT, curve: crate::soundlayers::FLAT };
+            crate::soundlayers::format_row(key, &chain, &layer)
+        };
+        crate::soundlayers::install(&(row("ZHBO_FX_test_remote_world") + &row("ZHBO_FX_test_remote_burst")));
+    }
+
+    /// The Black Hat fires as its hack lands: the hacker hears its own `fireSoundPlayer`, everyone
+    /// else its third-person `fireSound` at him (BO2 plays an offhand's fire for both).
+    #[test]
+    fn the_black_hat_is_heard_as_its_hack_lands() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(general(2, 1));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        sim.take_control(&host, 1, 2);
+        sim.choose_class(1, 2, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let pda: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            class: crate::weapons::Class::Tactical,
+            place: crate::weapons::Place::Hack,
+            fire_sound: "ZHBO_BO2_Snd_fly_claymore_plant_plr".into(),
+            npc_fire_sound: "ZHBO_BO2_Snd_fly_claymore_plant_npc".into(),
+            ..Default::default()
+        }));
+        for p in [0, 1] {
+            sim.players[p].as_mut().unwrap().arsenal.tactical.def = pda;
+        }
+        let at = sim.players[1].as_ref().unwrap().body.eye();
+        client.cues.queue.clear();
+        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Hacked });
+        client.frame(&mut sim, &inp);
+        assert!(client.cues.queue.iter().any(|c| c.event == "ZHBO_BO2_Snd_fly_claymore_plant_npc" && c.at == Some(at)), "{:?}", client.cues.queue);
+        client.cues.queue.clear();
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Hacked });
+        client.frame(&mut sim, &inp);
+        assert!(client.cues.queue.iter().any(|c| c.event == "ZHBO_BO2_Snd_fly_claymore_plant_plr" && c.at.is_none()), "{:?}", client.cues.queue);
+        assert!(!client.cues.queue.iter().any(|c| c.event == "ZHBO_BO2_Snd_fly_claymore_plant_npc"), "the hacker hears his own sound");
+    }
+
+    /// Another player's burst opens with the def's third-person opening beside the shot, and the
+    /// round that empties his magazine plays the def's last-round sound in place of the shot
+    /// (`FUN_005320e0`); the rounds between are the FX weapon's chain.
+    #[test]
+    fn another_players_burst_opens_and_his_last_round_ends_with_the_defs_sounds() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(general(2, 1));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        sim.take_control(&host, 1, 2);
+        sim.choose_class(1, 2, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let fx = "ZHBO_FX_test_remote_burst";
+        install_test_layers();
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            fx_weapon: fx.into(),
+            npc_fire_start_sound: "ZHBO_BO2_Snd_test_fire_npc_burst".into(),
+            npc_fire_last_sound: "ZHBO_BO2_Snd_test_fire_npc_last".into(),
+            ..crate::weapons::catalog().get("an94_mp").unwrap().clone()
+        }));
+        let at = Vec3::new(40.0, 30.0, 5.0);
+        let shot = crate::sim::EventKind::Shot { origin: at, end: at, left: false };
+        // (rounds this frame, the string and the magazine after them) -> what plays.
+        let mut hear = |rounds: usize, string: u16, ammo: u16| -> Vec<&'static str> {
+            let p = sim.players[1].as_mut().unwrap();
+            let active = p.arsenal.active;
+            p.arsenal.weapons[active] = crate::weapons::WeaponState::new(def);
+            (p.arsenal.weapons[active].string, p.arsenal.weapons[active].ammo) = (string, ammo);
+            client.cues.queue.clear();
+            for _ in 0..rounds {
+                sim.events.push(crate::sim::Event { player: 1, kind: shot });
+            }
+            client.frame(&mut sim, &inp);
+            client.cues.queue.iter().filter(|c| c.at == Some(at)).map(|c| c.event).collect()
+        };
+        let (chain, open, last) = ("ZHBO_BO2_FireNpc_test_remote_burst", "ZHBO_BO2_Snd_test_fire_npc_burst", "ZHBO_BO2_Snd_test_fire_npc_last");
+        assert_eq!(hear(1, 1, 20), [chain, open], "the string's first round");
+        assert_eq!(hear(2, 3, 20), [chain, chain], "later rounds");
+        assert_eq!(hear(3, 3, 20), [chain, open, chain, chain], "a whole burst in one step opens once, on its first round");
+        assert_eq!(hear(2, 2, 0), [chain, open, last], "the second round emptied the magazine");
+    }
+
     /// Every event of another player's, of every kind: what its owner hears or sees at a place in
     /// the world (a pellet's impact and its effect, a blast, a bounce, a dud, a Trophy kill, the
     /// deployed shield) plays the same here, and nothing of his plays as the local player's own
@@ -236,8 +330,7 @@
         ];
         // The other player's gun has a third-person chain (`soundlayers`): his shot and launch.
         let fx = "ZHBO_FX_test_remote_world";
-        let layer = crate::soundlayers::Layer { event: "ZHBO_BO2_FireNpc_test_remote_world", min: 0.0, max: 1000.0, min_curve: crate::soundlayers::FLAT, curve: crate::soundlayers::FLAT };
-        crate::soundlayers::install(&crate::soundlayers::format_row(fx, "ZHBO_BO2_FireNpc_test_remote_world", &layer));
+        install_test_layers();
         let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { fx_weapon: fx.into(), ..crate::weapons::catalog().get("an94_mp").unwrap().clone() }));
         // What a frame presents of one event of `player`'s: the positional cues, the 2D cues and
         // the impacts.

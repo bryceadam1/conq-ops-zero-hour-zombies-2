@@ -37,9 +37,25 @@ impl Client {
         let auth = sim.player(me).cloned();
         self.present(inp, own, auth.as_ref(), auth.as_ref(), body_pos, mine);
         // Everyone else's events, after the presented seat's own: their impacts take the frame's
-        // impact slots the own shots left (`ClientOut.hits`).
-        for e in others {
-            self.present_remote(sim, e, body_pos);
+        // impact slots the own shots left (`ClientOut.hits`). Each round knows how many of its
+        // shooter's rounds this step fired after it (`sounds::remote_round`'s `later`).
+        for (i, e) in others.iter().enumerate() {
+            let later = if is_round(&e.kind) { others[i + 1..].iter().filter(|o| o.player == e.player && is_round(&o.kind)).count() } else { 0 };
+            self.present_remote(sim, *e, body_pos, later);
+        }
+    }
+
+    /// One of another player's rounds (`right`: how many of his rounds this step fired after it,
+    /// `None` for the dual-wield left gun's).
+    fn remote_round(&mut self, p: &PlayerSim, at: Vec3, listener: Option<Vec3>, right: Option<usize>) {
+        let w = p.arsenal.current();
+        let cues = right.map(|later| sounds::remote_round(w.def, w.string, w.ammo, later));
+        match cues.and_then(|c| c.shot) {
+            Some(last) => self.cues.third_person_cue(last, at, listener),
+            None => self.cues.third_person_shot(&w.def.fx_weapon, at, listener),
+        }
+        if let Some(opening) = cues.and_then(|c| c.opening) {
+            self.cues.third_person_cue(opening, at, listener);
         }
     }
 
@@ -84,21 +100,31 @@ impl Client {
     /// play their third-person sounds at him. The rest is his own first person (his view, kick,
     /// flinch, viewmodel, 2D sounds, hit marker, HUD) and plays only on his machine; the match is
     /// exhaustive so that a new event has to say who sees it.
-    fn present_remote(&mut self, sim: &Sim, e: Event, listener: Option<Vec3>) {
+    fn present_remote(&mut self, sim: &Sim, e: Event, listener: Option<Vec3>, later: usize) {
         if self.world_event(e.kind, false) {
             return;
         }
         let Some(p) = sim.player(e.player) else { return };
         match e.kind {
             // BO2's third-person chain, layer by layer at the listener's distance. A launcher's
-            // shot is the same chain (its FX weapon's `_npc` layers), from the eye it left.
-            EventKind::Shot { origin, .. } => self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, origin, listener),
-            EventKind::Launched => self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, p.body.eye(), listener),
+            // shot is the same chain (its FX weapon's `_npc` layers), from the eye it left. The
+            // round that empties the magazine plays the def's last-round sound instead and a fire
+            // string's first round adds its opening (`FUN_005320e0`, `sounds::remote_round`); the
+            // left gun's rounds are the plain shot.
+            EventKind::Shot { origin, left, .. } => self.remote_round(p, origin, listener, (!left).then_some(later)),
+            EventKind::Launched => self.remote_round(p, p.body.eye(), listener, Some(later)),
             // An offhand leaving another player's hand: its third-person `fireSound` at them
             // (`sounds::remote_offhand`), as BO2 plays it for everyone but the thrower.
             EventKind::Thrown { lethal } => {
                 let def = if lethal { p.arsenal.lethal.def } else { p.arsenal.tactical.def };
                 if let Some(cue) = sounds::remote_offhand(def) {
+                    self.cues.play_at(cue, p.body.eye());
+                }
+            }
+            // The Black Hat fires as the hack lands: what others hear of any offhand firing.
+            EventKind::Hacked => {
+                let tool = [p.arsenal.lethal.def, p.arsenal.tactical.def].into_iter().find(|d| d.place == crate::weapons::Place::Hack);
+                if let Some(cue) = tool.and_then(sounds::remote_offhand) {
                     self.cues.play_at(cue, p.body.eye());
                 }
             }
@@ -143,7 +169,6 @@ impl Client {
             | EventKind::CantPlant { .. }
             | EventKind::Detonated
             | EventKind::DestroyedEquipment
-            | EventKind::Hacked
             | EventKind::Hacking { .. }
             | EventKind::AltToggled
             | EventKind::Hammer { .. }
@@ -367,7 +392,14 @@ impl Client {
                     self.hud.hack_progress = progress;
                     self.hud.hack_shown = 0.15;
                 }
-                EventKind::Hacked => self.hud.hack_shown = 0.0,
+                EventKind::Hacked => {
+                    self.hud.hack_shown = 0.0;
+                    // The Black Hat fires as the hack lands: its own fire sound (`fireSoundPlayer`).
+                    let tool = held.and_then(|(_, _, _, l, t)| [l, t].into_iter().find(|d| d.place == crate::weapons::Place::Hack));
+                    if let Some(cue) = tool.and_then(sounds::hack_fire_for) {
+                        self.cues.play(cue);
+                    }
+                }
                 EventKind::AltToggled => self.vm_events.swapped = true,
                 EventKind::Planted { kind } => {
                     use crate::equipment::Kind;
@@ -460,4 +492,9 @@ fn spectated_event(kind: &EventKind) -> bool {
             | EventKind::Working { .. }
             | EventKind::WorkDone { .. }
     )
+}
+
+/// A round leaving another player's gun: what `sounds::remote_round` counts.
+fn is_round(kind: &EventKind) -> bool {
+    matches!(kind, EventKind::Shot { left: false, .. } | EventKind::Launched)
 }

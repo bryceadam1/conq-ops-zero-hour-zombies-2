@@ -180,6 +180,18 @@ fn dpad_icons(weapons: &[zhbo_formats::weapon::Weapon], roster: &crate::weapons:
     icons
 }
 
+/// The wanted sprites with each name once: the first source, the largest size.
+fn merge_wanted(wanted: Vec<(String, Source, u32)>) -> Vec<(String, Source, u32)> {
+    let mut out: Vec<(String, Source, u32)> = Vec::with_capacity(wanted.len());
+    for (name, source, max) in wanted {
+        match out.iter_mut().find(|(n, ..)| *n == name) {
+            Some(w) => w.2 = w.2.max(max),
+            None => out.push((name, source, max)),
+        }
+    }
+    out
+}
+
 /// A standalone overlay page's texture: the file the archive stores (`Art\Textures\<this>`) and
 /// the name its MappedImage gives, one spelling for both.
 fn standalone_texture(name: &str) -> String {
@@ -195,7 +207,8 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // Full-screen art that cannot share a 1024-px atlas page (the snipers' scope overlays).
     let mut standalone: Vec<(String, Rgba)> = Vec::new();
     // The fixed HUD and create-a-class sprites, then each converted weapon's own HUD icon
-    // (`ZHBO_BO2_Icon_<weapon>`, the lethal and tactical counters use them).
+    // (its `hudIcon` material, `WeaponDef::hud_icon_image`: the class buttons, the editor's rows and
+    // the lethal and tactical counters draw them).
     let mut wanted: Vec<(String, Source, u32)> = SPRITES
         .iter()
         .chain(crate::cac::SPRITES.iter())
@@ -243,12 +256,14 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 wanted.push((zhbo_core::names::cac_weapon_image(base), Source::Dynamic(format!("{image}_256")), 256));
             }
         }
-        let name = format!("ZHBO_BO2_Icon_{id}");
-        match (w.hud_icon_key, &w.hud_icon) {
-            (Some(hash), _) => wanted.push((name, Source::Hash(hash), 64)),
+        // The weapon's HUD icon under its material's name (`WeaponDef::hud_icon_image`): one
+        // sprite per material, shared by every def that names it (an alt mode names its gun's).
+        let Some(icon) = &w.hud_icon else { continue };
+        let name = zhbo_core::lui::materials::image(icon);
+        match w.hud_icon_key {
+            Some(hash) => wanted.push((name, Source::Hash(hash), 64)),
             // Equipment icons are stubs in common_mp; the menus' zones hold the real material.
-            (None, Some(icon)) => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
-            _ => {}
+            None => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
         }
     }
     // The alt-fire slot's art (`zhbo_core::hud::ammo::alt_slot_icon`): each variant's `dpadIcon`
@@ -308,6 +323,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             None => report.missing.push((format!("attachment {short}"), "no icon in mp/attachmenttable.csv".into())),
         }
     }
+    // One sprite per name: a material several surfaces draw (the FHJ's `menu_mp_weapons_fhj` is
+    // its HUD icon and its action-slot icon) is packed once, at the largest size any asks for.
+    let wanted = merge_wanted(wanted);
     let overlay_names: std::collections::HashSet<String> = zhbo_core::hud::OVERLAY_MATERIALS.iter().map(|(m, _)| zhbo_core::lui::materials::image(m)).collect();
     for (name, source, max) in &wanted {
         let hash = match source {
@@ -667,6 +685,17 @@ mod tests {
     }
 
     #[test]
+    fn a_sprite_two_surfaces_want_is_packed_once_at_the_larger_size() {
+        let w = vec![
+            ("ZHBO_Mat_menu_mp_weapons_fhj".to_string(), Source::Dynamic("menu_mp_weapons_fhj".into()), 64),
+            ("ZHBO_Mat_hud_gl_select".to_string(), Source::Dynamic("hud_gl_select".into()), 128),
+            ("ZHBO_Mat_menu_mp_weapons_fhj".to_string(), Source::Dynamic("menu_mp_weapons_fhj".into()), 128),
+        ];
+        let m = merge_wanted(w);
+        assert_eq!(m.iter().map(|(n, _, max)| (n.as_str(), *max)).collect::<Vec<_>>(), [("ZHBO_Mat_menu_mp_weapons_fhj", 128), ("ZHBO_Mat_hud_gl_select", 128)]);
+    }
+
+    #[test]
     fn dpad_icons_are_the_alt_modes_distinct_materials() {
         use zhbo_formats::weapon::{inventory, Weapon};
         let alt = |name: &str, icon: Option<&str>, hash: Option<u32>| Weapon { name: name.into(), inventory: inventory::ALTMODE, dpad_icon: icon.map(str::to_string), dpad_icon_key: hash.map(|h| zhbo_formats::ipak::ImageKey { data_hash: h, name_hash: h }), ..Default::default() };
@@ -826,11 +855,14 @@ mod tests {
             // counter icon (only `code_post_gfx` loads it).
             "ZHBO_Mat_hud_gl_select",
             "ZHBO_Mat_hud_select_fire_bullet_stack",
-            "ZHBO_BO2_Icon_willy_pete_mp",
+            "ZHBO_Mat_hud_willy_pete",
         ] {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
         }
-        assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
+        // Only a weapon's HUD icon may lack an image.
+        let (pool, _) = crate::paks::MpPool::load(&bo2.path).unwrap().weapons().unwrap();
+        let icons: std::collections::BTreeSet<String> = pool.iter().filter_map(|w| w.hud_icon.as_deref()).map(zhbo_core::lui::materials::image).collect();
+        assert!(report.missing.iter().all(|(name, _)| icons.contains(name)), "{:?}", report.missing);
         // The reticle grid: every custom-reticle optic's art for every reticle row converts (the
         // Hybrid Optic's pair included), so no cell of any optic's page is blank.
         let patch = crate::generals::load_zone(&bo2.path, crate::fx::ZONE).unwrap();

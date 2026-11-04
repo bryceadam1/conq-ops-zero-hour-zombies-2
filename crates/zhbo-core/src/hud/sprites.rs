@@ -104,7 +104,8 @@ pub const CAC_CHROME: [&str; 15] = [
     WILDCARD_HIGHLIGHT,
 ];
 
-/// Every fixed MappedImage name the converter emits (`ZHBO_BO2_Icon_<weapon>` is per weapon).
+/// Every fixed MappedImage name the converter emits (a weapon's HUD icon is its def's `hudIcon`
+/// material, `WeaponDef::hud_icon_image`).
 pub const ALL: &[&str] = &[
     DIGITS[0], DIGITS[1], DIGITS[2], DIGITS[3], DIGITS[4], DIGITS[5], DIGITS[6], DIGITS[7], DIGITS[8],
     DIGITS[9], SLASH, BLOOD, RED_DOT, HIT_MARKER, PLAYER_ARROW, DOT, COMPASS, LEFT_LOWER, LEFT_LOWER_BACK,

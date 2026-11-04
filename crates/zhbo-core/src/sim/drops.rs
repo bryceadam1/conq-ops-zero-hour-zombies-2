@@ -384,8 +384,8 @@ impl Sim {
     pub fn dropped_poses(&self) -> Vec<(u32, i32, Vec3, f32)> {
         self.drops
             .iter()
-            .filter(|d| d.object != 0 && d.weapon.def.viewmodel >= 0) // content: presentation (dropped_poses: the third-person draw)
-            .map(|d| (d.object, d.weapon.def.viewmodel, d.pos, d.yaw)) // content: presentation (dropped_poses: the third-person draw)
+            .filter(|d| d.object != 0 && d.weapon.def.world_index() >= 0) // content: presentation (dropped_poses: the third-person draw)
+            .map(|d| (d.object, d.weapon.def.world_index(), d.pos, d.yaw)) // content: presentation (dropped_poses: the third-person draw)
             .collect()
     }
 

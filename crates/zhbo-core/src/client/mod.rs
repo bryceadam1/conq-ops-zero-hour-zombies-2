@@ -953,7 +953,7 @@ impl Client {
                 .player(inp.local_player)
                 .filter(|p| p.class.is_some() && p.is_first_person())
                 .map(|p| {
-                    let vm = p.arsenal.current().def.viewmodel;
+                    let vm = p.arsenal.current().def.world_index();
                     (p.general, vm, sim.third_person_camo(p.general, vm))
                 });
             if holds.is_some() && holds != ap.mp_holds {

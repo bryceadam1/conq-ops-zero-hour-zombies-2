@@ -729,7 +729,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("FxWeapon", "Zero Hour assets made for this weapon by the converter (empty when absent).", FieldKind::Str,
         |d: &WeaponDef| d.fx_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.fx_weapon = v.text.into(); Ok(()) }),
-    field!("ExplosionFx", "Zero Hour FXList for the blast (grenades, rockets).", FieldKind::Str,
+    field!("ExplosionFx", "Zero Hour FXList for the def's own blast effect (`projExplosionEffect`, over the impact table's cell); empty when BO2 names none.", FieldKind::Str,
         |d: &WeaponDef| d.explosion_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.explosion_fx = v.text.into(); Ok(()) }),
     field!("ImpactType", "BO2's `impactType` (+40): the impact-table bucket (0: none).", FieldKind::Num,
@@ -1175,6 +1175,21 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "AmmoPickupSoundNpc", "What others hear of the ammo pickup (`ammoPickupSound`).", FieldKind::Str,
         |d: &WeaponDef| d.npc_ammo_pickup_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.npc_ammo_pickup_sound = v.text.into(); Ok(()) }),
+    field!(present "FireStartSoundNpc", "A gun's third-person BO2 sound event as its fire string opens (`fireStartSound`): what other players hear beside the shot; empty when BO2 names none.", FieldKind::Str,
+        |d: &WeaponDef| d.npc_fire_start_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_fire_start_sound = v.text.into(); Ok(()) }),
+    field!(present "FireLastSoundNpc", "A gun's third-person BO2 sound event for the round that empties the magazine (`fireLastSound`): what other players hear instead of the shot; empty when BO2 names none.", FieldKind::Str,
+        |d: &WeaponDef| d.npc_fire_last_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_fire_last_sound = v.text.into(); Ok(()) }),
+    field!("ScreenFx", "A smoke grenade's screen: the Zero Hour FXList of the cloud BO2's script plays where it goes off (`smoke_center_mp`'s effect); empty for everything else.", FieldKind::Str,
+        |d: &WeaponDef| d.screen_fx.clone(),
+        |d: &mut WeaponDef, v: Values| { d.screen_fx = v.text.into(); Ok(()) }),
+    field!(present "HudIcon", "BO2's `hudIcon`: the weapon's HUD icon material (the class buttons, the editor's rows, the offhand counters draw it), empty when none.", FieldKind::Str,
+        |d: &WeaponDef| d.hud_icon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.hud_icon = v.text.into(); Ok(()) }),
+    field!(present "WorldWeapon", "The third-person weapon's own index (`W{index}{k}`, `ZW<index>.zbw`) when it is not the viewmodel's: an alt mode BO2 draws with its own worldModel; -1 for the viewmodel's.", FieldKind::Num,
+        |d: &WeaponDef| d.world_weapon.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.world_weapon = v.text.parse().map_err(|_| "number")?; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -1326,7 +1341,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 164);
+        assert_eq!(WEAPON_FIELDS.len(), 169);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

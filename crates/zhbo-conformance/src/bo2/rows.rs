@@ -15,6 +15,14 @@ use crate::weapons::{self as cols, enum_name};
 use std::collections::{BTreeMap, HashMap};
 use zhbo_formats::t6zone::layouts::WeaponDef as WD;
 
+/// `weapType_t` melee.
+const MELEE: u32 = 7;
+/// `weapType_t` riotshield.
+const RIOTSHIELD: u32 = 8;
+/// The model BO2's engine attaches to a player whose weapon up is a riot shield
+/// (`refreshshieldattachment`, t6mp `FUN_00967450`).
+const SHIELD_CARRY_MODEL: &str = "t6_wpn_shield_carry_world";
+
 /// The always-given melee weapons (`_class.gsc:586`, `:682`).
 const KNIVES: [&str; 2] = ["knife_mp", "knife_held_mp"];
 
@@ -57,6 +65,30 @@ impl<'a> Expected<'a> {
     pub fn new(install: &'a Install) -> Expected<'a> {
         let atts = install.attachments();
         Expected { install, variants: install.variants(), default_att: atts.get("defaultattachment").copied(), materials: Default::default() }
+    }
+
+    /// The third-person parts as the DObj links them (`FUN_00783290`): each part's tag is looked up
+    /// in the model it hangs from (the world model, `FUN_0052a4c0` passes its index) and the models
+    /// already linked under it; a tag none of them has prints "Part '%s' not found in model '%s'"
+    /// and leaves the part with no parent bone (0xff). The SMR's launcher mode draws
+    /// `t6_wpn_ar_sa58_view`, whose root is `j_gun`, so every part it names on `tag_weapon` hangs
+    /// from no bone.
+    fn linked_world_parts(&self, world_model: Option<String>, parts: Vec<Part>) -> Vec<Part> {
+        let Some(world) = world_model.and_then(|m| self.install.model(&m)) else { return parts };
+        let mut bones: Vec<String> = world.bones.iter().map(|b| b.name.clone()).collect();
+        parts
+            .into_iter()
+            .map(|mut p| {
+                if bones.contains(&p.tag) {
+                    if let Some(m) = self.install.model(&p.model) {
+                        bones.extend(m.bones.iter().map(|b| b.name.clone()));
+                    }
+                } else {
+                    p.tag = cols::NO_PARENT_TAG.to_string();
+                }
+                p
+            })
+            .collect()
     }
 
     /// A model's LOD0 surface materials, `;`-joined (cached by model).
@@ -451,8 +483,19 @@ impl<'a> Expected<'a> {
         b.set("view_hide_tags", &resolve::hide_tags(pw));
         let mats: Vec<String> = gun.iter().cloned().chain(hip.iter().map(|p| p.model.clone())).map(|m| self.model_materials(&m)).collect();
         b.list("view_part_materials", &mats);
-        b.opt_text("world_model", d.world_model());
-        part_cols(&mut b, "world_part", &resolve::world_parts(pw));
+        // The model the player carries in third person. `FUN_0052a4c0` (the third-person weapon's
+        // models) adds `worldModel` and its parts (`FUN_008ace30`) only when the weapType is not
+        // riotshield; a riot shield is the model `refreshshieldattachment` attaches while it is
+        // the weapon up (`FUN_00967450`: the literal `t6_wpn_shield_carry_world` on
+        // `tag_weapon_left`), and its `worldModel` (`t6_wpn_shield_pickup_world`) is the dropped
+        // pickup's only.
+        if d.weap_type() == RIOTSHIELD {
+            b.text("world_model", SHIELD_CARRY_MODEL);
+            part_cols(&mut b, "world_part", &[]);
+        } else {
+            b.opt_text("world_model", d.world_model());
+            part_cols(&mut b, "world_part", &self.linked_world_parts(d.world_model(), resolve::world_parts(pw)));
+        }
 
         // Animations.
         let table = resolve::anims(w, left);
@@ -464,15 +507,19 @@ impl<'a> Expected<'a> {
 
         // Sounds and effects.
         for (i, (c, f)) in cols::OVERRIDE_SOUNDS.iter().zip(OVERRIDE_SOUND_FIELDS).enumerate() {
-            b.opt_text(c, resolve::sound(w, i as u32, d.sound(f)));
+            b.opt_text(c, resolve::heard_sound(w, i as u32, fire, d.sound(f)));
         }
         for (c, f) in cols::DEF_SOUNDS.iter().zip(DEF_SOUND_FIELDS) {
             // A melee's swing and hit are the melee weapon's (see `md`).
             let from = if f == WD::meleeSwipeSoundPlayer || f == WD::meleeHitSound { md } else { d };
             b.opt_text(c, from.sound(f));
         }
-        b.opt_text("view_flash_effect", resolve::effect(w, 0, d.effect(WD::viewFlashEffect)))
-            .opt_text("world_flash_effect", resolve::effect(w, 1, d.effect(WD::worldFlashEffect)));
+        // The flashes play on the fire event (EV_FIRE_WEAPON, 0x20-0x23), which the fire step
+        // `FUN_008e1b80` never raises for a melee weapType (its guard `weapType != 7`): the held
+        // knife's `fx_pistol_flash_base` never plays.
+        let fires = d.weap_type() != MELEE;
+        b.opt_text("view_flash_effect", resolve::effect(w, 0, d.effect(WD::viewFlashEffect)).filter(|_| fires))
+            .opt_text("world_flash_effect", resolve::effect(w, 1, d.effect(WD::worldFlashEffect)).filter(|_| fires));
         for (c, f) in cols::EFFECTS[2..].iter().zip(DEF_EFFECT_FIELDS) {
             b.opt_text(c, d.effect(f));
         }

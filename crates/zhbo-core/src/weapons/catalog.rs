@@ -239,13 +239,20 @@ impl Catalog {
     /// draws it from its own `.zbw` instead.
     pub fn world_viewmodel(&self, def: &WeaponDef) -> i32 {
         if def.world_meshes > 0 {
-            return def.viewmodel;
+            return def.world_index();
         }
+        // An alt mode's own variant first (`gl_sa58_mp`, when its model is not its gun's), then
+        // its gun's base weapon.
         def.id
             .split('~')
             .filter_map(|part| self.by_id.get(attachments::split_id(part).0))
             .find(|b| b.world_meshes > 0)
-            .map_or(def.viewmodel, |b| b.viewmodel)
+            .map_or(def.viewmodel, |b| b.world_index())
+    }
+
+    /// One past the highest third-person index that carries W3D meshes (the bridge's scan).
+    pub fn world_index_end(&self) -> i32 {
+        self.order.iter().filter(|d| d.world_meshes > 0).map(|d| d.world_index() + 1).max().unwrap_or(0)
     }
 }
 
@@ -898,6 +905,7 @@ End
 
 Weapon an94_mp
   DisplayName = AN-94
+  HudIcon = menu_mp_weapons_an94
   Class = rifle
   CacSlot = primary
   Fire = auto
@@ -931,6 +939,7 @@ End
 
 Weapon fnp45_mp
   DisplayName = Tac-45
+  HudIcon = menu_mp_weapons_fnp45
   Class = pistol
   WeapClass = pistol
   Attributes = 30 75 30 65
@@ -963,6 +972,7 @@ Weapon frag_grenade_mp
   DisplayName = Grenade
   Inventory = offhand
   WeapType = grenade
+  HudIcon = hud_grenadeicon
   Class = lethal
   CacSlot = primarygrenade
   Fire = semi
@@ -986,6 +996,7 @@ Weapon claymore_mp
   DisplayName = Claymore
   Inventory = item
   WeapType = grenade
+  HudIcon = hud_icon_claymore_256
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -1010,6 +1021,7 @@ Weapon satchel_charge_mp
   DisplayName = C4
   Inventory = item
   WeapType = grenade
+  HudIcon = hud_icon_satchelcharge_256
   Class = equipment
   CacSlot = primarygrenade
   Fire = semi
@@ -1032,6 +1044,7 @@ Weapon concussion_grenade_mp
   DisplayName = Concussion
   Inventory = offhand
   WeapType = grenade
+  HudIcon = hud_us_stungrenade
   Class = tactical
   CacSlot = specialgrenade
   Fire = semi
@@ -1056,6 +1069,7 @@ Weapon trophy_system_mp
   DisplayName = Trophy System
   Inventory = item
   WeapType = grenade
+  HudIcon = hud_trophy_system_256
   Class = equipment
   CacSlot = specialgrenade
   Fire = semi
@@ -1073,6 +1087,7 @@ End
 
 Weapon knife_held_mp
   DisplayName = Knife
+  HudIcon = menu_mp_weapons_ballistic_knife
   Class = melee
   Inventory = primary
   WeapType = melee
@@ -1087,6 +1102,7 @@ End
 ; surfaces on the BO2 body and in the deploy animation.
 Weapon riotshield_mp
   DisplayName = Assault Shield
+  HudIcon = menu_mp_weapons_riot_shield
   Class = shield
   CacSlot = primary
   CacGroup = weapon_special
@@ -1120,12 +1136,14 @@ End
 ; of these entries with the real weapon, which the mod's requirements check guarantees exists.
 Weapon tar21_mp
   DisplayName = MTAR
+  HudIcon = menu_mp_weapons_tar21
   Class = rifle
   CacSlot = primary
 End
 
 Weapon mp7_mp
   DisplayName = MP7
+  HudIcon = menu_mp_weapons_mp7
   Class = smg
   CacSlot = primary
   Description = Fully automatic personal defense weapon.  Versatile and strong overall.
@@ -1134,18 +1152,21 @@ End
 
 Weapon mk48_mp
   DisplayName = MK48
+  HudIcon = menu_mp_weapons_mk48
   Class = lmg
   CacSlot = primary
 End
 
 Weapon 870mcs_mp
   DisplayName = 870 MCS
+  HudIcon = menu_mp_weapons_870mcs
   Class = shotgun
   CacSlot = primary
 End
 
 Weapon svu_mp
   DisplayName = SVU
+  HudIcon = menu_mp_weapons_svu
   Class = sniper
   CacSlot = primary
 End
@@ -1153,12 +1174,14 @@ End
 Weapon smaw_mp
   DisplayName = SMAW
   WeapType = projectile
+  HudIcon = menu_mp_weapons_smaw
   Class = launcher
   CacSlot = secondary
 End
 
 Weapon fiveseven_mp
   DisplayName = Five-Seven
+  HudIcon = menu_mp_weapons_five_seven
   Class = pistol
   CacSlot = secondary
   Allowed = dw=dw
@@ -1168,6 +1191,7 @@ End
 Weapon knife_ballistic_mp
   DisplayName = Ballistic Knife
   WeapType = projectile
+  HudIcon = menu_mp_weapons_ballistic_knife
   Class = pistol
   CacSlot = secondary
   CacGroup = weapon_special
@@ -1176,6 +1200,7 @@ End
 ; What a class with the Five-seven and Dual Wield gets: no CaC item of its own.
 Weapon fiveseven_dw_mp
   DisplayName = Five-Seven Dual Wield
+  HudIcon = menu_mp_weapons_five_seven
   Class = pistol
   DualWieldWeapon = fiveseven_lh_mp
 End
@@ -1194,6 +1219,19 @@ mod tests {
         assert_eq!(world("mp7_mp"), 5, "a base weapon shows its own");
         assert_eq!(world("mp7_mp+reflex"), 5, "a combination shows its base weapon's");
         assert_eq!(world("gl_an94_mp~an94_mp+gl"), 1, "an alt mode falls back through its parent");
+    }
+
+    /// An alt mode BO2 draws with its own `worldModel` (the SMR's launcher) has its own third-person
+    /// index: the W3D body shows its variant's meshes, the native pass its own `.zbw`.
+    #[test]
+    fn an_alt_mode_with_its_own_model_shows_its_own_world_weapon() {
+        let def = |id: &str, vm: i32, meshes: u8, world: i32| WeaponDef { id: id.into(), viewmodel: vm, world_meshes: meshes, world_weapon: world, ..WeaponDef::default() };
+        let c = Catalog::new(vec![def("sa58_mp", 3, 4, -1), def("sa58_mp+gl", 950, 0, -1), def("gl_sa58_mp~sa58_mp+gl", 950, 0, 20001), def("gl_sa58_mp", -1, 3, 20002)]);
+        let world = |id: &str| c.world_viewmodel(c.get(id).unwrap());
+        assert_eq!(world("sa58_mp+gl"), 3, "the main mode shows its gun");
+        assert_eq!(world("gl_sa58_mp~sa58_mp+gl"), 20002, "the launcher mode shows its variant's own meshes");
+        assert_eq!(c.get("gl_sa58_mp~sa58_mp+gl").unwrap().world_index(), 20001, "and its own native weapon");
+        assert_eq!(c.world_index_end(), 20003);
     }
 
     #[test]

@@ -2164,7 +2164,7 @@ fn throw_smoke(sim: &mut Sim, host: &FakeHost) {
         id: "willy_pete_mp".into(),
         effect: crate::weapons::Effect::Smoke,
         fuse_time: 0.5,
-        explosion_fx: "SMOKE_SCREEN".into(),
+        screen_fx: "SMOKE_SCREEN".into(),
         ..Default::default()
     }));
     let p = Projectile::launch(smoke, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0), 0.5, host, 0.0);

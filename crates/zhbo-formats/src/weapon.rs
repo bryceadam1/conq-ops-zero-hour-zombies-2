@@ -841,6 +841,12 @@ pub struct Weapon {
     pub fire_sound: Option<String>,
     pub fire_sound_player: Option<String>,
     pub fire_last_sound_player: Option<String>,
+    /// What others hear for the round that empties the magazine (`fireLastSound`, the Strela's),
+    /// in place of `fireSound` (`FUN_005320e0`).
+    pub fire_last_sound: Option<String>,
+    /// What others hear as a fire string opens (`fireStartSound`, a burst's whole recording),
+    /// beside the shot's `fireSound`. Never attachment-overridden (`FUN_005320e0` reads the def).
+    pub fire_start_sound: Option<String>,
     pub empty_fire_sound_player: Option<String>,
     pub projectile_explosion_sound: Option<String>,
     pub pullback_sound_player: Option<String>,
@@ -1426,6 +1432,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.fire_sound = opt_str(z, d + WD::fireSound);
     w.fire_sound_player = opt_str(z, d + WD::fireSoundPlayer);
     w.fire_last_sound_player = opt_str(z, d + WD::fireLastSoundPlayer);
+    w.fire_last_sound = opt_str(z, d + WD::fireLastSound);
+    w.fire_start_sound = opt_str(z, d + WD::fireStartSound);
     w.empty_fire_sound_player = opt_str(z, d + WD::emptyFireSoundPlayer);
     w.projectile_explosion_sound = opt_str(z, d + WD::projExplosionSound);
     w.pullback_sound_player = opt_str(z, d + WD::pullbackSoundPlayer);

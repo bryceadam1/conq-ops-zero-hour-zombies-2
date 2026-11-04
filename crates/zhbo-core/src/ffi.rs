@@ -843,7 +843,7 @@ pub struct ClassButton {
     pub slot: i32,
     /// The button's label, UTF-8 NUL-terminated (also served to the engine by `strings.rs`).
     pub name: [u8; 48],
-    /// The primary weapon's converted HUD icon (`ZHBO_BO2_Icon_<id>`).
+    /// The primary weapon's converted HUD icon (its def's `hudIcon` sprite, `ZHBO_Mat_<material>`).
     pub primary: [u8; 48],
     /// The secondary weapon's icon.
     pub secondary: [u8; 48],
@@ -1042,14 +1042,19 @@ pub(crate) fn third_person_camo(general: u32, vm: i32) -> Option<String> {
     with_state(|s| s.sim.third_person_camo(general, vm)).flatten()
 }
 
-/// Third-person meshes of viewmodel `vm`'s weapon on the soldier model, or of the tablet for -2.
+/// Third-person meshes of third-person index `vm`'s weapon on the soldier model
+/// (`WeaponDef::world_index`), of the tablet for -2, and for -3 one past the highest index that
+/// carries any (an alt mode's own weapon sits past the converted viewmodels).
 #[no_mangle]
 pub extern "C" fn zhbo_world_mesh_count(vm: i32) -> i32 {
     let c = crate::weapons::catalog();
     if vm == -2 {
         return c.tablet_meshes as i32;
     }
-    c.all().iter().filter(|d| d.viewmodel == vm).map(|d| d.world_meshes as i32).max().unwrap_or(0)
+    if vm == -3 {
+        return c.world_index_end();
+    }
+    c.all().iter().filter(|d| d.world_index() == vm).map(|d| d.world_meshes as i32).max().unwrap_or(0)
 }
 
 /// The viewmodels of the General's kit, so the host can load them before they are first shown.
@@ -1553,7 +1558,7 @@ mod tests {
         crate::profile::reset();
         let c = crate::classes::CustomClass {
             name: "My Sniper".into(),
-            primary: "dsr50_mp+acog".into(),
+            primary: "svu_mp+acog".into(),
             ..crate::classes::CustomClass::default()
         };
         crate::profile::save(c.clone());
@@ -1564,13 +1569,13 @@ mod tests {
         assert_eq!(out[0].present, 1);
         assert_eq!((out[0].page, out[0].slot), (1, 1));
         assert!(!ctext(&out[0].name).is_empty(), "a preset is labelled");
-        assert!(ctext(&out[0].primary).starts_with("ZHBO_BO2_Icon_"));
+        assert!(ctext(&out[0].primary).starts_with("ZHBO_Mat_menu_mp_weapons_"), "the preset primary's `hudIcon`");
         assert!(out[0].payload_len == 0, "a preset picks by index");
         // The one custom class sits on page one's first custom slot, with its wire words.
         assert_eq!(out[crate::classicons::preset_rows()].present, 1);
         assert_eq!((out[crate::classicons::preset_rows()].page, out[crate::classicons::preset_rows()].slot), (1, 6));
         assert_eq!(ctext(&out[crate::classicons::preset_rows()].name), "My Sniper");
-        assert_eq!(ctext(&out[crate::classicons::preset_rows()].primary), "ZHBO_BO2_Icon_dsr50_mp");
+        assert_eq!(ctext(&out[crate::classicons::preset_rows()].primary), "ZHBO_Mat_menu_mp_weapons_svu");
         let len = out[crate::classicons::preset_rows()].payload_len as usize;
         assert_eq!(crate::classes::CustomClass::from_wire_words(&out[crate::classicons::preset_rows()].payload[..len]), Some(c));
         // The empty custom slots carry no class.

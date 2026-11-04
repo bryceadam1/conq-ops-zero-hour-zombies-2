@@ -1121,7 +1121,7 @@ impl Sim {
     }
 
     /// What each General's native third person needs this frame (Track R7): the weapon in hand
-    /// (`WeaponDef::viewmodel`, -1 for none), the stance and the body clip the sim's movement
+    /// (`WeaponDef::world_index`, -1 for none), the stance and the body clip the sim's movement
     /// state picks, the clip's clock and the pistol stance. `moving` is the engine's answer for
     /// the General the bridge asks about while he is under RTS control (the sim does not step his
     /// body then), ignored while first person. `viewer` is the General this machine is looking
@@ -1144,7 +1144,7 @@ impl Sim {
                 let tablet = matches!(p.mode, Mode::FieldComputer { .. }) || (matches!(p.mode, Mode::Fps) && a.raise_left > a.raise_total + 1e-4);
                 NativePose {
                     general: p.general,
-                    weapon: if tablet { -1 } else { a.current().def.viewmodel }, // content: presentation (native_poses: the third-person draw)
+                    weapon: if tablet { -1 } else { a.current().def.world_index() }, // content: presentation (native_poses: the third-person draw)
                     stance: p.stance_index(),
                     state: p.body_state(engine_moving, run_speed),
                     time,

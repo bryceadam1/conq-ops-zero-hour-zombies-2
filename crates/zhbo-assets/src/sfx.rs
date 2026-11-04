@@ -504,9 +504,11 @@ pub fn files(
         let range = if matches!(kind, Kind::Player | Kind::PlayerLoop) { None } else { falloff(&mixer, &chain) };
         pending.push(Pending { event: event.to_string(), kind, limit, range, variants });
         // A converted gun's third-person shot also ships layer by layer for the client to level by
-        // BO2's distance curves (`zhbo_core::soundlayers`), keyed by the gun's FX weapon.
-        if let Some(key) = event.strip_prefix(zhbo_core::names::NPC_FIRE_PREFIX).filter(|_| kind == Kind::Remote) {
-            let fx = zhbo_core::names::fx_weapon(key);
+        // BO2's distance curves (`zhbo_core::soundlayers`), keyed by the gun's FX weapon; another
+        // remote cue (a burst's opening, the last round: `WeaponDef::npc_fire_start_sound`) by its
+        // own event.
+        if kind == Kind::Remote {
+            let fx = event.strip_prefix(zhbo_core::names::NPC_FIRE_PREFIX).map_or_else(|| event.to_string(), zhbo_core::names::fx_weapon);
             let reach = zhbo_core::units::inches(mixer.audible_range(&chain).max(1.0));
             for (k, a) in aliases.iter().enumerate() {
                 let Some(first) = a.variants.first() else { continue };

@@ -787,13 +787,15 @@ pub(crate) fn world_weapons(
             })
             .clone()
     };
-    for (vm, id) in converted.iter().enumerate() {
-        let (base, shorts) = zhbo_core::attachments::split_id(id);
-        let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
+    let jobs = world_jobs(bo2, defs, converted, base_count);
+    for job in &jobs {
+        let (vm, id) = (job.index, job.id.as_str());
+        let (_, shorts) = zhbo_core::attachments::split_id(job.parts_id.as_str());
+        let (w, model_w) = (job.parts, job.model);
         // The Assault Shield is carried as the script's carry model on the left hand
         // (`_riotshield.gsc` `refreshshieldattachment`), not its pickup world model.
         let shield = crate::weapons::is_shield(w);
-        let world_name = if shield { Some(crate::shield::CARRY_MODEL) } else { w.world_model.as_deref() };
+        let world_name = if shield { Some(crate::shield::CARRY_MODEL) } else { model_w.world_model.as_deref() };
         // The body bone the weapon hangs on: the shield's own (`tag_weapon_left`), else the right
         // hand. The W3D meshes and the native manifest's base part name the same one.
         let body_tag = shield.then_some(crate::shield::HELD_TAG);
@@ -801,7 +803,13 @@ pub(crate) fn world_weapons(
         let Some((world, tex, world_path)) = world_name.and_then(|m| load(m, out, looks)) else { continue };
         let c = combo(w, atts, &shorts);
         let prefix = format!("W{vm:02}");
-        let write_w3d = vm < base_count;
+        let write_w3d = job.w3d;
+        // An alt mode drawn with its own model: the third person's index is its own.
+        if vm >= converted.len() {
+            for d in defs.iter_mut().filter(|d| d.id == id) {
+                d.world_weapon = vm as i32;
+            }
+        }
         if let Some(b) = world.bones.iter().find(|b| b.name == "tag_flash").filter(|_| write_w3d) {
             flashes.push((vm, character::scaled_xf((b.rotation, b.position))));
         }
@@ -868,12 +876,60 @@ pub(crate) fn world_weapons(
         finish(&mut mine, looks);
         number(&mut mine, |k| crate::generals::world_mesh(vm as i32, k));
         let count = mine.len().min(99) as u8;
-        for d in defs.iter_mut().filter(|d| &d.id == id || d.alt == *id && d.id.contains('~')) {
+        for d in defs.iter_mut().filter(|d| d.id == id || d.alt == id && d.id.contains('~')) {
             d.world_meshes = count;
         }
         meshes.extend(mine);
     }
     (meshes, flashes)
+}
+
+/// One third-person weapon to write: its world-weapon index (`zhbo_native::world_weapon_path`,
+/// `W<index><k>`), the id it is for, the BO2 weapon whose `worldModel` is drawn, and the
+/// combination whose parts ride it.
+struct WorldJob<'a> {
+    index: usize,
+    id: String,
+    model: &'a zhbo_formats::weapon::Weapon,
+    parts: &'a zhbo_formats::weapon::Weapon,
+    parts_id: String,
+    w3d: bool,
+}
+
+/// The third-person weapons to write: every converted id at its viewmodel index (W3D meshes for the
+/// base set), then each alt mode whose BO2 `worldModel` is not its gun's at an index of its own past
+/// them. BO2 draws the current weapon index's `worldModel` with no altmode→parent swap
+/// (`FUN_0052a4c0`), so the SMR's launcher mode shows `t6_wpn_ar_sa58_view`; the parts are its gun's
+/// combination's, as the expected side reads them. An alt mode whose model is its gun's shares its
+/// gun's weapon. The alt variant itself (`gl_sa58_mp`) gets W3D meshes of its own, which the W3D body
+/// shows for every combination's alt mode (`Catalog::world_viewmodel`).
+fn world_jobs<'a>(bo2: &'a [zhbo_formats::weapon::Weapon], defs: &[zhbo_core::weapons::WeaponDef], converted: &[String], base_count: usize) -> Vec<WorldJob<'a>> {
+    let find = |name: &str| bo2.iter().find(|w| w.name == name);
+    let mut jobs: Vec<WorldJob<'a>> = converted
+        .iter()
+        .enumerate()
+        .filter_map(|(vm, id)| {
+            let w = find(zhbo_core::attachments::split_id(id).0)?;
+            Some(WorldJob { index: vm, id: id.clone(), model: w, parts: w, parts_id: id.clone(), w3d: vm < base_count })
+        })
+        .collect();
+    let mut next = converted.len();
+    let mut variants: Vec<&str> = Vec::new();
+    for d in defs {
+        let Some((alt, parent)) = d.id.split_once('~') else { continue };
+        let (Some(wa), Some(w)) = (find(alt), find(zhbo_core::attachments::split_id(parent).0)) else { continue };
+        if wa.world_model.is_none() || wa.world_model == w.world_model || crate::weapons::is_shield(w) || !converted.iter().any(|c| c == parent) {
+            continue;
+        }
+        jobs.push(WorldJob { index: next, id: d.id.clone(), model: wa, parts: w, parts_id: parent.to_string(), w3d: false });
+        next += 1;
+        if !variants.contains(&alt) && defs.iter().any(|v| v.id == alt) {
+            variants.push(alt);
+            jobs.push(WorldJob { index: next, id: alt.to_string(), model: wa, parts: wa, parts_id: alt.to_string(), w3d: true });
+            next += 1;
+        }
+    }
+    jobs
 }
 
 /// Each faction's arms holding the scorestreak tablet, with its lit screen.
@@ -1024,6 +1080,36 @@ pub(crate) fn tablet_world(pool: &[&Zone], paks: &Paks, out: &mut BTreeMap<Strin
 pub(crate) fn number(meshes: &mut [w3d::SkinMesh], name: impl Fn(usize) -> String) {
     for (k, m) in meshes.iter_mut().enumerate() {
         m.name = name(k);
+    }
+}
+
+#[cfg(test)]
+mod world_job_tests {
+    use super::*;
+    use zhbo_core::weapons::WeaponDef;
+    use zhbo_formats::weapon::Weapon;
+
+    /// Every alt mode whose BO2 `worldModel` is not its gun's gets a third-person weapon of its own
+    /// past the converted ones (and its variant W3D meshes once); one whose model is its gun's
+    /// shares its gun's.
+    #[test]
+    fn an_alt_mode_with_its_own_world_model_gets_its_own_weapon() {
+        let w = |name: &str, model: &str| Weapon { name: name.into(), world_model: Some(model.into()), ..Default::default() };
+        let bo2 = [w("sa58_mp", "sa58_world"), w("gl_sa58_mp", "sa58_view"), w("an94_mp", "an94_world"), w("gl_an94_mp", "an94_world")];
+        let def = |id: &str| WeaponDef { id: id.into(), ..Default::default() };
+        let defs = [def("sa58_mp+gl"), def("gl_sa58_mp~sa58_mp+gl"), def("sa58_mp+gl+reflex"), def("gl_sa58_mp~sa58_mp+gl+reflex"), def("gl_sa58_mp"), def("an94_mp+gl"), def("gl_an94_mp~an94_mp+gl")];
+        let converted: Vec<String> = ["sa58_mp", "an94_mp", "sa58_mp+gl", "sa58_mp+gl+reflex", "an94_mp+gl"].map(String::from).to_vec();
+        let jobs = world_jobs(&bo2, &defs, &converted, 2);
+        let extra: Vec<(usize, &str, &str, &str, bool)> = jobs.iter().skip(converted.len()).map(|j| (j.index, j.id.as_str(), j.model.name.as_str(), j.parts_id.as_str(), j.w3d)).collect();
+        assert_eq!(
+            extra,
+            [
+                (5, "gl_sa58_mp~sa58_mp+gl", "gl_sa58_mp", "sa58_mp+gl", false),
+                (6, "gl_sa58_mp", "gl_sa58_mp", "gl_sa58_mp", true),
+                (7, "gl_sa58_mp~sa58_mp+gl+reflex", "gl_sa58_mp", "sa58_mp+gl+reflex", false),
+            ]
+        );
+        assert!(jobs.iter().take(converted.len()).enumerate().all(|(i, j)| j.index == i && j.w3d == (i < 2)));
     }
 }
 

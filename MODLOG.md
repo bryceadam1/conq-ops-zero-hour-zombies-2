@@ -12279,3 +12279,188 @@ In game after both fixes (`~/.opencode/plan/bug-sweep-4/`): `--equipment` 8/8 (T
 rocket, Black Hat hack, the drone changed sides), `--rts-dry` 5/5, `--showcase` captured, default
 16/16, `--splash` 4/4, `--rts` 16/16, mp short 25/25; the real-install roster lockstep gate, content
 variants and props scale pass.
+
+## Conformance gaps: the enumerator test, eight of the twelve gap clusters (2026-11-03, branch `v1/conformance-gaps`)
+
+**The enumerator test (red on main).** `conformance_the_enumerator_matches_the_expected_rows` had
+every Peacekeeper row on BO2's side only. The enumerator (`all_legal_combos`, `add_variants`) was
+right; the test fed it `common_mp`'s weapons alone, while the converter, both conformance sides and
+the archive resolve BO2's pool (`patch_mp` > `common_patch_mp` > `common_mp`, `MpPool::weapons`).
+Only `common_patch_mp` defines the Peacekeeper, `sf_peacekeeper`, `grip_smg` and the `dualclip_*add`
+attachments. Eight more install tests (compatibility, attribute bars, legal-combo coverage, the
+XPR's anti-quickscope, camo assets, target finder, FMJ's specialties, the native pose, penetration)
+and the `weapons`/`attachments`/`fx` dump commands parsed one zone too, silently skipping the
+patch's weapons or checking launch values. All read the pool now; the unit test
+`paks::tests::weapon_definitions_are_read_through_the_pool` fails on any single-zone
+`weapon::all`/`all_in`/`attachments` parse not marked `zone-local:` with its reason.
+
+**Sounds (4 clusters, 11 cells → 0).**
+* *Expected-side transcription, cited.* `FUN_008ebe80` (the override gate) has five callers and
+  they pass only indices 0, 1, 6, 8 (`FUN_008ebf70`/`ebfa0`/`ebfd0`/`ec020`/`ec070`). The shot's
+  sound event `FUN_005320e0` reads `fireLastSound`/`fireLastSoundPlayer` (+0xe0/+0xe4) and, for
+  another player's shot, `fireStartSound` (+0xc8) straight off the def; only the shooter's opening
+  goes through the gate (`FUN_008ec070(w, 1)`). The gated third-person opening is the looping-fire
+  path's (`FUN_0051aec0`/`FUN_00516180`), which returns unless the fire type is full auto or
+  minigun. The expected side gated all twelve; `resolve::heard_sound` now follows the engine. The
+  silenced B23R's third-person opening is the def's (none), not the silencer unique's `null_sound`
+  (7 cells).
+* *Mod.* Others now hear a fire string's opening and the magazine's last round as BO2 plays them:
+  `WeaponDef::npc_fire_start_sound`/`npc_fire_last_sound` (table `FireStartSoundNpc`,
+  `FireLastSoundNpc`; the B23R Dual Wield's `_fire_npc_burst`, the FHJ's `wpn_strela_fire_npc`),
+  played by the client's remote round (`sounds::remote_round`: the last-round sound in place of the
+  FX chain, the opening beside it, counted per shooter per step) with BO2's distance layers
+  (`Heard::Remote` events ship layer rows keyed by their own event; `Cues::third_person_cue`).
+* *Black Hat.* It was ruled "never fires". `_hacker_tool.gsc:263` notifies `hacker_tool_fired`
+  from script once the lock holds, and the offhand's own fire spends the charge (`:210-231` refunds
+  it only when no hack landed). The mod's tool leaves the hand as the hack lands
+  (`Arsenal::hack_done`), so `Hacked` now plays its `fireSoundPlayer` for the hacker and its
+  `fireSound` at him for everyone else.
+
+**Names (5 → 0).** The converter mapped three keys by hand (`manifest::display_name_key`) and
+upper-cased the id when a key had no text. BO2 shows a reference its string tables lack as the
+reference (`WEAPON_CONCUSSION_GRENADE`, `BOUNCING_BETTY`: no english zone holds either; checked
+all 64) and `knife_mp` names none. `display_name` is now that rule; the menus already name items by
+their statstable name (`cac_name`), and no surface shows an offhand's or `knife_mp`'s HUD name.
+
+**hud_icon (1,871 → 0).** Every icon surface drew `ZHBO_BO2_Icon_<base id>`, a name the def did
+not carry, so an alt mode's icon did not exist. The def now carries BO2's `hudIcon`
+(`WeaponDef::hud_icon`, table `HudIcon`) and every surface draws its material's sprite
+(`hud_icon_image`, `ZHBO_Mat_<material>`): the class buttons, the RTS kit bar, the editor's rows,
+the offhand counters. The converter packs one sprite per material, so the `sf_`/`dualoptic_` alt
+modes name their gun's and nothing new ships; the `gl_` alts name none, as in BO2. The stand-in
+table names its weapons' icons; `the_built_in_hud_icons_are_the_installs` pins them and the alt
+modes to the install.
+
+**Smoke (1 → 0).** The mod carried the smoke grenade's cloud as its `ExplosionFx`, but
+`willy_pete_mp` names no `projExplosionEffect`: the cloud is the script's (`_smokegrenade.gsc`,
+`smoke_center_mp`'s effect). It is `WeaponDef::screen_fx` (table `ScreenFx`) now, played by
+`projectiles::blast_fx` after the impact cell and the def's own effect, only where the screen rises.
+
+**Riot shield world model (1, expected side, cited).** `FUN_0052a4c0` (the third-person weapon's
+models) adds `worldModel` and its parts only when the weapType is not riotshield; the shield on a
+player is what `refreshshieldattachment` attaches (`FUN_00967450`, the literal
+`t6_wpn_shield_carry_world` on `tag_weapon_left` while it is up, `_stow_world` on the back
+otherwise). `t6_wpn_shield_pickup_world` is only the dropped pickup's. The expected side reports
+the carried model for weapType 8; the mod already drew it.
+
+**Left in the report, with the reason.**
+* *`world_model` `gl_sa58` (67).* `FUN_0052a4c0` draws the current weapon index's `worldModel`
+  with no altmode→parent swap (the viewmodel's `FUN_00535540` has one), so BO2 shows the SMR's
+  launcher mode as `t6_wpn_ar_sa58_view` in third person. The mod's third-person weapon is keyed by
+  viewmodel (`W{vm}{k}`, `zhbo_native::world_weapon_path`) and an alt mode shares its gun's, so
+  matching needs a per-mode world-weapon key in the native world-weapon files and the host's
+  W-mesh names. Real but cosmetic (the same gun at view LOD); not done here.
+* *`anim_ads_up`/`anim_ads_down` (10 + 10).* BO2 registers the idle in an offhand's empty ADS slots
+  (`FUN_0052d3e0`) but never aims an offhand; the mod's ADS layer (`Loaded::ads_clip`) has no idle
+  fallback by design, and only a gun may aim (`wants_ads`). Reporting or loading the idle would
+  change nothing a player sees.
+* *`world_flash_effect` `knife_held_mp` (1).* The def names `fx_pistol_flash_base` (a copied
+  default), but the held knife is a melee weapType whose attack is a stab in BO2 and in the mod: the
+  mod gives a melee weapon no FX weapon, so nothing carries a world flash. Not proven in t6mp that
+  a melee weapType never raises a fire event (`FUN_008da950`'s callers only choose the melee
+  weapon); left as a data-only cell.
+* *`projectile_explosion_effect` sensor, Trophy (2).* Both are weapon objects whose watcher's
+  `detonate` is script (`_sensor_grenade.gsc:23` → `sensorgrenadedestroyed`, `:113-118`;
+  `_trophy_system.gsc:37` → `trophysystemdetonate`, `:251-266`): `playfx` and `delete`, never the
+  engine's `detonate()`, so the def field never plays.
+* *cac, 4 BO2-only MTX camos* (`camo_dayofdead`, `_mtp`, `_pap`, `_snake`). New evidence: BO2 lists
+  a store camo only when `CoD.CACUtility.ShouldDisplayWeaponOptionMTX` passes
+  (`cacutility.lua:1130-1146`, `caccamomenu.lua:1287-1306`), i.e. `Engine.SkipMTXItem` is false.
+  That is t6mp `FUN_0093b170` → `FUN_006c9310`: skipped while `tu8_mtx_enabled` (default 0; "1 -
+  usable if purchased, 2 - completely enabled") is below 1, and at 1 unless purchased
+  (`FUN_006c9240`'s owned bits). A Steam MTX pack ships its art only to owners, and these four have
+  none on this install, so BO2 would not list them for this player either; the expected side does
+  not model `SkipMTXItem` because ownership has no offline source it could read independently.
+
+**Found elsewhere (not changed).** BO2's equipment destruction effects are per item in script, and
+the mod plays one: a destroyed Trophy System plays `fx_exp_equipment_lg` (`_trophy_system.gsc:256`,
+the mod `BREAK_FX`), a Trophy kill `fx_trophy_radius_detonation` (`:231`, the mod
+`fx_exp_equipment_lg`), a destroyed Betty `fx_betty_destroyed` (`_bouncingbetty.gsc:119`), and a
+shot claymore detonates through `weapondetonate` (`_weaponobjects.gsc:347-393`) where the mod only
+breaks it.
+
+**Bumps (integrator).** The archive's `hud::VERSION` (the weapon table gains `FireStartSoundNpc`,
+`FireLastSoundNpc`, `ScreenFx`, `HudIcon`; `ExplosionFx` empties on the smoke grenade; the HUD
+icons are renamed by material; the offhands' and `knife_mp`'s `DisplayName`s change). No C ABI
+change.
+
+**Measured** (conformance CLI into ~/.opencode/plan/conformance-gaps/conf vs integration8): weapons
+1,979 → 90 cells, 11 → 5 clusters (`hud_icon` 1,871, the four sound columns 11, `display_name` 5,
+riot shield `world_model` 1, smoke `projectile_explosion_effect` 1 → 0), no new or changed cell; the
+expected side moved only `fire_start_sound` (7) and the shield's `world_model` (1). cac files
+byte-identical (0 cells, 4 BO2-only rows). Gap clusters 12 → 6. Real install: zhbo-assets 73
+passed, the conformance gate red by design (the clusters above); the enumerator test, the roster
+lockstep gate and the archive build pass.
+
+**Gotcha.** The HUD archive named a weapon's icon by its id, so two surfaces that wanted one
+material under two names packed it twice. Named by material, the FHJ's `menu_mp_weapons_fhj` is
+both its HUD icon and its action-slot icon: the wanted sprites now merge by name at the largest
+size (`hud::merge_wanted`) instead of packing a duplicate MappedImage.
+
+
+**In game** (`cargo xtask build --dist target/zhbo-dist`, a fresh `ConquerOps_BO2.big`): default
+16/16, `--rts` 16/16, `--smoke` 7/7, `--mp` 25/25 (state hash agreed, no CRC mismatch). The
+offhand counters (frag, concussion) and the RTS kit bar draw the material-named icons.
+
+### Conformance gaps, round 2: alt-mode world models, the ADS registration, the held knife's flash (same branch)
+
+* **An alt mode draws its own `worldModel`.** `FUN_0052a4c0` draws the current weapon index's
+  `worldModel` with no altmode→parent swap, so BO2 shows the SMR's launcher mode as
+  `t6_wpn_ar_sa58_view` (the only alt whose model is not its gun's; the sweep is
+  `viewmodels::world_jobs` over every `<alt>~<combo>` def). Such an alt gets a third-person weapon
+  of its own past the converted viewmodels: `WeaponDef::world_weapon` (table `WorldWeapon`,
+  `world_index()`), its own `.zbw` with its gun's combination's parts, and the alt variant
+  (`gl_sa58_mp`) its own W3D meshes `W<index><k>`, which `Catalog::world_viewmodel` shows for every
+  combination's alt mode. The native poses send `world_index()`; the class camo still dresses it
+  (`nativebody::camo_for`). The bridge scans the W3D indices up to `zhbo_world_mesh_count(-3)` (one
+  past the highest index with meshes; at least 160, so an older core keeps the old range; CONTRACT
+  "Pending for the next bump").
+  **Residual, same 67 rows:** every part BO2 mounts on the launcher mode names `tag_weapon`, which
+  `t6_wpn_ar_sa58_view` (root `j_gun`) does not have. The mod hangs them at the model's origin (the
+  native composer refuses a missing tag, and BO2's DObj attach to a missing bone is not pinned
+  down), so `world_part_tags` reports `(origin)` against BO2's authored `tag_weapon`.
+* **The offhands' ADS slots stay empty (tried, reverted, with the evidence).** BO2's registration
+  (`FUN_0052d3e0`, G14 §5) plays slot 1 for any empty slot 1–0x57, and the runtime applies it
+  through `nativevm::clip_for` everywhere but the ADS layer. Writing the idle into the offhands'
+  ADS up/down slots is that rule, but the mod's ADS layer is sampled over every pose, at the hip
+  too (`Loaded::ads_clip` → `pose`'s `sample_over` at ads 0), and an idle keys every bone: the
+  real-install viewmodel sweep then failed `every_viewmodel_is_held_in_front_of_the_eye`
+  (`willy_pete_mp`'s throw, slot 0x4 at ads 0: 324 gun vertices 630″ out) and
+  `equipment_subbone_tracks_are_bo2s_authored_parking`. BO2's own ADS channel never plays for an
+  offhand; the mod's layer cannot carry the registered idle without replacing the throw, so the
+  20 cells stay as the honest floor.
+* **The held knife never flashes (expected side, cited).** The fire step `FUN_008e1b80` returns
+  before raising `EV_FIRE_WEAPON` (0x20-0x23, `FUN_008bd750`) unless the weapType is not melee
+  (`*(def + 0x1c) != 7`), so a melee weapon's `viewFlashEffect`/`worldFlashEffect` (the held
+  knife's copied `fx_pistol_flash_base`) never play. The expected side reports no flash for a melee
+  weapType; the converter no longer converts one for it.
+* **Sensor and Trophy `projectile_explosion_effect` stay.** The column is a faithful dump of the
+  def's `projExplosionEffect` for every weapon; the scripts never `detonate()` these two
+  (`_sensor_grenade.gsc:23`, `:113-118`; `_trophy_system.gsc:37`, `:251-266`), so the field never
+  plays, and the mod does not carry an effect it never plays.
+
+**Measured, round 2** (conformance CLI vs integration8): weapons 1,979 → 89 cells, 11 → 4 clusters;
+gap clusters 12 → 5 (cac unchanged). Closed this round: `world_model` `gl_sa58` (67) and
+`world_flash_effect` `knife_held_mp` (1). New: `world_part_tags` on the same 67 launcher-mode rows
+(see the residual above). Left: the offhands' ADS slots (20), Sensor/Trophy (2), the 4 cac MTX
+camos. The real-install viewmodel sweep (`every_viewmodel_is_held_in_front_of_the_eye`,
+`equipment_subbone_tracks_are_bo2s_authored_parking`) passes again after the ADS revert.
+
+### Conformance gaps, round 3: the launcher mode's part tags (same branch)
+
+The 67 `world_part_tags` rows are the expected side's. BO2 links a DObj's models in
+`FUN_00783290` (reached from `FUN_006c9980` → `FUN_00784130` → `FUN_00784090`): a part's tag is looked
+up in the model whose index the entry names (`FUN_0052a4c0` passes the world model's to
+`FUN_008ace30`) and the models linked under it (`FUN_00791c20`); when none has it the engine prints
+"WARNING: Part '%s' not found in model '%s' or any of its descendants" and the part keeps parent
+0xff, no bone. `t6_wpn_ar_sa58_view` (the launcher mode's model) has no `tag_weapon`, so every part
+hangs from no bone. The expected side now links its parts that way (`Expected::linked_world_parts`,
+`weapons::NO_PARENT_TAG`), which is the mod's `(origin)`. BO2 hangs such a part in the DObj's root
+frame; the mod hangs it from the weapon's root, so the two place it differently, but neither mounts
+it on a bone.
+
+**Measured, round 3** (vs integration8): weapons 1,979 → 22 cells, 11 → 2 clusters (the offhands'
+ADS slots, 20; Sensor/Trophy, 2), no new cell; gap clusters 12 → 4 (with the cac MTX camos). The
+expected side moved `fire_start_sound` 7, `world_part_tags` 67, the knife's two flashes and the
+shield's `world_model`, each with its citation above.
+

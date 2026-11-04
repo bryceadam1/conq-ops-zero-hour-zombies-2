@@ -174,6 +174,7 @@ pub fn attachment_metadata(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<S
 /// a zeroed `,defaultattachment` reference stub, whose 0.0s are not the engine's values. This is
 /// the one loader of it; the table builders take its result.
 pub fn default_attachment(patch: &zhbo_formats::t6zone::Zone) -> Option<bo2::Attachment> {
+    // zone-local: one named asset from the pool's top zone.
     bo2::attachments(patch).ok()?.into_iter().find(|a| a.name == DEFAULT_ATTACHMENT)
 }
 
@@ -884,10 +885,14 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
     // one event per BO2 alias any def names, shared by every def that names it.
     let mut def_events = BTreeSet::new();
     for d in defs.iter() {
-        for (event, world) in d.def_sound_events() {
+        for (event, heard) in d.def_sound_events() {
             if let Some(alias) = zhbo_core::names::def_sound_alias(event) {
                 if def_events.insert(event.to_string()) {
-                    let kind = if world { Kind::World } else { Kind::Player };
+                    let kind = match heard {
+                        zhbo_core::weapons::Heard::Player => Kind::Player,
+                        zhbo_core::weapons::Heard::World => Kind::World,
+                        zhbo_core::weapons::Heard::Remote => Kind::Remote,
+                    };
                     events.push(DynSfx { event: event.to_string(), layers: vec![alias.to_string()], kind, limit: 2 });
                 }
             }
@@ -1200,15 +1205,12 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // The same in rounds: the crossbow's start 6 is 3 loaded + 3 spare, its max 3 spare.
         ((w.start_ammo - w.clip_size).max(0) as u16, w.max_ammo.max(0) as u16)
     };
-    let key = manifest::display_name_key(w.display_name.trim_start_matches("WEAPON_"));
-    let display_name = names
-        .get(key)
-        .or_else(|| names.get(&format!("WEAPON_{key}")))
-        // BO2's text exactly (the Tac-45 Dual Wield's ends in a space; the table quotes such a
-        // value, `table::quote`); a blank one is none.
-        .filter(|s| !s.trim().is_empty())
-        .cloned()
-        .unwrap_or_else(|| w.name.trim_end_matches("_mp").to_uppercase());
+    // The HUD's name as BO2 renders `displayName`: its localized text exactly (the Tac-45 Dual
+    // Wield's ends in a space; the table quotes such a value, `table::quote`), else the reference
+    // itself — what the engine shows for a key its string tables lack (the Concussion's
+    // `WEAPON_CONCUSSION_GRENADE`, the Bouncing Betty's `BOUNCING_BETTY`); `knife_mp` names none.
+    // The menus name an item by its statstable name instead (`cac_name`, `menu_name`).
+    let display_name = names.get(&w.display_name).cloned().unwrap_or_else(|| w.display_name.clone());
     let effect = effect_of(w);
     // What sticks and then waits (a fuse, or landing as equipment): BO2's `stickiness` `all` or
     // `all_orient`. An impact weapon's strike is its damage (the ballistic knife lies where it
@@ -1316,9 +1318,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         view_last_shot_shell_fx: String::new(),
         // The def's own `projExplosionEffect` only (set by the effects pass): BO2 plays the impact
         // table's cell for the `impactType` and surface first (`impacts.txt`), and the sim falls
-        // back to a stand-in only when neither exists. The smoke screen keeps Zero Hour's cloud
-        // until the effects pass names BO2's.
-        explosion_fx: if effect == Effect::Smoke { "FX_OverlordSmoke".to_string() } else { String::new() },
+        // back to a stand-in only when neither exists.
+        explosion_fx: String::new(),
+        // The smoke screen keeps Zero Hour's cloud until the effects pass names BO2's.
+        screen_fx: if effect == Effect::Smoke { "FX_OverlordSmoke".to_string() } else { String::new() },
         projectile_object: String::new(),
         // A gun's shot is its own `ZHBO_BO2_Fire_<id>` mix (`sounds_and_fx`); an offhand's throw is
         // its def-level alias.
@@ -1330,6 +1333,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // What others hear when it is thrown or set down (`fireSound`; `client` plays it at the
         // thrower for every other player).
         npc_fire_sound: if class.is_offhand() { def_sound(&w.fire_sound) } else { String::new() },
+        // A gun's third-person opening and last round (`FUN_005320e0` reads both off the def, so
+        // no attachment changes them): the client plays them at another player's shot.
+        npc_fire_start_sound: if class.is_offhand() { String::new() } else { def_sound(&w.fire_start_sound) },
+        npc_fire_last_sound: if class.is_offhand() { String::new() } else { def_sound(&w.fire_last_sound) },
         silenced_fire_sound_npc: String::new(),
         silenced_fx_weapon: String::new(),
         silenced_view_flash_fx: String::new(),
@@ -1368,6 +1375,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         anims: w.anims.iter().enumerate().take(128).filter(|(_, a)| a.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i)),
         clip_base: 0,
         world_meshes: 0,
+        world_weapon: -1,
         attachments: Vec::new(),
         allowed: w.attachment_variants.iter().map(|(_, id)| (short_name(id), id.clone())).collect(),
         // Filled from the attribute table by `apply_attributes`.
@@ -1489,6 +1497,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // The variant's own action-slot material (`WeaponVariantDef.dpadIcon`): an alt mode carries
         // it (`gl_an94_mp`: `hud_gl_select`), the weapon it toggles from does not.
         dpad_icon: w.dpad_icon.clone().unwrap_or_default(),
+        hud_icon: w.hud_icon.clone().unwrap_or_default(),
         // Set by `generals::files` once the effects are converted (`world_shot_fx`).
         world_shell_fx_weapon: String::new(),
         world_last_shot_shell_fx_weapon: String::new(),
@@ -1972,7 +1981,16 @@ mod tests {
         let w = Weapon { name: "an94_mp".into(), clip_size: 30, start_ammo: 4, max_ammo: 8, ammo_clip_relative: false, fire_time: 0.096, ..Default::default() };
         let d = to_def(&w, &HashMap::new());
         assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 240));
-        assert_eq!(d.display_name, "AN94");
+        assert_eq!(d.display_name, "", "no displayName, no HUD name (BO2's knife_mp)");
+    }
+
+    /// The HUD name is BO2's rendering of `displayName`: its text, else the reference itself.
+    #[test]
+    fn the_display_name_is_the_localized_reference_or_the_reference() {
+        let names: HashMap<String, String> = [("WEAPON_AN94".to_string(), "AN-94".to_string())].into();
+        let named = |dn: &str| to_def(&Weapon { name: "x_mp".into(), display_name: dn.into(), clip_size: 1, ..Default::default() }, &names).display_name;
+        assert_eq!(named("WEAPON_AN94"), "AN-94");
+        assert_eq!(named("BOUNCING_BETTY"), "BOUNCING_BETTY", "a key no string table holds shows as itself");
     }
 
     /// `iMaxAmmo` is the spare cap beside the magazine, never minus one (`FUN_005e08d0`; G16): the
@@ -2018,7 +2036,7 @@ mod tests {
         assert_eq!(d.bounce_sounds.len(), 2, "brick is no mod slot");
         assert_eq!(d.activate_dist, zhbo_core::units::inches(300.0));
         assert_eq!(d.dud_sound, "ZHBO_BO2_Snd_wpn_grenade_bounce_flesh");
-        assert!(d.def_sound_events().any(|(e, world)| e == d.dud_sound && world));
+        assert!(d.def_sound_events().any(|(e, heard)| e == d.dud_sound && heard == zhbo_core::weapons::Heard::World));
         // A combination takes them from its base like every converted asset.
         let mut combo = zhbo_core::weapons::WeaponDef::default();
         combo.take_converted_assets(&d);
@@ -2431,10 +2449,11 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn conformance_the_enumerator_matches_the_expected_rows() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        // The converter's own source: BO2's weapon pool (`MpPool`), whose `common_patch_mp` alone
+        // defines the Peacekeeper and the patch's attachments.
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (all, atts) = mp.weapons().unwrap();
+        let patch = mp.patch;
         let strip = |id: &str| -> String {
             let (base, rest) = id.split_once('+').map(|(b, r)| (b, Some(r))).unwrap_or((id, None));
             let base = base.strip_suffix("_mp").unwrap_or(base);
@@ -2482,9 +2501,9 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_converted_compatibility_matches_bo2s_rule() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (_, atts) = mp.weapons().unwrap();
+        let patch = mp.patch;
         let meta = attachment_metadata(&patch, &HashMap::new());
         let default = default_attachment(&patch).unwrap_or_default();
         let defs: Vec<AttachmentDef> = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, &default, &HashMap::new(), &meta)).collect();
@@ -2518,8 +2537,7 @@ mod tests {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
         let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
         let patch_ui = crate::generals::load_zone(&dir, "patch_ui_mp").unwrap();
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
         let (bars, att_bars) = attributes(&patch_ui);
         // The AN-94's row and the reflex's row keyed by it (`mp/attributestable.csv`).
         assert_eq!(bars["an94_mp"], [60.0, 60.0, 55.0, 50.0]);
@@ -2539,9 +2557,9 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_legal_combo_set_covers_every_base_weapon() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (all, _) = mp.weapons().unwrap();
+        let patch = mp.patch;
         let base = converted_base(&all, &Roster::read(&patch));
         let full = all_legal_combos(&patch, &all);
         // The base set's statstable-backed ids: the enumerator's `items` are the only CaC bases.
@@ -2744,8 +2762,7 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn only_the_xpr_carries_the_anti_quickscope_and_snipers_hold_breath() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
-        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
-        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
         let aqs: Vec<&str> = all.iter().filter(|w| w.anti_quickscope).map(|w| w.name.as_str()).collect();
         assert_eq!(aqs, ["as50_mp"], "bAntiQuickScope");
         let xpr = all.iter().find(|w| w.name == "as50_mp").unwrap();
@@ -2772,8 +2789,7 @@ mod tests {
         let sets: HashSet<String> = bo2::camo_all(&common_patch).unwrap().into_iter().map(|c| c.name).collect();
         assert_eq!(sets.len(), 48, "common_patch_mp's camo_<weapon> assets");
         // Every camo asset a def or a unique names is one of those sets (G16's per-part camo).
-        let common = crate::generals::load_zone(&bo2_dir, "common_mp").unwrap();
-        let bo2w = bo2::all(&common).unwrap();
+        let (bo2w, _) = crate::paks::MpPool::load(&bo2_dir).unwrap().weapons().unwrap();
         let camo_of = |id: &str| bo2w.iter().find(|w| w.name == id).and_then(|w| w.weapon_camo.clone());
         assert_eq!(camo_of("an94_mp").as_deref(), Some("camo_an94"));
         assert_eq!(camo_of("saiga12_mp").as_deref(), Some("camo_saiga"));
@@ -2922,6 +2938,28 @@ mod tests {
         assert_eq!(OptionTab::of(true, 2, false), OptionTab::Dlc2, "camo_dragon (column 5 = 2)");
     }
 
+    /// The stand-in table's weapons name the install's `hudIcon` (the class buttons and the
+    /// offhand counters draw it), and every alt mode that names one names its gun's (the select
+    /// fire and the hybrid optic do; a launcher alt names none).
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_built_in_hud_icons_are_the_installs() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
+        let icon = |id: &str| all.iter().find(|w| w.name == id).and_then(|w| w.hud_icon.clone()).unwrap_or_default();
+        for d in zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().weapons {
+            if all.iter().any(|w| w.name == d.id) {
+                assert_eq!(d.hud_icon, icon(&d.id), "{}", d.id);
+            }
+        }
+        for w in all.iter().filter(|w| w.inventory == bo2::inventory::ALTMODE && w.hud_icon.is_some()) {
+            let parent = all.iter().find(|p| p.alt_weapon.as_deref() == Some(w.name.as_str()) || p.attachment_uniques.iter().any(|u| u.alt_weapon.as_deref() == Some(w.name.as_str())));
+            if let Some(p) = parent {
+                assert_eq!(w.hud_icon, p.hud_icon, "{} names {}'s icon", w.name, p.name);
+            }
+        }
+    }
+
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_installs_perk_rows_are_the_built_in_rows_and_weapons_carry_their_bits() {
@@ -2938,8 +2976,7 @@ mod tests {
         }
         // In this install only FMJ grants specialties through the data (`armorpiercing`,
         // `bulletpenetration`); fast mag and quickdraw work through their reload/ADS time scales.
-        let common = crate::generals::load_zone(&bo2, "common_mp").unwrap();
-        let atts = bo2::attachments(&common).unwrap();
+        let (_, atts) = crate::paks::MpPool::load(&bo2).unwrap().weapons().unwrap();
         let granting: Vec<(String, Specialties)> =
             atts.iter().map(|a| (a.name.clone(), Specialties::from_words(a.perks.0, a.perks.1))).filter(|(_, s)| !s.is_empty()).collect();
         assert!(granting.iter().any(|(n, s)| n == "fmj" && s.has(Specialty::BulletPenetration) && s.has(Specialty::ArmorPiercing)), "{granting:?}");
@@ -3008,8 +3045,7 @@ mod target_finder_tests {
     #[ignore]
     fn the_installs_target_finder_is_kind_0x13() {
         let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR"));
-        let common = crate::paks::load_zone(&dir, "common_mp").unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let (_, atts) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
         let finders: Vec<&str> = atts.iter().filter(|a| a.kind == zhbo_core::attachments::TARGET_FINDER_KIND as u32).map(|a| a.name.as_str()).collect();
         assert!(!finders.is_empty() && finders.iter().all(|n| n.starts_with("rangefinder")), "{finders:?}");
     }
