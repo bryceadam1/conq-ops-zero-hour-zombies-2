@@ -195,23 +195,35 @@ pub struct SkinMesh {
     pub bo2_maps: Option<String>,
     /// Self-lit at full brightness, whatever the scene's lights (screens, glowing buttons).
     pub emissive: bool,
+    /// The vertices where they stand in the bind pose, in the model's (the hierarchy root's) space,
+    /// when the writer knows the bones: the header's box and sphere are taken from these. W3D reads
+    /// a skin's header bounds in root space (`HLodClass::Update_Obj_Space_Bounding_Volumes` merges
+    /// them through the skin's bone, the root) and culls the whole model by them, while `positions`
+    /// are relative to each vertex's bone: bounds taken from those are off by the bones' offsets.
+    pub bind_positions: Option<Vec<[f32; 3]>>,
 }
 
-fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
-    let mut c = Chunk::wrapper(CHUNK_MESH);
-    let textured = m.texture.is_some();
+/// The axis-aligned box and its centre's bounding sphere of `points` (all zero when empty).
+pub fn bounds(points: &[[f32; 3]]) -> ([f32; 3], [f32; 3], [f32; 3], f32) {
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for p in &m.positions {
+    for p in points {
         for k in 0..3 {
             lo[k] = lo[k].min(p[k]);
             hi[k] = hi[k].max(p[k]);
         }
     }
-    if m.positions.is_empty() {
+    if points.is_empty() {
         (lo, hi) = ([0.0; 3], [0.0; 3]);
     }
     let center = [0, 1, 2].map(|k| (lo[k] + hi[k]) / 2.0);
-    let radius = m.positions.iter().map(|p| (0..3).map(|k| (p[k] - center[k]).powi(2)).sum::<f32>().sqrt()).fold(0.0, f32::max);
+    let radius = points.iter().map(|p| (0..3).map(|k| (p[k] - center[k]).powi(2)).sum::<f32>().sqrt()).fold(0.0, f32::max);
+    (lo, hi, center, radius)
+}
+
+fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
+    let mut c = Chunk::wrapper(CHUNK_MESH);
+    let textured = m.texture.is_some();
+    let (lo, hi, center, radius) = bounds(m.bind_positions.as_deref().unwrap_or(&m.positions));
 
     let mut header = Chunk::new(CHUNK_MESH_HEADER3);
     header
@@ -516,6 +528,7 @@ mod tests {
             env_map: None,
             bo2_maps: None,
             emissive: false,
+            bind_positions: None,
         };
         let d = skin_model("TEST_SKN", "TEST_SKL", std::slice::from_ref(&m));
         let top = chunks(&d);

@@ -175,6 +175,7 @@ pub fn skin_hiding(rig: &Rig, model: &Model, mesh_prefix: &str, textures: &[Opti
             texture: textures.get(lod.first_surface + k).cloned().flatten(),
             ..Default::default()
         };
+        let mut rest = Vec::with_capacity(s.vertices.len());
         for v in &s.vertices {
             let bone = v.weights.iter().copied().fold((0u16, -1.0f32), |a, w| if w.1 > a.1 { w } else { a }).0;
             let bone_index = bone as usize;
@@ -183,11 +184,15 @@ pub fn skin_hiding(rig: &Rig, model: &Model, mesh_prefix: &str, textures: &[Opti
             // model's bind and the rig's base do not stretch the mesh.
             let bind = model.bones.get(bone_index).map_or(xf::IDENTITY, |b| (b.rotation, scaled(b.position)));
             let inv = xf::inverse(bind);
-            m.positions.push(xf::apply(inv, scaled(v.position)));
+            let local = xf::apply(inv, scaled(v.position));
+            m.positions.push(local);
+            // Where the rig stands it in its bind pose: the header's bounds (W3D culls by them).
+            rest.push(xf::apply(rig.bind.get(pivot).copied().unwrap_or(xf::IDENTITY), local));
             m.normals.push(xf::qrot(inv.0, v.normal));
             m.uvs.push(v.uv);
             m.bones.push(pivot as u16);
         }
+        m.bind_positions = Some(rest);
         // BO2 and Zero Hour use opposite front-face winding: keep BO2's order and the engine culls
         // the outside of the model, so it looks inside-out.
         let heaviest = |v: usize| s.vertices[v].weights.iter().copied().fold((0u16, -1.0f32), |a, w| if w.1 > a.1 { w } else { a }).0 as usize;
@@ -346,6 +351,26 @@ mod tests {
             for k in 0..3 {
                 assert!((drawn[k] - v.position[k] * SCALE).abs() < 1e-4, "vertex {i}: {drawn:?}");
             }
+        }
+    }
+
+    /// W3D culls a skinned model by its meshes' header bounds read in the root's space; the
+    /// vertices are stored relative to their bones. The bounds must be where the rig stands the
+    /// vertices: a model placed from another origin (the planted shield, drawn from its box's
+    /// footing) had them off by that offset, and the shield vanished as the view rose above its feet.
+    #[test]
+    fn a_skins_bounds_are_where_the_rig_stands_it() {
+        let model = two_bone_model();
+        for rig in [Rig::new(&model, &[]), Rig::placed(&model, [0.0, 0.0, -30.0 * SCALE])] {
+            let meshes = skin(&rig, &model, "M", &[None]);
+            let m = &meshes[0];
+            let drawn: Vec<[f32; 3]> = m.positions.iter().zip(&m.bones).map(|(p, &b)| xf::apply(rig.bind[b as usize], *p)).collect();
+            assert_eq!(m.bind_positions.as_deref().map(<[_]>::len), Some(drawn.len()));
+            for (a, b) in m.bind_positions.as_ref().unwrap().iter().zip(&drawn) {
+                assert!((0..3).all(|k| (a[k] - b[k]).abs() < 1e-4), "{a:?} vs {b:?}");
+            }
+            let (_, _, center, radius) = zhbo_formats::w3d::bounds(m.bind_positions.as_ref().unwrap());
+            assert!(drawn.iter().all(|p| (0..3).map(|k| (p[k] - center[k]).powi(2)).sum::<f32>().sqrt() <= radius + 1e-4));
         }
     }
 

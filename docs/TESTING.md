@@ -414,7 +414,9 @@ the other log's `autopilot mp: General G weapon V camo C in hand`). Results go t
 Both runs also check that each machine presented the other player: his gunshot chain and his
 footsteps were played there (`sound ZHBO_BO2_FireNpc_…: playing`; `sound ZHBO_BO2_StepNpc:
 playing` or `no sound`, the engine's answer for a step out of the listener's short range, e.g.
-from overhead; the core plays both only for another player).
+from overhead; the core plays both only for another player). `ZHBO_MPTEST_SHOTS=1` also captures each
+machine's screen (`host-shot.*`, `join-shot.*`) every `ZHBO_MPTEST_SHOT_INTERVAL` logic frames
+(default 150).
 
 **The long run** (`ZHBO_MPTEST_ROUNDS=N`, any N > 1, sets `ZHBO_AUTOPILOT_ROUNDS` in both
 instances; limit 1,800 s): the joiner plays N lives and the host plays until the joiner has left, each life
@@ -422,7 +424,9 @@ walked to the meeting point. The joiner first
 declines his spawn (Escape on the class screen; the bridge takes control again). Every life after
 the first fight throws the tactical at the other General (a concussion: a shellshock in both
 sims; the bridge logs `player P's General is shellshocked (…)`), fires a hip and an aimed burst,
-reloads, knifes and goes back overhead, unless he dies first; the host ends each round with a
+reloads, knifes and goes back overhead, unless he dies first (the field computer's key is also the
+use key: standing over a dropped weapon he first backs off until nothing is in reach, or the press
+would swap for it and keep him in first person); the host ends each round with a
 long aimed burst. In his third life — his next-to-last when he plays fewer than four
 (`Autopilot::mp_change_life`: the first fight at N = 2, the first round at N = 3), so the change
 always has a next General — the joiner changes class mid-life once his throw has made him a
