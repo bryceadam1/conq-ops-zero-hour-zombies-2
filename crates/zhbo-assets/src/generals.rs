@@ -684,12 +684,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             }
         }
         // The def's own `projExplosionEffect`, played on top of the impact table's cell (BO2's
-        // `FUN_004c0ac0`); most explosives leave it empty and blow up with the table's alone.
+        // `FUN_004c0ac0`) wherever the def goes off; most explosives leave it empty and blow up
+        // with the table's alone. Carried for every def that names one: a def that never goes off
+        // (the Trophy System: no timed fuse, and its script deletes it) never plays it, as in BO2.
         let Some(e) = &w.explosion_effect else { continue };
-        use zhbo_core::weapons::Effect;
-        if matches!(d.effect, Effect::Explode | Effect::Stun | Effect::Emp | Effect::Smoke) {
-            d.explosion_fx = effects.add(e, &|h| paks.image(h));
-        }
+        d.explosion_fx = effects.add(e, &|h| paks.image(h));
     }
     for name in zhbo_core::equipment::BO2_EFFECTS {
         if let Some(e) = zhbo_formats::fx::find(&common, name) {

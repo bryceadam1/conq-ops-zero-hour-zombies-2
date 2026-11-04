@@ -110,12 +110,14 @@ mod swap_tests {
         let mut out = Vec::new();
         a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
         assert!(!out.iter().any(|w| matches!(w, WeaponAction::Fire { .. } | WeaponAction::Launch { .. })), "{out:?}");
-        // It raises (ADS) like a gun: BO2's `viewmodel_riotshield_ads_up`.
+        // It does not aim: BO2's `riotshield_mp` has `aimDownSight` 0, so `FUN_008e4470` keeps
+        // the ADS fraction at 0 (its `ads_down` clip is only the hip pose's layer).
+        assert!(!shield.aims);
         for _ in 0..30 {
             a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
         }
-        assert!(a.ads > 0.99);
-        assert_eq!(a.move_scale(), shield.ads_move_scale);
+        assert_eq!(a.ads, 0.0);
+        assert_eq!(a.move_scale(), shield.move_scale);
     }
 }
 

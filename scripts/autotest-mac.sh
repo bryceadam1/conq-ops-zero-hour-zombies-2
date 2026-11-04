@@ -7,8 +7,10 @@
 #                                      Escape on the class screen declines the spawn (back overhead),
 #                                      T again, 6 picks the SMG class, holds W, moves the mouse)
 #   scripts/autotest-mac.sh --equipment
-#                                      C4, Trophy System and Black Hat against an enemy drone and
-#                                      rocket troopers (two runs: C4 + Trophy, C4 + Black Hat)
+#                                      C4, Trophy System, Black Hat and Sensor Grenade against an enemy
+#                                      drone and rocket troopers (three runs: C4 + Trophy, C4 + Black
+#                                      Hat, C4 + Sensor Grenade, which goes off on its timed fuse where
+#                                      it lies); each run's captures in its own folder
 #   scripts/autotest-mac.sh --rts      the General under RTS control: his class guns armed, the rifle's
 #                                      rounds counted, the command bar's orders (the lethal at a rebel,
 #                                      a reload, the pistol, the knife at a close rebel), then first person
@@ -199,7 +201,7 @@ if [[ $mode == equipment ]]; then
         if grep -qE "$3" "$1"; then printf '%-28s PASS\n' "$2"; else printf '%-28s FAIL\n' "$2"; ok=1; fi
     }
     profile="$userdata/ConquerOps.profile"
-    for tactical in trophy_system_mp pda_hack_mp; do
+    for tactical in trophy_system_mp pda_hack_mp sensor_grenade_mp; do
         rm -f "$log"
         # A General spawns unarmed, so the run needs the C4/tactical class on the spawn list:
         # seed it in the profile (the autopilot picks the first custom by its computed row key).
@@ -221,6 +223,10 @@ EOF
         for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
         stop_game
         cp "$log" "$out/ConquerOps-$tactical.log"
+        mkdir -p "$out/$tactical"
+        for f in "$out"/shot.*.bmp; do
+            [[ -f "$f" ]] && sips -s format png "$f" --out "$out/$tactical/$(basename "${f%.bmp}").png" >/dev/null && rm "$f"
+        done
         l="$out/ConquerOps-$tactical.log"
         echo "== C4 + $tactical"
         check "$l" "C4 thrown and stuck" "put down equipment \(C4\)"
@@ -228,6 +234,15 @@ EOF
         if [[ $tactical == trophy_system_mp ]]; then
             check "$l" "Trophy System planted" "put down equipment \(Trophy\)"
             check "$l" "Trophy shot down a rocket" "Trophy System shot down a projectile"
+        elif [[ $tactical == sensor_grenade_mp ]]; then
+            # The sensor lands, then its timed fuse sets it off where it lies (t6mp FUN_00607c00,
+            # FUN_0060a480): a blast logged after it was put down.
+            check "$l" "Sensor Grenade landed" "put down equipment \(Sensor\)"
+            if awk '/put down equipment \(Sensor\)/ { down = 1 } down && /grenade went off at/ { found = 1 } END { exit !found }' "$l"; then
+                printf '%-28s PASS\n' "Sensor went off on its fuse"
+            else
+                printf '%-28s FAIL\n' "Sensor went off on its fuse"; ok=1
+            fi
         else
             check "$l" "Black Hat hack" "hacked with the Black Hat"
             check "$l" "drone changed sides" "captured by General"

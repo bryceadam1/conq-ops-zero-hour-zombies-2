@@ -12826,3 +12826,73 @@ ABI 32 paragraph. No `zhbo_native` format moves (`BODY_VERSION` 1, `WEAPON_VERSI
   launcher and camo with "Press F for AN-94 Launcher" and its HUD icon (`shot-dropped-weapon-hint.png`),
   the SMAW's blast (`shot-explosion-flipbook*.png`), the low-ammo "[R] Reload" (`shot-low-ammo.png`),
   the planted shield standing (`shot-planted-shield.png`).
+
+## The last weapon gaps: who aims, the ADS layer that never runs, the Sensor Grenade's fuse (2026-11-03, `v1/conformance-final`)
+
+The weapons report's last 22 cells (integration9): `anim_ads_up`/`anim_ads_down` on ten offhands
+and the knife, `projectile_explosion_effect` on the Sensor Grenade and the Trophy System. Read-only
+Ghidra (t6mp; raw C in the plan dir's `ghidra/`) settled all three, and one sweep found the same
+root cause in the sim.
+
+* **The ADS layer runs only for a def that aims, or one that names its own `ads_down` (expected
+  side, cited).** `FUN_0052bb10`, the only caller of the ADS clip driver `FUN_0052b750` (G12), drives
+  slots 0x55-0x57 by the ADS fraction when `aimDownSight` (WeaponDef+0x638) is set; otherwise only
+  when the variant's own `szXAnims[0x56]` (variant+0x20, +0x158) is a non-empty name, at fraction 0
+  (`ads_down` at full weight: the hip pose's layer — the Assault Shield's, C4's, the Trophy System's).
+  The registration (`FUN_0052d3e0`) does put IDLE in an empty slot, but for the frag, Semtex,
+  flashbang, concussion, EMP, smoke, Sensor, Claymore, hatchet and knife (`aimDownSight` 0, no
+  `ads_down`) nothing ever plays it. The expected side had reported the registered IDLE for the two
+  ADS-layer slots; it now reports them empty when the layer never runs (`resolve::ads_layer_runs`,
+  `weapons::is_ads_layer_slot`; the oracle test
+  `the_ads_layer_runs_for_a_def_that_aims_or_names_its_own_ads_down`). The mod already matched:
+  `Loaded::ads_clip` reads the manifest without the IDLE fallback, and these offhands have no ADS
+  clip. `ads_up_other_scope` (0x57) rides the same driver but its column stays the registered clip.
+* **Only a def with `aimDownSight` aims (sim, the sweep).** `FUN_008e4470` (G3's ADS lerp) moves
+  `fWeaponPosFrac` only when `aimDownSight` is set and otherwise sets it to 0 (the one other path is
+  a turret link, playerState+0x484 bit 4, set and cleared by the link/unlink pair `FUN_00676290` /
+  `FUN_00675f90`). Probe of the pool: `aimDownSight` 0 on every offhand, knife, `_dw`/`_lh`,
+  `riotshield_mp`, `knife_ballistic_mp`, `explosive_bolt_mp` and the nine `gl_*` launcher modes. The
+  mod gated ADS by class (`is_slot_weapon` and not dual-wield), so the Assault Shield, the Ballistic
+  Knife and the launcher modes aimed (and zoomed). The weapon table gains `Aims` (BO2's
+  `aimDownSight`, `WeaponDef::aims`), `wants_ads` requires it and a def without it sets the fraction
+  straight to 0, as BO2 does. The shield's raise was the mod's inference from its `ads_up` clip, not
+  BO2 behaviour; its `ads_down` is the hip layer it already shows. Tests: the shield test now holds
+  ADS and stays at 0; the every-weapon conformance sim (`conformance::check`) fails any non-aiming def
+  that aims; the real-install `the_install_says_who_aims_whose_fuse_is_timed_and_which_is_the_laser_sensor`
+  (which also holds the stand-in catalog's `Aims` to the install).
+* **The Sensor Grenade goes off on its timed fuse (sim + converter).** `FUN_00607c00` (called by the
+  grenade launch `FUN_00607cb0`) sets the explode think from `fuseTime` only for a def with
+  `timedDetonation`; the planted items lack it, the Sensor Grenade has it (fuse 4.5 s, `projExplosion`
+  smoke, `isLaserSensor`). The explode think `FUN_0060a480` runs the radius damage (`FUN_005f2130`,
+  for any `iExplosionInnerDamage` ≠ 0: the sensor's 15), `G_SensorGrenadeDetonate` (`FUN_005f26c0`,
+  the enemies' ping event) for a laser sensor, raises the smoke-type event 0x4c, then frees the entity
+  (`FUN_0064b950`). `CG_EntityEvent` (`FUN_004c1590`) case 0x4c plays the impact table's sound, its
+  effect unless `isLaserSensor`, the def's `projExplosionEffect` and `projExplosionSound`. Its script
+  waits for exactly that (`_sensor_grenade.gsc:56-64`, `waittill( "explode", origin )`). The mod set
+  every landing piece's fuse to infinity and its converter kept `projExplosionEffect` only for an
+  Effect allowlist, so the sensor never went off and its scan effect was never converted. Now: the
+  table's `TimedDetonation` and `LaserSensor`; a landing piece keeps a timed throw's fuse
+  (`Placed::fuse`, hashed); when it runs out the piece goes off where it lies (`Placed::explode`:
+  its own effect, no table cell for a laser sensor, radius damage for an Effect-less def with inner
+  damage, the `Exploded` event and its sounds) and is gone. Tests:
+  `a_landing_piece_keeps_only_a_timed_fuse`,
+  `a_timed_piece_goes_off_where_it_lies_when_its_fuse_runs_out`.
+* **The Trophy System's `projExplosionEffect` is carried, never played (converter).** It has no timed
+  fuse, no impact explosion and no activation distance, and its script never `detonate()`s it
+  (`trophysystemdetonate`, `_trophy_system.gsc:251-266`: `playfx` of `level._equipment_explode_fx_lg`
+  and `delete`), so in BO2 the def field never plays. The converter now carries every def's
+  `projExplosionEffect` (the allowlist was the only reason the mod's def lacked it); the sim plays it
+  wherever a def goes off, which for the Trophy System is never, as in BO2. Its destruction effect
+  stays the script's (`equipment::EQUIPMENT_LG_FX`, the same asset).
+
+**Not modelled (noted).** BO2 also pings the enemies within the sensor's explosion radius at its
+detonation (event 0x4e) and, while the sensor flies and lies, scans every 800 ms with team-coloured
+runners and a targeting effect on enemies in range (`CG_Missile` `FUN_004bcac0` → `FUN_004bc570`). The
+mod keeps its own reveal (enemies inside `SENSOR_RANGE` of a down sensor) for as long as the sensor
+lies; it now lies until its fuse. The explode think also postpones a run-out fuse while an entity
+field at +0x60 is set (up to 60 s from the launch); what sets it for a grenade was not found.
+
+**Measured** (conformance CLI vs integration9): weapons 22 → 0 cells (3 → 0 clusters); cac unchanged
+(0 cells, 4 BO2-only MTX rows); gap clusters 4 → 1. The expected side moved only in
+`anim_ads_up`/`anim_ads_down` (the 10 rows), the actual side only in `projectile_explosion_effect`
+(sensor, Trophy).

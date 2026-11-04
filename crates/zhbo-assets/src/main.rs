@@ -384,7 +384,7 @@ fn cmd_weapons(args: &[String]) -> Result<(), String> {
             continue;
         }
         println!(
-            "{:<24} {:<18} type {} class {:>2} pat {:>2} inv {} fire {} clip {:>3} start {:<3} max {:<3} rpm {:>5.0} dmg {:?}@{:?} reload {:.2}/{:.2} add {:.2} ads {:.2} raise {:.2} drop {:.2} spread hip {:?} ads {:.2} move {:.2} pellets {} fuse {:.2} expl {}/{}-{} vm {:?} anims {}",
+            "{:<24} {:<18} type {} class {:>2} pat {:>2} inv {} fire {} clip {:>3} start {:<3} max {:<3} rpm {:>5.0} dmg {:?}@{:?} reload {:.2}/{:.2} add {:.2} ads {:.2} raise {:.2} drop {:.2} spread hip {:?} ads {:.2} move {:.2} pellets {} fuse {:.2} expl {}/{}-{} vm {:?} anims {} aim {} timed {} sensor {}",
             w.name,
             w.display_name,
             w.weap_type,
@@ -414,6 +414,9 @@ fn cmd_weapons(args: &[String]) -> Result<(), String> {
             w.explosion_outer_damage,
             w.view_model,
             w.anims.iter().filter(|a| a.is_some()).count(),
+            w.aim_down_sight,
+            w.timed_detonation,
+            w.laser_sensor,
         );
         if args.iter().any(|a| a == "--more") {
             println!("    attach {:?} base parts {:?} uniques {}", w.attach_view_models, w.base_view_parts(), w.attachment_uniques.len());

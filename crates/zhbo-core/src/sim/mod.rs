@@ -831,7 +831,9 @@ impl Sim {
                 }
                 Outcome::Landed { at, stuck_to } => {
                     let yaw = crate::math::det::atan2(proj.vel.y, proj.vel.x);
-                    let p = Placed::new(proj.def, *owner, proj.owner, proj.object, at, yaw, stuck_to);
+                    let mut p = Placed::new(proj.def, *owner, proj.owner, proj.object, at, yaw, stuck_to);
+                    // A timed throw's fuse runs on where it lies (the Sensor Grenade).
+                    p.fuse = proj.fuse.is_finite().then_some(proj.fuse);
                     self.emit(*owner, EventKind::Planted { kind: p.kind });
                     self.equipment.add(p);
                 }

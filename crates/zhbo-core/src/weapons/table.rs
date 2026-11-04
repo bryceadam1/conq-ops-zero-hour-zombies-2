@@ -701,6 +701,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ExplodeOnGround", "1 if a fuse that runs out in the air waits until the grenade is at rest (BO2's bExplodeOnGround).", FieldKind::Num,
         |d: &WeaponDef| (d.explode_on_ground as u8).to_string(),
         |d: &mut WeaponDef, v: Values| { d.explode_on_ground = v.text_num()? != 0.0; Ok(()) }),
+    field!("TimedDetonation", "1 if the throw arms its fuse (BO2's timedDetonation); a piece that lands keeps it running.", FieldKind::Num,
+        |d: &WeaponDef| (d.timed_detonation as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.timed_detonation = v.text_num()? != 0.0; Ok(()) }),
+    field!("LaserSensor", "1 for the Sensor Grenade (BO2's isLaserSensor): its blast plays no impact-table effect.", FieldKind::Num,
+        |d: &WeaponDef| (d.laser_sensor as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.laser_sensor = v.text_num()? != 0.0; Ok(()) }),
+    field!("Aims", "1 if the weapon aims down its sights (BO2's aimDownSight).", FieldKind::Num,
+        |d: &WeaponDef| (d.aims as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.aims = v.text_num()? != 0.0; Ok(()) }),
     field!("Inventory", "BO2's inventory type: primary, offhand, item, altmode, melee, dwlefthand.", FieldKind::Enum,
         |d: &WeaponDef| d.inventory.name().into(),
         |d: &mut WeaponDef, v: Values| { d.inventory = Inventory::parse(v.text).ok_or("unknown inventory type")?; Ok(()) }),
@@ -1341,7 +1350,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 169);
+        assert_eq!(WEAPON_FIELDS.len(), 172);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

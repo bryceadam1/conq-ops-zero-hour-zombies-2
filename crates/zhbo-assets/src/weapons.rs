@@ -1298,6 +1298,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         hold_cancelable: w.offhand_hold_is_cancelable,
         plantable: w.plantable,
         explode_on_ground: w.explode_on_ground,
+        timed_detonation: w.timed_detonation,
+        laser_sensor: w.laser_sensor,
+        aims: w.aim_down_sight,
         inventory: zhbo_core::weapons::Inventory::from_bo2(w.inventory),
         explosion_radius: inches(w.explosion_radius as f32),
         explosion_radius_min: inches(w.explosion_radius_min as f32),
@@ -2756,6 +2759,38 @@ mod tests {
             assert!(!def(name).explode_on_ground, "{name}");
         }
         assert!(def("willy_pete_mp").fuse_time < 0.05);
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_install_says_who_aims_whose_fuse_is_timed_and_which_is_the_laser_sensor() {
+        // `aimDownSight` (t6mp `FUN_008e4470`): every gun aims but a dual-wield pair, the Ballistic
+        // Knife and the launcher modes; the Assault Shield, knives and offhands never do.
+        // `timedDetonation` (`FUN_00607c00`): the thrown grenades and the Sensor Grenade, no
+        // planted item. `isLaserSensor`: the Sensor Grenade alone. The stand-in table agrees.
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
+        let def = |name: &str| to_def(all.iter().find(|w| w.name == name).expect(name), &HashMap::new());
+        let stand_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap();
+        for d in &stand_in.weapons {
+            if let Some(w) = all.iter().find(|w| w.name == d.id) {
+                assert_eq!(d.aims, w.aim_down_sight, "{}: the stand-in's Aims", d.id);
+            }
+        }
+        for name in ["an94_mp", "dsr50_mp", "fiveseven_mp", "smaw_mp", "crossbow_mp", "dualoptic_an94_mp", "minigun_mp"] {
+            assert!(def(name).aims, "{name}");
+        }
+        for name in ["riotshield_mp", "knife_ballistic_mp", "gl_an94_mp", "fiveseven_dw_mp", "knife_held_mp", "frag_grenade_mp", "trophy_system_mp"] {
+            assert!(!def(name).aims, "{name}");
+        }
+        for name in ["frag_grenade_mp", "sticky_grenade_mp", "flash_grenade_mp", "concussion_grenade_mp", "emp_grenade_mp", "willy_pete_mp", "sensor_grenade_mp"] {
+            assert!(def(name).timed_detonation, "{name}");
+        }
+        for name in ["satchel_charge_mp", "claymore_mp", "bouncingbetty_mp", "trophy_system_mp", "tactical_insertion_mp", "proximity_grenade_mp", "pda_hack_mp"] {
+            assert!(!def(name).timed_detonation, "{name}");
+        }
+        let sensors: Vec<&str> = all.iter().filter(|w| w.laser_sensor).map(|w| w.name.as_str()).collect();
+        assert_eq!(sensors, ["sensor_grenade_mp"]);
     }
 
     #[test]

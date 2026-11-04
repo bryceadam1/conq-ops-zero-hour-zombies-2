@@ -366,6 +366,7 @@ getters!(Def, WD {
     f32 alt_scope_ads_in_time = altScopeADSTransInTime;
     f32 alt_scope_ads_out_time = altScopeADSTransOutTime;
     bool bolt_action = bBoltAction;
+    bool aim_down_sight = aimDownSight;
     bool cook_off_hold = bCookOffHold;
     bool dual_wield = bDualWield;
     bool clip_only = bClipOnly;

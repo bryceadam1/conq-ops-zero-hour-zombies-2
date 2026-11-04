@@ -323,6 +323,16 @@ pub fn anims(w: &Weapon, left: Option<Variant>) -> Vec<Option<String>> {
     }
 }
 
+/// Whether the viewmodel's ADS layer (slots 0x55-0x57, the clip driver `FUN_0052b750`) runs for
+/// `w` at all. `FUN_0052bb10`, its only caller, drives it by the ADS fraction for a def with
+/// `aimDownSight`; for any other only when the variant's own `szXAnims[0x56]` (`ads_down`) names
+/// a clip, held at fraction 0 (`ads_down` at full weight: the hip pose's layer, the Assault
+/// Shield's or the equipment's). Otherwise the slots are never played, whatever the registration
+/// (`FUN_0052d3e0`) put in them.
+pub fn ads_layer_runs(w: &Weapon) -> bool {
+    w.d.aim_down_sight() || w.v.anims().get(0x56).is_some_and(Option::is_some)
+}
+
 /// `FUN_008ec1a0`: the hidden tags. With attachments (and both `attachments[0]` and the base
 /// unique present), a single unique's tag is always hidden and a variant tag stays hidden only
 /// when every single unique lists it too.
@@ -543,6 +553,26 @@ mod tests {
         m.put_anims(g.v + WV::szXAnims, &[(1, "idle"), (0x10, "reload"), (0x55, "ads_up"), (0x18, "first_raise")]);
         m.put_anims(u0 + WU::szXAnims, &[(1, "u0_idle"), (0x10, "u0_reload"), (0x55, "u0_ads_up")]);
         (m, g, [u0, acog, acog_gl, acog_grip, gl, grip])
+    }
+
+    /// `FUN_0052bb10` runs the ADS layer for a def that aims, or for one whose variant names its
+    /// own `ads_down`; a grenade with neither never plays its (IDLE-registered) ADS slots.
+    #[test]
+    fn the_ads_layer_runs_for_a_def_that_aims_or_names_its_own_ads_down() {
+        let mut m = Mem::new();
+        let g = Gun::new(&mut m, "an94_mp");
+        m.put_anims(g.v + WV::szXAnims, &[(1, "idle"), (0x55, "ads_up"), (0x56, "ads_down")]);
+        let grenade = Gun::new(&mut m, "frag_grenade_mp");
+        m.put_anims(grenade.v + WV::szXAnims, &[(1, "frag_idle")]);
+        let c4 = Gun::new(&mut m, "satchel_charge_mp");
+        m.put_anims(c4.v + WV::szXAnims, &[(1, "c4_idle"), (0x55, "c4_ads_up"), (0x56, "c4_ads_down")]);
+        m.put8(g.d + WD::aimDownSight, 1);
+        let z = m.zone();
+        let w = |g: &Gun| Weapon::new(g.variant(&z), &[]).unwrap();
+        assert!(ads_layer_runs(&w(&g)), "a gun aims");
+        assert!(ads_layer_runs(&w(&c4)), "the C4's ads_down is its hip layer");
+        assert!(!ads_layer_runs(&w(&grenade)), "a grenade's ADS slots are never played");
+        assert_eq!(anims(&w(&grenade), None)[0x55].as_deref(), Some("frag_idle"), "though registered as IDLE");
     }
 
     #[test]

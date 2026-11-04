@@ -917,15 +917,17 @@ impl Arsenal {
         // while sprinting or until the weapon is back up from a sprint.
         let def = self.current().def;
         let sprint_ready = self.sprint_ready();
-        // Only a gun aims, and the Assault Shield (raised, `viewmodel_riotshield_ads_up`); a knife
-        // or a held offhand has no sights (and no ADS zoom). A dual-wield weapon has none either:
-        // its ADS button is the left gun's trigger.
+        // Only a def with `aimDownSight` aims (`FUN_008e4470` pins the fraction at 0 for any
+        // other): a knife, a held offhand, the Assault Shield, the Ballistic Knife and a launcher
+        // mode have no sights (and no ADS zoom); the shield's `ads_down` is its hip pose. A
+        // dual-wield weapon has none either: its ADS button is the left gun's trigger.
         // `FUN_008daa10`: an alt toggle's drop and raise (states 5 and 2) let only an ADS-only
         // weapon aim; every other raise or drop refuses it.
         let switching = self.raise_left > 0.0 || self.drop_left > 0.0;
         let alt_switching = self.alt_pending || (self.raise_left > 0.0 && self.raise_kind == RaiseKind::Alt);
         let switch_ok = !switching || (alt_switching && def.traits.alt_ads_only);
         let wants_ads = def.class.is_slot_weapon()
+            && def.aims
             && !def.is_dual_wield()
             && held & buttons::ADS != 0
             && !sprinting
@@ -936,6 +938,9 @@ impl Arsenal {
         let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
         self.ads = if wants_ads {
             (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)
+        } else if !def.aims {
+            // `FUN_008e4470` sets the fraction straight to 0 for a def that does not aim.
+            0.0
         } else {
             (self.ads - dt / (def.ads_out_time.max(1e-3) * quickdraw)).max(0.0)
         };

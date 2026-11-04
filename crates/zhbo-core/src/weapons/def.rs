@@ -372,6 +372,17 @@ pub struct WeaponDef {
     /// `bExplodeOnGround`: a fuse that runs out in the air waits until the grenade comes to rest
     /// (t6mp `FUN_0060a480`; the smoke, concussion and EMP grenades) — [`crate::projectiles`].
     pub explode_on_ground: bool,
+    /// `timedDetonation`: the throw arms the fuse (t6mp `FUN_00607c00` sets the explode think only
+    /// for a timed def). A piece that lands as equipment keeps it running: the Sensor Grenade
+    /// goes off where it lies when it runs out ([`crate::equipment`]).
+    pub timed_detonation: bool,
+    /// `isLaserSensor` (the Sensor Grenade): its smoke-type explosion plays no impact-table effect,
+    /// only its own `projExplosionEffect` (`CG_EntityEvent` `FUN_004c1590`, case 0x4c).
+    pub laser_sensor: bool,
+    /// `aimDownSight`: whether it aims at all. `FUN_008e4470` moves the ADS fraction only for a
+    /// def with it set; every offhand, knife, dual-wield pair, the Assault Shield, the Ballistic
+    /// Knife and the launcher modes have it clear.
+    pub aims: bool,
     /// BO2's `inventoryType` ([`Inventory`]).
     pub inventory: Inventory,
     pub explosion_radius: f32,
@@ -1039,6 +1050,9 @@ impl Default for WeaponDef {
             hold_cancelable: false,
             plantable: false,
             explode_on_ground: false,
+            timed_detonation: false,
+            laser_sensor: false,
+            aims: true,
             inventory: Inventory::Primary,
             explosion_radius: 0.0,
             explosion_radius_min: 0.0,

@@ -810,6 +810,10 @@ pub struct Weapon {
     pub sprint_duration_scale: f32,
     pub max_range: f32,
     pub bolt_action: bool,
+    /// `aimDownSight`: whether the weapon aims at all. `PM_UpdateAimDownSightLerp`
+    /// (`FUN_008e4470`) moves `fWeaponPosFrac` only for a def with it set, so a def without it
+    /// never leaves the hip pose (and never plays its ADS-in/out clips).
+    pub aim_down_sight: bool,
     pub cook_off_hold: bool,
     /// The offhand flags the offhand state machine reads (`FUN_008e2710`, `FUN_008e28e0`):
     /// `hasDetonator` (the offhand button with none left in hand detonates), `holdButtonToThrow`,
@@ -824,6 +828,16 @@ pub struct Weapon {
     /// it is on it (t6mp `FUN_0060a480`: `groundEntityNum == ENTITYNUM_NONE` re-thinks every
     /// frame, for up to 60 s from launch) — the smoke, concussion and EMP grenades.
     pub explode_on_ground: bool,
+    /// `timedDetonation`: the throw arms a fuse (`fuseTime`, less any cooking) that sets the
+    /// grenade off where it is (t6mp `FUN_00607c00`: without the flag the launch sets no fuse
+    /// think). On the install: the frag, Semtex, flashbang, concussion, EMP, smoke and the Sensor
+    /// Grenade; every planted item and the launchers' grenades lack it.
+    pub timed_detonation: bool,
+    /// `isLaserSensor` (the Sensor Grenade): its explosion runs `G_SensorGrenadeDetonate`
+    /// (t6mp `FUN_005f26c0`, the enemies' ping event) and the client's smoke-type explosion
+    /// (`CG_EntityEvent` `FUN_004c1590` case 0x4c) plays no impact-table effect for it, only its
+    /// own `projExplosionEffect`.
+    pub laser_sensor: bool,
     pub dual_wield: bool,
     pub clip_only: bool,
     /// The weapon-drop rules' data (t6mp): `bIsCarriedKillstreakWeapon` (a held killstreak gun:
@@ -1394,6 +1408,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.sprint_duration_scale = z.f32(d + WD::sprintDurationScale);
     w.max_range = z.f32(d + WD::maxRange);
     w.bolt_action = z.u8(d + WD::bBoltAction) != 0;
+    w.aim_down_sight = z.u8(d + WD::aimDownSight) != 0;
     w.cook_off_hold = z.u8(d + WD::bCookOffHold) != 0;
     w.has_detonator = z.u8(d + WD::hasDetonator) != 0;
     w.hold_button_to_throw = z.u8(d + WD::holdButtonToThrow) != 0;
@@ -1401,6 +1416,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.is_hold_use_grenade = z.u8(d + WD::isHoldUseGrenade) != 0;
     w.plantable = z.u8(d + WD::plantable) != 0;
     w.explode_on_ground = z.u8(d + WD::bExplodeOnGround) != 0;
+    w.timed_detonation = z.u8(d + WD::timedDetonation) != 0;
+    w.laser_sensor = z.u8(d + WD::isLaserSensor) != 0;
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
     w.dual_wield_weapon = opt_str(z, d + WD::szDualWieldWeaponName);
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;
