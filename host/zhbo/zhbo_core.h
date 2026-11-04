@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 31u
+#define ZHBO_ABI_VERSION 32u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -159,7 +159,7 @@ typedef struct ZhboLogicApi
 
 /* The damage kinds of ZhboLogicApi.damage (zhbo_core::damage::ZH_DAMAGE_TYPES): Zero Hour's
    DamageTypes by their INI names, the first three since the ABI's start, the rest appended by
-   ABI 32 (pending) in Zero Hour's order; the bridge maps each to its DamageType. The core sends
+   ABI 32 in Zero Hour's order; the bridge maps each to its DamageType. The core sends
    the kind its tuning pack's [MeansOfDeath] table names for each BO2 means of death. The
    shield hook (zhbo_logic_shield_damage) reports only the first three. Then
    zhbo_core::host::disable_kind. */

@@ -1182,7 +1182,7 @@ The functions the sections above do not cover, by when the bridge calls them (th
 | Every client frame | `zhbo_client_draw_hud(local_player)` | Draws the first-person HUD through the `ClientApi` draw callbacks. |
 | | `zhbo_client_rts_ammo(general, out)` | A General's weapon-slot ammo for the control bar (`ZhboRtsWeapons`). |
 | | `zhbo_client_world_poses(out, cap)` | The Generals' third-person weapon/tablet poses and the held weapon's animation set (`ZhboWorldPose`); returns how many. |
-| | `zhbo_world_mesh_count(vm)` | Third-person meshes of third-person index `vm`'s weapon on the soldier model (`WeaponDef::world_index`: the viewmodel's, or an alt mode's own past the converted viewmodels); -2: the tablet; -3: one past the highest index carrying meshes, which the bridge scans to (at least 160, so an older core answering 0 keeps the old range). Cached by the bridge on first use. **Pending for the next bump:** the -3 meaning (no signature change). |
+| | `zhbo_world_mesh_count(vm)` | Third-person meshes of third-person index `vm`'s weapon on the soldier model (`WeaponDef::world_index`: the viewmodel's, or an alt mode's own past the converted viewmodels); -2: the tablet; -3: one past the highest index carrying meshes, which the bridge scans to (at least 160, so an older core answering 0 keeps the old range). Cached by the bridge on first use. The -3 meaning is ABI 32's (no signature change). |
 | | `zhbo_native_body_ready(in)` | 1 when the native third-person body frame can be drawn (see "The native third person"). |
 | Building | `zhbo_general_build_rate()` | A General's building speed as a share of a dozer's (`building::GENERAL_BUILD_RATE`). |
 | Engine sight and path hooks (patch 0024) | `zhbo_logic_smoke_blocks(a, b)`, `zhbo_logic_smoke_covers(x, y)`, `zhbo_logic_smoke_crosses(a, b, since)` | Lock-free questions to the mirror of the standing smoke screens (see "Smoke screens in Zero Hour's targeting and pathing"). |
@@ -1483,38 +1483,40 @@ three boxes (39 numbers; a table converted before it does not parse, so the arch
 rebuilt) and two sound events, `ZHBO_BO2_StepNpc` and `ZHBO_BO2_SprintStepNpc` (other players'
 footsteps). The native blob formats are unchanged.
 
-**Pending for the next bump (remote-presentation).** No ABI change. Archive `hud::VERSION` (85 → 86):
-the weapon table's `NpcSounds` and `TorsoAnims` keys (two new weapon fields: 156), the torso clips
-in each faction body manifest (ids from `torso::BASE`; `.zbc` format unchanged), the torso rows in
-`sound_layers.txt`, the new AudioEvents (`ZHBO_BO2_SndNpc_*`, `ZHBO_NTN_*`, the 18 voice events) and
-the General INI without the Zero Hour death voice; the follow-up adds `NpcSounds`' `empty_fire`,
-the flinch/jump/land torso actions (12 actions per set), `ZHBO_BO2_LandNpc` and the 117 battle
-chatter events. Until the archive is rebuilt the core finds no
-torso picks and no new events (the engine logs a missing event once).
-
-
-**Pending for the next bump (ABI 32, weapon-drops; beside damage-rules' below):** the dropped
-weapon's native draw. Appended: `ZhboDroppedWeapon` (24 bytes: `object`, `vm`, `pos[3]`, `yaw`;
-size-asserted on both sides), `zhbo_client_dropped_weapons(out, cap)` (the sim's drops with a
-Zero Hour object, `Sim::dropped_poses`; it also releases the rigs of drops gone since) and the
+**ABI 32** (round 4's integration, one bump for the round): `ZhboLogicApi.damage`'s `kind` widens
+from three codes to one per Zero Hour `DamageType`: `ZHBO_DAMAGE_SMALL_ARMS`/`MELEE`/`EXPLOSION`
+keep 0–2 and `ZHBO_DAMAGE_CRUSH` … `ZHBO_DAMAGE_STATUS` are appended as 3–37 (`ZHBO_DAMAGE_COUNT`
+38; Zero Hour's order after the first three, `damage::ZH_DAMAGE_TYPES`, a core test holding the
+header and the bridge's `s_zhboDamageTypes` map to it, a `static_assert` its size; an older bridge
+would take every new code as small arms, so core and bridge move together;
+`zhbo_logic_shield_damage` still reports only the first three). The dropped weapon's native draw is
+appended: the struct `ZhboDroppedWeapon` (24 bytes: `object`, `vm`, `pos[3]`, `yaw`; asserted on
+both sides), the free function `zhbo_client_dropped_weapons(out, cap)` (the sim's drops with a Zero
+Hour object, `Sim::dropped_poses`; it also releases the rigs of drops gone since) and the
 `ZhboNativeBodyIn.mode` value `ZHBO_BODY_LYING` (3: `general` is the drop's object, `pos`/`yaw`
-where it lies, no tag). No struct grows; an older core answers mode 3 as weapon-only without a tag
-(not native), so an older core with a newer bridge draws the W3D prop.
+where it lies, no tag; the bridge passes the prop's render transform). One meaning is added:
+`zhbo_world_mesh_count(-3)` answers one past the highest third-person index carrying meshes (an alt
+mode's own world weapon, `WeaponDef::world_index`, past the viewmodels), which the bridge scans to.
+No other struct or API table moves.
 
-**Pending for the next bump (ABI 32):** `ZhboLogicApi.damage`'s `kind` widens from three codes to
-one per Zero Hour `DamageType`: `ZHBO_DAMAGE_SMALL_ARMS`/`MELEE`/`EXPLOSION` keep 0–2 and
-`ZHBO_DAMAGE_CRUSH` … `ZHBO_DAMAGE_STATUS` are appended as 3–37 (`ZHBO_DAMAGE_COUNT` 38; Zero
-Hour's order after the first three, `damage::ZH_DAMAGE_TYPES`, a core test holding the header and
-the bridge's `s_zhboDamageTypes` map to it, a `static_assert` its size). No struct, table or
-function moves; an older bridge would take every new code as small arms, so core and bridge must
-bump together. `zhbo_logic_shield_damage` still reports only the first three.
-
-**Pending for the next bump (fx-flipbook):** archive `hud::VERSION` 85 → 86. The converted
-effects now use host patch 0025's particle fields (`FrameGrid` …, `SpawnRange`, `FarFade`,
-`NearFade`), the flipbook grid textures, the projectile trails (`ParticleSysBone` in the projectile
-objects) and `TerrainScorch`/the millisecond `LightPulse`; an engine without 0025 refuses those
-fields, and an archive converted before them would keep drawing first cells. No ABI change
-(`ZHBO_ABI_VERSION` stays 31), no struct, API table or native blob format moves.
+Archive `hud::VERSION` 86 at the same point: the weapon table's new fields (`NpcSounds`,
+`TorsoAnims`; `Drop`, `DropObject`, `HudIconRatio` and the four pickup sounds; `LowAmmoWarning`;
+`FireStartSoundNpc`, `FireLastSoundNpc`, `ScreenFx`, `HudIcon`, `WorldWeapon`: 169 fields), the
+`UiText` keys
+`PLATFORM_PICKUPNEWWEAPON`, `PLATFORM_SWAPWEAPONS`, `PLATFORM_RELOAD`, `PLATFORM_LOW_AMMO_NO_RELOAD`
+and `PLATFORM_HOLD_BREATH` (read from the install's own language, `t6zone::language`), the torso
+and death clips in each faction body manifest (ids from `torso::BASE`; the `.zbc` format is
+unchanged), the torso rows in `sound_layers.txt`, the new AudioEvents (`ZHBO_BO2_SndNpc_*`,
+`ZHBO_NTN_*`, the voices, `ZHBO_BO2_LandNpc`, the 117 battle-chatter events, the NPC fire start/last
+events, the pickup sounds), the General INI without the Zero Hour death voice, the dropped weapons'
+`ZHBO_BO2_Drops.ini` and `ZDR###` models, the alt modes' own world weapons (`ZW<index>.zbw` past the
+viewmodels), the HUD icons by material name, the converted effects on host patch 0028's particle
+fields (`FrameGrid` …, `SpawnRange`, `FarFade`, `NearFade`; an engine without 0028 refuses them),
+the flipbook grid textures, the projectile trails (`ParticleSysBone`), `TerrainScorch` and the
+millisecond `LightPulse`, the four equipment-breaking effects, and the smoke grenade's screen as its
+`ScreenFx`. The native blob formats are unchanged (`BODY_VERSION` 1, `WEAPON_VERSION` 3: the torso
+and death clips are new ids in the body's clip list, an alt mode's world weapon and an offhand's are
+ordinary `.zbw` files at their own index).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
