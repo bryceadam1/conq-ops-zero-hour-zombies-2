@@ -206,6 +206,10 @@ impl State {
         // A corpse keeps the rig he died with: his record (and with it his stowed weapon, offhands
         // and camo) is gone, and recomposing would show the W3D body while it loads.
         let corpse = torso_of(general).is_some_and(|a| a.action == zhbo_native::thirdperson::torso::DEATH);
+        if let Some(a) = torso_of(general).filter(|_| corpse) {
+            let name = crate::torso::get().clip(a.clip).map_or("?", |c| c.name.as_str());
+            self.log_once(format!("General {general} falls by {name}"));
+        }
         let keep = corpse && self.rigs.get(&general).is_some_and(|r| (r.loaded.key.0, r.loaded.key.1, r.loaded.key.2) == (key.0, key.1, key.2));
         if !keep && self.rigs.get(&general).is_none_or(|r| r.loaded.key != key || r.loaded.camo.as_deref() != camo) {
             // His weapon or camo changed: drop his old rig (another General's stays).
