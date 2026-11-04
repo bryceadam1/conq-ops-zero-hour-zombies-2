@@ -48,6 +48,7 @@ pub use lockstep::Fingerprint;
 
 use crate::host::{geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HIT_RADIUS};
+use crate::damage::MeansOfDeath;
 use crate::impacts::Surface;
 use crate::input::{buttons, FpsInput};
 use crate::math::{basis_xy, dir_from_angles, Vec3};
@@ -60,7 +61,9 @@ use crate::units::inches;
 use crate::building::{self, Hammer, Site};
 use crate::weapons::idle_sway::{BreathIn, IdleSway};
 use crate::weapons::view_kick::{self, ViewKick};
-use crate::weapons::{Arsenal, Class, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
+use crate::weapons::{Arsenal, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
+#[cfg(test)]
+use crate::weapons::Class;
 
 pub const MAX_PLAYERS: usize = 16;
 // `Sim::combat_seen` keeps a bit per seat.
@@ -73,12 +76,9 @@ pub const FIELD_COMPUTER_RAISE: f32 = crate::viewmodel::TABLET_PULLOUT_TIME + 0.
 /// weapon comes up.
 pub const TAKE_CONTROL_READY: f32 = crate::client::ENTER_TIME + crate::viewmodel::TABLET_PUTAWAY_TIME;
 /// BO2 health regeneration: wait this long after the last hit, then regenerate. The values come
-/// from the tuning pack (`data/ConquerOps/tuning.ini`); these aliases are for the sim tests.
+/// from the tuning pack (`data/ConquerOps/tuning.ini`); this alias is for the sim tests.
 pub fn regen_delay() -> f32 {
     crate::tuning::get().regen_delay
-}
-pub fn regen_full_time() -> f32 {
-    crate::tuning::get().regen_full_time
 }
 /// Hard cap on queued client events so a headless or paused client cannot grow it forever.
 const MAX_EVENTS: usize = 512;
@@ -311,6 +311,9 @@ pub struct PlayerSim {
     pub health: f32,
     pub max_health: f32,
     pub regen_wait: f32,
+    /// BO2's `veryhurt`: his health fell to `healthoverlaycutoff` or under since he was last whole,
+    /// so it comes back a share at a time instead of at once (`_healthoverlay.gsc`).
+    pub very_hurt: bool,
     /// Black Hat: what it is aimed at (an object id) and how far along the hack is (seconds).
     pub hack: Option<(u32, f32)>,
     /// Under RTS control: the weapon lock, what the third slot does and the gun to go back to
@@ -340,7 +343,7 @@ pub struct PlayerSim {
 
 crate::statehash::state_hash!(struct PlayerSim {
     general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
-    view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, hack,
+    view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, very_hurt, hack,
     rts, hammer, site, building, optics, tracer_count, charge, shock, combat, spawned,
 });
 
@@ -477,6 +480,7 @@ impl PlayerSim {
             health: 500.0,
             max_health: 500.0,
             regen_wait: 0.0,
+            very_hurt: false,
             hack: None,
             rts: RtsState::default(),
             hammer: None,
@@ -534,6 +538,9 @@ pub struct Sim {
     /// Each player seat's chosen class (BO2's `pers["class"]`, `spawn.rs`): it outlives his
     /// Generals, and the next one spawns with it.
     pub chosen: Vec<Option<ChosenClass>>,
+    /// Each player seat: the chosen class was picked mid-life and waits for his next General
+    /// (`ClassAtNextSpawn`); the record made for that General wears it and says so (`ClassChosen`).
+    pub class_waits: Vec<bool>,
     pub events: Vec<Event>,
     /// This step's tracer bullets, for the host layer to draw per viewer and clear.
     pub tracers: Vec<ShotTracer>,
@@ -591,6 +598,7 @@ impl Sim {
             hit_body: None,
             frame: 0,
             chosen: vec![None; MAX_PLAYERS],
+            class_waits: vec![false; MAX_PLAYERS],
             events: Vec::new(),
             tracers: Vec::new(),
             shields: Vec::new(),
@@ -771,7 +779,8 @@ impl Sim {
         for (owner, kill) in struck {
             self.emit(owner, EventKind::HitMarker { headshot: false, kill });
             if kill {
-                self.scavenge(owner);
+                // A strike that did not end the flight: the def does not go off on impact.
+                self.scavenge(owner, MeansOfDeath::Impact);
             }
         }
         for (i, owner, outcome) in done.iter().rev() {
@@ -785,7 +794,7 @@ impl Sim {
                         self.smokes.push(crate::smoke::Smoke { at, born: self.frame });
                     }
                     let mut ev = Vec::new();
-                    self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, &mut ev);
+                    self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, proj.def.effect, &mut ev);
                     self.equipment_events(host, ev);
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
@@ -797,13 +806,13 @@ impl Sim {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                     }
                     if kill {
-                        self.scavenge(*owner);
+                        self.scavenge(*owner, crate::damage::strike(proj.def, true));
                     }
                 }
                 Outcome::Hit { kill, .. } => {
                     if kill {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
-                        self.scavenge(*owner);
+                        self.scavenge(*owner, crate::damage::strike(proj.def, false));
                     }
                 }
                 Outcome::Spawned { at, stuck_to, hit_enemy, kill } => {
@@ -811,7 +820,7 @@ impl Sim {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                     }
                     if kill {
-                        self.scavenge(*owner);
+                        self.scavenge(*owner, crate::damage::strike(proj.def, false));
                     }
                     // A table without the spawned grenade has nothing to leave (noted once by
                     // `weapon_or_none`).
@@ -858,13 +867,25 @@ impl Sim {
         }
     }
 
-    /// Scavenger: a kill with a non-explosive weapon refills ammo.
-    fn scavenge(&mut self, idx: usize) {
-        if let Some(Some(p)) = self.players.get_mut(idx) {
-            if p.arsenal.has_specialty(Specialty::Scavenger) {
-                p.arsenal.scavenge();
-            }
+    /// Scavenger: a kill by a projectile's strike (`how`, its means of death; never its blast)
+    /// refills ammo. The victim's kind is not known here (a struck object): it counts as a soldier.
+    fn scavenge(&mut self, idx: usize, how: MeansOfDeath) {
+        let Some(Some(mut p)) = self.players.get_mut(idx).map(Option::take) else { return };
+        self.scavenger_kill(idx, &mut p.arsenal, true, how);
+        self.players[idx] = Some(p);
+    }
+
+    /// BO2's Scavenger pack (`_weapons.gsc` `dropscavengerfordeath`, `scavenger_think`): a kill
+    /// refills the killer's ammo when he has the perk, the victim was a soldier (BO2 drops it only
+    /// for a player), outside the grace period (`_globallogic_player.gsc:1911`, `if (
+    /// !level.ingraceperiod )`), and not by a grenade or a blast (`how`,
+    /// [`MeansOfDeath::drops_scavenger`]). His C4 gets none while one of his is down.
+    pub(super) fn scavenger_kill(&self, idx: usize, arsenal: &mut crate::weapons::Arsenal, soldier: bool, how: MeansOfDeath) {
+        if !soldier || !how.drops_scavenger() || self.in_grace_period() || !arsenal.has_specialty(Specialty::Scavenger) {
+            return;
         }
+        let c4_down = self.equipment.placed.iter().any(|q| q.owner == idx && q.kind == crate::equipment::Kind::C4);
+        arsenal.scavenge(c4_down);
     }
 
     /// Hand a first-person General back to RTS control where he stands.
@@ -896,11 +917,17 @@ impl Sim {
         // a living ally (`onSelfDestruct` with `transferAssets`). This seat no longer commands
         // him; his new owner's own seat takes him over on its next report or take-control. Kept,
         // the old record would drive the General with the leaver's last input forever (or fight
-        // the new owner's record for his pose).
+        // the new owner's record for his pose). The leaver's equipment goes with him, as BO2
+        // deletes a disconnecting player's weapon objects (`_weaponobjects.gsc`
+        // `deleteweaponobjectson`, his insertion by `_tacticalinsertion.gsc` `watchdisconnect`);
+        // his planted shield falls with the record (`step_deployed`, `_riotshield.gsc`
+        // `deleteshieldonplayerdeathordisconnect`). Kept, it stayed his seat's: his C4 waited for a
+        // detonator nobody holds, and its kills and his Claymores' were credited to a seat gone.
         if info.owner_player != idx as i32 {
             if p.is_first_person() {
                 self.return_to_rts(host, idx, p);
             }
+            self.equipment.clear_leaver(host, idx);
             return false;
         }
         p.shock.step();
@@ -1159,10 +1186,21 @@ impl Sim {
         self.equipment.sensed(idx, pos)
     }
 
+    /// The health he has and BO2's regeneration (`_healthoverlay.gsc` `playerhealthregen`): a hit
+    /// restarts the wait (`playerHealthRegenTime`); once it is over he is whole again at once,
+    /// unless his health fell to `healthoverlaycutoff` or under since he was last whole (very
+    /// hurt), when it comes back `regenrate` of full every `RegenStep` from `veryhurttime` after the
+    /// hit on.
     fn track_health(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, info: &ObjInfo) {
+        let t = crate::tuning::get();
         p.max_health = info.max_health;
+        if info.max_health > 0.0 && info.health >= info.max_health - 1e-3 {
+            p.very_hurt = false;
+        } else if info.max_health > 0.0 && info.health <= info.max_health * t.health_overlay_cutoff {
+            p.very_hurt = true;
+        }
         if info.health < p.health - 1e-3 {
-            p.regen_wait = regen_delay();
+            p.regen_wait = if p.very_hurt { t.regen_delay.max(t.very_hurt_time) } else { t.regen_delay };
             let amount = p.health - info.health;
             self.emit(idx, EventKind::Damaged { amount });
             let toughness = p.arsenal.class_specialties().has(Specialty::BulletFlinch);
@@ -1171,7 +1209,8 @@ impl Sim {
         } else {
             p.regen_wait = (p.regen_wait - LOGIC_DT).max(0.0);
             if p.regen_wait <= 0.0 && info.health < info.max_health {
-                let amount = (info.max_health / regen_full_time() * LOGIC_DT).min(info.max_health - info.health);
+                let per_second = if p.very_hurt { info.max_health * t.regen_rate / t.regen_step.max(1e-3) } else { f32::INFINITY };
+                let amount = (per_second * LOGIC_DT).min(info.max_health - info.health);
                 host.heal(p.general, amount);
                 // BO2 decays every attacker's damage by the health regained (`score`).
                 self.score.decay(p.general, amount / BO2_TO_ZH_DAMAGE);

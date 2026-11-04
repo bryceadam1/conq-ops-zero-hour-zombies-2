@@ -124,27 +124,6 @@ pub(super) fn draw_marks(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h
     }
 }
 
-/// BO2's reload hint under the crosshair when the clip runs low.
-pub(super) fn draw_reload_prompt(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, p: &PlayerSim) {
-    if p.arsenal.is_unarmed() {
-        return;
-    }
-    let wpn = p.arsenal.current();
-    let low = super::ammo::low_clip(wpn.ammo, wpn.def.clip);
-    let prompt = if wpn.is_reloading() {
-        Some(("Reloading...", DIM))
-    } else if wpn.ammo == 0 && wpn.reserve == 0 {
-        Some((crate::weapons::catalog().label("WEAPON_NO_AMMO"), RED))
-    } else if low {
-        Some(("Press  R  to reload", WHITE))
-    } else {
-        None
-    };
-    if let Some((text, col)) = prompt {
-        prims.push(Prim::Text { x: w * 0.5, y: h * 0.5 + 46.0 * s, text: text.to_string(), argb: col, size: (13.0 * s) as i32, align: 1 });
-    }
-}
-
 /// Whether BO2 draws the hold-breath hint (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed
 /// through an overlay scope whose def has `bHoldBreathToSteady`, while the breath is not held.
 pub(super) fn breath_hint_shown(p: &PlayerSim) -> bool {

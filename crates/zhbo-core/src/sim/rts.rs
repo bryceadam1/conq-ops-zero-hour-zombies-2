@@ -108,7 +108,7 @@ impl Sim {
             // A new General wears the player's chosen class (BO2's `pers["class"]`, `spawn.rs`);
             // without one he has no guns to fire: the report marks nothing usable until a class
             // lands (the bridge's empty-weapon veto stops Zero Hour's own firing).
-            self.players[idx] = Some(self.new_record(idx, general, Mode::Rts, Some(&info)));
+            self.players[idx] = Some(self.fresh_record(idx, general, Mode::Rts, Some(&info)));
         }
         let Some(mut p) = self.players[idx].take() else { return RtsWeapons::default() };
         if p.general != general {
@@ -202,7 +202,7 @@ impl Sim {
         proj.vel = vel;
         (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
         self.projectiles.push((idx, proj));
-        self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
+        self.emit(idx, EventKind::Thrown { lethal: std::ptr::eq(def, p.arsenal.lethal.def) || def.id == p.arsenal.lethal.def.id });
     }
 
     /// Under RTS control: what the third slot's next shot does — `choice` is [`Third`]'s wire value

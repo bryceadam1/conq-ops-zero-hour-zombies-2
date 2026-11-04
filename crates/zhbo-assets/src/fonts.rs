@@ -24,7 +24,8 @@ const TEXTURE: &str = "zhbo_bo2_fonts.tga";
 
 /// The converted fonts: the archive files (atlas, MappedImages, metrics) and a summary.
 pub fn files(bo2_dir: &Path) -> Result<(crate::generals::Files, String), String> {
-    let zone_path = zhbo_formats::t6zone::language_path(bo2_dir, "code_post_gfx_mp");
+    let language = zhbo_formats::t6zone::language(bo2_dir).ok_or("no language zone with the UI fonts")?;
+    let zone_path = language.file(bo2_dir, "code_post_gfx_mp.ff");
     if !zone_path.is_file() {
         return Err("no language zone with the UI fonts".into());
     }
@@ -47,8 +48,7 @@ pub fn files(bo2_dir: &Path) -> Result<(crate::generals::Files, String), String>
     if hash.data_hash == 0 || hashes.iter().any(|h| *h != hash) {
         return Err(format!("the UI fonts do not share one streamed atlas ({hashes:x?})"));
     }
-    let (dir, prefix) = zhbo_formats::t6zone::LANGUAGE;
-    let pak_path = bo2_dir.join("zone").join(dir).join(format!("{prefix}_base.ipak"));
+    let pak_path = language.file(bo2_dir, "base.ipak");
     let pak = Ipak::open(&pak_path).map_err(|e| format!("{}: {e}", pak_path.display()))?;
     let atlas = pak.entry(hash).ok_or("the font atlas is not in the language pack").and_then(|e| images::load(&pak, e).map_err(|_| "the font atlas does not decode"))?;
     let (metrics, mapped) = describe(&fonts, &atlas);

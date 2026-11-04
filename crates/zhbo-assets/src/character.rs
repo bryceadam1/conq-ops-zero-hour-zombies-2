@@ -46,18 +46,31 @@ impl Rig {
     /// `tag_knife_attach` (off-hand equipment) with its magazine on `j_gun`.
     /// Attachments are added in order, so a later one may hang from an earlier one's bone.
     pub fn new(base: &Model, attachments: &[(&Model, &str)]) -> Rig {
-        let mut rig = Rig {
-            pivots: vec![Pivot { name: "ROOTTRANSFORM".into(), parent: None, translation: [0.0; 3], rotation: [0.0, 0.0, 0.0, 1.0] }],
-            bind: vec![xf::IDENTITY],
-            names: vec!["ROOTTRANSFORM".into()],
-            anim_base: vec![[0.0; 3]],
-        };
+        let mut rig = Rig::root();
         rig.add_bones(base, None);
         for (model, tag) in attachments {
             let tag = rig.pivot(tag);
             rig.add_bones(model, tag);
         }
         rig
+    }
+
+    /// [`Rig::new`] for `base` alone, its origin moved to `origin` (model space, scaled): the model
+    /// drawn from another point of itself (the planted shield from its collision box's footing).
+    pub fn placed(base: &Model, origin: [f32; 3]) -> Rig {
+        let mut rig = Rig::root();
+        rig.add_bones_at(base, None, (xf::IDENTITY.0, origin.map(|c| -c)));
+        rig
+    }
+
+    /// The root transform alone.
+    fn root() -> Rig {
+        Rig {
+            pivots: vec![Pivot { name: "ROOTTRANSFORM".into(), parent: None, translation: [0.0; 3], rotation: [0.0, 0.0, 0.0, 1.0] }],
+            bind: vec![xf::IDENTITY],
+            names: vec!["ROOTTRANSFORM".into()],
+            anim_base: vec![[0.0; 3]],
+        }
     }
 
     /// Hang another model from pivot `tag` with its origin at `offset` (scaled units) in the tag's

@@ -12059,3 +12059,223 @@ the ground), default 16/16, short mptest 25/25 with captures: both machines drew
 dropped MP7 natively (`native body: dropped weapon 151 (weapon 6) drawn lying` in host.log and
 join.log). The host's capture of that spot (`at-mp/host-shot.bmp.016800.png`) shows the body, with
 the small gun beside it not distinguishable at that range.
+
+## Bug sweep 4: round 3's leftovers (2026-11-03, branch `v1/bug-sweep-4`)
+
+**The shield in the wrong hand (third person).** By default (`ZHBO_NATIVE_BODY` 1) the W3D body
+draws and the native pass draws only the weapon, placed by the engine's `tag_weapon_right`: the
+Assault Shield, whose manifest names `tag_weapon_left`, was drawn in the right hand. The W3D
+fallback (`viewmodels::world_weapons`) skinned every weapon's `W<vm><k>` meshes on the right-hand
+pivot too. Cause: one hand for every weapon. Fix: the W3D meshes ride the body bone the native
+manifest names (the shield's `tag_weapon_left`, else the right hand), and the weapon-only mode
+refuses a manifest whose base part names a body bone ("held on tag_weapon_left, not the right hand
+…", logged once), so the W3D shield draws in the left hand. Body mode (2) already used the tag.
+Tests: `every_world_weapon_shows_all_its_meshes` (real install) now checks every weapon's meshes
+ride the hand its manifest names and that the shield's are on the left;
+`the_shield_rides_the_left_hand_and_the_back` checks the weapon-only refusal.
+
+**The planted shield's Zero Hour box floated.** Zero Hour's `Box` geometry has no offset: centred on
+its object in x and y, rising from it in z. The object stood at the model's origin, 26" up
+(`riotshield_placement_zoffset` × the drawn scale ≈ 5 units) and 2.7" behind the panel's middle.
+Fix: `ShieldBox::footing` (the deployed box's bottom middle); the sim spawns the object there
+(`deploy::planted_object_at`, turned with the shield) and the converter draws the posed model from
+the same point (`Rig::placed`). The sim's own blocking box is unchanged.
+`the_planted_shields_object_stands_where_its_box_blocks` rays the sim's box against the Zero Hour
+box from the object; `every_prop_is_drawn_at_the_bodys_scale` checks the drawn box rises from the
+object, centred.
+
+**A class that waited for the next spawn came in silently.** `ClassAtNextSpawn` changed the chosen
+class, and the next General's record wore it, but nothing said so (no `ClassChosen`, no "assumed the
+… class" line). `Sim::class_waits` (per seat, hashed with the seat) marks a waiting class;
+`Sim::fresh_record` (take-control and the RTS report) emits `ClassChosen` as the next General wears
+it. Picking back the worn class clears it (BO2 still prints `change_class`, `menuclass`).
+
+**A leaver's equipment stayed his seat's.** When Zero Hour passed his General to an ally, the sim let
+go of the record but kept his Claymores, C4 and Tactical Insertion under his seat (their kills were
+credited to a seat gone; his C4 waited for a detonator nobody holds). BO2 deletes a disconnecting
+player's weapon objects (`_weaponobjects.gsc` `deleteweaponobjectson` on `disconnect`), his
+insertion (`_tacticalinsertion.gsc` `watchdisconnect`) and his planted shield
+(`_riotshield.gsc` `deleteshieldonplayerdeathordisconnect`, already: it falls with the record).
+`Equipment::clear_leaver` now runs on the hand-over. Note: BO2 keeps equipment through a death until
+the respawn (`deleteweaponobjectson` skips `death`; `scr_deleteexplosivesonspawn` 1 clears it in
+`resetweaponobjectwatcher`); the mod clears it at the death, since a Zero Hour General's
+replacement can be minutes away. Left as is.
+
+**The long multiplayer run for any N ≥ 2.** The class change was scripted in the joiner's third
+life, so it needed a fourth to be worn and N ≥ 5 overall. `Autopilot::mp_change_life` puts it in
+his third life, or his next-to-last when he has fewer than four (the first fight at N = 2, after
+the lethal throw). The round check asks min(2, N − 1). `the_long_run_changes_class_in_a_life_with_a_next_one`
+runs the script headless at two and three lives.
+
+**ClassChangeGracePeriod (15 s) is not in the install.** BO2 sets `level.graceperiod` in the base
+`maps/mp/gametypes/_globallogic.gsc`. Every gametype includes it (patch_mp holds the include's name
+string) but no fastfile of the install carries the script: `zhbo-assets find` over every zone in
+`zone/all` and `zone/english` finds neither `_globallogic.gsc` nor its `grace_period_ending` notify;
+`mp/gamesettings_default.cfg` has `prematchperiod 15` and `flagCaptureGracePeriod` but no grace
+period setting, and t6mp.exe has no such dvar or string. The 15 stays, its comment says what was
+checked. A definitive value needs the BO2-reference session (the base script from another source).
+
+**Non-English installs.** The converter read `zone/english/en_*.ff` only. BO2 reads its language
+from `localization.txt` (t6mp.exe's `"localization.txt"`, dvar `loc_language`) and opens a
+localized zone as `"%s\zone\%s\%s%s"` (install, language, prefix, zone); the exe's prefix table is
+`en_ fr_ fc_ ge_ as_ it_ sp_ br_ ru_ po_ ko_ ja_ cz_ fj_ bp_ ms_`. A French install has
+`zone/french/fr_*.ff`: no fonts, no names, no UI strings. Fix: `t6zone::language` takes the folder
+`localization.txt` names if it holds the localized zones, else the first one that does, and reads
+the prefix off the folder's own `*code_post_gfx_mp.ff` (no table copied); `language_path`, the
+fonts' zone and `*_base.ipak`, and `zhbo-assets strings` use it. The sound banks were already
+read by id from every bank. `the_localized_zones_are_the_installs_own_language` covers English,
+French, two languages, a stale `localization.txt`, other case and none; the real-install
+`install_variants_convert_the_same_sim_content` lays the English zones out as French ones and gets
+every name back, the content fingerprint unmoved.
+
+## Bug sweep 4: health comes back as BO2's regen gives it (2026-11-03, branch `v1/bug-sweep-4`)
+
+**Found reading the sim against `_healthoverlay.gsc`.** The mod regenerated a General linearly from
+empty to full over `RegenFullTime` (3 s, "the mod's value") after a 5 s wait. BO2's
+`playerhealthregen` (`maps/mp/gametypes/_healthoverlay.gsc:78-200`) does something else: after
+`playerhealth_regularregendelay` (the gametype setting `playerHealthRegenTime`, 5 in
+`mp/gamesettings_default.cfg:60`) a player over `level.healthoverlaycutoff` (0.55) is set whole at
+once (`newhealth = 1`); one who fell to 55% or under since he was last whole (`veryhurt`, cleared
+only at full health) gets `regenrate` (0.1 of full) back every 0.05 s step from `veryhurttime`
+(3 s) after the hit, so from 10% to whole in 0.45 s. A General at 80% waited 5 s and then took
+another 0.6 s to fill; at 10%, 2.7 s.
+
+**Fix.** `track_health` follows the script: `PlayerSim::very_hurt` (hashed with the record), the
+wait `max(RegenDelay, veryhurttime)` when very hurt, then whole at once or `regenrate / RegenStep`
+of full per second. The tuning pack's `RegenFullTime` is gone; `healthoverlaycutoff`, `regenrate`,
+`RegenStep` and `veryhurttime` carry the script's constants with their lines. Overhead nothing
+changes (Zero Hour units do not regenerate). Test: `health_comes_back_as_bo2s_regen_gives_it`
+(light hurt whole at once; very hurt at 10% a step; a hit on the way up restarts the wait and keeps
+him very hurt).
+
+## Bug sweep 4: Scavenger follows BO2's drop rules (2026-11-03, branch `v1/bug-sweep-4`)
+
+BO2 drops a Scavenger pack only from a **player's** death (`dropscavengerfordeath`, called from
+`_globallogic_player.gsc:1911-1914`), only **outside the grace period** (`if ( !level.ingraceperiod )`)
+and not for a blast (`MOD_GRENADE*`/`MOD_EXPLOSIVE*`/`MOD_PROJECTILE_SPLASH`); picking it up refills
+C4 only when none of the player's is down (`scavenger_think`'s `satchel_charge_mp` case,
+`_weaponobjects.gsc` `anyobjectsinworld`). The mod refilled on any kill: a vehicle or building, in the
+grace period, the C4 with one already down. `Sim::scavenger_kill` gates the bullet, knife and
+projectile-impact kills (the blast kills were already excluded) on all three; a projectile's struck
+victim is not known and counts as a soldier. Test: `scavenger_follows_bo2s_drop_rules`.
+
+## Bug sweep 4: the low-ammo warning is BO2's (2026-11-03, branch `v1/bug-sweep-4`)
+
+**Found reading a default-leg screenshot.** Under the crosshair the HUD drew "Press  R  to reload"
+(hard-coded English) once the clip was under a third, "Reloading..." during every reload, and the
+reload prompt also when nothing was left to reload with. BO2's warning is `t6mp` `FUN_0049d3e0`
+(ownerdraw 123, `weaponinfo.menu`'s `lowammowarning`): drawn only for a weapon with a clip counter
+(`ammoCounterClip`) and no `unlimitedAmmo`, never in the reload states (0x0b-0x12), only at or
+under `lowAmmoWarningThreshold` of the clip (`FUN_004d8970`, per weapon: 0.33 for most guns, 0.2
+for the QBB, 0.25 for the crossbow and SRM, 0.1 for the minigun; 0 for the shield and knives, which
+have no counter). With rounds in reserve it is `PLATFORM_RELOAD` "^3[{+reload}]^7 Reload" (not for
+`bNoPartialReload` or a one-round clip); with none, `WEAPON_NO_AMMO` on an empty clip, else
+`PLATFORM_LOW_AMMO_NO_RELOAD` "Low Ammo". Each pulses at 1.7 Hz between its dvar colours
+(`lowAmmoWarningColor1/2` white, `NoReloadColor1/2` (0.7, 0.7, 0, 0.8)→yellow, `NoAmmoColor1/2`
+(0.8, 0, 0, 0.8)→red; `FUN_00499c30`). The LUI ammo counter's red pulse (`lowClip`) is the same
+test, and was also "under a third".
+
+**Fix.** The weapon table's `LowAmmoWarning` line (presentation: threshold, `bNoPartialReload`,
+counter; WEAPON_FIELDS 154 → 155) from `WeaponDef` +0x744/+0x669/+0x3c4. `hud::hints` draws the
+warning by BO2's cases with the localized strings (three new `UI_TEXT_KEYS`, the hold-breath hint's
+`PLATFORM_HOLD_BREATH` among them, which was hard-coded too), the reload key filled into `{+reload}`
+and the `^3`/`^7` runs coloured; `hud::ammo::low_clip` uses the threshold. Placement: centred in
+the item's rect (`-320 -8 640 100` at the safe area's middle, `textalign 9`). Tests:
+`the_low_ammo_warning_follows_bo2s_cases`, `a_hint_fills_in_the_key_and_splits_at_the_colour_codes`,
+`the_warning_pulses_between_its_colours`, `low_clip_is_the_weapons_threshold`.
+
+**Needs `hud::VERSION`** (the table's new line; a table without it keeps a third and a counter).
+
+## Bug sweep 4: Tactical Mask stops the Shock Charge, Hard Wired the EMP grenade (2026-11-03, branch `v1/bug-sweep-4`)
+
+A sweep of the perks' specialties against the sim found two protective bits read nowhere:
+`proximityprotection` (Tactical Mask) and `immuneemp` (Hard Wired). BO2: a Shock Charge's zap
+(`proximitygrenadedamageplayer`, `_proximity_grenade.gsc:118-124`: the DOT, its shellshock and the
+HUD blackout) skips a player with `specialty_proximityprotection`; an EMP grenade's effect on a
+player (`monitorempgrenade`, `_empgrenade.gsc:43`) skips one with `specialty_immuneemp`. In the mod
+a masked General was still zapped and a Hard Wired one still flashed. `Guard::proximity_protected`
+drops a placed stun's disable (overhead: Zero Hour's paralysis; first person: the shellshock) for
+him, and `shock::emp_hits` skips `immuneemp`. Tests: `the_tactical_mask_stops_a_shock_charge`,
+`hard_wired_ignores_the_emp_grenade`. The other specialties with no reader are scorestreak, radar
+and UI ones the mod has no counterpart for (counter-UAV, air support, sentries, the MMS/thermal and
+target-finder immunities on another General, Ghost's `gpsjammer`, Awareness's `loudenemies`);
+listed in the report, not changed.
+
+## Bug sweep 4: the long run's lone round no longer shoots the next General on arrival (2026-11-03, branch `v1/bug-sweep-4`)
+
+The first `ZHBO_MPTEST_ROUNDS=2` run (`~/.opencode/plan/bug-sweep-4/mp-long2/`) changed class in the
+first fight as scripted and the next General logged "assumed the CQB class" at his record, but he
+was killed taking control: the host's round 2 had started alone (`round 2 starts (nobody to aim
+at)`, its 20 s timeout) and its closing burst (14.5-19 s into the round) fell exactly on the
+joiner's arrival. This is the bug-sweep-3 entry's "his second General was shot entering". A round
+that began with nobody to aim at now starts over, once, when the other General comes in
+(`Autopilot::mp_fight_alone`). The same run's one state-hash "difference" was a log line cut by
+the disk filling up at that moment (the joined line holds two records); every other of 49,624 common
+frames agreed.
+
+Real install: `every_converted_weapon_draws` audited every world manifest in the weapon-only mode,
+which now refuses the shield; a manifest held on its own body bone (`nativebody::held_on_body_bone`)
+is audited in body mode. The UI stand-ins must follow `UI_TEXT_KEYS`' order.
+
+## Bug sweep 4: verification (2026-11-03, branch `v1/bug-sweep-4`)
+
+In game on this branch (`~/.opencode/plan/bug-sweep-4/`): default 16/16, `--classpick` 12/12,
+`--rts` 16/16, `--scope` 1/1, `--w3d-ads` 2/2, `--input` 3/3, `--build` 18/18, `--replay` 5/5,
+`--smoke` 7/7, `--splash` 4/4, mp short 25/25. Long runs: `ZHBO_MPTEST_ROUNDS=3` 34/34 (the class
+change in the joiner's first round, worn by his last General, logged "assumed the CQB class" on
+both machines); `ZHBO_MPTEST_ROUNDS=2` 33/34 by the old shellshock check: at N = 2 the joiner's
+only round is the life he leaves four seconds into, before its concussions land, so both logs held
+none (and agreed). The check now asks for at least one shellshock from N = 3 and only agreement at
+N = 2. The default leg's screenshot `at-default/shot.bmp.000450.png` shows the new warning,
+"[R] Reload" with the key in yellow, at 9/30 rounds. Conformance: byte-identical to integration8.
+
+## Bug sweep 4: the --equipment leg, and every item breaks as its script says (2026-11-03, branch `v1/bug-sweep-4`)
+
+**The legs that exist** (`scripts/autotest-mac.sh`): the default autopilot, `--input`,
+`--equipment`, `--rts`, `--rts-dry`, `--build`, `--classpick`, `--scope`, `--w3d-ads`, `--replay`,
+`--splash`, `--smoke`, `--mp` (= `scripts/mptest-mac.sh`, with `ZHBO_MPTEST_ROUNDS` for the long
+run) and `--showcase` (captures only, no checks); Windows has `autotest.ps1` and `inputtest.ps1`.
+The legs integrations ran left out `--equipment`, `--rts-dry` and `--showcase`.
+
+**`--equipment` failed (Trophy, Black Hat, capture): a test bug, and a game bug found with it.**
+The script's fixed windows pressed the tactical at t = 2 s, while the C4's offhand states still ran:
+the C4 now goes about a second later (behind the spawn's class pick), and BO2 refuses an offhand
+press during another offhand (`FUN_008e2bb0`), so neither the Trophy nor the Black Hat was used in
+the first life. The Black Hat's 4 s hold was also shorter than its lock on a drone
+(`hackertoollockstart` 0.1 + `vehiclehackertooltimems` 4000 ms + the fire delay). The script now
+waits for the state it needs (lethal once armed, tactical once the lethal is down and the hands are
+free, held past the lock; `the_equipment_run_waits_for_the_hands`). Found with it:
+`EventKind::Thrown` took its slot from the item's class, so a C4 (class equipment) was a "tactical"
+throw and played the tactical's throw sound; the throw action now carries its slot
+(`a_thrown_c4_is_the_lethal_slots_throw`).
+
+**Equipment breaking (from conformance-gaps' list, swept over every item).** The mod broke any
+piece that was shot or caught in any blast with one generic effect, and nothing went off. BO2's
+watchers (`_weaponobjects.gsc` `weaponobjectdamage` → `waitanddetonate` → each item's `detonate`):
+* C4 (`satcheldetonate`), the Claymore (`claymoredetonate`, `:347-363`) and the Shock Charge
+  (`proximitydetonate`) go off through `weapondetonate`, **as the breaker's** (`self detonate(
+  attacker )`): the shooter's blast, his credit.
+* The Betty is destroyed without its jump (`bouncingbettydestroyed`: `fx_betty_destroyed`); the
+  Trophy System explodes as equipment (`trophysystemdetonate`: `fx_exp_equipment_lg`); the Sensor
+  Grenade too (`sensorgrenadedestroyed`: `fx_exp_equipment`); the Tactical Insertion fizzles
+  (`fizzle`: `misc/fx_equip_tac_insert_exp`).
+* A concussion, flashbang or Shock Charge only stuns a piece and smoke does nothing (the damage
+  watchers' `continue` cases); an EMP takes it out with `fx_emp_explosion_equip`
+  (`waitanddetonate`), no blast.
+* An explosion breaks the enemy pieces it reaches, which may go off in turn (the chain,
+  `waschained`); the mod's equipment blasts broke nothing.
+* A Trophy System's kill plays `fx_trophy_radius_detonation` and does `radiusdamage( projposition,
+  128, 105, 10, self )` from its owner (`projectileexplode`, `_trophy_system.gsc:228-233`; three new
+  tuning keys); spent, it blows itself apart (`trophysystemdetonate`). The mod played
+  `fx_exp_equipment_lg` at the kill and removed a spent one silently.
+
+`equipment::breaks`/`blast_breaks` hold the per-item rule, `Equipment::destroy` applies it, and
+`BO2_EFFECTS` lists the six effects (all in `common_mp`; the converter already converts the list).
+Tests: `every_item_breaks_as_its_script_says`, `blasts_break_chain_and_spare_by_their_effect`, the
+Trophy test's kill effect, blast and spent effect, and the real-install
+`every_equipment_effect_is_in_the_install`. **Needs `hud::VERSION`** for the four new converted effects.
+
+In game after both fixes (`~/.opencode/plan/bug-sweep-4/`): `--equipment` 8/8 (Trophy shot down a
+rocket, Black Hat hack, the drone changed sides), `--rts-dry` 5/5, `--showcase` captured, default
+16/16, `--splash` 4/4, `--rts` 16/16, mp short 25/25; the real-install roster lockstep gate, content
+variants and props scale pass.

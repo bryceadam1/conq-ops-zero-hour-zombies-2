@@ -31,11 +31,12 @@ pub const CONCUSSION_WEAPON: &str = "concussion_grenade_mp";
 pub const FLASH_WEAPON: &str = "flash_grenade_mp";
 
 /// An EMP grenade gone off at `at`: every first-person General it reaches — its thrower too,
-/// not a teammate (`_empgrenade.gsc:41-60`) — takes its flashbang shock.
+/// not a teammate, nor one with Hard Wired's `immuneemp` (`_empgrenade.gsc:41-60`) — takes its
+/// flashbang shock.
 pub(super) fn emp_hits(host: &dyn LogicHost, players: &[Option<PlayerSim>], def: &'static WeaponDef, owner: u32, at: Vec3) -> Vec<ShockHit> {
     let mut out = Vec::new();
     for p in players.iter().flatten().filter(|p| p.is_first_person()) {
-        if (p.body.pos - at).length() > def.explosion_radius {
+        if (p.body.pos - at).length() > def.explosion_radius || p.arsenal.class_specialties().has(Specialty::ImmuneEmp) {
             continue;
         }
         let ally = p.general != owner && host.object(p.general, owner).is_some_and(|o| o.has(objflags::ALLY));
@@ -187,6 +188,17 @@ mod tests {
         go_off_def(&mut sim, &host, flash, at); // General 2 faces +x: away from it
         let away = sim.player(1).unwrap().shock.active.as_ref().map_or(0.0, |a| a.left);
         assert!(away < facing, "{away} vs {facing}");
+    }
+
+    /// Hard Wired (`immuneemp`): an EMP grenade's flashbang shock skips him (`_empgrenade.gsc:43`).
+    #[test]
+    fn hard_wired_ignores_the_emp_grenade() {
+        let emp: &'static WeaponDef = Box::leak(Box::new(WeaponDef { id: "emp_grenade_mp".into(), effect: Effect::Emp, explosion_radius: 100.0, ..weapon(CONCUSSION_WEAPON).clone() }));
+        let (host, mut sim) = duel(40.0);
+        let shocked = |sim: &Sim| sim.players.iter().flatten().map(|p| p.general).filter(|g| emp_hits(&host, &sim.players, emp, 1, Vec3::new(40.0, 0.0, 0.0)).iter().any(|h| h.victim == *g)).collect::<Vec<_>>();
+        assert_eq!(shocked(&sim), [1, 2], "both in reach, the thrower too");
+        sim.players[1].as_mut().unwrap().arsenal.loadout.perks.push(crate::weapons::Perk::HARD_WIRED);
+        assert_eq!(shocked(&sim), [1], "Hard Wired keeps it off him");
     }
 
     /// A frag's blast shakes the first-person General (`frag_grenade_mp`, 0.5 s).

@@ -1483,6 +1483,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             unlimited_ammo: w.unlimited_ammo,
         },
         guided_missile_type: w.guided_missile_type,
+        low_ammo_threshold: w.low_ammo_warning_threshold,
+        no_partial_reload: w.no_partial_reload,
+        ammo_counter: w.ammo_counter_clip != 0,
         // The variant's own action-slot material (`WeaponVariantDef.dpadIcon`): an alt mode carries
         // it (`gl_an94_mp`: `hud_gl_select`), the weapon it toggles from does not.
         dpad_icon: w.dpad_icon.clone().unwrap_or_default(),

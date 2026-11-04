@@ -53,6 +53,9 @@ pub struct EquipTuning {
     /// Trophy System: interception range and charges.
     pub trophy_range: f32,
     pub trophy_charges: u8,
+    /// Trophy System: the blast where it shoots something down (radius, centre and edge damage
+    /// on BO2's 100-HP scale).
+    pub trophy_blast: (f32, f32, f32),
     /// `delayexplosive` (Engineer): extra seconds a tripped explosive waits.
     pub delay_explosive: f32,
     /// Black Hat: range; the lock on equipment and on a drone (seconds of sight); the script's
@@ -79,6 +82,7 @@ impl EquipTuning {
             shock_grace: t.proximity_grenade_grace_period,
             trophy_range: inches(t.trophy_system_range),
             trophy_charges: t.trophy_system_ammo.clamp(0.0, 255.0) as u8,
+            trophy_blast: (inches(t.trophy_intercept_radius), t.trophy_intercept_max_damage, t.trophy_intercept_min_damage),
             delay_explosive: t.perk_delay_explosive_time,
             hack_range: inches(t.hacker_tool_max_equipment_distance),
             hack_lock_equipment: t.equipment_hacker_tool_time_ms / 1000.0,
@@ -100,11 +104,77 @@ impl Default for EquipTuning {
     }
 }
 
-/// BO2's effects for a piece of equipment that is shot, and for a Trophy System kill, as the
-/// converter names them (`zhbo_assets::fx::fxlist_name`); the converter converts [`BO2_EFFECTS`].
-pub const BREAK_FX: &str = "ZHBO_BO2FX_explosions_fx_exp_equipment";
-pub const TROPHY_FX: &str = "ZHBO_BO2FX_explosions_fx_exp_equipment_lg";
-pub const BO2_EFFECTS: &[&str] = &["explosions/fx_exp_equipment", "explosions/fx_exp_equipment_lg"];
+/// BO2's effects for equipment that breaks or does its work, by BO2's names (the converter
+/// converts each of [`BO2_EFFECTS`]; [`play`] plays one by its converted name):
+/// `level._equipment_explode_fx` and `_lg` (`_weaponobjects.gsc:60-61`; the Sensor Grenade's and
+/// the Trophy System's destruction), `level._equipment_emp_destroy_fx` (`:59`, anything an EMP
+/// takes out), the Betty's `bettydestroyedfx` (`_bouncingbetty.gsc:13`), the Tactical Insertion's
+/// `tacticalInsertionFizzle` (`_tacticalinsertion.gsc:20`) and the Trophy System's
+/// `trophydetonationfx` where it shoots something down (`_trophy_system.gsc:20`).
+pub const EQUIPMENT_FX: &str = "explosions/fx_exp_equipment";
+pub const EQUIPMENT_LG_FX: &str = "explosions/fx_exp_equipment_lg";
+pub const EMP_DESTROY_FX: &str = "weapon/emp/fx_emp_explosion_equip";
+pub const BETTY_DESTROYED_FX: &str = "weapon/bouncing_betty/fx_betty_destroyed";
+pub const TAC_INSERT_FIZZLE_FX: &str = "misc/fx_equip_tac_insert_exp";
+pub const TROPHY_INTERCEPT_FX: &str = "weapon/trophy_system/fx_trophy_radius_detonation";
+pub const BO2_EFFECTS: &[&str] = &[EQUIPMENT_FX, EQUIPMENT_LG_FX, EMP_DESTROY_FX, BETTY_DESTROYED_FX, TAC_INSERT_FIZZLE_FX, TROPHY_INTERCEPT_FX];
+
+/// Play the BO2 effect `effect` (one of [`BO2_EFFECTS`]) at `at`.
+pub fn play(host: &dyn LogicHost, effect: &str, at: Vec3) {
+    host.fx(&crate::names::bo2_fx(effect), at);
+}
+
+/// What a piece does when an enemy breaks it (shot, or caught in an explosion): BO2's watcher for
+/// it. C4 (`satcheldetonate`), the Claymore (`claymoredetonate`, `_weaponobjects.gsc:347-363`) and
+/// the Shock Charge (`proximitydetonate`) all go to `weapondetonate`: they go off, the breaker
+/// their attacker. The Betty is destroyed without its jump (`bouncingbettydetonate` with a weapon:
+/// `bouncingbettydestroyed`), the Trophy System and the Sensor Grenade explode as equipment
+/// (`trophysystemdetonate`, `sensorgrenadedestroyed`), the Tactical Insertion fizzles (`fizzle`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Breaks {
+    Detonates,
+    Destroyed(&'static str),
+}
+
+pub fn breaks(kind: Kind) -> Breaks {
+    match kind {
+        Kind::C4 | Kind::Claymore | Kind::Shock => Breaks::Detonates,
+        Kind::Betty => Breaks::Destroyed(BETTY_DESTROYED_FX),
+        Kind::Trophy => Breaks::Destroyed(EQUIPMENT_LG_FX),
+        Kind::Insertion => Breaks::Destroyed(TAC_INSERT_FIZZLE_FX),
+        Kind::Sensor | Kind::Other => Breaks::Destroyed(EQUIPMENT_FX),
+    }
+}
+
+/// Whether a blast of `effect` breaks equipment: an explosion does, an EMP does (its own way);
+/// a concussion, flashbang or Shock Charge only stuns it and smoke does nothing
+/// (`weaponobjectdamage`'s `continue` cases, `_weaponobjects.gsc:603-628`).
+pub fn blast_breaks(effect: crate::weapons::Effect) -> bool {
+    use crate::weapons::Effect;
+    matches!(effect, Effect::Explode | Effect::Emp)
+}
+
+/// A Trophy System shooting something down at `at` (`projectileexplode`, `_trophy_system.gsc:
+/// 228-233`): its detonation effect there, and `radiusdamage( projposition, 128, 105, 10, self )`
+/// from its owner — the full damage at the centre falling linearly to the edge, on BO2's scale. The
+/// script's `radiusdamage` names no means of death, so it deals the script default's
+/// `MOD_EXPLOSIVE` (the explicit `"MOD_EXPLOSIVE"` the other scripts pass for the same blast):
+/// Flak Jacket's `isexplosivedamage` and BO2's vehicle splash rule apply to it.
+fn trophy_kill(host: &dyn LogicHost, p: &Placed, at: Vec3, tn: &EquipTuning) {
+    play(host, TROPHY_INTERCEPT_FX, at);
+    let (radius, max, min) = tn.trophy_blast;
+    let mut objs = Vec::new();
+    host.query(at, radius, p.viewer(), &mut objs);
+    objs.sort_by_key(|o| o.id);
+    for o in objs.iter().filter(|o| o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && !o.has(objflags::PROJECTILE)) {
+        let d = crate::projectiles::blast_distance(o, at);
+        if d > radius {
+            continue;
+        }
+        let bo2 = max - (max - min) * (d / radius.max(1e-3));
+        host.damage(p.general, o.id, bo2 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::MeansOfDeath::Explosive);
+    }
+}
 
 /// What a piece of equipment is and does (`crate::weapons::Kind`, re-exported here for the
 /// sim's equipment code). Lives on the weapon definition (the weapon table's `Equipment` block,
@@ -206,11 +276,18 @@ impl Placed {
     /// Blow it up where it is; its damage reaches each General through his guard, and what it does
     /// to a first-person General goes into `hits` (the sim's shellshocks).
     fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer], guards: &[crate::sim::guard::Guard], hits: &std::cell::RefCell<Vec<crate::sim::guard::ShockHit>>) -> EquipEvent {
+        let (owner, general) = (self.owner, self.general);
+        self.explode_for(host, owner, general, shields, guards, hits)
+    }
+
+    /// [`Placed::explode`] with another attacker: a piece an enemy broke goes off as his
+    /// (`weapondetonate`: `self detonate( attacker )`), its damage and credit his.
+    fn explode_for(&mut self, host: &dyn LogicHost, seat: usize, general: u32, shields: &[crate::shield::Bearer], guards: &[crate::sim::guard::Guard], hits: &std::cell::RefCell<Vec<crate::sim::guard::ShockHit>>) -> EquipEvent {
         self.remove(host);
-        let guarded = crate::sim::guard::Guarded { host, guards, def: self.def, stuck_to: self.stuck_to, thrown: false, owner: self.general, at: Some(self.pos), hits };
-        let b = blast(&guarded, self.def, self.general, self.pos, crate::projectiles::Hit { direct: None, stuck_to: self.stuck_to }, 1.0, 1.0, shields);
+        let guarded = crate::sim::guard::Guarded { host, guards, def: self.def, stuck_to: self.stuck_to, thrown: false, owner: general, at: Some(self.pos), hits };
+        let b = blast(&guarded, self.def, general, self.pos, crate::projectiles::Hit { direct: None, stuck_to: self.stuck_to }, 1.0, 1.0, shields);
         let d = self.def;
-        EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, def: d, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface: b.surface }
+        EquipEvent::Exploded { owner: seat, at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, def: d, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface: b.surface }
     }
 }
 
@@ -253,6 +330,8 @@ impl Equipment {
         events: &mut Vec<EquipEvent>,
     ) {
         let mut gone = Vec::new();
+        // What went off this step, for the chain: (seat, General, where, radius, effect).
+        let mut blasts: Vec<(usize, u32, Vec3, f32, crate::weapons::Effect)> = Vec::new();
         let shields = &self.shields;
         let guards = &self.guards;
         let hits = &self.shock_hits;
@@ -287,6 +366,7 @@ impl Equipment {
                         p.pos.z = host.ground_height(p.pos.x, p.pos.y) + tn.betty_hop;
                     }
                     events.push(p.explode(host, shields, guards, hits));
+                    blasts.push((p.owner, p.general, p.pos, p.def.explosion_radius, p.def.effect));
                     gone.push(i);
                 }
                 continue;
@@ -329,7 +409,7 @@ impl Equipment {
                         if hostile && (proj.pos - p.pos).length() <= tn.trophy_range && !proj.resting {
                             let (_, mut proj) = projectiles.remove(k);
                             proj.intercept(host);
-                            host.fx(TROPHY_FX, proj.pos);
+                            trophy_kill(host, p, proj.pos, &tn);
                             p.charges -= 1;
                             events.push(EquipEvent::Intercepted { owner: p.owner, at: proj.pos });
                             continue;
@@ -345,11 +425,13 @@ impl Equipment {
                             break;
                         }
                         host.destroy(o.id);
-                        host.fx(TROPHY_FX, o.pos);
+                        trophy_kill(host, p, o.pos, &tn);
                         p.charges -= 1;
                         events.push(EquipEvent::Intercepted { owner: p.owner, at: o.pos });
                     }
+                    // Spent, it blows itself apart (`trophyactive` -> `trophysystemdetonate`).
                     if p.charges == 0 {
+                        play(host, EQUIPMENT_LG_FX, p.pos);
                         p.remove(host);
                         gone.push(i);
                     }
@@ -360,6 +442,10 @@ impl Equipment {
         for i in gone.into_iter().rev() {
             self.placed.remove(i);
         }
+        // An explosion breaks the enemy equipment it reaches, which may go off in turn.
+        for (seat, general, at, radius, effect) in blasts {
+            self.caught_in_blast(host, seat, general, at, radius, effect, events);
+        }
     }
 
     /// The owner's detonator: every one of their C4 goes off.
@@ -369,6 +455,7 @@ impl Equipment {
             if self.placed[k].owner == owner && self.placed[k].kind == Kind::C4 {
                 let mut p = self.placed.remove(k);
                 events.push(p.explode(host, &self.shields, &self.guards, &self.shock_hits));
+                self.caught_in_blast(host, p.owner, p.general, p.pos, p.def.explosion_radius, p.def.effect, events);
             } else {
                 k += 1;
             }
@@ -385,25 +472,43 @@ impl Equipment {
             .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
-    /// Enemy equipment caught in a blast at `at` breaks.
-    pub fn caught_in_blast(&mut self, host: &dyn LogicHost, by: usize, general: u32, at: Vec3, radius: f32, events: &mut Vec<EquipEvent>) {
-        let mut k = 0;
-        while k < self.placed.len() {
-            let p = &self.placed[k];
-            if (p.pos - at).length() <= radius && p.hostile_to(host, general) {
-                events.push(self.destroy(host, k, Some(by)));
-            } else {
-                k += 1;
-            }
+    /// Enemy equipment caught in a blast of `effect` at `at` (General `general`'s, player `by`'s)
+    /// breaks ([`blast_breaks`], [`Equipment::destroy`]); what goes off breaks more in turn.
+    #[allow(clippy::too_many_arguments)]
+    pub fn caught_in_blast(&mut self, host: &dyn LogicHost, by: usize, general: u32, at: Vec3, radius: f32, effect: crate::weapons::Effect, events: &mut Vec<EquipEvent>) {
+        if !blast_breaks(effect) {
+            return;
+        }
+        // Each break may set off more (and take them out of the list): look again from the top.
+        while let Some(k) = self.placed.iter().position(|p| (p.pos - at).length() <= radius && p.hostile_to(host, general)) {
+            self.destroy(host, k, Some((by, general)), effect, events);
         }
     }
 
-    /// Break the piece at `index` (shot, blown up).
-    pub fn destroy(&mut self, host: &dyn LogicHost, index: usize, by: Option<usize>) -> EquipEvent {
+    /// Break the piece at `index`, by player and General `by` (shot, or in a blast of `cause`):
+    /// an EMP takes it out with its own effect (`waitanddetonate`'s `_equipment_emp_destroy_fx`;
+    /// the detonations then only delete it); anything else does what [`breaks`] says, a piece that
+    /// goes off doing so as the breaker's.
+    pub fn destroy(&mut self, host: &dyn LogicHost, index: usize, by: Option<(usize, u32)>, cause: crate::weapons::Effect, events: &mut Vec<EquipEvent>) {
         let mut p = self.placed.remove(index);
-        host.fx(BREAK_FX, p.pos);
-        p.remove(host);
-        EquipEvent::Destroyed { owner: p.owner, by, at: p.pos }
+        let breaker = by.map(|(seat, _)| seat);
+        events.push(EquipEvent::Destroyed { owner: p.owner, by: breaker, at: p.pos });
+        if cause == crate::weapons::Effect::Emp {
+            play(host, EMP_DESTROY_FX, p.pos);
+            p.remove(host);
+            return;
+        }
+        match breaks(p.kind) {
+            Breaks::Detonates => {
+                let (seat, general) = by.unwrap_or((p.owner, p.general));
+                events.push(p.explode_for(host, seat, general, &self.shields, &self.guards, &self.shock_hits));
+                self.caught_in_blast(host, seat, general, p.pos, p.def.explosion_radius, p.def.effect, events);
+            }
+            Breaks::Destroyed(fx) => {
+                play(host, fx, p.pos);
+                p.remove(host);
+            }
+        }
     }
 
     /// The enemy equipment `general` is aiming at from `eye` along `dir` (Black Hat), by index.
@@ -447,10 +552,22 @@ impl Equipment {
         self.placed.iter().any(|p| p.owner == owner && p.kind == Kind::Sensor && p.is_armed(&self.tuning) && (p.pos - pos).length_xy() <= SENSOR_RANGE)
     }
 
-    /// Remove everything a player put down (their General left the game).
+    /// Remove everything a player put down but his Tactical Insertion (his General died: the next
+    /// one comes in at it).
     pub fn clear_owner(&mut self, host: &dyn LogicHost, owner: usize) {
+        self.clear(host, owner, true);
+    }
+
+    /// Remove everything a player put down, his Tactical Insertion too: he left the game (BO2's
+    /// `deleteweaponobjectson` on `disconnect` deletes every weapon object of his, and
+    /// `_tacticalinsertion.gsc` `watchdisconnect` destroys his insertion).
+    pub fn clear_leaver(&mut self, host: &dyn LogicHost, owner: usize) {
+        self.clear(host, owner, false);
+    }
+
+    fn clear(&mut self, host: &dyn LogicHost, owner: usize, keep_insertion: bool) {
         self.placed.retain_mut(|p| {
-            if p.owner == owner && p.kind != Kind::Insertion {
+            if p.owner == owner && !(keep_insertion && p.kind == Kind::Insertion) {
                 p.remove(host);
                 false
             } else {
@@ -524,6 +641,85 @@ mod tests {
         assert!(matches!(events[0], EquipEvent::Exploded { hit_enemy: true, .. }), "{events:?}");
         assert!(eq.placed.is_empty());
         assert!(host.destroyed.borrow().contains(&50));
+    }
+
+    /// One piece of `id` of player 0 (General 1) at the origin, its object 50, a soldier of player
+    /// 1 (General 7) 20 units off, and General 2 of player 1 who breaks it.
+    fn broken_scene(id: &str, effect: Effect) -> (FakeHost, Equipment) {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(general(2, 1));
+        let mut piece = general(50, 0);
+        piece.flags = objflags::NO_COLLIDE;
+        host.add(piece);
+        host.add(soldier(7, 1, 20.0));
+        let mut eq = Equipment::default();
+        eq.add(Placed::new(def(id, effect), 0, 1, 50, Vec3::ZERO, 0.0, None));
+        (host, eq)
+    }
+
+    /// Every item, shot by an enemy, does what BO2's watcher for it does: C4, the Claymore and the
+    /// Shock Charge go off as the shooter's (`weapondetonate`), the others are destroyed with their
+    /// own effect (`bouncingbettydestroyed`, `trophysystemdetonate`, `sensorgrenadedestroyed`,
+    /// `fizzle`). The mod used to break them all with one effect, and nothing went off.
+    #[test]
+    fn every_item_breaks_as_its_script_says() {
+        for (id, effect, want) in [
+            ("satchel_charge_mp", Effect::Explode, None),
+            ("claymore_mp", Effect::Explode, None),
+            ("proximity_grenade_mp", Effect::Stun, None),
+            ("bouncingbetty_mp", Effect::Explode, Some(BETTY_DESTROYED_FX)),
+            ("trophy_system_mp", Effect::None, Some(EQUIPMENT_LG_FX)),
+            ("sensor_grenade_mp", Effect::None, Some(EQUIPMENT_FX)),
+            ("tactical_insertion_mp", Effect::None, Some(TAC_INSERT_FIZZLE_FX)),
+        ] {
+            let (host, mut eq) = broken_scene(id, effect);
+            let mut events = Vec::new();
+            eq.destroy(&host, 0, Some((1, 2)), Effect::None, &mut events);
+            assert!(eq.placed.is_empty() && host.destroyed.borrow().contains(&50), "{id}: gone");
+            assert!(events.iter().any(|e| matches!(e, EquipEvent::Destroyed { owner: 0, by: Some(1), .. })), "{id}: the shooter destroyed it");
+            let went_off = events.iter().find(|e| matches!(e, EquipEvent::Exploded { .. }));
+            match want {
+                None => {
+                    assert!(matches!(went_off, Some(EquipEvent::Exploded { owner: 1, .. })), "{id}: goes off, the shooter's: {events:?}");
+                    // Its blast is the shooter's: General 2 is the attacker, so the owner's side is hit.
+                    if effect == Effect::Explode {
+                        assert!(host.damage_log.borrow().iter().any(|d| d.0 == 2), "{id}: {:?}", host.damage_log.borrow());
+                    }
+                }
+                Some(fx) => {
+                    assert!(went_off.is_none(), "{id}: no blast");
+                    assert_eq!(*host.played_fx.borrow(), vec![crate::names::bo2_fx(fx)], "{id}");
+                }
+            }
+        }
+    }
+
+    /// An explosion breaks the enemy equipment it reaches, and a Claymore broken that way goes off
+    /// in turn and breaks the next (the script's chained detonation, `waschained`); a concussion
+    /// only stuns equipment and smoke leaves it, an EMP takes it out with its own effect.
+    #[test]
+    fn blasts_break_chain_and_spare_by_their_effect() {
+        let (host, mut eq) = broken_scene("claymore_mp", Effect::Explode);
+        let mut second = general(51, 0);
+        second.flags = objflags::NO_COLLIDE;
+        host.add(second);
+        eq.add(Placed::new(def("claymore_mp", Effect::Explode), 0, 1, 51, Vec3::new(25.0, 0.0, 0.0), 0.0, None));
+        let mut events = Vec::new();
+        for spare in [Effect::Stun, Effect::Smoke] {
+            eq.caught_in_blast(&host, 1, 2, Vec3::new(-5.0, 0.0, 0.0), 10.0, spare, &mut events);
+            assert_eq!(eq.placed.len(), 2, "{spare:?} breaks nothing");
+        }
+        // A frag 5 units off the first: it goes off, its 30-unit blast takes the second 25 off.
+        eq.caught_in_blast(&host, 1, 2, Vec3::new(-5.0, 0.0, 0.0), 10.0, Effect::Explode, &mut events);
+        assert!(eq.placed.is_empty(), "the chain took both");
+        assert_eq!(events.iter().filter(|e| matches!(e, EquipEvent::Exploded { .. })).count(), 2);
+        // An EMP: its own effect, no blast.
+        let (host, mut eq) = broken_scene("claymore_mp", Effect::Explode);
+        let mut events = Vec::new();
+        eq.caught_in_blast(&host, 1, 2, Vec3::ZERO, 10.0, Effect::Emp, &mut events);
+        assert!(eq.placed.is_empty() && !events.iter().any(|e| matches!(e, EquipEvent::Exploded { .. })));
+        assert_eq!(*host.played_fx.borrow(), vec![crate::names::bo2_fx(EMP_DESTROY_FX)]);
     }
 
     #[test]
@@ -712,6 +908,22 @@ mod sim_tests {
         assert!(projectiles.is_empty(), "grenade shot down");
         assert!(events.iter().any(|e| matches!(e, EquipEvent::Intercepted { owner: 0, .. })));
         assert_eq!(eq.placed[0].charges, EquipTuning::default().trophy_charges - 1);
+        // BO2's `projectileexplode`: its detonation effect where it shot, and a 128" blast there
+        // from the trophy's owner (105 at the centre, 10 at the edge): General 2, the thrower,
+        // stands outside it; a soldier of his beside the grenade takes it.
+        assert!(host.played_fx.borrow().contains(&crate::names::bo2_fx(TROPHY_INTERCEPT_FX)), "{:?}", host.played_fx.borrow());
+        let (radius, max, min) = EquipTuning::default().trophy_blast;
+        assert!((radius - crate::units::inches(128.0)).abs() < 1e-4 && max == 105.0 && min == 10.0);
+        // A second grenade with a soldier of player 1 beside where it is shot down.
+        host.add(crate::sim::tests::soldier(8, 1, 28.0));
+        let second = crate::projectiles::Projectile::launch(frag, 2, Vec3::new(30.0, 0.0, 5.0), Vec3::new(-1.0, 0.0, 0.0), 3.0, &host, 0.0);
+        let mut projectiles = vec![(1usize, second)];
+        for _ in 0..40 {
+            eq.step(&host, &mut projectiles, &|_| false, &mut events);
+        }
+        assert!(host.damage_log.borrow().iter().any(|d| d.0 == 1 && d.1 == 8), "the trophy's blast is its owner's: {:?}", host.damage_log.borrow());
+        // Spent: it blows itself apart (`trophysystemdetonate`).
+        assert!(eq.placed.is_empty() && host.played_fx.borrow().contains(&crate::names::bo2_fx(EQUIPMENT_LG_FX)));
     }
 
     #[test]

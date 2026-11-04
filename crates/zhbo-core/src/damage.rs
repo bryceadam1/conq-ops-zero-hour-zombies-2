@@ -127,6 +127,13 @@ impl MeansOfDeath {
         matches!(self, MeansOfDeath::Explosive | MeansOfDeath::Grenade | MeansOfDeath::GrenadeSplash | MeansOfDeath::ProjectileSplash)
     }
 
+    /// Whether a player killed by this means drops a Scavenger pack (`_globallogic_player.gsc:1913`:
+    /// every means but `MOD_GRENADE`, `MOD_GRENADE_SPLASH`, `MOD_EXPLOSIVE`,
+    /// `MOD_EXPLOSIVE_SPLASH` — not in t6mp's `meansOfDeath_t` — and `MOD_PROJECTILE_SPLASH`).
+    pub fn drops_scavenger(self) -> bool {
+        !matches!(self, MeansOfDeath::Grenade | MeansOfDeath::GrenadeSplash | MeansOfDeath::Explosive | MeansOfDeath::ProjectileSplash)
+    }
+
     /// The causes `_shellshock.gsc:19` shakes a player for (`damage > 10`).
     pub fn shellshocks(self) -> bool {
         matches!(self, MeansOfDeath::Explosive | MeansOfDeath::Grenade | MeansOfDeath::GrenadeSplash | MeansOfDeath::Projectile | MeansOfDeath::ProjectileSplash)

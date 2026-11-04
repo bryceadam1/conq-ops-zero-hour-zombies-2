@@ -753,7 +753,7 @@ type WorldModel = (std::rc::Rc<xmodel::Model>, Vec<Option<String>>, String);
 
 /// The third-person weapons: each converted weapon's BO2 world model with its base parts and its
 /// attachments' (at BO2's world offsets, [`world_parts`]) as a native `.zbw` manifest for every id
-/// in `converted`, and — for the first `base_count` (the base set) — rigid on the right hand as
+/// in `converted`, and — for the first `base_count` (the base set) — rigid on the right hand (the shield on its own `tag_weapon_left`) as
 /// `W<vm><k>` meshes on the soldier model, so the bridge shows the one in hand. Sets each base
 /// definition's `world_meshes` (its alt mode shares them); a combination beyond the base set has
 /// none, and the W3D body shows its base weapon's meshes (`Catalog::world_viewmodel`).
@@ -770,7 +770,7 @@ pub(crate) fn world_weapons(
     base_count: usize,
     looks: &mut Looks,
 ) -> (Vec<w3d::SkinMesh>, Vec<(usize, crate::xf::Xf)>) {
-    let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
+    let right_hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
     let mut meshes = Vec::new();
     let mut flashes = Vec::new();
     // Each model once: its parsed form, its textures and its native blob's path. The ~20,000
@@ -794,6 +794,10 @@ pub(crate) fn world_weapons(
         // (`_riotshield.gsc` `refreshshieldattachment`), not its pickup world model.
         let shield = crate::weapons::is_shield(w);
         let world_name = if shield { Some(crate::shield::CARRY_MODEL) } else { w.world_model.as_deref() };
+        // The body bone the weapon hangs on: the shield's own (`tag_weapon_left`), else the right
+        // hand. The W3D meshes and the native manifest's base part name the same one.
+        let body_tag = shield.then_some(crate::shield::HELD_TAG);
+        let hand = body_tag.and_then(|t| rig.pivot(t)).unwrap_or(right_hand);
         let Some((world, tex, world_path)) = world_name.and_then(|m| load(m, out, looks)) else { continue };
         let c = combo(w, atts, &shorts);
         let prefix = format!("W{vm:02}");
@@ -807,7 +811,7 @@ pub(crate) fn world_weapons(
         // inches, so its offsets stay unscaled (the W3D path's are scaled above).
         let mut native_parts = vec![zhbo_native::viewmodel::Part {
             model: world_path,
-            tag: shield.then(|| crate::shield::HELD_TAG.to_string()),
+            tag: body_tag.map(str::to_string),
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,

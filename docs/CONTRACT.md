@@ -413,7 +413,11 @@ Ownership and rules:
   from the match start) and before his first combat (`PlayerSim::combat`, BO2's `hasdonecombat`:
   a shot, a throw or plant, a launch, or damage taken, in first person or overhead, reset at each
   spawn). Otherwise the kit stays, `ClassAtNextSpawn` shows BO2's `MP_CHANGE_CLASS_NEXT_SPAWN` hint
-  (a `UI_TEXT_KEYS` string), and his next General comes in with it.
+  (a `UI_TEXT_KEYS` string), and his next General comes in with it: the seat's `Sim::class_waits`
+  (hashed with the seat) marks the class as waiting, and the record made for the next General
+  (`Sim::fresh_record`, in `take_control` and `rts_update`) emits `ClassChosen` as it wears it, so
+  both machines log "assumed the ... class" for him. Picking back the class he wears leaves nothing
+  waiting.
 * **The spawn is the first time in first person with a class** (`Sim::spawn_in`, run by
   `take_control` and at the top of each `step`): a Take Control on a classed General, or the pick
   that ends his wait behind the screen. That is when the player's Tactical Insertion is used (he is
@@ -765,12 +769,15 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
 
 * **The Assault Shield.** Its world manifest's base part names its own body bone,
   `tag_weapon_left`, with the script's carry model (`_riotshield.gsc` `refreshshieldattachment`); a
-  base part's tag overrides the body's `weapon_tag` (weapon-only mode ignores it). Carried with
+  base part's tag overrides the body's `weapon_tag`. The weapon-only mode is placed by the engine's
+  `tag_weapon_right`, so it refuses such a weapon (logged once: "held on tag_weapon_left, not the
+  right hand ...") and the W3D weapon draws it: the converter skins the shield's `W<vm><k>` meshes
+  on the W3D body's `tag_weapon_left` pivot, the bone the manifest names. Carried with
   another weapon up, the body also wears the shield's stowed manifest (`ZS<vm>.zbw`: the stow model
   on `tag_stowed_back`). Which General carries a stowed shield comes from a lock-free mirror the core
   publishes after each logic step (`Sim::stowed_weapons` → `nativebody::ffi::publish_stowed`), read
-  by `zhbo_native_body` through the frame's `general`: no ABI field. The W3D body still shows the
-  shield in the right hand.
+  by `zhbo_native_body` through the frame's `general`: no ABI field. The W3D body has no stowed
+  shield (body mode only).
 * **The body.** `zhbo-assets` writes each faction's MP body (`c_usa_mp_seal6_assault_fb`,
   `c_chn_mp_pla_assault_fb`, `c_mul_mp_pmc_assault_fb`) as one `.zbm` (skeleton, four-bone skin,
   surfaces and materials, in BO2 inches) and a `ZB<faction>.zbc` manifest naming it, the body bone
@@ -1342,13 +1349,14 @@ writes both counts; repair makes a held item's 0 (a class saved before the count
 without a count (the shipped presets) gives the item's start count.
 
 **The class editor's and HUD's UI strings come from the install.** The weapon table's `UiText <key>` blocks
-carry the english text of the localize keys the core draws (`weapons::UI_TEXT_KEYS`: the offhand
+carry the text of the localize keys the core draws (`weapons::UI_TEXT_KEYS`: the offhand
 titles `MPUI_PRIMARY_GRENADE_CAPS`, `MPUI_SPECIAL_GRENADE_CAPS` and Tactician's
 `MPUI_SECOND_SPECIAL_GRENADE_CAPS`, the slot and category headings, the dialog entries, the stat
 labels, the prompts, the scoreboard columns; drawn through `Catalog::label`/`label_upper`, BO2's
 `Engine.Localize` and `UIExpression.ToUpper`; the mod's own HUD words are `HUD:ZHBO_*` labels in
-`strings_en.ini`, read by `strings::text`), read by the converter from the same english zones as the
-display names; `Catalog::ui_text` looks them up and a table without them takes the built-in
+`strings_en.ini`, read by `strings::text`), read by the converter from the same language zones as the
+display names (the install's own language, `t6zone::language`: the folder `localization.txt` names,
+`zone/english/en_*.ff`, `zone/french/fr_*.ff`, ..., its prefix read off its files); `Catalog::ui_text` looks them up and a table without them takes the built-in
 stand-ins (BO2's strings, checked against the install by an ignored test).
 
 ## Versioning

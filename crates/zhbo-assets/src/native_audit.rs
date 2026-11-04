@@ -158,7 +158,11 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
             }
         }
         report.third_person += 1;
-        let req = nativebody::Request { vm: d.viewmodel, faction: b'U', mode: Mode::Weapon, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [-1; 2] };
+        // A weapon held on its own body bone (the shield) draws in body mode only; the weapon-only
+        // mode leaves it to the W3D weapon.
+        let own_bone = read(&zhbo_native::world_weapon_path(d.viewmodel)).and_then(|b| zhbo_native::thirdperson::Weapon::from_bytes(&b).ok()).is_some_and(|w| nativebody::held_on_body_bone(&w).is_some());
+        let mode = if own_bone { Mode::Body } else { Mode::Weapon };
+        let req = nativebody::Request { vm: d.viewmodel, faction: b'U', mode, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1, offhands: [-1; 2] };
         match drive(&mut files, read, |files| nativebody::load(files, &req, None)) {
             Ok(l) if l.mesh.surfaces.is_empty() => fail(format!("ZW{:02}: no surface", d.viewmodel)),
             Ok(l) => {

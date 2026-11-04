@@ -148,6 +148,7 @@ impl Sim {
             health,
             max_health,
             regen_wait: 0.0,
+            very_hurt: false,
             hack: None,
             rts: RtsState::default(),
             hammer: None,
@@ -162,6 +163,21 @@ impl Sim {
         };
         if let Some(Some(c)) = self.chosen.get(idx) {
             p.wear(c);
+        }
+        p
+    }
+
+    /// [`Sim::new_record`] for a General taking the place of the player's last (his first, or the
+    /// next after a death): a class that waited for him (picked mid-life, `ClassAtNextSpawn`) comes
+    /// in now, and the record says so with `ClassChosen` (the log's "assumed the ... class"), as
+    /// an at-once pick does.
+    pub(crate) fn fresh_record(&mut self, idx: usize, general: u32, mode: Mode, info: Option<&ObjInfo>) -> PlayerSim {
+        let p = self.new_record(idx, general, mode, info);
+        if std::mem::take(&mut self.class_waits[idx]) {
+            if let (Some(c), Some(_)) = (self.chosen[idx].as_ref(), p.class.as_ref()) {
+                let class = c.name;
+                self.emit(idx, EventKind::ClassChosen { general, class });
+            }
         }
         p
     }
@@ -206,7 +222,7 @@ impl Sim {
                 p.input = FpsInput { yaw: info.yaw, ..Default::default() };
                 p
             }
-            _ => self.new_record(idx, general, Mode::Fps, Some(&info)),
+            _ => self.fresh_record(idx, general, Mode::Fps, Some(&info)),
         };
         // The weapon can't fire or aim until the tablet is down and it is up again.
         // BO2's first raise, once the tablet is down.
@@ -273,6 +289,7 @@ impl Sim {
         // bar's class set, overhead): make his record, which wears it, ready for the field.
         // His position and health are filled in from the object when he takes the field.
         let Some(p) = self.players[idx].as_mut() else {
+            self.class_waits[idx] = false;
             self.players[idx] = Some(self.new_record(idx, general, Mode::Rts, None));
             self.emit(idx, EventKind::ClassChosen { general, class: name });
             return;
@@ -281,8 +298,11 @@ impl Sim {
             // A wait behind the class screen ends with this: he spawns on the next step
             // (`Sim::spawn_in`, which needs the host for the Tactical Insertion).
             p.wear(&chosen);
+            self.class_waits[idx] = false;
             self.emit(idx, EventKind::ClassChosen { general, class: name });
         } else {
+            // Back to the class he wears: nothing waits (BO2 still prints the hint, `menuclass`).
+            self.class_waits[idx] = p.class.as_ref() != Some(&chosen.id);
             self.emit(idx, EventKind::ClassAtNextSpawn { general, class: name });
         }
     }

@@ -63,8 +63,10 @@ fn dlc_locks_and_dlc_camos_leave_the_sim_fingerprint_alone() {
 /// table, the locks, the converted combinations), over variants of the install laid out as
 /// symlink farms: without the DLC zones (`dlc0*`), with a DLC the player does not own present
 /// (Revolution's `dlc1_load_mp.ff`, the Peacekeeper's pack), and without the english zones (a
-/// localized install: every name and description is gone). The sim fingerprint must not move;
-/// the presentation must (the variants did something).
+/// install without its language: every name and description is gone), and the english zones laid
+/// out as another language's (`zone/french/fr_*.ff`, `localization.txt` saying `french`: a
+/// localized install, read in its own language, gives every name back). The sim fingerprint must
+/// not move; the presentation must (the variants did something).
 #[test]
 #[cfg(unix)]
 #[ignore = "reads this machine's Black Ops II install"]
@@ -72,13 +74,17 @@ fn install_variants_convert_the_same_sim_content() {
     let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
     let tmp = std::env::temp_dir().join(format!("zhbo-content-variants-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
-    let farm = |name: &str, keep: &dyn Fn(&str, &str) -> bool, extra: &[(&str, &str)]| {
+    // `as_language`: lay the english zones out as that language's (folder, prefix) instead.
+    let farm_as = |name: &str, keep: &dyn Fn(&str, &str) -> bool, extra: &[(&str, &str)], as_language: Option<(&str, &str)>| {
         let root = tmp.join(name);
-        for sub in ["", "zone/all", "zone/english"] {
+        let (folder, prefix) = as_language.unwrap_or(("english", "en_"));
+        for sub in ["", "zone/all", &format!("zone/{folder}")] {
             std::fs::create_dir_all(root.join(sub)).unwrap();
         }
         for e in std::fs::read_dir(&bo2_dir).unwrap().flatten() {
-            if e.file_name() != "zone" {
+            if e.file_name() == "localization.txt" && as_language.is_some() {
+                std::fs::write(root.join("localization.txt"), format!("{folder}\r\n")).unwrap();
+            } else if e.file_name() != "zone" {
                 std::os::unix::fs::symlink(e.path(), root.join(e.file_name())).unwrap();
             }
         }
@@ -87,7 +93,8 @@ fn install_variants_convert_the_same_sim_content() {
             for e in list.flatten() {
                 let f = e.file_name().to_string_lossy().into_owned();
                 if keep(dir, &f) {
-                    std::os::unix::fs::symlink(e.path(), root.join("zone").join(dir).join(&f)).unwrap();
+                    let (to_dir, to) = if dir == "english" { (folder.to_string(), f.strip_prefix("en_").map_or_else(|| f.clone(), |rest| format!("{prefix}{rest}"))) } else { (dir.to_string(), f.clone()) };
+                    std::os::unix::fs::symlink(e.path(), root.join("zone").join(to_dir).join(to)).unwrap();
                 }
             }
         }
@@ -96,6 +103,7 @@ fn install_variants_convert_the_same_sim_content() {
         }
         root
     };
+    let farm = |name: &str, keep: &dyn Fn(&str, &str) -> bool, extra: &[(&str, &str)]| farm_as(name, keep, extra, None);
     let convert = |dir: &std::path::Path| {
         let mp = crate::paks::MpPool::load(dir).unwrap();
         let (bo2, atts) = mp.weapons().unwrap();
@@ -111,13 +119,18 @@ fn install_variants_convert_the_same_sim_content() {
     let no_dlc = convert(&farm("no-dlc", &|dir, f| !(dir == "all" && f.starts_with("dlc")), &[]));
     let revolution = convert(&farm("revolution", &|_, _| true, &[("dlc1_load_mp.ff", "common_mp.ff")]));
     let localized = convert(&farm("localized", &|dir, _| dir != "english", &[]));
+    let french_dir = farm_as("french", &|_, _| true, &[], Some(("french", "fr_")));
+    assert_eq!(zhbo_formats::t6zone::language(&french_dir).map(|l| (l.folder, l.prefix)), Some(("french".into(), "fr_".into())));
+    let french = convert(&french_dir);
     let _ = std::fs::remove_dir_all(&tmp);
 
     let pk = |t: &Table| t.weapons.iter().find(|d| d.id == "peacekeeper_mp").map(|d| d.cac_locked);
     assert_ne!(pk(&real), pk(&revolution), "owning Revolution unlocks the Peacekeeper");
     let name = |t: &Table| t.weapons.iter().find(|d| d.id == "an94_mp").map(|d| d.display_name.clone());
     assert_ne!(name(&real), name(&localized), "without the english zones the names change");
-    for (what, t) in [("no DLC zones", &no_dlc), ("Revolution present", &revolution), ("no english zones", &localized)] {
+    let texts = |t: &Table| t.weapons.iter().map(|d| (d.display_name.clone(), d.description.clone())).collect::<Vec<_>>();
+    assert_eq!(texts(&french), texts(&real), "a localized install's names are read from its own language's zones");
+    for (what, t) in [("no DLC zones", &no_dlc), ("Revolution present", &revolution), ("no english zones", &localized), ("another language", &french)] {
         assert_eq!(print(t), print(&real), "{what}: the sim fingerprint moved");
     }
 }

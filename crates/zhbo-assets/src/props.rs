@@ -59,7 +59,13 @@ pub(crate) fn prop(
 ) -> Option<Prop> {
     use zhbo_core::weapons::Class;
     let shown = shown_model(pool, w, d)?.ok()?;
-    let rig = Rig::new(&shown, &[]);
+    // The planted shield is drawn from its deployed box's footing (the bottom middle of its
+    // collision surfaces): Zero Hour's `Box` geometry has no offset, so the object stands there
+    // (`zhbo_core::sim::deploy`) and the box rises from the ground. Everything else from its origin.
+    let rig = match d.shield {
+        Some(g) if d.class == Class::Shield => Rig::placed(&shown, character::scaled(g.deployed.footing())),
+        _ => Rig::new(&shown, &[]),
+    };
     let tex = textures(&shown, paks, out, looks);
     let mut meshes = character::skin(&rig, &shown, "P", &tex);
     finish(&mut meshes, looks);
@@ -317,10 +323,13 @@ pub fn line_up(bo2_dir: &std::path::Path, ids: &[String], prop_scale: Option<f32
             }
             (positions, triangles)
         };
-        // Stand it beside the body: a planted shield on its origin's height, the rest on the ground.
+        // Stand it beside the body: a planted shield where its object stands (BO2's model on its
+        // origin's height; the mod's skin, drawn from the deployed box's footing, on the footing's),
+        // the rest on the ground.
         let lo = positions.iter().fold([f32::MAX; 3], |a, p| [0, 1, 2].map(|i| a[i].min(p[i])));
         let hi = positions.iter().fold([f32::MIN; 3], |a, p| [0, 1, 2].map(|i| a[i].max(p[i])));
-        let lift = if d.class == zhbo_core::weapons::Class::Shield { zoffset * unit } else { -lo[2] };
+        let footing = d.shield.filter(|_| !bo2).map_or(0.0, |g| g.deployed.footing()[2]);
+        let lift = if d.class == zhbo_core::weapons::Class::Shield { (zoffset + footing) * unit } else { -lo[2] };
         let shift = [-(lo[0] + hi[0]) * 0.5, 20.0 * body_k - lo[1], lift];
         let positions = positions.into_iter().map(|p| [p[0] + shift[0], p[1] + shift[1], p[2] + shift[2]]).collect();
         made.push((id.clone(), Soup { positions: body.positions.clone(), triangles: body.triangles.clone() }, Soup { positions, triangles }));
@@ -410,6 +419,20 @@ mod tests {
             if let Some(g) = d.shield {
                 let (clo, chi) = crate::shield::collision_bounds(&p.shown);
                 assert_eq!((g.deployed.mins, g.deployed.maxs), (clo, chi), "the table's deployed box is the planted model's collision surfaces");
+                // Drawn from the box's footing (Zero Hour's `Box` has no offset: the object stands
+                // there and the geometry rises from it, centred): the posed collision surfaces sit
+                // centred on the object's origin and rise from it.
+                let f = g.deployed.footing();
+                let k = character::SCALE * ini_scale(&p.ini);
+                let drawn = |v: [f32; 3]| [0, 1, 2].map(|a| (v[a] - f[a]) * k);
+                let (blo, bhi) = (drawn(clo), drawn(chi));
+                for a in 0..2 {
+                    assert!((blo[a] + bhi[a]).abs() < 1e-3, "axis {a}: the box is centred on the object ({blo:?}..{bhi:?})");
+                }
+                assert!(blo[2].abs() < 1e-3, "the box rises from the object's feet ({blo:?})");
+                // And the skin drawn from that point: its posed vertices moved by the footing.
+                let (dlo, _) = drawn_bounds(&p.rig, &p.meshes, ini_scale(&p.ini));
+                assert!((dlo[2] - (lo[2] - f[2]) * k).abs() < 0.05, "the skin's bottom {dlo:?} is the model's bottom over the footing");
                 // The panel slid up over the visor in the deploy animation: taller than the folded
                 // carry model's surfaces would say about it, the leg and spikes (no collision) out.
                 assert!(chi[2] - clo[2] > 50.0 && chi[0] - clo[0] < 12.0, "deployed collision {clo:?}..{chi:?}");

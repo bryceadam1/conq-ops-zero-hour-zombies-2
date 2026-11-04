@@ -26,14 +26,14 @@
 #     127.0.0.1 with per-instance ports, so no `sudo ifconfig lo0 alias` is needed.
 #   * Each instance after the first writes ConquerOps_InstanceNN.log / .profile (user data dir).
 #
-# The long run (ZHBO_MPTEST_ROUNDS=N, N > 1; ZHBO_AUTOPILOT_ROUNDS in both instances; its checks need
-# N >= 5, see TESTING.md: the class change in the joiner's third life is worn by a fourth): the joiner
+# The long run (ZHBO_MPTEST_ROUNDS=N, any N > 1; ZHBO_AUTOPILOT_ROUNDS in both instances): the joiner
 # plays N lives and the host plays until the joiner has left, every life walked to the meeting point. The target first declines his spawn (Escape
 # on the class screen; the bridge takes control again). Every life after the first fight throws the
 # tactical at the other General (a concussion: a shellshock on both machines' sims), fires, reloads,
 # knifes and goes back overhead by the field computer, unless he dies (the host ends each round with a
-# long aimed burst). In his third life the target changes class mid-life after his throw and stays
-# for the bursts (the next General wears it). In his last life he leaves the
+# long aimed burst). In his third life (his next-to-last when he has fewer than four: the first fight
+# for N = 2) the target changes class mid-life after his throw and stays for the bursts (the next
+# General wears it). In his last life he leaves the
 # game in first person (the quit menu's Exit), and the host must carry on alone. The long run's own
 # checks: the decline, the rounds, the same shellshocks on both machines, the class change worn,
 # and the host past the leave (his General dies, the host's sim runs on, no mismatch).
@@ -271,16 +271,22 @@ if grep -qE "autopilot mp: General [0-9]+ weapon [0-9]+ camo camo_gold in hand" 
 if (( long )); then
     in_log "the target declined his first spawn" "$j" "declining the spawn"
     in_log "and was taken into first person again" "$j" "back overhead; taking control again"
+    # The joiner has N - 1 lives after the first fight (the host plays his alongside): at least
+    # two rounds once there is room for them, else the one.
+    want_rounds=$(( rounds - 1 < 2 ? rounds - 1 : 2 ))
     for side in "$h" "$j"; do
         n=$( (grep -oE "autopilot mp: round [0-9]+ starts" "$side" 2>/dev/null || true) | wc -l | tr -d ' ')
-        if [[ $n -ge 2 ]]; then pass "rounds after the first fight (${side##*/}: $n)"; else fail "rounds after the first fight (${side##*/})" "$n"; fi
+        if [[ $n -ge $want_rounds ]]; then pass "rounds after the first fight (${side##*/}: $n)"; else fail "rounds after the first fight (${side##*/})" "$n of $want_rounds"; fi
     done
     # The same shellshocks, frame for frame, in both logs (up to the joiner's leave).
     shocks() { grep -oE "^\[[0-9]+\] player [0-9]+'s General is shellshocked.*" "$1" 2>/dev/null | sort -u || true; }
     shocks "$h" | awk -v f="${left_frame:-999999999}" -F'[][]' '$2 + 0 < f' >"$out/host-shocks.txt"
     shocks "$j" >"$out/join-shocks.txt"
     n=$(wc -l <"$out/join-shocks.txt" | tr -d ' ')
-    if [[ $n -ge 1 ]] && cmp -s "$out/host-shocks.txt" "$out/join-shocks.txt"; then
+    # At N = 2 the joiner's only round is his last life, which he leaves a few seconds in, before
+    # the round's concussions land: the two logs must still agree, but may hold none.
+    want_shocks=$(( rounds >= 3 ? 1 : 0 ))
+    if [[ $n -ge $want_shocks ]] && cmp -s "$out/host-shocks.txt" "$out/join-shocks.txt"; then
         pass "the same shellshocks on both machines ($n)"
     else
         fail "the same shellshocks on both machines" "$(wc -l <"$out/host-shocks.txt" | tr -d ' ') vs $n"

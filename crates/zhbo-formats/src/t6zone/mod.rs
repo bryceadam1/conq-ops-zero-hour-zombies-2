@@ -358,17 +358,78 @@ pub(crate) fn synthetic_zone(name: &str, mem: Vec<u8>, script_strings: Vec<Strin
     synthetic(name, mem, script_strings, assets)
 }
 
-/// The language folder and file prefix the localized zones are read from (`zone/english/en_*.ff`).
-pub const LANGUAGE: (&str, &str) = ("english", "en");
+/// The install's language: the folder under `zone/` its localized zones are in and their file
+/// prefix (`english` and `en_`, `french` and `fr_`, `german` and `ge_`, ...).
+///
+/// BO2 reads the language's name from `localization.txt` beside the exe (`t6mp.exe`'s
+/// `"localization.txt"`, the `loc_language` dvar) and opens a localized zone as
+/// `"%s\zone\%s\%s%s"`: the install, the language's name, its prefix and the zone. Its prefixes
+/// come from a table in the exe (`en_`, `fr_`, `fc_`, `ge_`, `as_`, `it_`, `sp_`, `br_`, `ru_`,
+/// `po_`, `ko_`, `ja_`, `cz_`, `fj_`, `bp_`, `ms_`); here the prefix is read off the folder's own
+/// files instead, so no table is copied and any language reads the same way.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Language {
+    pub folder: String,
+    /// With its underscore (`en_`).
+    pub prefix: String,
+}
+
+/// The zone every multiplayer install's language folder holds (the UI fonts and strings): the
+/// file the prefix is read from.
+const LANGUAGE_PROBE: &str = "code_post_gfx_mp.ff";
+
+/// The install's [`Language`]: the one `localization.txt` names, if its folder holds the localized
+/// zones, else the first folder under `zone/` (by name, `all` aside) that does. `None` when the
+/// install has no localized zones at all.
+pub fn language(bo2_dir: &std::path::Path) -> Option<Language> {
+    let zone = bo2_dir.join("zone");
+    let prefix_in = |folder: &std::path::Path| -> Option<String> {
+        std::fs::read_dir(folder).ok()?.flatten().find_map(|e| {
+            let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+            name.strip_suffix(LANGUAGE_PROBE).filter(|p| p.len() > 1 && p.ends_with('_')).map(str::to_string)
+        })
+    };
+    let named = std::fs::read_to_string(bo2_dir.join("localization.txt")).ok().and_then(|t| t.lines().next().map(|l| l.trim().to_string())).filter(|l| !l.is_empty());
+    let mut folders: Vec<String> = std::fs::read_dir(&zone)
+        .map(|d| d.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.eq_ignore_ascii_case("all")).collect())
+        .unwrap_or_default();
+    folders.sort();
+    // The named language first (its folder by any case), then the rest.
+    if let Some(n) = &named {
+        if let Some(i) = folders.iter().position(|f| f.eq_ignore_ascii_case(n)) {
+            let f = folders.remove(i);
+            folders.insert(0, f);
+        }
+    }
+    folders.into_iter().find_map(|folder| prefix_in(&zone.join(&folder)).map(|prefix| Language { folder, prefix }))
+}
+
+impl Language {
+    /// The localized file `name` (`<prefix><name>`, e.g. `en_base.ipak`) of `bo2_dir`, matched
+    /// case-insensitively in the folder (an install copied between file systems keeps its case).
+    pub fn file(&self, bo2_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let folder = bo2_dir.join("zone").join(&self.folder);
+        let want = format!("{}{name}", self.prefix);
+        std::fs::read_dir(&folder)
+            .ok()
+            .and_then(|d| d.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(&want)))
+            .map_or_else(|| folder.join(&want), |e| e.path())
+    }
+}
 
 /// `<bo2_dir>/zone/all/<name>.ff`: a zone of the player's install.
 pub fn install_path(bo2_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     bo2_dir.join("zone").join("all").join(format!("{name}.ff"))
 }
 
-/// `<bo2_dir>/zone/english/en_<name>.ff`: a zone's localized half ([`LANGUAGE`]).
+/// `<bo2_dir>/zone/<language>/<prefix><name>.ff`: a zone's localized half, in the install's
+/// [`language`] (`zone/english/en_<name>.ff` in an English install, `zone/french/fr_<name>.ff` in
+/// a French one). An install with no localized zones gives a path that does not exist.
 pub fn language_path(bo2_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
-    bo2_dir.join("zone").join(LANGUAGE.0).join(format!("{}_{name}.ff", LANGUAGE.1))
+    match language(bo2_dir) {
+        Some(l) => l.file(bo2_dir, &format!("{name}.ff")),
+        None => bo2_dir.join("zone").join("english").join(format!("en_{name}.ff")),
+    }
 }
 
 /// Read, decrypt and load every asset of the fastfile at `path`. The error names the file (read)
@@ -592,6 +653,56 @@ fn bad_addr(addr: u32, len: u32) -> FormatError {
 
 #[cfg(test)]
 mod tests {
+    /// A localized install's zones are found in its own language: the folder `localization.txt`
+    /// names, with the prefix its files carry; an install whose `localization.txt` is missing or
+    /// names a language it lacks reads the one it has; and the English layout reads as before.
+    #[test]
+    fn the_localized_zones_are_the_installs_own_language() {
+        use super::{language, language_path, Language};
+        let root = std::env::temp_dir().join(format!("zhbo-language-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let install = |name: &str, folders: &[(&str, &str)], localization: Option<&str>| {
+            let dir = root.join(name);
+            std::fs::create_dir_all(dir.join("zone/all")).unwrap();
+            std::fs::write(dir.join("zone/all/common_mp.ff"), b"").unwrap();
+            for (folder, prefix) in folders {
+                std::fs::create_dir_all(dir.join("zone").join(folder)).unwrap();
+                for zone in ["code_post_gfx_mp", "common_mp", "patch_mp"] {
+                    std::fs::write(dir.join("zone").join(folder).join(format!("{prefix}{zone}.ff")), b"").unwrap();
+                }
+            }
+            if let Some(l) = localization {
+                std::fs::write(dir.join("localization.txt"), format!("{l}\r\n")).unwrap();
+            }
+            dir
+        };
+        let lang = |folder: &str, prefix: &str| Some(Language { folder: folder.into(), prefix: prefix.into() });
+        let english = install("english", &[("english", "en_")], Some("english"));
+        assert_eq!(language(&english), lang("english", "en_"));
+        assert_eq!(language_path(&english, "common_mp"), english.join("zone/english/en_common_mp.ff"));
+        let french = install("french", &[("french", "fr_")], Some("french"));
+        assert_eq!(language(&french), lang("french", "fr_"));
+        assert!(language_path(&french, "patch_mp").is_file(), "{}", language_path(&french, "patch_mp").display());
+        // Two languages installed: localization.txt picks; without it, the first by name.
+        let both = install("both", &[("english", "en_"), ("german", "ge_")], Some("german"));
+        assert_eq!(language(&both), lang("german", "ge_"));
+        std::fs::remove_file(both.join("localization.txt")).unwrap();
+        assert_eq!(language(&both), lang("english", "en_"));
+        // localization.txt names a language whose zones are not there.
+        let stale = install("stale", &[("portuguese", "bp_")], Some("english"));
+        assert_eq!(language(&stale), lang("portuguese", "bp_"));
+        assert!(language_path(&stale, "common_mp").is_file());
+        // A folder with other case (copied off Windows) still matches.
+        let upper = install("upper", &[("Russian", "RU_")], Some("russian"));
+        assert_eq!(language(&upper).map(|l| l.folder), Some("Russian".to_string()));
+        assert!(language_path(&upper, "common_mp").is_file());
+        // No localized zones at all.
+        let none = install("none", &[], Some("english"));
+        assert_eq!(language(&none), None);
+        assert!(!language_path(&none, "common_mp").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// Every zone in the player's install loads cleanly. Needs the BO2 install:
     /// `ZHBO_BO2_DIR=... cargo test -p zhbo-formats --release -- --ignored`.
     #[test]

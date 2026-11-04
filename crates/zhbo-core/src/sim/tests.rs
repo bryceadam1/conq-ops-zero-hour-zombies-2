@@ -733,13 +733,42 @@ fn a_mid_life_pick_applies_in_the_grace_period_before_combat_else_at_the_next_sp
     let e = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).expect("told it waits");
     assert_eq!(event_hint(&e.kind), Some("MP_CHANGE_CLASS_NEXT_SPAWN"));
     assert!(describe_event(e).unwrap().contains("next spawn"));
-    // His next General comes in with it.
+    // His next General comes in with it, and says so (the log's "assumed the ... class").
     host.objects.borrow_mut()[0].flags |= objflags::DEAD;
     run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
     host.add(general(2, 0));
+    sim.events.clear();
     sim.take_control(&host, 0, 2);
     assert_eq!(id(&sim), preset(2), "the next spawn wears the new class");
     assert!(!sim.player(0).unwrap().combat, "a new life has not fought");
+    let worn = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassChosen { general: 2, .. })).expect("the waiting class comes in with a ClassChosen");
+    let want = crate::classes::at(2).unwrap().name;
+    assert!(describe_event(worn).unwrap().contains(&format!("General 2 assumed the {want} class")), "{:?}", describe_event(worn));
+    // A later General, the class unchanged: no second ClassChosen (it is the same pick).
+    host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2).for_each(|o| o.flags |= objflags::DEAD);
+    run(&mut sim, &host, 0, 2, FpsInput::default(), 1);
+    host.add(general(3, 0));
+    sim.events.clear();
+    sim.take_control(&host, 0, 3);
+    assert_eq!(id(&sim), preset(2));
+    assert!(!events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { .. })), "{:?}", events(&sim));
+    // A next General brought in overhead (the RTS report makes his record) says it too; picking
+    // back the class he wears leaves nothing waiting.
+    wait_until_ready(&mut sim, &host);
+    run(&mut sim, &host, 0, 3, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+    sim.choose_class(0, 3, 0, &[]);
+    assert!(sim.class_waits[0]);
+    sim.choose_class(0, 3, 2, &[]);
+    assert!(!sim.class_waits[0], "back to the class he wears: nothing waits");
+    sim.choose_class(0, 3, 1, &[]);
+    host.objects.borrow_mut().iter_mut().filter(|o| o.id == 3).for_each(|o| o.flags |= objflags::DEAD);
+    run(&mut sim, &host, 0, 3, FpsInput::default(), 1);
+    host.add(general(4, 0));
+    sim.events.clear();
+    sim.rts_update(&host, 0, 4, 0, [0, 0, 0], None);
+    assert_eq!(id(&sim), preset(1));
+    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { general: 4, .. })), "{:?}", events(&sim));
+    assert!(!sim.class_waits[0]);
 
     // Past the grace period, no combat: the next spawn too.
     let host = FakeHost::default();
@@ -1175,6 +1204,8 @@ fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
     spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
+    // Past the grace period (BO2 drops no pack in it).
+    sim.frame = frames(crate::tuning::get().class_change_grace_period);
     let p = sim.players[0].as_mut().unwrap();
     p.arsenal.loadout.perks.push(crate::weapons::Perk::SCAVENGER);
     let w = p.arsenal.current_mut();
@@ -1187,6 +1218,55 @@ fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
     let a = &sim.player(0).unwrap().arsenal;
     assert_eq!(a.current().reserve, 240, "topped up to the stock cap, not past it");
     assert!(a.current().ammo > 0 && a.current().ammo < 30, "the magazine is the one being fired");
+}
+
+/// BO2's Scavenger pack is a player's death outside the grace period: a kill in the grace period,
+/// or of anything but a soldier, refills nothing; and a C4 is not refilled while one of the
+/// killer's is down (`_weapons.gsc` `scavenger_think`'s `satchel_charge_mp` case).
+#[test]
+fn scavenger_follows_bo2s_drop_rules() {
+    let c4: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { id: "satchel_charge_mp".into(), equipment_kind: crate::equipment::Kind::C4, ..Default::default() }));
+    let mut sim = Sim::new();
+    let kit = || {
+        let mut a = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
+        a.loadout.perks.push(crate::weapons::Perk::SCAVENGER);
+        a.current_mut().reserve = 0;
+        a
+    };
+    let mut a = kit();
+    assert!(sim.in_grace_period());
+    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
+    assert_eq!(a.current().reserve, 0, "no pack in the grace period");
+    sim.frame = frames(crate::tuning::get().class_change_grace_period);
+    sim.scavenger_kill(0, &mut a, false, crate::damage::MeansOfDeath::RifleBullet);
+    assert_eq!(a.current().reserve, 0, "no pack from a vehicle or a building");
+    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
+    assert!(a.current().reserve > 0, "a soldier's pack");
+    // Not for a grenade or a blast (`_globallogic_player.gsc:1913`); a launcher's impact is one.
+    use crate::damage::MeansOfDeath as M;
+    for how in [M::Grenade, M::GrenadeSplash, M::Explosive, M::ProjectileSplash] {
+        let mut b = kit();
+        sim.scavenger_kill(0, &mut b, true, how);
+        assert_eq!(b.current().reserve, 0, "no pack for {how:?}");
+    }
+    for how in [M::PistolBullet, M::HeadShot, M::Melee, M::Impact, M::Projectile] {
+        let mut b = kit();
+        sim.scavenger_kill(0, &mut b, true, how);
+        assert!(b.current().reserve > 0, "a pack for {how:?}");
+    }
+    // C4 in hand, one of his down: the guns refill, the C4 does not; none down, it does.
+    let mut a = kit();
+    a.lethal.def = c4;
+    a.loadout.lethal = c4.id.clone();
+    a.loadout.lethal_count = Some(1);
+    a.lethal.count = 0;
+    sim.equipment.placed.push(crate::equipment::Placed::new(c4, 0, 1, 0, Vec3::ZERO, 0.0, None));
+    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
+    assert_eq!(a.lethal.count, 0, "no C4 while one is down");
+    assert!(a.current().reserve > 0);
+    sim.equipment.placed.clear();
+    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
+    assert_eq!(a.lethal.count, 1, "the C4 back once none is down");
 }
 
 /// BO2 traces a non-spread round `bulletrange` (8192 in, `Bullet_Fire`), whatever the def's
@@ -1728,6 +1808,61 @@ fn health_regenerates_after_delay_and_death_releases() {
     assert!(host.get(1).health < 151.0, "no regen during the delay");
     run(&mut sim, &host, 0, 1, FpsInput::default(), 30 * 5);
     assert_eq!(host.get(1).health, 300.0, "regenerated to full");
+    host.objects.borrow_mut()[0].flags |= objflags::DEAD;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert!(sim.player(0).is_none());
+    assert!(events(&sim).contains(&EventKind::GeneralDied { general: 1 }));
+}
+
+/// BO2's regeneration (`_healthoverlay.gsc` `playerhealthregen`): `playerHealthRegenTime` after
+/// the last hit a lightly hurt General (over `healthoverlaycutoff`, 55%) is whole again at once;
+/// a very hurt one (at or under it since he was last whole) gets `regenrate` (10%) back every
+/// 0.05 s step: from 10% to whole in under half a second. A hit during the regen starts the wait
+/// again, and he stays very hurt until whole.
+#[test]
+fn health_comes_back_as_bo2s_regen_gives_it() {
+    let t = crate::tuning::Tuning::default();
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    spawn(&mut sim, &host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    let max = host.get(1).max_health;
+    let wait = frames(t.regen_delay);
+    // Lightly hurt: nothing during the wait, then whole on the next step.
+    host.objects.borrow_mut()[0].health = max * 0.8;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), wait - 1);
+    assert_eq!(host.get(1).health, max * 0.8, "no regen during the wait");
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 2);
+    assert_eq!(host.get(1).health, max, "whole at once");
+    assert!(!sim.player(0).unwrap().very_hurt);
+    // Very hurt: a share at a time, whole in (1 - 0.1) / 0.1 steps of 0.05 s.
+    host.objects.borrow_mut()[0].health = max * 0.1;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), wait);
+    assert!(sim.player(0).unwrap().very_hurt);
+    let start = host.get(1).health;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 3);
+    let per_frame = max * t.regen_rate / t.regen_step * crate::units::LOGIC_DT;
+    assert!(((host.get(1).health - start) - 3.0 * per_frame).abs() < 1e-3, "{} per frame", (host.get(1).health - start) / 3.0);
+    // Hit again on the way up: still very hurt (over the cutoff now), the wait starts over.
+    let mid = (max * 0.7).max(host.get(1).health);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(0.2));
+    host.objects.borrow_mut()[0].health = mid - 1.0;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), wait - 1);
+    assert_eq!(host.get(1).health, mid - 1.0, "the hit restarted the wait");
+    assert!(sim.player(0).unwrap().very_hurt, "very hurt until whole");
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(t.regen_step * (1.0 / t.regen_rate)) + 2);
+    assert_eq!(host.get(1).health, max);
+    assert!(!sim.player(0).unwrap().very_hurt);
+}
+
+#[test]
+fn a_dead_general_is_released() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    spawn(&mut sim, &host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
     host.objects.borrow_mut()[0].flags |= objflags::DEAD;
     run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
     assert!(sim.player(0).is_none());

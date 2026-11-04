@@ -169,7 +169,8 @@ pub(super) fn draw_breath_hint(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, ke
         return;
     }
     let (pen, height) = (BREATH_HINT_BELOW_TOP_480 * 1.5, BREATH_HINT_HEIGHT_480 * 1.5);
-    let parts = [("Press ", (1.0, 1.0, 1.0)), (key, (1.0, 1.0, 0.0)), (" and hold to steady", (1.0, 1.0, 1.0))];
+    let parts = super::hints::runs(crate::weapons::catalog().label("PLATFORM_HOLD_BREATH"), key, (1.0, 1.0, 1.0));
+    let parts: Vec<(&str, (f32, f32, f32))> = parts.iter().map(|(t, c)| (t.as_str(), *c)).collect();
     let widths: Vec<f32> = parts.iter().map(|(t, _)| l.text_width(Family::Condensed, t, height)).collect();
     let total: f32 = widths.iter().sum();
     let row = Place::new((true, true, 0.0, 0.0), (true, false, pen - height, pen)).resolve(l.screen());

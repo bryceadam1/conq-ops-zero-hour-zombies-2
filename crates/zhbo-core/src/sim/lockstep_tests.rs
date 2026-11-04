@@ -192,8 +192,8 @@ fn a_full_event_buffer_still_tells_the_log_this_steps_events() {
 
 /// A player who leaves a network game hands his assets to a living ally (Zero Hour's
 /// `onSelfDestruct` with `transferAssets`), his first-person General among them. The leaver's seat
-/// lets go of him at once (his last input would otherwise drive him forever) and the ally can take
-/// him into first person as his own.
+/// lets go of him at once (his last input would otherwise drive him forever), his equipment goes
+/// with him (BO2's disconnect), and the ally can take him into first person as his own.
 #[test]
 fn a_general_handed_to_an_ally_leaves_the_leavers_seat() {
     let host = FakeHost::default();
@@ -207,11 +207,21 @@ fn a_general_handed_to_an_ally_leaves_the_leavers_seat() {
         sim.step(&host, f);
     }
     assert_eq!(*host.controlled.borrow(), vec![1]);
+    // He had a Claymore and his Tactical Insertion down; another player a Claymore of his own.
+    let claymore: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { equipment_kind: crate::equipment::Kind::Claymore, ..Default::default() }));
+    let ti: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { equipment_kind: crate::equipment::Kind::Insertion, ..Default::default() }));
+    use crate::equipment::Placed;
+    sim.equipment.placed.push(Placed::new(claymore, 0, 1, 77, Vec3::new(50.0, 0.0, 0.0), 0.0, None));
+    sim.equipment.placed.push(Placed::new(ti, 0, 1, 78, Vec3::new(0.0, 50.0, 0.0), 0.0, None));
+    sim.equipment.placed.push(Placed::new(claymore, 1, 9, 79, Vec3::new(-50.0, 0.0, 0.0), 0.0, None));
     for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 1) {
         o.owner_player = 1;
     }
     sim.step(&host, 11);
     assert!(sim.player(0).is_none(), "the leaver's seat let go of him");
+    assert!(sim.equipment.placed.iter().all(|p| p.owner != 0), "the leaver's equipment went with him (BO2 deletes a disconnecting player's weapon objects)");
+    assert!(host.destroyed.borrow().contains(&77) && host.destroyed.borrow().contains(&78), "their objects too: {:?}", host.destroyed.borrow());
+    assert_eq!(sim.equipment.placed.len(), 1, "another player's stays");
     assert!(host.controlled.borrow().is_empty(), "his AI runs again");
     let at = host.get(1).pos;
     sim.step(&host, 12);
@@ -434,7 +444,9 @@ fn populated_sim() -> Sim {
 /// Change the `n`-th leaf of the hashed state (the parts [`Sim::fingerprint`] streams).
 fn perturb_state(sim: &mut Sim, n: &mut usize) -> bool {
     use crate::statehash::StateHash;
-    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
+    // A seat's class wait is hashed with the seat, so only the seats in use (a record or a class).
+    let in_use: Vec<usize> = (0..MAX_PLAYERS).filter(|&i| sim.players[i].is_some() || sim.chosen[i].is_some()).collect();
+    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || in_use.into_iter().any(|i| sim.class_waits[i].perturb(n)) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
 }
 
 /// Sensitivity: every leaf of the state (every scalar, string and definition of every player
@@ -711,6 +723,28 @@ fn the_long_multiplayer_autopilot_run_fights_in_lockstep() {
     assert!(count(1, &|k| matches!(k, EventKind::ClassAtNextSpawn { .. })) >= 1, "the target's mid-life change waited for his next spawn: {lines:?}");
     let change = lines.iter().position(|l| l.contains("changing class mid-life")).expect("the change was made");
     assert!(lines[change..].iter().any(|l| l.contains("first-person session") && l.contains("(class cqb)")), "his next General wore it: {lines:?}");
+    // And the sim said so for that General, on every machine: the waiting class came in with a
+    // ClassChosen naming it.
+    let waited = seen.iter().rposition(|e| e.player == 1 && matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).unwrap();
+    let EventKind::ClassAtNextSpawn { general: old, class } = seen[waited].kind else { unreachable!() };
+    assert!(seen[waited..].iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::ClassChosen { general, class: c } if general != old && c == class)), "the next General's ClassChosen for {class}");
+    crate::profile::reset();
+}
+
+/// The long run is meaningful for any number of lives from two: the target's class change falls in
+/// a life that has a next one ([`crate::client::Autopilot::mp_change_life`]: the first fight for two
+/// lives, the first round for three), and his next General wears it, on every machine.
+#[test]
+fn the_long_run_changes_class_in_a_life_with_a_next_one() {
+    let _g = crate::profile::lock();
+    for rounds in [2u32, 3] {
+        crate::profile::reset();
+        let (seen, lines, _) = mp_autopilot_match(rounds, 30 * 150);
+        let change = lines.iter().position(|l| l.contains("changing class mid-life")).unwrap_or_else(|| panic!("{rounds} lives: the change was made: {lines:?}"));
+        assert!(lines[change..].iter().any(|l| l.contains("first-person session") && l.contains("(class cqb)")), "{rounds} lives: his next General wore it: {lines:?}");
+        let waited = seen.iter().rposition(|e| e.player == 1 && matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).unwrap_or_else(|| panic!("{rounds} lives: the change waited"));
+        assert!(seen[waited..].iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::ClassChosen { .. })), "{rounds} lives: the next General's ClassChosen");
+    }
     crate::profile::reset();
 }
 

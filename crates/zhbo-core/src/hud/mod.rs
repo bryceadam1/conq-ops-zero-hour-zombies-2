@@ -28,6 +28,7 @@ pub mod center;
 pub mod damage;
 pub mod digit;
 pub mod frame;
+pub mod hints;
 pub mod map;
 mod panels;
 pub mod pickup;
@@ -305,7 +306,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
                 draw_hack(prims, w, h, s, client);
             }
             if p.hammer.is_none() && !p.building && !spectating {
-                draw_reload_prompt(prims, w, h, s, p);
+                hints::draw_low_ammo(&l, prims, p, crate::input::key_name(client.cfg.bindings.reload), client.hud.lui.clock);
                 draw_breath_hint(&l, prims, p, crate::input::key_name(client.cfg.bindings.sprint));
             }
         }

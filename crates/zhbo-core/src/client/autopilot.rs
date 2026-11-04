@@ -134,6 +134,17 @@ pub struct Autopilot {
     /// When the fight started this session: the first moment the other General was there to aim
     /// at (the two machines take control a few seconds apart).
     pub(crate) mp_fight: Option<f32>,
+    /// The long run's round began with nobody to aim at (it starts after 20 s anyway): when the
+    /// other General comes in, the round starts over for him once, so its closing burst is not
+    /// fired into a General just taking the field.
+    pub(crate) mp_fight_alone: bool,
+    /// The equipment run's view of his arsenal, set by the client from the sim each frame: no
+    /// offhand, raise or put-away running, and the lethals left.
+    pub(crate) eq_idle: bool,
+    pub(crate) eq_lethal_left: u16,
+    /// When this session's lethal press began, and when the tactical's turn came (the lethal down).
+    pub(crate) eq_lethal_at: Option<f32>,
+    pub(crate) eq_tactical_from: Option<f32>,
     /// What his own General holds in third person, last logged (general, viewmodel, camo).
     pub(crate) mp_holds: Option<(u32, i32, Option<String>)>,
     /// Log lines for `ConquerOps.log` (drained by the FFI layer after the frame).
@@ -468,6 +479,9 @@ impl Autopilot {
         } else if (5.0..5.3).contains(&c) {
             keys.set_down(b.fire, true);
         }
+        // A long run of two lives changes class here, in the first fight, after the target's throw
+        // (before his burst; he stays in the fight until he is down, so his next General wears it).
+        let (pick_force, change_pick) = if long { self.mp_class_change(life, c, 4.2) } else { (0, None) };
         // Out by the field computer once the fight is over: the shooter when the target is down
         // (or the time is up), the target only if he outlived it.
         let done = (self.mp_shooter && !target_up && c >= 15.0) || c >= MP_KILL_TIME + 2.0;
@@ -478,23 +492,55 @@ impl Autopilot {
                 keys.set_down(b.field_computer, true);
             }
         }
-        Scripted { keys, class_pick: pick, look, ..Default::default() }
+        Scripted { keys, class_pick: change_pick.or(pick), pick_force, look, ..Default::default() }
+    }
+
+    /// The target's life in which the long run changes class mid-life: his third (the second round)
+    /// when he plays four or more, else his next-to-last, so every run of two lives or more has a
+    /// next General to wear it (two lives: the first fight).
+    pub fn mp_change_life(&self) -> u32 {
+        self.mp_rounds.saturating_sub(1).clamp(1, 3)
+    }
+
+    /// The mid-life class change (the long run's target, in [`Self::mp_change_life`]), once the
+    /// throw has made him a combatant: the screen forced open at `force` seconds into the fight,
+    /// the second default class picked half a second on. `(pick_force, class_pick)`.
+    fn mp_class_change(&mut self, life: u32, c: f32, force: f32) -> (i32, Option<Key>) {
+        if self.mp_shooter || self.mp_rounds < 2 || life != self.mp_change_life() || self.mp_changed_class {
+            return (0, None);
+        }
+        if (force..force + 0.1).contains(&c) {
+            return (1, None);
+        }
+        if (force + 0.5..force + 0.6).contains(&c) {
+            self.mp_changed_class = true;
+            self.log.push("autopilot mp: changing class mid-life after combat".to_string());
+            return (0, Some(second_preset_key()));
+        }
+        (0, None)
     }
 
     /// A life of the long multiplayer run after the first fight: at the meeting point again (the
     /// bridge walks every General there), each throws his tactical at the other (the concussion:
     /// a shellshock on both machines' sims), fires a hip burst and an aimed one at him, reloads,
     /// knifes, and leaves by the field computer, or dies; the shooter ends with a long aimed burst.
-    /// On his second such life the target changes class mid-life once his throw has made him a
+    /// In [`Self::mp_change_life`] the target changes class mid-life once his throw has made him a
     /// combatant (BO2's `MP_CHANGE_CLASS_NEXT_SPAWN`) and stays for the bursts, so his next
     /// General wears it.
     pub fn mp_round(&mut self, b: &Bindings, life: u32) -> Scripted {
         let t = self.t;
         let mut keys = KeySet::default();
         let fight = match self.mp_fight {
+            Some(_) if self.mp_fight_alone && self.mp_aim.is_some() => {
+                self.mp_fight_alone = false;
+                self.mp_fight = Some(t);
+                self.log.push(format!("autopilot mp: round {life} starts over (the other General came in)"));
+                t
+            }
             Some(start) => start,
             None if t >= 1.0 && (self.mp_aim.is_some() || t >= 20.0) => {
                 self.mp_fight = Some(t);
+                self.mp_fight_alone = self.mp_aim.is_none();
                 self.log.push(format!("autopilot mp: round {life} starts ({})", if self.mp_aim.is_some() { "the other General is in first person" } else { "nobody to aim at" }));
                 t
             }
@@ -526,21 +572,17 @@ impl Autopilot {
         if (9.5..9.6).contains(&c) {
             keys.set_down(b.melee, true);
         }
-        // The mid-life class change, once the throw has made him a combatant: the screen forced
-        // open, the next default class picked.
-        if !self.mp_shooter && life == 3 && !self.mp_changed_class {
-            if (1.3..1.4).contains(&c) {
-                pick_force = 1;
-            }
-            if (1.8..1.9).contains(&c) {
-                class_pick = Some(second_preset_key());
-                self.mp_changed_class = true;
-                self.log.push("autopilot mp: changing class mid-life after combat".to_string());
-            }
+        // The mid-life class change, once the throw has made him a combatant.
+        let (force, pick) = self.mp_class_change(life, c, 1.3);
+        if force != 0 {
+            pick_force = force;
+        }
+        if pick.is_some() {
+            class_pick = pick;
         }
         // The shooter ends each round with a long aimed burst at him; the target stays for it in
         // the life he changed class in (the new class comes in with his next General).
-        let changing = !self.mp_shooter && life == 3;
+        let changing = !self.mp_shooter && life == self.mp_change_life();
         if self.mp_shooter && (14.0..19.0).contains(&c) {
             keys.set_down(b.ads, true);
             if c >= 14.5 {
@@ -648,28 +690,94 @@ impl Autopilot {
         Scripted { keys, look, ..Default::default() }
     }
 
-    pub fn equipment_input(&self, b: &Bindings) -> KeySet {
+    /// Each step waits for the state it needs, not a clock: the lethal goes once the class is
+    /// armed and the hands are free; the tactical once the lethal is down and the hands are free
+    /// again (BO2 refuses an offhand press during another offhand, `FUN_008e2bb0`), held long enough
+    /// for the Black Hat to finish on the drone (`hackertoollockstart` + `vehiclehackertooltimems`,
+    /// two seconds' margin); the rest is timed from its release.
+    pub fn equipment_input(&mut self, b: &Bindings) -> KeySet {
         let t = self.t;
         let mut keys = KeySet::default();
-        if (0.5..1.0).contains(&t) {
-            keys.set_down(b.lethal, true);
+        if t < 0.5 {
+            return keys;
         }
-        if (2.0..6.0).contains(&t) {
+        if self.eq_lethal_at.is_none() && self.eq_idle && self.eq_lethal_left > 0 {
+            self.eq_lethal_at = Some(t);
+        }
+        if let Some(at) = self.eq_lethal_at {
+            if (at..at + 0.5).contains(&t) {
+                keys.set_down(b.lethal, true);
+            }
+        }
+        let lethal_done = self.eq_lethal_at.is_some_and(|at| t > at + 0.5 && self.eq_lethal_left == 0) || (self.eq_lethal_at.is_none() && self.eq_lethal_left == 0);
+        if self.eq_tactical_from.is_none() && lethal_done && self.eq_idle {
+            self.eq_tactical_from = Some(t + 0.2);
+        }
+        let Some(from) = self.eq_tactical_from else { return keys };
+        let tn = crate::tuning::get();
+        let hold = tn.hacker_tool_lock_start + tn.vehicle_hacker_tool_time_ms / 1000.0 + 2.0;
+        let end = from + hold;
+        if (from..end).contains(&t) {
             keys.set_down(b.tactical, true);
         }
-        if (7.0..7.08).contains(&t) || (7.2..7.28).contains(&t) {
+        let c = t - end;
+        if (1.0..1.08).contains(&c) || (1.2..1.28).contains(&c) {
             keys.set_down(b.reload, true);
         }
         // A burst and a reload (the reload animation's magazines).
-        if (9.0..10.0).contains(&t) {
+        if (3.0..4.0).contains(&c) {
             keys.set_down(b.fire, true);
         }
-        if (10.3..10.4).contains(&t) {
+        if (4.3..4.4).contains(&c) {
             keys.set_down(b.reload, true);
         }
-        if (20.0..20.1).contains(&t) {
+        if (14.0..14.1).contains(&c) {
             keys.set_down(b.field_computer, true);
         }
         keys
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The equipment run waits for the state each step needs: no tactical while the lethal is
+    /// still in the hands (BO2 refuses that press), the Black Hat held past the drone's lock, and a
+    /// lethal press only once the class is armed. A late class (the spawn's pick landing a second
+    /// in, as in game) shifts everything with it. The run used fixed windows: the C4's throw, late
+    /// behind the pick, swallowed the tactical's press.
+    #[test]
+    fn the_equipment_run_waits_for_the_hands() {
+        let b = Bindings::default();
+        let tn = crate::tuning::get();
+        let lock = tn.hacker_tool_lock_start + tn.vehicle_hacker_tool_time_ms / 1000.0;
+        for armed_at in [0.5f32, 1.5] {
+            let mut ap = Autopilot { equipment: true, ..Default::default() };
+            let (mut lethal_at, mut tactical) = (None, Vec::new());
+            let mut thrown_at = None;
+            for f in 0..(30 * 30) {
+                ap.t = f as f32 * crate::units::LOGIC_DT;
+                // The arsenal as the sim shows it: armed at `armed_at`, the C4's offhand states
+                // running 1.5 s from its press.
+                let busy = lethal_at.is_some_and(|at: f32| ap.t < at + 1.5);
+                ap.eq_idle = ap.t >= armed_at && !busy;
+                ap.eq_lethal_left = if thrown_at.is_some() { 0 } else { 1 };
+                let keys = ap.equipment_input(&b);
+                if keys.is_down(b.lethal) && lethal_at.is_none() {
+                    assert!(ap.t >= armed_at, "the lethal waits for the class");
+                    lethal_at = Some(ap.t);
+                }
+                if lethal_at.is_some_and(|at| ap.t >= at + 0.8) {
+                    thrown_at.get_or_insert(ap.t);
+                }
+                if keys.is_down(b.tactical) {
+                    assert!(!busy, "no tactical press during the lethal's offhand ({armed_at}: t {})", ap.t);
+                    tactical.push(ap.t);
+                }
+            }
+            let held = tactical.last().unwrap() - tactical.first().unwrap();
+            assert!(held >= lock, "{armed_at}: held {held} s, the drone's lock needs {lock}");
+        }
     }
 }

@@ -585,6 +585,13 @@ pub struct WeaponDef {
     /// `guidedMissileType_t`: a TV-guided weapon (6) keeps the HUD's scoped-hidden widgets under
     /// its overlay ([`crate::weapons::scope::scoped`]).
     pub guided_missile_type: u32,
+    /// The HUD's low-ammo warning (`FUN_0049d3e0`): the clip warns at or under this share of its
+    /// size (`lowAmmoWarningThreshold`).
+    pub low_ammo_threshold: f32,
+    /// `bNoPartialReload`: no reload prompt and no "Low Ammo" under the warning threshold.
+    pub no_partial_reload: bool,
+    /// `ammoCounterClip` is not 0: the weapon has a clip counter, so the warning shows at all.
+    pub ammo_counter: bool,
     /// BO2's `WeaponVariantDef.dpadIcon`: the action-slot material (`hud_gl_select` on a grenade
     /// launcher's alt mode, `hud_select_fire_bullet_stack` on select fire), empty when none. The HUD's
     /// alt-fire slot draws it (`hud::ammo::alt_slot_icon`).
@@ -673,6 +680,14 @@ impl ShieldBox {
     pub fn from_nums(n: &[f32]) -> Self {
         let a = |i: usize| [n[i], n[i + 1], n[i + 2]];
         ShieldBox { rot: [n[0], n[1], n[2], n[3]], pos: a(4), mins: a(7), maxs: a(10) }
+    }
+
+    /// The middle of the box's bottom face, in its own frame (inches): where a Zero Hour `Box`
+    /// geometry, which has no offset of its own (centred on its object in x and y, rising from it in
+    /// z), must have its object for the two to cover the same space. The planted shield's object
+    /// stands there and the converter draws its model from there (`zhbo-assets` `props`).
+    pub fn footing(&self) -> [f32; 3] {
+        [(self.mins[0] + self.maxs[0]) * 0.5, (self.mins[1] + self.maxs[1]) * 0.5, self.mins[2]]
     }
 }
 
@@ -780,7 +795,8 @@ pub const UI_TEXT_KEYS: &[&str] = &[
     "MPUI_DLC2_CAPS", "MENU_CUSTOMIZED_CAPS", "MENU_SCOREBOARD_CAPS", "MPUI_SCORE_CAPS",
     "MPUI_KILLS_CAPS", "MPUI_DEATHS_CAPS", "MPUI_ASSISTS_CAPS", "WEAPON_NO_AMMO",
     "MENU_SELECT_RETICLE", "MENU_X_OPTICS", "MP_CHANGE_CLASS_NEXT_SPAWN", "MPUI_SPECTATING",
-    "MPUI_FIRST_PERSON_VIEW", "PLATFORM_PICKUPNEWWEAPON", "PLATFORM_SWAPWEAPONS",
+    "MPUI_FIRST_PERSON_VIEW", "PLATFORM_PICKUPNEWWEAPON", "PLATFORM_SWAPWEAPONS", "PLATFORM_RELOAD",
+    "PLATFORM_LOW_AMMO_NO_RELOAD", "PLATFORM_HOLD_BREATH",
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1084,6 +1100,10 @@ impl Default for WeaponDef {
             zoom: Zoom::default(),
             traits: Traits::default(),
             guided_missile_type: 0,
+            // A table predating the field: a third, the share most of BO2's guns carry (0.33).
+            low_ammo_threshold: 1.0 / 3.0,
+            no_partial_reload: false,
+            ammo_counter: true,
             dpad_icon: String::new(),
             world_shell_fx_weapon: String::new(),
             world_last_shot_shell_fx_weapon: String::new(),

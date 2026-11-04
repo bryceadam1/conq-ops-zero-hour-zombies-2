@@ -382,6 +382,21 @@ fn the_shield_rides_the_left_hand_and_the_back() {
         assert_eq!(s.frame(&body_input(3), 2, None), s.frame(&body_input(3), 2, None));
         assert!(s.loaded().is_some_and(|l| l.key.3 == 9), "the corpse's rig is the one he died with");
         ffi::publish_torso(std::iter::empty());
+        // The weapon-only mode is placed by the engine's right-hand tag: the shield is not in that
+        // hand, so it is refused (once) and the W3D weapon, skinned on tag_weapon_left, draws it.
+        // The rifle still draws there.
+        *s = ffi::State::default();
+        let weapon_input = |vm: i32| input(vm, Some(tag([0.0; 3])));
+        for _ in 0..20 {
+            assert_ne!(s.frame(&weapon_input(9), 1, None), ffi::DRAWN, "the shield is never drawn on the right-hand tag");
+            answer(s, &f);
+        }
+        assert!(s.logged().any(|l| l.contains("held on tag_weapon_left")), "{:?}", s.logged().collect::<Vec<_>>());
+        for _ in 0..20 {
+            s.frame(&weapon_input(3), 1, None);
+            answer(s, &f);
+        }
+        assert!(s.loaded().is_some_and(|l| l.key.1 == 3), "the rifle composes in the weapon-only mode: {:?}", s.logged().collect::<Vec<_>>());
     });
 }
 

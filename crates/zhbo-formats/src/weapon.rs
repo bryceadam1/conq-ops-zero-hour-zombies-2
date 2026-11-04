@@ -712,6 +712,12 @@ pub struct Weapon {
     pub segmented_reload: bool,
     /// `unlimitedAmmo`: the clip never counts as empty for the empty raise/drop (`FUN_008e6770`).
     pub unlimited_ammo: bool,
+    /// The HUD's low-ammo warning (`FUN_0049d3e0`): a clip at or under `lowAmmoWarningThreshold`
+    /// of its size warns; `bNoPartialReload` shows no reload prompt; `ammoCounterClip` 0 (no clip
+    /// counter) shows none at all.
+    pub low_ammo_warning_threshold: f32,
+    pub no_partial_reload: bool,
+    pub ammo_counter_clip: u32,
     pub raise_time: f32,
     pub first_raise_time: f32,
     pub drop_time: f32,
@@ -1245,6 +1251,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.reload_ammo_add = int(z, d + WD::iReloadAmmoAdd);
     w.segmented_reload = z.u8(d + WD::bSegmentedReload) != 0;
     w.unlimited_ammo = z.u8(d + WD::unlimitedAmmo) != 0;
+    w.low_ammo_warning_threshold = z.f32(d + WD::lowAmmoWarningThreshold);
+    w.no_partial_reload = z.u8(d + WD::bNoPartialReload) != 0;
+    w.ammo_counter_clip = z.u32(d + WD::ammoCounterClip);
     w.raise_time = ms(z, d + WD::iRaiseTime);
     w.first_raise_time = ms(z, d + WD::iFirstRaiseTime);
     w.drop_time = ms(z, d + WD::iDropTime);
