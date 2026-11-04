@@ -13179,3 +13179,76 @@ dir), default 16/16, `--rts` 16/16, `--rts-dry` 5/5, `--build` 18/18, `--input` 
 5/5, `--drops` 10/10 (the next General picked Drop Reflex, the pre-selection), `--mp` 26/26 (2,843
 common frames), `ZHBO_MPTEST_ROUNDS=3` 35/35 (7,054 common frames, 6 shellshocks on both machines,
 three Generals classed, CQB worn by the next General after the change). No CRC mismatch.
+
+## Integration: round 5 (2026-11-04, `v1/integration10`)
+
+Merged onto main 8b7405b, in this order, each `--no-ff`: `v1/conformance-final` (57c5f96),
+`v1/death-anims` (366be85), `v1/class-per-general` (44eeba8). Every branch entry above is kept as
+written.
+
+**Conflicts.** Only MODLOG conflicted textually (the three entries, kept in merge order). Everything
+else merged on its own: the tuning pack (conformance-final's seven Sensor Grenade and compass keys
+beside death-anims' three movement dvars and `[ZeroHourDamage]`; `tuning.ini` lists them all and the
+pack's every-key test passes), the built-in catalog's Assault Shield (`Aims = 0` beside
+`WeapType = riotshield`), the CONTRACT pending notes, `sim/mod.rs`, the lockstep fingerprint and
+its perturbation test, and the autotest/mptest scripts.
+
+**Semantic resolutions.**
+* *The sensor's blast and the Blow API.* conformance-final's timed fuse sets the Sensor Grenade off
+  through `projectiles::blast`, which death-anims changed to name every blow: `splash(def)` (its
+  `weapType` grenade → `MOD_GRENADE_SPLASH`, `dmgType` explosive), the sensor as the weapon and
+  BO2's radius `vDir` from the blast to the victim (`Blow::from_to`). The scan and the detonation's
+  compass marks deal no damage. Nothing held the two branches together, so a new fake-host test
+  plants a timed laser sensor beside an enemy and checks the blow and the hurt's side
+  (`a_sensor_grenades_detonation_is_explosive_from_where_it_lay`).
+* *The fingerprint.* The equipment's part hashes conformance-final's `Placed::fuse` and the sensor
+  `Marks` (both in the perturbation state); class-per-general's removal of `class_waits` left the
+  module doc saying a seat hashes "whether it waits for his next General": it now names the fuse
+  and marks, and lists death-anims' `Sim::blows` among the skipped presentation with its reason
+  (the destructure already skipped it).
+* *Scripts.* The equipment leg's three runs (Trophy, Black Hat, Sensor) each start a fresh game
+  whose first General picks the seeded custom, which the per-General pick does not change; the mp
+  autopilot's per-General re-pick and `mp_armed` wait, death-anims' "was killed"/"falls by" lines
+  and the classpick/drops re-picks all ran together (below).
+
+**Bumps.** `ZHBO_ABI_VERSION` 32 → 33 on both sides (death-anims' appended
+`zhbo_logic_engine_damage`); `hud::VERSION` 86 → 87 (the weapon table's 172 fields with
+`TimedDetonation`, `LaserSensor`, `Aims`; every `projExplosionEffect` converted; the sensor prop
+without Zero Hour sight; the 2,250 death and 90 torso contexts and the flinch sides). CONTRACT's
+three Pending notes are folded into "Versioning"'s ABI 33 paragraph; the shield's damage-path
+section names the engine damage report. No `zhbo_native` format moves.
+
+**Fixed in the integration.**
+* *An overhead General's hurt had no presentation* (death-anims × the overhead seat step). The engine
+  hook reports Zero Hour's damage with its way for every General, but the overhead branch of the
+  seat step only marked combat and copied the health: an overhead General shot by Zero Hour units
+  emitted no `Damaged`, so his native body (drawn for everyone, as in first person) never flinched
+  and his voice never pained; only his death reported. The overhead branch now emits the same
+  `Damaged { amount, dir }` with the last blow's way (no `Flinch`: no first-person view to kick),
+  and the client keeps the hurt cue and damage flash to the local first-person view. Tests:
+  `an_overhead_general_hurt_by_zero_hour_units_flinches_by_the_blows_side`,
+  `the_hurt_cue_and_flash_are_first_persons_alone`. In game: the default leg's General, back
+  overhead, logs `took 5 damage along (1.00, 0.04)` from the rebels (frames 679–717) and his body
+  flinches (`shot-overhead-general-hurt-zoom.png`).
+
+**Verified (final head).** `cargo test --workspace` 1,235 passed, 0 failed; clippy clean (workspace
+`--all-targets`; zhbo-core `--features harness`, `harness,renderer`, `autopilot`). Real install
+(`--ignored --skip conformance`, both dirs): 78 passed, the roster lockstep gate and the
+2,250-context death sweep among them; the other crates' ignored tests pass; the conformance gate is
+red only for the 4 BO2-only cac rows. Conformance CLI: weapons 0 cells / 0 clusters, cac 0 cells and
+4 BO2-only rows, 1 gap cluster; all ten files byte-identical to conformance-final's (death-anims and
+class-per-general were byte-identical to integration9 on their own). `cargo xtask build` (own work
+dir and dist): host patches 0001–0028 apply. Every autotest leg on the final build: default 16/16,
+`--input` 3/3, `--equipment` 12/12 (the Sensor down at 455, gone off at 556), `--rts` 16/16,
+`--rts-dry` 5/5, `--build` 18/18, `--classpick` 12/12, `--scope` 1/1, `--w3d-ads` 2/2, `--replay` 5/5,
+`--splash` 5/5, `--smoke` 7/7, `--detail` 10/10, `--drops` 10/10, `--showcase` (the scripted kill
+falls by `pb_stand_death_frontspin`), `--mp` 26/26 (2,827 common frames), `ZHBO_MPTEST_ROUNDS=3`
+35/35 (7,070 frames, 6 shellshocks on both, CQB worn), `ZHBO_MPTEST_ROUNDS=5` 35/35 (7,597 frames,
+5 shellshocks on both, CQB worn). No desync, CRC mismatch or panic line in any log. The build before
+the overhead fix had passed every leg up to the short mp too. Screenshots in
+`~/.opencode/plan/integration10/`: the second General's class screen opened on Custom 2
+(`shot-second-general-class-screen.png`), the Sensor Grenade lying and its scan effect going off
+(`shot-sensor-lying-zoom.png`, `shot-sensor-going-off.png`, `sheet-sensor-lying.png`; in the
+equipment leg the C4's own blast shellshocks the view over it), a corpse from the showcase's
+scripted kill (`shot-corpse-scriptkill-frontspin.png`; no leg kills by a non-rifle weapon: every mp
+kill is `dmgType normal`), the overhead General hurt (`shot-overhead-general-hurt*.png`).
