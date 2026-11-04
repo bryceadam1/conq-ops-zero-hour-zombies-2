@@ -12952,3 +12952,15 @@ The three "found elsewhere" items of the death work, by the same evidence.
   `KilledBy` with `DmgType::of` (no BO2 weapon) and the blow's way, his hurt its flinch side.
   **Decision:** no BO2 weapon for Zero Hour's damage, so an overhead General's own shotgun fired by
   Zero Hour reads `normal`, not `normal_shotgun` (the engine's report names no weapon).
+
+**Verified (follow-up).** `cargo test --workspace` 1,226 passed; clippy clean (workspace
+`--all-targets`, zhbo-core `--features harness`); real install (`--ignored --skip conformance`) 77
+passed (the torso sweep: 340 clips, the new spot picks); conformance byte-identical to integration9.
+In game (own dist, fresh archive): default 16/16 — all 66 of the General's hurts from Zero Hour's
+units logged with a way (`took N damage along (x, y)`, none without: the engine hook reaches the
+sim); `--rts` 16/16; `--mp` short 25/25 (2,831 common frames; both machines logged the same
+`was killed: dmgType normal along (-0.19, 0.98)` and corpse clip); `ZHBO_MPTEST_ROUNDS=3` 34/34
+(4,724 frames, 2 shellshocks on both); on the build before the log line also `--classpick` 12/12,
+`--drops` 9/9, `--splash` 5/5, `--equipment` 8/8, `--showcase`. Images:
+`~/.opencode/plan/death-anims/shots/torso-flinch-sides-and-corpses-headless.png` (the four flinch
+sides, then a corpse per kind), `mp-followup-corpse-normal.png`.
