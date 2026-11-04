@@ -12896,3 +12896,12 @@ field at +0x60 is set (up to 60 s from the launch); what sets it for a grenade w
 (0 cells, 4 BO2-only MTX rows); gap clusters 4 → 1. The expected side moved only in
 `anim_ads_up`/`anim_ads_down` (the 10 rows), the actual side only in `projectile_explosion_effect`
 (sensor, Trophy).
+
+**In game** (this branch's build, own dist): `--equipment` 12/12 — the Sensor run: thrown at frame
+423, put down at 456, gone off at 557 (134 frames, BO2's 4.5 s fuse), `wpn_sensor_grenade_explode`
+played, the General beside it took its 15 (×1.5) and BO2's shellshock; default 16/16, `--splash` 5/5,
+`--smoke` 7/7, `--drops` 9/9, `--w3d-ads` 2/2, `scripts/mptest-mac.sh` (`ZHBO_MPTEST_ROUNDS=3`)
+34/34. The equipment leg now files each run's captures in its own folder; `finish`'s capture loop
+uses `if`, so a leg with no capture left no longer exits 1 under `set -e` (it did once here with all
+checks passing). The scan effect's conversion against BO2's own: `zhbo-assets fx-sheet <dir>
+--effects weapon/sensor_grenade/fx_sensor_exp_scan_friendly`.

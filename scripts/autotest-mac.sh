@@ -131,8 +131,10 @@ wait_for_log() { # pattern, seconds
 finish() {
     stop_game
     cp "$log" "$out/" 2>/dev/null || true
+    # `if`, not `&&`: with no capture left (the equipment leg files each run's away) a false test
+    # as the loop's last command would make `finish` fail and, under `set -e`, the leg exit 1.
     for f in "$out"/shot.*.bmp; do
-        [[ -f "$f" ]] && sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null && rm "$f"
+        if [[ -f "$f" ]]; then sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null && rm "$f"; fi
     done
 }
 trap finish EXIT
@@ -225,7 +227,7 @@ EOF
         cp "$log" "$out/ConquerOps-$tactical.log"
         mkdir -p "$out/$tactical"
         for f in "$out"/shot.*.bmp; do
-            [[ -f "$f" ]] && sips -s format png "$f" --out "$out/$tactical/$(basename "${f%.bmp}").png" >/dev/null && rm "$f"
+            if [[ -f "$f" ]]; then sips -s format png "$f" --out "$out/$tactical/$(basename "${f%.bmp}").png" >/dev/null && rm "$f"; fi
         done
         l="$out/ConquerOps-$tactical.log"
         echo "== C4 + $tactical"
