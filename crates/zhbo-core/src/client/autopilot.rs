@@ -293,7 +293,10 @@ impl Autopilot {
         // hammer's own input is not eaten by the screen (the hammer itself works unarmed).
         let pick = (0.3..0.4).contains(&t).then(custom_class_key);
         let dy = if (3.0..3.4).contains(&t) { 120.0 } else { 0.0 };
-        let wheel = if (3.6..3.65).contains(&t) { 1.0 } else { 0.0 };
+        // One notch: on the one logic frame at 3.6 s (a time window caught one frame or two by
+        // rounding, turning it 30 or 45 degrees from run to run).
+        let frame = |at: f32| (at / crate::units::LOGIC_DT).round() as i64;
+        let wheel = if frame(t) == frame(3.6) { 1.0 } else { 0.0 };
         if (2.6..2.7).contains(&t) {
             keys.set_down(b.hammer, true);
         }

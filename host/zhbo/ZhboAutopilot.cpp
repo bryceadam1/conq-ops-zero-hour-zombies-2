@@ -119,9 +119,10 @@ void buildTestStructureDone(Object *obj)
 					const Real a = k * (PI / 12.0f);
 					Coord3D at;
 					at.set(g.x + Cos(a) * ahead, g.y + Sin(a) * ahead, g.z);
-					// The hammer turns the front towards him, and the script turns it a notch or two.
+					// The hammer turns the front towards him, and the script turns it (one wheel notch;
+					// every turn up to three is checked, so a site is legal whatever it lands on).
 					found = TRUE;
-					for (Int turn = 1; turn <= 2 && found; ++turn)
+					for (Int turn = 0; turn <= 3 && found; ++turn)
 						found = TheBuildAssistant->isLocationLegalToBuild(&at, what, a + PI + turn * (PI / 12.0f), checks, general, nullptr) == LBC_OK;
 					if (found)
 					{
