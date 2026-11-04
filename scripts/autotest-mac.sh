@@ -28,7 +28,8 @@
 #                                      screen sends the classless General back overhead, the next
 #                                      take-control picks the class by its row key, then the script
 #                                      forces the screen open after re-taking control and Escape-closes it;
-#                                      then the General dies and the next one comes in with the class
+#                                      then the General dies and the next one meets the screen again,
+#                                      opened on the class, and Enter re-picks it
 #   scripts/autotest-mac.sh --splash   explosive splash on Zero Hour units: an enemy armour group (an
 #                                      Overlord, three Crusaders) and two rebels, held still; one SMAW
 #                                      into the Overlord, then a frag; every health change is logged
@@ -38,7 +39,8 @@
 #                                      holds two AN-94 customs (grenade launcher, reflex sight); the
 #                                      first General wears the first, picks the second for his next
 #                                      spawn and is killed past the grace period: his rifle drops as
-#                                      its ground prop; the next General walks onto it (its stock is
+#                                      its ground prop; the next General's screen opens on the second,
+#                                      Enter takes it, and he walks onto it (its stock is
 #                                      his, the same base weapon) and swaps for it with the use key
 #   scripts/autotest-mac.sh --replay   spectating a replay: records a fresh skirmish (started from the
 #                                      main menu by ZHBO_AUTOTEST_SKIRMISH: a loaded save records no
@@ -324,8 +326,9 @@ if [[ $mode == classpick ]]; then
     # spawns a classless player, so the General goes back overhead and the host takes control
     # again. After the pick the script leaves first person, takes control again, forces the
     # screen open and Escapes it, proving first-person play continues. Then the General is killed,
-    # a new one takes his place, and the host takes control of him: he must come in with the class
-    # and no screen. The profile file's v2
+    # a new one takes his place, and the host takes control of him: every General is picked for, so
+    # he meets the spawn screen, opened on Custom 2, and the script's Enter re-picks it (one press).
+    # The profile file's v2
     # format: `v2`, the active set, then each set's `class`/name/spec/`end` records (profile.rs).
     profile="$userdata/ConquerOps.profile"
     rm -f "$profile"
@@ -399,15 +402,16 @@ EOF
     else
         printf '%-28s FAIL\n' "  ...Escape kept playing"; ok=1
     fi
-    # The fourth session: the General is killed and a new one takes his place. The chosen class
-    # belongs to the player (BO2's pers["class"]), so the new General comes in wearing it, with no
-    # class screen: after the respawn no pose line waits for a class, one names the MTAR, and the
+    # The fourth session: the General is killed and a new one takes his place. Every General is
+    # picked for (the deliberate break from BO2's pers["class"] respawn): the new General waits
+    # behind the screen (a pose line awaiting a class), the script's Enter takes the pre-selected
+    # Custom 2 (a second "assumed" line, after the respawn), then a pose line names the MTAR and the
     # pose changes (the script walks, which a screen would block).
     check "  ...respawned a General" "autopilot: respawned General"
-    if awk '/autopilot: respawned General/ { r = 1; next } r && /entered first-person control/ { e = 1; next } e && / pos \(/ { if ($0 ~ /awaiting a class/) bad = 1; if ($0 ~ /MTAR [0-9]+\|/) mtar = 1; if (first == "") first = $0; last = $0 } END { exit !(e && mtar && !bad && first != last) }' "$out/ConquerOps.log"; then
-        printf '%-28s PASS\n' "  ...came back with the class"
+    if awk '/autopilot: respawned General/ { r = 1; next } r && /entered first-person control/ { e = 1; next } e && /assumed the Custom 2 class/ { p = 1; next } e && / pos \(/ { if (!p && $0 ~ /awaiting a class/) waited = 1; if (p && $0 ~ /MTAR [0-9]+\|/) { mtar = 1; if (first == "") first = $0; last = $0 } } END { exit !(e && waited && p && mtar && first != last) }' "$out/ConquerOps.log"; then
+        printf '%-28s PASS\n' "  ...next General re-picked"
     else
-        printf '%-28s FAIL\n' "  ...came back with the class"; ok=1
+        printf '%-28s FAIL\n' "  ...next General re-picked"; ok=1
     fi
     if grep -q "assumed the ??? class" "$out/ConquerOps.log"; then
         printf '%-28s FAIL\n' "  ...not as ???"; ok=1
@@ -558,6 +562,9 @@ EOF
     grep -E "drops|dropped|picked up|took ammo|next spawn" "$out/ConquerOps.log" || true
     check "class for the next spawn" "comes in at the next spawn"
     check "the General was killed" "autopilot drops: killing General"
+    # Every General is picked for: the next one's screen opened on the class changed for him, and
+    # the script's Enter took it.
+    check "the next General picked it" "General [0-9]+ assumed the Drop Reflex class"
     check "his rifle dropped" "General dropped his an94_mp\+gl at"
     check "  ...as its ground prop" "drops: an94_mp\+gl down at .* as ZHBO_Drop_an94_mp object [1-9]"
     # The native third person (ZHBO_NATIVE_BODY, on by default) draws the combination on the

@@ -203,7 +203,8 @@ void repairTestFrame(UnsignedInt frame)
 // own player the way a person would, through the replicated messages only: it orders a General
 // from its Command Center, walks him to a meeting point between the two bases, and takes control;
 // the core's script (zhbo-core client/autopilot.rs `mp_input`) fights. A General who dies is
-// ordered again from the Command Center and taken once more (his class comes back with him).
+// ordered again from the Command Center and taken once more (every General is picked for: the core's
+// script re-picks the class his screen opens on).
 enum MpPhase
 {
 	MP_ORDER,		// order a General at the Command Center
@@ -1126,8 +1127,8 @@ void autopilotFrame()
 	// three times for the classpick run. Its first session declines the spawn (Escape on the class
 	// screen sends the unclassed General back overhead), the second picks, the third forces the
 	// screen open and Escapes it; then the General is killed and a new one stands in his place,
-	// and the fourth session takes him: he must come in with the chosen class and no screen
-	// (BO2's `pers["class"]` survives the death).
+	// and the fourth session takes him: every General is picked for, so he meets the spawn screen,
+	// opened on the class picked last, and the core's script re-picks it.
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
 	const Int retakes = s_config.autopilot_classpick ? 3 : 1;
 	if (!general || s_autopilot.retakes >= retakes)

@@ -13122,3 +13122,60 @@ sim); `--rts` 16/16; `--mp` short 25/25 (2,831 common frames; both machines logg
 `--drops` 9/9, `--splash` 5/5, `--equipment` 8/8, `--showcase`. Images:
 `~/.opencode/plan/death-anims/shots/torso-flinch-sides-and-corpses-headless.png` (the four flinch
 sides, then a corpse per kind), `mp-followup-corpse-normal.png`.
+
+## Every General is picked for: a deliberate break from BO2's respawn (2026-11-03, branch `v1/class-per-general`)
+
+**The decision (the user's, against BO2 parity on purpose).** "I want to have the user select
+their class every time a new General is built." BO2 keeps `pers["class"]` across deaths and a
+respawn wears it with no menu (`_globallogic_ui.gsc` `menuclass`, `_class.gsc` `giveloadout`); the
+mod copied that: `Sim::new_record` dressed every new General in `Sim::chosen`, and a class changed
+mid-life after combat waited in `Sim::class_waits` to come in with him.
+
+**Design.**
+* `Sim::new_record` makes every new General's record unclassed and unarmed, the first's rule:
+  `take_control` (a General new to the seat), `rts_update` (the overhead report making his record
+  first) and `choose_class` without a record (which now wears the pick explicitly). The overhead
+  path needs nothing new: the command bar's class set is already up for any General without a
+  class, and the empty veto holds Zero Hour's stand-ins until a pick lands. Nothing modal opens
+  overhead (an RTS player keeps building); Take Control puts the spawn's screen up.
+* The pre-selection: `Sim::chosen` (the player's last pick) outlives his Generals as what the
+  screen opens on: `Client::frame` highlights the worn class's row, else the chosen one's, so the
+  same class again is one Enter, click or number key.
+* `ClassChangeGracePeriod` and `hasdonecombat` still govern a classed General's mid-life change; a
+  General's first pick wears at once whatever the clock (it is his spawn). A change after combat
+  keeps the kit and becomes the next screen's pre-selection, so `class_waits` (and its hashed slot)
+  is gone. No new sim state; the pick is the same replicated `MSG_ZHBO_CHOOSE_CLASS`, so lockstep
+  and replays need nothing new.
+* A General handed to another seat is new to it: unclassed for his new player. A spectator never
+  picks (`class_pick_wanted`, unchanged). No AI seat has a pick path (none had one before either).
+* *Gotcha (lockstep harness):* with no class carried over, a hostile custom payload the sim drops
+  left the round's General classless and the prediction floor failed; the harness now does what a
+  player whose screen stays up does and picks again (a default class).
+* *Seen while capturing:* the seeded classpick profile names its first custom "Custom 2", so the
+  match list shows "Custom 2" twice (that slot and the untouched second slot's default name) —
+  the seed's doing, not a bug.
+
+**Scripts.** The mp autopilot re-picks every later General with Enter (the long run's changed
+class is what the next screen opens on) and logs `autopilot mp: General N wears class C` as each
+class lands; `mptest-mac.sh` checks two Generals classed and reads the long run's worn class from
+those lines. The classpick run's fourth session waits two seconds behind the respawned General's
+screen, then Enter re-picks Custom 2 and he walks; the drops run's next General re-picks the
+second custom.
+* *Gotcha (the mp scripts' timing):* with each life's class landing a moment into it, the long
+  run's round-2 concussion was pressed during the new kit's first raise and refused (in game: "the
+  same shellshocks" 0 vs 0), and headless the shooter's round, still running from the target's last
+  life, killed his third General before the class change. A round now starts once the script's
+  General is classed and the first raise is done (`Autopilot::mp_armed`), the aim ignores a General
+  behind his screen or in that first raise, and a long-run round starts over when the other General
+  comes back after `MP_AWAY` (2 s) out of the field.
+
+**Verification.** `cargo test --workspace` (and zhbo-core `--features autopilot`) green; clippy
+`--workspace --all-targets` and `--features autopilot` clean. Real install (`--ignored --skip
+conformance`, both dirs): 77 passed, the roster lockstep gate among them. Conformance: all ten files
+byte-identical to integration9's. In game (final build): `--classpick` 12/12 (the respawned
+General 230 waits behind the screen opened on Custom 2, Enter re-picks it: the captures
+`picker-second-general-classpick.png` and `second-general-after-repick-classpick.png` in the plan
+dir), default 16/16, `--rts` 16/16, `--rts-dry` 5/5, `--build` 18/18, `--input` 3/3, `--replay`
+5/5, `--drops` 10/10 (the next General picked Drop Reflex, the pre-selection), `--mp` 26/26 (2,843
+common frames), `ZHBO_MPTEST_ROUNDS=3` 35/35 (7,054 common frames, 6 shellshocks on both machines,
+three Generals classed, CQB worn by the next General after the change). No CRC mismatch.

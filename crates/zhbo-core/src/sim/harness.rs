@@ -12,9 +12,9 @@
 //! enemy soldiers, over rounds whose custom classes the caller's [`Picks`] send as wire words (the
 //! profile is the sender's alone: only the words travel), with the presets picked by index in round
 //! 0; fire, aim, reload, sprint, both offhands, melee, the alt mode, the weapon swap, stances, a
-//! mid-life class change after combat (the class waits for the next spawn), the field computer and
-//! the overhead General's RTS report, and a death and a fresh General every round (the chosen class
-//! comes in with him).
+//! mid-life class change after combat (the kit stays for this General), the field computer and
+//! the overhead General's RTS report, and a death and a fresh General every round, each picked for
+//! by his player (every General is: `sim/spawn.rs`).
 //!
 //! The gate on the built-in catalog is `sim/lockstep_tests.rs`; the `harness` feature exposes this
 //! module so `zhbo-assets` can run it over a real install's whole roster ([`roster_classes`]).
@@ -404,6 +404,9 @@ pub fn play(m: &Match) -> Report {
                 // Round 0 by preset index from the overhead command bar, then customs.
                 1 if r == 0 => net.send(frame, player, Cmd::ChooseClass(g, p, vec![])),
                 1 => net.send(frame, player, Cmd::ChooseClass(g, 0, capped((m.picks)(r, player, 0)))),
+                // Every General is picked for (`sim/spawn.rs`): a custom pick the sim drops (words
+                // that do not decode) leaves his screen up, and he picks again, a default class.
+                2 if r > 0 && ChosenClass::decode(0, &capped((m.picks)(r, player, 0))).is_none() => net.send(frame, player, Cmd::ChooseClass(g, p, vec![])),
                 3 => net.send(frame, player, Cmd::TakeControl(g)),
                 // Mid-life after the fight: the class waits for the next spawn (or, in the grace
                 // period of round 0, before any combat, it lands at once).

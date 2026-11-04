@@ -7,8 +7,9 @@
 //! (`lockstep_tests.rs`) compares.
 //!
 //! What is hashed is the deterministic state only, streamed field by field
-//! ([`crate::statehash`]): each seat's player record and chosen class (and whether it waits for
-//! his next General), the projectiles, the equipment that is down, the smoke screens, the deployed
+//! ([`crate::statehash`]): each seat's player record and chosen class, the projectiles, the
+//! equipment that is down (with each timed piece's fuse and the Sensor Grenade's compass marks),
+//! the smoke screens, the deployed
 //! shields, the dropped weapons and the kills not yet read by a death, the assist bookkeeping
 //! (`score`: every General's attackers and each seat's assists) and the antilag history (the
 //! first-person Generals and shields of the last frames, which decide what a shot hits), plus the
@@ -18,8 +19,10 @@
 //!   at its own render cadence, and a headless replay never does) and [`Sim::tracers`] (drained
 //!   right after each step and drawn per viewer), and `emitted`, the count of every event ever
 //!   emitted (the log's bookkeeping across the event cap: it only grows with `events`, which a
-//!   client drains, and nothing in the step reads it), and `antilag_hits`, the log's record of
-//!   rewound hits (drained after every step, read by nothing in it);
+//!   client drains, and nothing in the step reads it), `antilag_hits`, the log's record of
+//!   rewound hits (drained after every step, read by nothing in it), and [`Sim::blows`], the
+//!   blows' ways and `dmgType`s that only give the hurt and death events a side and a report
+//!   (read by the next step's events alone, cleared as it ends);
 //! * per-step scratch rebuilt from the hashed state before it is read: [`Sim::shields`] and the
 //!   equipment's copies of it and of the guards, the equipment's shock hits, `combat_seen`;
 //! * the installed data, which never changes during a game and which the content CRC (the
@@ -69,7 +72,6 @@ impl Sim {
             smoke: _,
             frame,
             chosen,
-            class_waits,
             deployed,
             drops,
             kills,
@@ -96,7 +98,6 @@ impl Sim {
                 let mut h = Hasher::new();
                 p.hash(&mut h);
                 c.hash(&mut h);
-                class_waits.get(i).copied().unwrap_or(false).hash(&mut h);
                 *seat = Some(h.finish());
             }
         }

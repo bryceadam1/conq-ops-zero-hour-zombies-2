@@ -840,8 +840,9 @@ impl Client {
 /// its spec instead of a registry index.
 const CHOOSE_CLASS_CUSTOM: i32 = i32::MIN;
 
-/// The match list's row for the class the General is wearing, so the pick screen can open on it
-/// (`hud/changeclass.lua`'s `Button_RowGainFocus` fires for the active class). The sim names a
+/// The match list's row for the class the General is wearing (or, for a new General who wears none,
+/// the player's last pick), so the pick screen can open on it (`hud/changeclass.lua`'s
+/// `Button_RowGainFocus` fires for the active class). The sim names a
 /// shipped class by its registry id and a custom one `custom:<name>`
 /// (`sim::choose_class`), and the profile stores customs by name, which is what the row lookup
 /// compares.
@@ -887,7 +888,10 @@ fn autopilot_aim(sim: &Sim, local: i32) -> Option<(f32, f32)> {
         .enumerate()
         .filter(|(i, _)| *i as i32 != local)
         .filter_map(|(_, p)| p.as_ref())
-        .filter(|p| p.is_first_person())
+        // In the field: a General still behind his class screen, or bringing his new class's
+        // weapon up for the first time (every General is picked for, so each life starts so), is
+        // not in the fight yet; the script waits for him, as its own rounds wait to be armed.
+        .filter(|p| p.is_first_person() && !p.awaiting_class() && !(p.arsenal.raise_kind == crate::weapons::RaiseKind::First && p.arsenal.raise_left > 0.0))
         .map(chest)
         .min_by(|a, b| (*a - eye).length().total_cmp(&(*b - eye).length()))?;
     let d = target - eye;
@@ -922,6 +926,7 @@ impl Client {
             ap.in_fps = true;
             ap.session += 1;
             ap.mp_fight = None;
+            ap.mp_aim_lost = None;
             ap.mp_fight_alone = false;
             ap.mp_leave_at = None;
             ap.eq_lethal_at = None;
@@ -948,6 +953,15 @@ impl Client {
             }
         }
         if ap.mp {
+            // Each General's class as it lands (his own pick: none comes in wearing the last).
+            let worn = sim.player(inp.local_player).and_then(|p| Some((p.general, p.class.clone()?)));
+            if worn.is_some() && worn != ap.mp_worn {
+                if let Some((general, class)) = &worn {
+                    ap.log.push(format!("autopilot mp: General {general} wears class {class}"));
+                }
+                ap.mp_worn = worn;
+            }
+            ap.mp_armed = sim.player(inp.local_player).is_some_and(|p| p.class.is_some() && p.arsenal.raise_left <= 0.0);
             ap.mp_aim = autopilot_aim(sim, inp.local_player).map(|(yaw, pitch)| (wrap_angle(yaw - off_aim.0), pitch - off_aim.1));
             ap.mp_over_drop = sim.player(inp.local_player).is_some_and(|p| sim.use_target(p).is_some());
             // What his General shows in third person on the other machines: the weapon in hand and
@@ -1111,8 +1125,12 @@ impl Client {
                 self.cues.play(cues::IN_GAME_OPEN);
                 // BO2's changeclass screen focuses the class the player is wearing (its rows fire
                 // `Button_RowGainFocus` on the active one), so opening the panel mid-life lands on
-                // it rather than on the first row.
-                if let Some(row) = current_class_row(player.as_ref().and_then(|p| p.class.as_deref())) {
+                // it rather than on the first row. A new General wears none yet (every General is
+                // picked for, `sim/spawn.rs`): his screen opens on the player's last pick, so the
+                // same class again is one press (Enter or a click on it).
+                let worn = player.as_ref().and_then(|p| p.class.as_deref());
+                let last = sim.chosen_class(viewed).map(|c| c.id.as_str());
+                if let Some(row) = current_class_row(worn.or(last)) {
                     self.class_pick_highlight = row;
                 }
             }

@@ -144,7 +144,8 @@ pub enum EventKind {
     /// a shipped one — a custom class has no registry index to look up.
     ClassChosen { general: u32, class: ClassName },
     /// A class picked mid-life after the grace period or his first combat: it is the player's
-    /// chosen class now, and his next General spawns with it (BO2's `MP_CHANGE_CLASS_NEXT_SPAWN`).
+    /// chosen class now, the kit stays, and his next General's class screen opens on it (BO2's
+    /// `MP_CHANGE_CLASS_NEXT_SPAWN`; every General is picked for, `spawn.rs`).
     ClassAtNextSpawn { general: u32, class: ClassName },
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
@@ -551,12 +552,10 @@ pub struct Sim {
     /// their own).
     pub hit_body: Option<&'static crate::hitloc::Poses>,
     pub frame: u32,
-    /// Each player seat's chosen class (BO2's `pers["class"]`, `spawn.rs`): it outlives his
-    /// Generals, and the next one spawns with it.
+    /// Each player seat's chosen class (BO2's `pers["class"]`, `spawn.rs`): his last pick. It
+    /// outlives his Generals as what the next one's class screen opens on (every General is picked
+    /// for; none comes in wearing it).
     pub chosen: Vec<Option<ChosenClass>>,
-    /// Each player seat: the chosen class was picked mid-life and waits for his next General
-    /// (`ClassAtNextSpawn`); the record made for that General wears it and says so (`ClassChosen`).
-    pub class_waits: Vec<bool>,
     pub events: Vec<Event>,
     /// This step's tracer bullets, for the host layer to draw per viewer and clear.
     pub tracers: Vec<ShotTracer>,
@@ -620,7 +619,6 @@ impl Sim {
             hit_body: None,
             frame: 0,
             chosen: vec![None; MAX_PLAYERS],
-            class_waits: vec![false; MAX_PLAYERS],
             events: Vec::new(),
             tracers: Vec::new(),
             shields: Vec::new(),
