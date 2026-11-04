@@ -215,3 +215,45 @@ fn a_sensor_grenades_detonation_is_explosive_from_where_it_lay() {
     });
     assert_eq!(hurt.map(|d| dmg_direction(d, 0.0)), Some(4), "from his right, where it lay: {hurt:?}");
 }
+
+/// An overhead General (his body drawn for everyone, as in first person) hurt by Zero Hour's own
+/// weapons: the hurt is the same `Damaged` event with the blow's way, so his pain voice and the
+/// third-person flinch by `dmgDirection` play; no view flinch (there is no first-person view);
+/// and a death to them reports its `KilledBy`.
+#[test]
+fn an_overhead_general_hurt_by_zero_hour_units_flinches_by_the_blows_side() {
+    let host = FakeHost::default();
+    host.add(ObjInfo { health: 200.0, max_health: 200.0, ..general(1, 0) });
+    let mut sim = Sim::new();
+    sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+    sim.choose_class(0, 1, 0, &[]);
+    let mut frame = 0;
+    let mut step = |sim: &mut Sim| {
+        frame += 1;
+        sim.step(&host, frame);
+    };
+    step(&mut sim);
+    assert!(!sim.player(0).unwrap().is_first_person());
+    sim.events.clear();
+    // A Ranger's round from his left (+Y side: it travels -Y).
+    let rifle = crate::damage::zh_code("SMALL_ARMS").unwrap() as i32;
+    sim.engine_blow(1, rifle, Vec3::new(0.0, -1.0, 0.0));
+    host.objects.borrow_mut()[0].health -= 30.0;
+    step(&mut sim);
+    let hurt: Vec<EventKind> = sim.events.iter().filter(|e| e.player == 0).map(|e| e.kind).filter(|k| matches!(k, EventKind::Damaged { .. } | EventKind::Flinch { .. })).collect();
+    assert_eq!(hurt, vec![EventKind::Damaged { amount: 30.0, dir: Vec3::new(0.0, -1.0, 0.0) }], "the hurt, no view flinch");
+    // A tank's shell from behind kills him: Zero Hour's report, explosive from the back.
+    sim.events.clear();
+    let shell = crate::damage::zh_code("ARMOR_PIERCING").unwrap() as i32;
+    sim.engine_blow(1, shell, Vec3::new(1.0, 0.0, 0.0));
+    host.objects.borrow_mut().iter_mut().for_each(|o| {
+        o.health = 0.0;
+        o.flags |= crate::host::objflags::DEAD;
+    });
+    step(&mut sim);
+    let killed = sim.events.iter().find_map(|e| match e.kind {
+        EventKind::KilledBy { dmg, dir } if e.player == 0 => Some((dmg, dmg_direction(dir, 0.0))),
+        _ => None,
+    });
+    assert_eq!(killed, Some((DmgType::Explosive, 2)));
+}

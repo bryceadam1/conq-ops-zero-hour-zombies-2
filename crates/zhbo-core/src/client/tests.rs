@@ -133,6 +133,33 @@
         }
     }
 
+    /// The hurt cue and the screen's flash are the first-person view's: the local General hurt in
+    /// first person gets both, hurt overhead neither (his body's flinch and voice are `remote`'s).
+    #[test]
+    fn the_hurt_cue_and_flash_are_first_persons_alone() {
+        for overhead in [false, true] {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            let mut client = Client::default();
+            let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+            if overhead {
+                sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+            } else {
+                sim.take_control(&host, 0, 1);
+            }
+            sim.choose_class(0, 1, 0, &[]);
+            frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+            assert_eq!(sim.player(0).unwrap().is_first_person(), !overhead);
+            client.cues.queue.clear();
+            client.hud.damage_flash = 0.0;
+            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Damaged { amount: 30.0, dir: Vec3::ZERO } });
+            client.frame(&mut sim, &inp);
+            let hurt = client.cues.queue.iter().any(|c| c.event == sounds::HURT);
+            assert_eq!((hurt, client.hud.damage_flash > 0.0), (!overhead, !overhead), "overhead {overhead}");
+        }
+    }
+
     /// Another player's throw and set-down are heard at them: the offhand's third-person
     /// `fireSound`; the local player's own throw plays its player sound, not that one.
     #[test]

@@ -361,6 +361,9 @@ impl Client {
                     self.hud.flinch_yaw += yaw_deg;
                     self.hud.flinch_pitch += pitch_deg;
                 }
+                // The hurt cue and the screen's flash are the first-person view's (an overhead
+                // General's hurt is his body's flinch and voice alone).
+                EventKind::Damaged { .. } if !auth.is_some_and(PlayerSim::is_first_person) => {}
                 EventKind::Damaged { amount, .. } => {
                     self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);

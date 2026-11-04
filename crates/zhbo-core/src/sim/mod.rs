@@ -999,9 +999,14 @@ impl Sim {
         p.shock.step();
         if !p.is_first_person() {
             // Overhead: hits still count as combat (BO2's damage callback sets `hasdonecombat`),
-            // and the health stays current for the next take-control.
+            // and the health stays current for the next take-control. His body is drawn for
+            // everyone as in first person, so the hurt is the same event, with the blow's way (his
+            // pain voice and the third-person flinch by `dmgDirection`); no view flinch: there
+            // is no first-person view to kick.
             if info.health < p.health - 1e-3 {
                 p.combat = true;
+                let dir = self.last_blow(host, p.general).map_or(Vec3::ZERO, |b| b.dir);
+                self.emit(idx, EventKind::Damaged { amount: p.health - info.health, dir });
             }
             p.health = info.health;
             p.max_health = info.max_health;

@@ -1622,7 +1622,9 @@ Grenade and compass keys (`sensor_scan_cycle_ms` … `compassSatellitePingFadeTi
   `emptyFireSound`, once per trigger pull on an empty magazine), his jump and landing
   (`_footsteps.csc`: the step alias and `ZHBO_BO2_LandNpc`), the script's `flinch` (per
   `dmgDirection` since death-anims: `torso::FLINCH`, `FLINCH_BACK`, `FLINCH_LEFT`, `FLINCH_RIGHT`,
-  by the last blow's way, `Damaged { dir }`) and its whole-body `jump`/`land` clips as torso
+  by the last blow's way, `Damaged { dir }`; an overhead General's hurt is the same event, so
+  his body flinches and his voice pains there too, while the hurt cue, the screen's flash and the
+  view flinch stay first person's) and its whole-body `jump`/`land` clips as torso
   actions (`torso::FLINCH`, `JUMP`, `LAND`; the last two replace every bone while they run), and
   BO2's battle chatter (`_battlechatter_mp.gsc` `reloadtracking`/`grenadetracking`:
   `ZHBO_BO2_Bc_<F><n>_<line>`, `sounds::CHATTER_LINES`; at the dvars' odds by a roll hashed from
