@@ -12905,3 +12905,37 @@ played, the General beside it took its 15 (×1.5) and BO2's shellshock; default 
 uses `if`, so a leg with no capture left no longer exits 1 under `set -e` (it did once here with all
 checks passing). The scan effect's conversion against BO2's own: `zhbo-assets fx-sheet <dir>
 --effects weapon/sensor_grenade/fx_sensor_exp_scan_friendly`.
+
+**Follow-up: does the Sensor Grenade persist? (review question, same branch).** The objection: in BO2
+the sensor sticks, keeps scanning and stays until destroyed, and the explode think postpones a fuse
+while the entity's +0x60 is set. More read-only Ghidra (t6mp; the scripts `RefsTo`, `FindDword` and
+`Dump` are in the plan dir's `ghidra/`):
+* *The grenade's think is the explode think.* `FUN_0060a480` has no code reference from a think
+  dispatcher, but the entity handler table holds it: rows of 0x30 bytes from 0x00c8c0d0 (the
+  `methodOfDeath` field the explode think reads, `&DAT_00c8c0f8 + handler * 0x30`, is +0x28). Row 10
+  holds think 0x0060a480 and MODs 3/4, and `FUN_00607730` (the grenade spawn, called by
+  `G_FireGrenade` `FUN_00607cb0`) sets handler 10 (0x0060794c). So the timed fuse's nextthink runs the
+  explode think.
+* *Landing keeps only a timed fuse.* `FUN_00607fa0`'s landing branch (the one that notifies
+  "stationary") zeroes nextthink (+0x1a4) when the def lacks `timedDetonation` (C4, Claymore, Trophy:
+  they persist) and leaves it otherwise; `bProjExplodeWhenStationary` (0 on the sensor) would set it
+  to the next frame.
+* *+0x60 is never set on a grenade.* Every store to `[reg + 0x60]` in the game module
+  (0x005c0000-0x0068ffff), byte, word, dword or 16-byte, was listed: the server stores are the
+  spawn-time zeroing in `G_FireGrenade` (0x00607d01) and the rocket spawn (0x0060db0c); the rest are
+  the client's own struct (`FUN_00607c00`, `FUN_005d2140`: the cooked-grenade time), a turret's
+  settings, or the client entity's lerp copy (`FUN_005c8eb0`). The postponement there is for an entity
+  that is never a thrown grenade in practice, and it ends in a free *without* an explosion
+  (0x0060a514 → 0x0060a4c4) after 60 s from +0x234.
+* *It does not stick.* The install's `sensor_grenade_mp` has `stickiness` 0 (`WEAPSTICKINESS_NONE`;
+  the Semtex 1, C4 2, the Trophy 3, the Claymore 4); it bounces and comes to rest.
+* *Everything else agrees with a timer:* the script waits for `"explode"` (`_sensor_grenade.gsc:56-64`,
+  and `watchforstationary` ends on it), the engine has a sensor-only detonation event
+  (`G_SensorGrenadeDetonate` `FUN_005f26c0`, the ping of enemies in the blast radius), the def names an
+  explosion effect (`fx_sensor_exp_scan`) and sound, and the client's 800 ms scan
+  (`FUN_004bc570`) runs from `CG_Missile` (`FUN_004bcac0`) only while the missile exists. A sensor
+  that persisted would never reach any of these.
+So BO2's sensor goes off on its timed fuse, 4.5 s from the throw, plays its scan effect then and is
+freed; the mod keeps that. What reveals enemies after it is BO2's ping (event 0x4e, enemies in its
+256-inch blast radius marked on the compass by `FUN_004ab320`), which the mod still does not model
+(noted above). No code changed; the in-game legs and the gates above stand.
