@@ -159,6 +159,8 @@ void cbSetPose(uint32_t id, const ZhboVec3 *pos, float yaw, int32_t moving);
 void cbSetControlled(uint32_t id, int32_t controlled);
 void cbFireFx(uint32_t shooter, const char *fxWeapon_, uint32_t target, const ZhboVec3 *pos);
 int32_t cbDamage(uint32_t shooter, uint32_t victimId, float amount, int32_t kind);
+// Zero Hour's DamageType as a ZHBO_DAMAGE_* code (s_zhboDamageTypes' inverse; -1 for none).
+int32_t zhboDamageKind(DamageType type);
 uint32_t cbSpawn(const char *thing, uint32_t owner, const ZhboVec3 *pos, float yaw);
 void cbDestroy(uint32_t id);
 void cbDisable(uint32_t id, int32_t kind, float seconds);

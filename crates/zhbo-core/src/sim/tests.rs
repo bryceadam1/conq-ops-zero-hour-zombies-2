@@ -1886,7 +1886,7 @@ fn damage_flinches_the_view_and_toughness_cuts_it() {
         // 60 Zero Hour points are 40 on BO2's scale.
         host.objects.borrow_mut()[0].health -= 40.0 * crate::units::BO2_TO_ZH_DAMAGE;
         run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
-        events(&sim).into_iter().find_map(|k| if let EventKind::Flinch { pitch_deg } = k { Some(pitch_deg) } else { None }).expect("a flinch")
+        events(&sim).into_iter().find_map(|k| if let EventKind::Flinch { pitch_deg, .. } = k { Some(pitch_deg) } else { None }).expect("a flinch")
     };
     assert!((flinch_for(false) - 7.0).abs() < 1e-3);
     assert!((flinch_for(true) - 1.75).abs() < 1e-3);

@@ -61,6 +61,42 @@ pub enum MeansOfDeath {
     Gas,
 }
 
+/// One blow as BO2's damage call takes it (`G_Damage`'s `mod`, `weapon` and `vDir`): the means of
+/// death, the weapon that dealt it, and the direction it travelled (zero: none). The armour and the
+/// sim's rules read the means; the weapon and the direction are the victim's death animation's
+/// (`crate::death`, presentation only, read off `EventKind::KilledBy`).
+#[derive(Clone, Copy, Debug)]
+pub struct Blow {
+    pub how: MeansOfDeath,
+    pub weapon: Option<&'static WeaponDef>,
+    pub dir: crate::math::Vec3,
+}
+
+impl PartialEq for Blow {
+    /// The same means, the same weapon (by its id) and direction.
+    fn eq(&self, o: &Blow) -> bool {
+        self.how == o.how && self.weapon.map(|w| w.id.as_str()) == o.weapon.map(|w| w.id.as_str()) && self.dir == o.dir
+    }
+}
+
+impl Blow {
+    /// A blow by `weapon` travelling along `dir`.
+    pub fn new(how: MeansOfDeath, weapon: &'static WeaponDef, dir: crate::math::Vec3) -> Blow {
+        Blow { how, weapon: Some(weapon), dir }
+    }
+
+    /// A blow by `weapon` from `from` into a victim at `to` (BO2's radius damage: `vDir` is the
+    /// victim's origin less the blast's).
+    pub fn from_to(how: MeansOfDeath, weapon: &'static WeaponDef, from: crate::math::Vec3, to: crate::math::Vec3) -> Blow {
+        Blow::new(how, weapon, to - from)
+    }
+
+    /// A blow by no weapon, from no direction (tests, and hosts that read only the means).
+    pub fn bare(how: MeansOfDeath) -> Blow {
+        Blow { how, weapon: None, dir: crate::math::Vec3::ZERO }
+    }
+}
+
 /// How many means of death BO2 has (`0x15`: `FUN_0063a1a0` pushes `badMOD` past it).
 pub const MOD_COUNT: usize = 21;
 
@@ -287,6 +323,73 @@ impl MeansOfDeathTable {
     }
 }
 
+/// The tuning pack's `[ZeroHourDamage]` table: the BO2 means of death each Zero Hour damage type
+/// ([`ZH_DAMAGE_TYPES`]) stands for when Zero Hour's own weapons hurt a General (the engine's
+/// damage hook, `Sim::engine_blow`): what his death animation and hurt read (`crate::death`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZhDamageTable {
+    mods: [MeansOfDeath; ZH_DAMAGE_TYPES.len()],
+}
+
+impl Default for ZhDamageTable {
+    /// The mod's defaults (the shipped `tuning.ini` must equal them), each Zero Hour type by what it
+    /// is in BO2's terms:
+    ///
+    /// * rounds (`SMALL_ARMS`, `GATTLING`, `SNIPER`, `COMANCHE_VULCAN`): `MOD_RIFLE_BULLET`;
+    /// * a blow (`MELEE`): `MOD_MELEE`;
+    /// * blasts and shells (`EXPLOSION`, `ARMOR_PIERCING`, `AURORA_BOMB`, `LAND_MINE`):
+    ///   `MOD_EXPLOSIVE`; missiles (`INFANTRY_MISSILE`, `JET_MISSILES`, `STEALTHJET_MISSILES`):
+    ///   `MOD_PROJECTILE_SPLASH`;
+    /// * crushing and a toppled structure: `MOD_CRUSH`; falling: `MOD_FALLING`;
+    /// * fire, lasers, the particle beam and the microwave: `MOD_BURNED`; radiation and poison:
+    ///   `MOD_GAS`; water: `MOD_DROWN`;
+    /// * Zero Hour's unconditional kill (`UNRESISTABLE`): `MOD_TRIGGER_HURT` (BO2's world kill);
+    /// * what does no harm to a soldier's health or is not a weapon (healing, the subdual types,
+    ///   capture, hacking, disarming, deploying, penalties, status, the pilot's and the garrison's
+    ///   kills): `MOD_UNKNOWN`.
+    fn default() -> Self {
+        use MeansOfDeath::*;
+        let pick = |zh: &str| match zh {
+            "SMALL_ARMS" | "GATTLING" | "SNIPER" | "COMANCHE_VULCAN" => RifleBullet,
+            "MELEE" => Melee,
+            "EXPLOSION" | "ARMOR_PIERCING" | "AURORA_BOMB" | "LAND_MINE" => Explosive,
+            "INFANTRY_MISSILE" | "JET_MISSILES" | "STEALTHJET_MISSILES" => ProjectileSplash,
+            "CRUSH" | "TOPPLING" => Crush,
+            "FALLING" => Falling,
+            "FLAME" | "MOLOTOV_COCKTAIL" | "LASER" | "PARTICLE_BEAM" | "MICROWAVE" => Burned,
+            "RADIATION" | "POISON" => Gas,
+            "WATER" => Drown,
+            "UNRESISTABLE" => TriggerHurt,
+            _ => Unknown,
+        };
+        ZhDamageTable { mods: std::array::from_fn(|i| pick(ZH_DAMAGE_TYPES[i])) }
+    }
+}
+
+impl ZhDamageTable {
+    /// The means of death Zero Hour's damage of ABI kind `kind` stands for (`MOD_UNKNOWN` for a
+    /// kind out of range).
+    pub fn means(&self, kind: i32) -> MeansOfDeath {
+        usize::try_from(kind).ok().and_then(|k| self.mods.get(k)).copied().unwrap_or(MeansOfDeath::Unknown)
+    }
+
+    /// Read the `<Zero Hour damage type> = MOD_*` lines of a tuning file over `self` (other lines
+    /// and unknown names are ignored).
+    pub fn parse_over(&mut self, text: &str) {
+        for line in text.lines() {
+            let Some((k, v)) = line.split(';').next().unwrap_or("").split_once('=') else { continue };
+            if let (Some(code), Some(m)) = (zh_code(k.trim()), MeansOfDeath::parse(v.trim())) {
+                self.mods[code as usize] = m;
+            }
+        }
+    }
+
+    /// Every Zero Hour damage type's name with its means of death, in Zero Hour's order.
+    pub fn entries(&self) -> impl Iterator<Item = (&'static str, MeansOfDeath)> + '_ {
+        ZH_DAMAGE_TYPES.iter().copied().zip(self.mods.iter().copied())
+    }
+}
+
 /// The means of death of `def`'s bullet on a soldier (`soldier`) struck at `location`, or anything
 /// else: BO2's bullet fire picks pistol or rifle by the weapon's class, and the player damage
 /// callback renames a head or helmet hit `MOD_HEAD_SHOT`.
@@ -426,6 +529,41 @@ mod tests {
         assert_eq!(t.zh_name(MeansOfDeath::Impact), "SMALL_ARMS");
         assert_eq!(t.zh_name(MeansOfDeath::Melee), "EXPLOSION");
         assert_eq!(t.zh_name(MeansOfDeath::Gas), "POISON", "an unknown name keeps the default");
+    }
+
+    /// Every Zero Hour damage type stands for a BO2 means of death, and so for a `dmgType` the
+    /// death script reads; the pack's lines override it; a kind past the list is MOD_UNKNOWN.
+    #[test]
+    fn every_zero_hour_damage_type_is_a_means_of_death() {
+        use crate::death::DmgType as D;
+        let t = ZhDamageTable::default();
+        let want = |zh: &str| match zh {
+            "SMALL_ARMS" | "GATTLING" | "SNIPER" | "COMANCHE_VULCAN" => (MeansOfDeath::RifleBullet, D::Normal),
+            "MELEE" => (MeansOfDeath::Melee, D::Melee),
+            "EXPLOSION" | "ARMOR_PIERCING" | "AURORA_BOMB" | "LAND_MINE" => (MeansOfDeath::Explosive, D::Explosive),
+            "INFANTRY_MISSILE" | "JET_MISSILES" | "STEALTHJET_MISSILES" => (MeansOfDeath::ProjectileSplash, D::Explosive),
+            "CRUSH" | "TOPPLING" => (MeansOfDeath::Crush, D::Normal),
+            "FALLING" => (MeansOfDeath::Falling, D::Falling),
+            "FLAME" | "MOLOTOV_COCKTAIL" | "LASER" | "PARTICLE_BEAM" | "MICROWAVE" => (MeansOfDeath::Burned, D::Fire),
+            "RADIATION" | "POISON" => (MeansOfDeath::Gas, D::Normal),
+            "WATER" => (MeansOfDeath::Drown, D::Normal),
+            "UNRESISTABLE" => (MeansOfDeath::TriggerHurt, D::Normal),
+            "HEALING" | "DEPLOY" | "SURRENDER" | "HACK" | "KILL_PILOT" | "PENALTY" | "DISARM" | "HAZARD_CLEANUP" | "SUBDUAL_MISSILE" | "SUBDUAL_VEHICLE"
+            | "SUBDUAL_BUILDING" | "SUBDUAL_UNRESISTABLE" | "KILL_GARRISONED" | "STATUS" => (MeansOfDeath::Unknown, D::Normal),
+            other => panic!("{other} has no expectation"),
+        };
+        assert_eq!(t.entries().count(), ZH_DAMAGE_TYPES.len());
+        for (code, zh) in ZH_DAMAGE_TYPES.iter().enumerate() {
+            let m = t.means(code as i32);
+            // Airborne for the falling one (BO2's falling death is in the air).
+            assert_eq!((m, crate::death::DmgType::of(m, None, true)), want(zh), "{zh}");
+        }
+        assert_eq!(t.means(-1), MeansOfDeath::Unknown);
+        assert_eq!(t.means(ZH_DAMAGE_TYPES.len() as i32), MeansOfDeath::Unknown);
+        let mut o = t;
+        o.parse_over("SNIPER = MOD_HEAD_SHOT\nMOD_HEAD_SHOT = SNIPER\nBOGUS = MOD_MELEE\nLASER = MOD_NOPE\n");
+        assert_eq!(o.means(zh_code("SNIPER").unwrap() as i32), MeansOfDeath::HeadShot);
+        assert_eq!(o.means(zh_code("LASER").unwrap() as i32), MeansOfDeath::Burned);
     }
 
     fn def(weap_type: WeapType, impact_explode: bool) -> WeaponDef {

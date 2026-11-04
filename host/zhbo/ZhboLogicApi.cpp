@@ -377,6 +377,14 @@ static const DamageType s_zhboDamageTypes[] = {
 };
 static_assert(sizeof(s_zhboDamageTypes) / sizeof(s_zhboDamageTypes[0]) == ZHBO_DAMAGE_COUNT, "one DamageType per ZHBO_DAMAGE_* code");
 
+int32_t zhboDamageKind(DamageType type)
+{
+	for (int32_t k = 0; k < ZHBO_DAMAGE_COUNT; ++k)
+		if (s_zhboDamageTypes[k] == type)
+			return k;
+	return -1;
+}
+
 int32_t cbDamage(uint32_t shooter, uint32_t victimId, float amount, int32_t kind)
 {
 	Object *victim = TheGameLogic->findObjectByID((ObjectID)victimId);

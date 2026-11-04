@@ -111,8 +111,9 @@ pub struct Hit {
     /// Zero Hour damage.
     pub amount: f32,
     pub kill: bool,
-    /// BO2's means of death (the presentation of the death: `EventKind::KilledBy`).
-    pub how: crate::damage::MeansOfDeath,
+    /// BO2's means of death, weapon and direction (the presentation of the death:
+    /// `EventKind::KilledBy`).
+    pub blow: crate::damage::Blow,
 }
 
 impl Score {
@@ -190,9 +191,14 @@ impl Sim {
     pub(super) fn score_hits(&mut self, host: &dyn LogicHost, hits: &[Hit]) {
         self.score.note_generals(&self.players);
         for h in hits {
-            // A player's General: a seat's record holds him (first person or overhead).
-            let Some(victim_seat) = self.players.iter().position(|p| p.as_ref().is_some_and(|p| p.general == h.victim)) else { continue };
+            // A player's General: a seat's record holds him (first person or overhead), or held
+            // him this step (his seat may have been stepped after the blow that killed him).
+            let Some(victim_seat) = self.score.seat_of(&self.players, h.victim) else { continue };
             let shooter = self.score.seat_of(&self.players, h.shooter);
+            // Where it came from and what it was, for his hurt and death (presentation).
+            let airborne = self.players[victim_seat].as_ref().is_some_and(|p| !p.body.on_ground);
+            let dmg = crate::death::DmgType::of(h.blow.how, h.blow.weapon, airborne);
+            self.blows.push(super::Struck { victim: h.victim, dir: h.blow.dir, dmg, engine: false });
             if let Some(seat) = shooter.filter(|&s| s != victim_seat) {
                 self.score.track(host, seat, h.shooter, h.victim, h.amount / crate::units::BO2_TO_ZH_DAMAGE, None);
             }
@@ -202,8 +208,7 @@ impl Sim {
                 }
                 self.score.forget(h.victim);
                 // How he died, for his death animation (presentation: the script's `DEATH`).
-                let from = host.object(h.shooter, h.shooter).map(|o| o.pos);
-                self.emit(victim_seat, EventKind::KilledBy { how: h.how, from });
+                self.emit(victim_seat, EventKind::KilledBy { dmg, dir: h.blow.dir });
             }
         }
     }
@@ -279,10 +284,13 @@ impl LogicHost for Tally<'_> {
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3) {
         self.host.fire_fx(shooter, fx_weapon, target, pos)
     }
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: crate::damage::MeansOfDeath) -> bool {
-        let kill = self.host.damage(shooter, victim, amount, how);
-        self.hits.borrow_mut().push(Hit { shooter, victim, amount, kill, how });
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, blow: crate::damage::Blow) -> bool {
+        let kill = self.host.damage(shooter, victim, amount, blow);
+        self.hits.borrow_mut().push(Hit { shooter, victim, amount, kill, blow });
         kill
+    }
+    fn last_blow(&self, victim: u32) -> Option<crate::damage::Blow> {
+        self.hits.borrow().iter().rev().find(|h| h.victim == victim).map(|h| h.blow)
     }
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)
@@ -343,8 +351,9 @@ mod tests {
 
     fn hit(sim: &mut Sim, host: &FakeHost, shooter: u32, victim: u32, bo2_damage: f32) {
         let amount = bo2_damage * crate::units::BO2_TO_ZH_DAMAGE;
-        let kill = host.damage(shooter, victim, amount, crate::damage::MeansOfDeath::RifleBullet);
-        sim.score_hits(host, &[Hit { shooter, victim, amount, kill, how: crate::damage::MeansOfDeath::RifleBullet }]);
+        let blow = crate::damage::Blow { how: crate::damage::MeansOfDeath::RifleBullet, weapon: None, dir: Vec3::new(1.0, 0.0, 0.0) };
+        let kill = host.damage(shooter, victim, amount, blow);
+        sim.score_hits(host, &[Hit { shooter, victim, amount, kill, blow }]);
     }
 
     fn assists(sim: &Sim) -> Vec<(i32, u8)> {
@@ -367,8 +376,8 @@ mod tests {
         assert_eq!(assists(&sim), [(1, 3)], "seat 1's 60 is assist_75; the killer scores none");
         assert_eq!(sim.score.assists, { let mut a = [0; MAX_PLAYERS]; a[1] = 1; a });
         assert!(sim.score.attacked.iter().all(|a| a.victim != 102), "his list ends with him");
-        // His death's presentation: how he was killed and where the killer stood.
-        assert!(sim.events.iter().any(|e| e.player == 2 && matches!(e.kind, EventKind::KilledBy { how: crate::damage::MeansOfDeath::RifleBullet, from: Some(_) })));
+        // His death's presentation: BO2's dmgType of the blow and the way it travelled.
+        assert!(sim.events.iter().any(|e| e.player == 2 && e.kind == EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::new(1.0, 0.0, 0.0) }));
         assert_eq!([assist_level(0.0), assist_level(25.0), assist_level(25.5), assist_level(50.0), assist_level(51.0), assist_level(500.0)], [1, 1, 2, 2, 3, 3]);
     }
 
@@ -444,10 +453,38 @@ mod tests {
     fn the_steps_damage_calls_are_scored() {
         let (mut sim, host) = match_of_four();
         sim.scored(&host, |_, h| {
-            h.damage(101, 102, 40.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::MeansOfDeath::RifleBullet);
-            h.damage(100, 102, 1000.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::MeansOfDeath::GrenadeSplash);
+            h.damage(101, 102, 40.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::Blow::bare(crate::damage::MeansOfDeath::RifleBullet));
+            h.damage(100, 102, 1000.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::Blow::bare(crate::damage::MeansOfDeath::GrenadeSplash));
         });
         assert_eq!(assists(&sim), [(1, 2)]);
+    }
+
+    /// A kill in the step itself scores whichever seat is stepped first: the victim's record ends
+    /// in his own seat's step, which comes after his killer's when his seat is the later one, and
+    /// his attacker list must outlive it until the step's blows are scored.
+    #[test]
+    fn a_kill_in_the_step_scores_when_the_victim_steps_after_his_killer() {
+        let (mut sim, host) = match_of_four();
+        // Seat 1 hurt seat 2's General (60: assist_75); he now stands at seat 0's knife, nearly dead.
+        hit(&mut sim, &host, 101, 102, 60.0);
+        for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 102) {
+            o.pos = Vec3::new(8.0, 0.0, 0.0);
+            o.health = 1.0;
+        }
+        let p = sim.players[0].as_mut().unwrap();
+        p.arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
+        p.arsenal.raise_left = 0.0;
+        sim.events.clear();
+        for i in 0..20 {
+            let melee = if i == 0 { crate::input::buttons::MELEE } else { 0 };
+            sim.input(0, 100, crate::input::FpsInput { pressed: melee, ..Default::default() });
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+        }
+        assert!(sim.events.iter().any(|e| e.player == 2 && matches!(e.kind, EventKind::GeneralDied { .. })), "he died in the step");
+        assert_eq!(assists(&sim), [(1, 3)], "seat 1's assist");
+        assert!(sim.events.iter().any(|e| e.player == 2 && matches!(e.kind, EventKind::KilledBy { dmg: crate::death::DmgType::Melee, .. })));
+        assert!(sim.score.attacked.iter().all(|a| a.victim != 102), "his list ends with him");
     }
 
     /// Every machine scores the same hits the same way: two sims fed one script agree on the

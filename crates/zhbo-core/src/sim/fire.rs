@@ -150,7 +150,7 @@ impl Sim {
         let how = crate::damage::bullet(def, infantry, location);
         let rule = victim.map_or(1.0, |v| crate::damage::scale_on(&p.arsenal.tuning, &def.id, how, &v));
         let amount = def.damage_at(distance) * mult * at * pierce * rule * BO2_TO_ZH_DAMAGE;
-        let kill = host.damage(p.general, id, amount, how);
+        let kill = host.damage(p.general, id, amount, crate::damage::Blow::new(how, def, dir));
         // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
         // surface comes from what was hit.
         let surface = Surface::of_object(victim.as_ref());
@@ -318,8 +318,10 @@ impl Sim {
             }
             host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
             self.emit(idx, EventKind::MeleeHit);
-            let rule = crate::damage::scale_on(&p.arsenal.tuning, &p.arsenal.melee_weapon().id, MeansOfDeath::Melee, &v);
-            let kill = host.damage(p.general, v.id, damage * rule * BO2_TO_ZH_DAMAGE, MeansOfDeath::Melee);
+            let melee = p.arsenal.melee_weapon();
+            let rule = crate::damage::scale_on(&p.arsenal.tuning, &melee.id, MeansOfDeath::Melee, &v);
+            // The blow travels the way he faces (BO2's melee passes his forward as `vDir`).
+            let kill = host.damage(p.general, v.id, damage * rule * BO2_TO_ZH_DAMAGE, crate::damage::Blow::new(MeansOfDeath::Melee, melee, fwd));
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
             if kill {
                 self.scavenger_kill(idx, &mut p.arsenal, v.has(objflags::INFANTRY), MeansOfDeath::Melee);

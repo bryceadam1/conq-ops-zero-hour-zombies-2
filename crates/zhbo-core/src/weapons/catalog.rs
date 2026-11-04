@@ -1114,6 +1114,7 @@ Weapon riotshield_mp
   DisplayName = Assault Shield
   HudIcon = menu_mp_weapons_riot_shield
   Class = shield
+  WeapType = riotshield
   CacSlot = primary
   CacGroup = weapon_special
   Fire = semi

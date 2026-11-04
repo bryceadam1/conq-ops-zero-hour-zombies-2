@@ -4,7 +4,7 @@
 //!
 //! Keep this file in sync with `host/zhbo/zhbo_core.h`.
 
-use crate::damage::MeansOfDeath;
+use crate::damage::Blow;
 use crate::math::Vec3;
 use std::ffi::{c_char, CString};
 
@@ -129,10 +129,16 @@ pub trait LogicHost {
     fn set_controlled(&self, id: u32, controlled: bool);
     /// Play a Zero Hour weapon's fire FX/sound from `shooter` toward `target`/`pos` without damage.
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3);
-    /// Deal damage as `shooter` by BO2's means of death `how`: the engine takes it as the Zero
-    /// Hour damage type the tuning pack's `[MeansOfDeath]` table names for it
-    /// ([`crate::damage`]), so its armour applies. Returns true if the victim died from it.
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: MeansOfDeath) -> bool;
+    /// Deal damage as `shooter` by `blow` (BO2's means of death, weapon and direction): the engine
+    /// takes it as the Zero Hour damage type the tuning pack's `[MeansOfDeath]` table names for
+    /// the means ([`crate::damage`]), so its armour applies. Returns true if the victim died from it.
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, blow: Blow) -> bool;
+    /// The last blow [`LogicHost::damage`] dealt `victim` in this step, when the host records
+    /// them (the step's scoring host, `sim::score`): the presentation of his hurt (its side, BO2's
+    /// `vDir`). None by default.
+    fn last_blow(&self, _victim: u32) -> Option<Blow> {
+        None
+    }
     fn heal(&self, id: u32, amount: f32);
     /// Create a Zero Hour object (a projectile's model) owned by `owner`'s player; 0 if it can't.
     fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32;
@@ -365,9 +371,11 @@ impl LogicHost for CLogicHost {
         }
     }
 
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, how: MeansOfDeath) -> bool {
-        let kind = crate::tuning::get().means_of_death.code(how);
-        self.0.damage.is_some_and(|f| f(shooter, victim, amount, kind) != 0)
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, blow: Blow) -> bool {
+        let kind = crate::tuning::get().means_of_death.code(blow.how);
+        // The sim's own blow: the engine's damage hook does not report it back
+        // ([`crate::enginedamage`]).
+        crate::enginedamage::dealing(|| self.0.damage.is_some_and(|f| f(shooter, victim, amount, kind) != 0))
     }
 
     fn heal(&self, id: u32, amount: f32) {

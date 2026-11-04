@@ -178,8 +178,9 @@ pub fn vocabulary(t: &Table) -> u32 {
     h.get()
 }
 
-/// The [`Part::Tuning`] hash: every key and the bits of its value, then the `[MeansOfDeath]`
-/// table's rows (the parsed pack, so a comment or the spacing of the file changes nothing).
+/// The [`Part::Tuning`] hash: every key and the bits of its value, then the `[MeansOfDeath]` and
+/// `[ZeroHourDamage]` tables' rows (the parsed pack, so a comment or the spacing of the file changes
+/// nothing).
 pub fn tuning(t: &crate::tuning::Tuning) -> u32 {
     let mut h = Hash::default();
     for (key, v) in crate::tuning::Tuning::KEYS.iter().zip(t.values()) {
@@ -187,6 +188,9 @@ pub fn tuning(t: &crate::tuning::Tuning) -> u32 {
     }
     for (m, zh) in t.means_of_death.entries() {
         h.str(m.name()).str(zh);
+    }
+    for (zh, m) in t.zh_damage.entries() {
+        h.str(zh).str(m.name());
     }
     h.get()
 }

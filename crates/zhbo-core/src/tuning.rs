@@ -30,11 +30,14 @@ macro_rules! tuning {
             /// The `[MeansOfDeath]` table: the Zero Hour damage type each BO2 means of death
             /// reaches the engine as (`MOD_IMPACT = EXPLOSION`; [`crate::damage`]).
             pub means_of_death: crate::damage::MeansOfDeathTable,
+            /// The `[ZeroHourDamage]` table: the BO2 means of death each Zero Hour damage type
+            /// stands for when Zero Hour's weapons hurt a General ([`crate::damage::ZhDamageTable`]).
+            pub zh_damage: crate::damage::ZhDamageTable,
         }
 
         impl Default for Tuning {
             fn default() -> Self {
-                Tuning { $($field: $default,)* means_of_death: Default::default() }
+                Tuning { $($field: $default,)* means_of_death: Default::default(), zh_damage: Default::default() }
             }
         }
 
@@ -101,6 +104,10 @@ tuning! {
     bg_view_kick_min: "bg_viewKickMin" = 0.5, "Flinch floor, degrees (G7).";
     bg_view_kick_max: "bg_viewKickMax" = 90.0, "Flinch cap, degrees (G7).";
     flinch_time: "FlinchTime" = 0.5, "Seconds a flinch lasts (`cg->damageTime = now + 500`; G7).";
+    // ---- The body's animation conditions (`mp/playeranim.script`; `crate::death`) -------------
+    player_run_threshhold: "player_runThreshhold" = 110.0, "`movestatus run` above this speed, inches/s (`FUN_008ad980`; `dvars-t6mp.tsv`).";
+    player_move_threshhold: "player_moveThreshhold" = 2.0, "`movestatus walk` above this speed, inches/s (`FUN_008ad980`; `dvars-t6mp.tsv`).";
+    player_strafe_anim_cos_angle: "player_strafeAnimCosAngle" = 0.5, "The normalised forward key past which `direction` is forward (backward past its negative), else the strafe's side (`FUN_008adb70`; `dvars-t6mp.tsv`).";
     // ---- Spread and the view (G4, G6) ----------------------------------------------------------
     player_standing_view_height: "player_standingViewHeight" = 60.0, "Standing eye height, inches: spread blends crouched->standing up to it (G2, G6).";
     view_height_crouch: "ViewHeightCrouch" = 40.0, "Crouched eye height, inches (the engine's 40; G6).";
@@ -338,6 +345,7 @@ pub fn parse(text: &str) -> Tuning {
         t.set(&k, v);
     }
     t.means_of_death.parse_over(text);
+    t.zh_damage.parse_over(text);
     t
 }
 
@@ -384,6 +392,9 @@ mod tests {
         }
         for m in crate::damage::MeansOfDeath::ALL {
             assert!(present.contains(&normalize(m.name())), "{} is in tuning.ini's [MeansOfDeath]", m.name());
+        }
+        for zh in crate::damage::ZH_DAMAGE_TYPES {
+            assert!(SHIPPED.lines().any(|l| l.split('=').next().is_some_and(|k| k.trim() == zh)), "{zh} is in tuning.ini's [ZeroHourDamage]");
         }
     }
 

@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-pub use zhbo_native::thirdperson::torso::{context, death_context, whole_body, ACTIONS, DEATH, DEATH_CONTEXTS, DMG_DIRECTIONS, DMG_TYPES, CONTEXTS, DROP, FIRE, FIRST_RAISE, FLINCH, JUMP, LAND, MELEE, MELEE_CHARGE, PRIME, RAISE, RELOAD, THROW};
+pub use zhbo_native::thirdperson::torso::{action_dmg_direction, context, death_context, flinch, is_flinch, split, whole_body, ACTIONS, CONTEXTS, DEATH, DEATH_CONTEXTS, DIRECTIONS, DMG_DIRECTIONS, DMG_TYPES, DROP, FIRE, FIRST_RAISE, FLINCH, FLINCH_BACK, FLINCH_LEFT, FLINCH_RIGHT, JUMP, LAND, MELEE, MELEE_CHARGE, MOVE_STATUSES, PRIME, RAISE, RELOAD, THROW};
 
 /// A torso clip: its length and its sound notetracks (seconds in, event).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -128,11 +128,11 @@ mod tests {
     #[test]
     fn rows_parse_into_picks_clips_and_notes() {
         let t = parse(
-            "; comment\nlayer x y z 1 2\ntorso 3 0 0 4096\ntorso 3 0 4 4097\ntorso_clip 4096 2.3 pt_reload_stand_rifle\n\
+            "; comment\nlayer x y z 1 2\ntorso 3 0 0 4096\ntorso 3 0 30 4097\ntorso_clip 4096 2.3 pt_reload_stand_rifle\n\
              torso_note 4096 0.0322 ZHBO_NTN_fly_assault_reload_npc_mag_out\ntorso_note 4096 0.966 ZHBO_NTN_fly_assault_reload_npc_mag_in\ntorso bad\n",
         );
         assert_eq!(t.pick(3, RELOAD, 0), Some(4096));
-        assert_eq!(t.pick(3, RELOAD, context(1, false, false)), Some(4097));
+        assert_eq!(t.pick(3, RELOAD, context(1, 0, 0, false)), Some(4097));
         assert_eq!(t.pick(3, MELEE, 0), None);
         let c = t.clip(4096).unwrap();
         assert_eq!((c.length, c.name.as_str()), (2.3, "pt_reload_stand_rifle"));

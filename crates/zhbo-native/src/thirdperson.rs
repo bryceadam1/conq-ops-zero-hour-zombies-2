@@ -106,50 +106,91 @@ pub mod torso {
     pub const RAISE: u8 = 6;
     pub const DROP: u8 = 7;
     pub const FIRST_RAISE: u8 = 8;
-    /// `flinch`: hurt (asked from the front: the sim carries no damage direction).
+    /// `flinch`: hurt, from the front (the script keys the flinch on `dmgDirection`: the other
+    /// sides are [`FLINCH_BACK`], [`FLINCH_LEFT`], [`FLINCH_RIGHT`]; [`flinch`] picks one).
     pub const FLINCH: u8 = 9;
     /// `jump` and `land`: the script's `legs` clips, whole-body one-shots that take over the
     /// movement clip while they run.
     pub const JUMP: u8 = 10;
     pub const LAND: u8 = 11;
-    pub const ACTIONS: u8 = 12;
+    /// `flinch` from behind, the left and the right.
+    pub const FLINCH_BACK: u8 = 12;
+    pub const FLINCH_LEFT: u8 = 13;
+    pub const FLINCH_RIGHT: u8 = 14;
+    pub const ACTIONS: u8 = 15;
     /// The script's event for each action.
     pub const EVENTS: [&str; ACTIONS as usize] = [
-        "reload", "knife_melee", "knife_melee_charge", "fireweapon", "prime_grenade", "fireweapon", "raiseweapon", "dropweapon", "firstraiseweapon", "flinch", "jump", "land",
+        "reload", "knife_melee", "knife_melee_charge", "fireweapon", "prime_grenade", "fireweapon", "raiseweapon", "dropweapon", "firstraiseweapon", "flinch", "jump", "land", "flinch", "flinch",
+        "flinch",
     ];
+    /// The `dmgDirection` an action is asked with ([`DMG_DIRECTIONS`]): each flinch its side;
+    /// every other action reads none of it (`front`).
+    pub const fn action_dmg_direction(action: u8) -> &'static str {
+        match action {
+            FLINCH_BACK => "back",
+            FLINCH_LEFT => "left",
+            FLINCH_RIGHT => "right",
+            _ => "front",
+        }
+    }
+    /// The flinch for a hit from `dmg_dir` ([`DMG_DIRECTIONS`] index: 1 front, 2 back, 3 left,
+    /// 4 right; none flinches as from the front).
+    pub const fn flinch(dmg_dir: u8) -> u8 {
+        match dmg_dir {
+            2 => FLINCH_BACK,
+            3 => FLINCH_LEFT,
+            4 => FLINCH_RIGHT,
+            _ => FLINCH,
+        }
+    }
+    /// Whether `action` is one of the four flinches.
+    pub const fn is_flinch(action: u8) -> bool {
+        matches!(action, FLINCH | FLINCH_BACK | FLINCH_LEFT | FLINCH_RIGHT)
+    }
 
     /// The death: the script's `DEATH` section (whole body), played through and held on the corpse.
     /// Not a per-weapon action: its clip comes from [`death_context`].
-    pub const DEATH: u8 = 12;
+    pub const DEATH: u8 = 15;
 
     /// Whether an action's clip moves the whole body (the legs too).
     pub const fn whole_body(action: u8) -> bool {
         matches!(action, JUMP | LAND | DEATH)
     }
 
-    /// The `DEATH` section's damage types (`dmgType`) and directions (`dmgDirection`) the mod asks
-    /// in; `none` matches no `dmgType` entry (a death the script keys on stance and gait only).
-    pub const DMG_TYPES: [&str; 6] = ["none", "explosive", "normal_shotgun", "headshot", "meleebash", "melee"];
-    pub const DMG_DIRECTIONS: [&str; 4] = ["front", "back", "left", "right"];
-    pub const DEATH_CONTEXTS: u16 = 3 * 2 * 6 * 4;
-    /// A death's context: stance (0 stand, 1 crouch, 2 prone), moving, a [`DMG_TYPES`] index and a
-    /// [`DMG_DIRECTIONS`] index.
-    pub const fn death_context(stance: u8, moving: bool, dmg_type: u8, dmg_dir: u8) -> u16 {
-        (if stance > 2 { 2 } else { stance }) as u16 * 48 + (moving as u16) * 24 + (dmg_type % 6) as u16 * 4 + (dmg_dir % 4) as u16
+    /// The `DEATH` section's conditions, each in BO2's own value order (t6mp's value tables:
+    /// `dmgType` at `0x00f6a6f8`, `dmgDirection` at `0x00f6a6c8`, `direction` and `movestatus`
+    /// beside them), as the engine sets them before the death (`BG_AnimScriptEvent`,
+    /// `FUN_008acce0`, runs one updater per condition). `dmgDirection` is `none` only for a death
+    /// no damage preceded (a suicide on a fresh life): `finishplayerdamage` names a side for every
+    /// blow, `back` for one with no direction.
+    pub const DMG_TYPES: [&str; 10] = ["normal", "normal_shotgun", "explosive", "melee", "meleebash", "headshot", "fire", "suicide", "gas", "falling"];
+    pub const DMG_DIRECTIONS: [&str; 5] = ["none", "front", "back", "left", "right"];
+    pub const MOVE_STATUSES: [&str; 3] = ["stationary", "walk", "run"];
+    pub const DIRECTIONS: [&str; 5] = ["none", "forward", "backward", "left", "right"];
+    pub const DEATH_CONTEXTS: u16 = 3 * 3 * 5 * 10 * 5;
+    /// A death's context: stance (0 stand, 1 crouch, 2 prone), a [`MOVE_STATUSES`], a
+    /// [`DIRECTIONS`], a [`DMG_TYPES`] and a [`DMG_DIRECTIONS`] index.
+    pub const fn death_context(stance: u8, move_status: u8, direction: u8, dmg_type: u8, dmg_dir: u8) -> u16 {
+        let stance = if stance > 2 { 2 } else { stance } as u16;
+        (((stance * 3 + (move_status % 3) as u16) * 5 + (direction % 5) as u16) * 10 + (dmg_type % 10) as u16) * 5 + (dmg_dir % 5) as u16
     }
-    /// A death context's parts.
-    pub const fn split_death(c: u16) -> (u8, bool, u8, u8) {
-        ((c / 48) as u8, (c / 24) % 2 == 1, ((c / 4) % 6) as u8, (c % 4) as u8)
+    /// A death context's parts, as [`death_context`] takes them.
+    pub const fn split_death(c: u16) -> (u8, u8, u8, u8, u8) {
+        ((c / 750) as u8, ((c / 250) % 3) as u8, ((c / 50) % 5) as u8, ((c / 5) % 10) as u8, (c % 5) as u8)
     }
 
-    /// The contexts an action is asked in: stance (0 stand, 1 crouch, 2 prone) × moving × aimed.
-    pub const CONTEXTS: u8 = 12;
-    pub const fn context(stance: u8, moving: bool, ads: bool) -> u8 {
-        (if stance > 2 { 2 } else { stance }) * 4 + (moving as u8) * 2 + ads as u8
+    /// The contexts an action is asked in, the conditions the `EVENTS` read as the engine sets
+    /// them: stance (0 stand, 1 crouch, 2 prone) × `movestatus` ([`MOVE_STATUSES`]: `reload`
+    /// keys on stationary, `jump`/`land` on run, the rest on `moving` = walk or run) ×
+    /// `direction` ([`DIRECTIONS`]: `jump`/`land`'s backward, left and right) × aimed.
+    pub const CONTEXTS: u8 = 3 * 3 * 5 * 2;
+    pub const fn context(stance: u8, move_status: u8, direction: u8, ads: bool) -> u8 {
+        let stance = if stance > 2 { 2 } else { stance };
+        ((stance * 3 + move_status % 3) * 5 + direction % 5) * 2 + ads as u8
     }
-    /// A context's `(stance, moving, ads)`.
-    pub const fn split(context: u8) -> (u8, bool, bool) {
-        (context / 4, context & 2 != 0, context & 1 != 0)
+    /// A context's `(stance, movestatus, direction, ads)`, as [`context`] takes them.
+    pub const fn split(context: u8) -> (u8, u8, u8, bool) {
+        (context / 30, (context / 10) % 3, (context / 2) % 5, context & 1 != 0)
     }
 }
 
@@ -271,6 +312,52 @@ impl Weapon {
 mod tests {
     use super::*;
     use crate::math::IDENTITY;
+
+    #[test]
+    fn every_action_context_splits_back_into_its_parts() {
+        use torso::*;
+        let mut seen = vec![false; CONTEXTS as usize];
+        for stance in 0..3 {
+            for ms in 0..3 {
+                for dir in 0..5 {
+                    for ads in [false, true] {
+                        let c = context(stance, ms, dir, ads);
+                        assert_eq!(split(c), (stance, ms, dir, ads));
+                        assert!(!std::mem::replace(&mut seen[c as usize], true));
+                    }
+                }
+            }
+        }
+        assert!(seen.iter().all(|&s| s));
+        // Each side's flinch is asked with its own side and played for it.
+        for (dir, name) in DMG_DIRECTIONS.iter().enumerate().skip(1) {
+            let a = flinch(dir as u8);
+            assert!(is_flinch(a) && EVENTS[a as usize] == "flinch");
+            assert_eq!(action_dmg_direction(a), *name);
+        }
+        assert_eq!(flinch(0), FLINCH);
+        assert!(DEATH >= ACTIONS && !is_flinch(DEATH));
+    }
+
+    #[test]
+    fn every_death_context_splits_back_into_its_parts() {
+        use torso::*;
+        let mut seen = vec![false; DEATH_CONTEXTS as usize];
+        for stance in 0..3 {
+            for ms in 0..MOVE_STATUSES.len() as u8 {
+                for dir in 0..DIRECTIONS.len() as u8 {
+                    for ty in 0..DMG_TYPES.len() as u8 {
+                        for dd in 0..DMG_DIRECTIONS.len() as u8 {
+                            let c = death_context(stance, ms, dir, ty, dd);
+                            assert_eq!(split_death(c), (stance, ms, dir, ty, dd));
+                            assert!(!std::mem::replace(&mut seen[c as usize], true));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seen.iter().all(|&s| s));
+    }
 
     fn body() -> Body {
         Body {

@@ -178,8 +178,8 @@ impl LogicHost for Field {
     fn set_pose(&self, _id: u32, _pos: Vec3, _yaw: f32, _moving: bool) {}
     fn set_controlled(&self, _id: u32, _controlled: bool) {}
     fn fire_fx(&self, _shooter: u32, _fx_weapon: &str, _target: u32, _pos: Vec3) {}
-    fn damage(&self, _shooter: u32, victim: u32, amount: f32, how: MeansOfDeath) -> bool {
-        self.hits.borrow_mut().push((victim, amount, how));
+    fn damage(&self, _shooter: u32, victim: u32, amount: f32, blow: crate::damage::Blow) -> bool {
+        self.hits.borrow_mut().push((victim, amount, blow.how));
         false
     }
     fn heal(&self, _id: u32, _amount: f32) {}
@@ -263,7 +263,7 @@ fn hurts(def: &WeaponDef) -> bool {
 
 /// Every way `def`'s blast departs from BO2's radius damage against Zero Hour's objects (empty if
 /// none).
-pub fn check(def: &WeaponDef) -> Vec<String> {
+pub fn check(def: &'static WeaponDef) -> Vec<String> {
     let mut fails = Vec::new();
     if !is_explosive(def) {
         return fails;

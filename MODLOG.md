@@ -12984,3 +12984,141 @@ Verified: `cargo test --workspace`, clippy clean; real-install suite 78/78 (the 
 included); in game on this build `--equipment` 12/12 and `scripts/mptest-mac.sh`
 (`ZHBO_MPTEST_ROUNDS=3`) 34/34, the per-frame state hashes (now carrying the marks) equal on both
 machines. The marks have no log line; the in-game legs show the minimap unchanged in look.
+
+## A player falls by every death BO2 tells apart (2026-11-03, branch `v1/death-anims`)
+
+Round 4's corpses picked the `DEATH` clip by a guessed `dmgType` (no shotgun, no shield bash), the
+killer's position for `dmgDirection`, "moving" for any speed and always `forward`. Notes, the
+extracted script and the decompiles are in `~/.opencode/plan/death-anims/`.
+
+**BO2 (t6mp, read-only Ghidra).**
+* `mp/playeranim.script`'s `DEATH` (this install) reads five conditions: `stance` (prone first:
+  `pb_prone_death_quickdeath` whatever hit him), `dmgType` (`explosive` per side plus a no-side
+  fallback, `normal_shotgun`, `headshot`, `meleebash`, `melee`, each per side with crouched clips
+  except the explosive), `dmgDirection`, and for the rest `movestatus run` (crouched; `direction
+  backward`/`left`/`right`; forward) and the stance; gas and last stand are commented out.
+* `BG_AnimScriptEvent` (`FUN_008acce0`) runs the 25 condition updaters at `0x00f6afe8` before it
+  picks. The value tables: `dmgType` `NORMAL, NORMAL_SHOTGUN, EXPLOSIVE, MELEE, MELEEBASH, HEADSHOT,
+  FIRE, SUICIDE, GAS, FALLING` (`0x00f6a6f8`), `dmgDirection` `NONE, FRONT, BACK, LEFT, RIGHT`,
+  `direction` `NONE, FORWARD, BACKWARD, LEFT, RIGHT`, `movestatus` `STATIONARY, WALK, RUN`; the
+  condition table (`0x00f6ab28`) PLAYERANIMTYPE 0 … MOVESTATUS 5, DIRECTION 7, DMGDIRECTION 8,
+  DMGTYPE 9, STANCE 10.
+* `dmgType` (`FUN_008ade60` maps the player-state value `player_die` `FUN_005effe0` stores, after
+  `finishplayerdamage` `FUN_005ed360`): `MOD_BURNED` fire; grenade, grenade splash, projectile,
+  projectile splash, explosive → explosive; melee/bayonet → `meleebash` when the weapon's weapType
+  is `riotshield`, else `melee`; `MOD_HEAD_SHOT` headshot (before the class test: a shotgun's
+  headshot is a headshot); suicide → explosive by a grenade, else suicide; falling with no ground
+  entity → falling; anything else `normal_shotgun` for weapClass spread/pistol spread, else
+  `normal`. Gas is set by no branch.
+* `dmgDirection` (`finishplayerdamage`): `vectoyaw(vDir)` less his whole-degree view yaw in
+  [0, 360): [135, 225) front, [45, 135) right, [225, 315) left, else back; no `vDir`: back. `none`
+  only when no damage preceded the death (a suicide on a fresh life).
+* `direction` (`FUN_008adb70`): the movement keys normalised, forward past
+  `player_strafeAnimCosAngle` (0.5) forward, past -0.5 backward, else the strafe's side.
+  `movestatus` (`FUN_008ad980`): speed past `player_runThreshhold` (110) run, past
+  `player_moveThreshhold` (2) walk.
+* The alternatives are random (`FUN_008aca50` with the level's random state).
+
+**The mod.** `damage::Blow` (means, weapon, direction: BO2's `G_Damage` `mod`/`weapon`/`vDir`)
+replaces the means in `LogicHost::damage`, so every site names its weapon and the blow's way: a
+round along its trace, the knife or the held shield (`melee_weapon`) along the striker's facing, a
+missile along its flight, radius damage from the blast to the victim. `crate::death` holds BO2's
+rules (`DmgType::of`, `dmg_direction`, `move_status`, `move_direction`); the sim reports
+`KilledBy { dmg, dir }`; the client reads stance, speed and keys off the seat's last record. The
+death context is stance × movestatus × direction × dmgType × dmgDirection (2,250, BO2's own value
+orders); the converter asks the script in each. Tuning: `player_runThreshhold`,
+`player_moveThreshhold`, `player_strafeAnimCosAngle` (the dvars' defaults). The built-in table's
+shield carries `WeapType = riotshield`. Presentation only: nothing of `crate::death` reaches the sim
+state (`DmgType::of` runs in the score pass only to fill the event).
+
+**Bug found: a kill in the step was lost when the victim's seat stepped after the killer's.** The
+step's blows are scored after every seat has stepped, but a dead General's record (and his
+attacker list) ended in his own seat's step: when his seat came later the same frame, the kill
+found no victim seat — no `KilledBy` (the corpse fell by the default clip) and **no assists**. The
+victim's seat is now found among each seat's last Generals and `Sim::step` forgets the dead
+Generals' lists only after the scoring. Sim behaviour change (assists now awarded in that order),
+the same on every machine. The client builds the corpse in its update, so the report may follow the
+death event.
+
+**Ragdoll (assessed, left out).** BO2 clones the player (`cloneplayer`), plays the clip and starts
+the physics ragdoll 0.2 s + 35 % of the clip in (`delaystartragdoll`; the clip's `start_ragdoll`
+notetrack if any, none if `ignore_ragdoll`), at once in the air, on a ladder or mantle, for a crush
+or a hit-by-object, with an explosive push for an explosive kill (`_globallogic_player.gsc:2243-2400`).
+The mod would need jointed bodies per bone with BO2's limits, collision against Zero Hour's terrain
+and objects, the hand-off from the clip's pose and a pose override in the native body pass: client
+side (no lockstep risk), but far from small. The held last pose stays (Zero Hour's way, the user's
+call).
+
+**Tests.** `death::tests` (every means × every weapClass × every weapType × airborne against
+`player_die`'s rule; every 45° sector edge of the direction, turned; gait and keys);
+`every_death_context_splits_back_into_its_parts`; `sim::death_tests` (the knife and the held
+shield: melee/meleebash from the front and from behind; a round normal, a spread class
+normal_shotgun, from the shooter's side; a blast explosive from where it went off, every blow naming
+the frag); `a_kill_in_the_step_scores_when_the_victim_steps_after_his_killer` (fails on the old
+lookup); `a_killed_general_falls_by_the_scripts_death` (headshot, shotgun side, bash, running back,
+default; report before and after the death). Real install (`every_weapon_action_plays_the_torso_bo2_gives_it`):
+all 2,250 contexts equal the script asked directly and have a death, every `DEATH` entry is reached
+by some context, 20 BO2 spot picks, every converted shield bashes `meleebash`, every shotgun's round
+`normal_shotgun` and its headshot `headshot`.
+
+**Verified (v1/death-anims).** `cargo test --workspace` 1,218 passed; clippy clean (workspace
+`--all-targets`, zhbo-core `--features harness`); real install (`--ignored --skip conformance`) 77
+passed (the roster lockstep gate included); conformance byte-identical to integration9 (weapons 22
+cells / 3 column clusters, cac 0, 4 BO2-only rows, 4 gap clusters). In game (own dist, fresh
+archive): default 16/16, `--mp` short 25/25 (state hash on 2,835 common frames, content CRC
+71E4A2A1 on both) and again with the clip log 25/25 (2,720 frames; both machines logged the same
+corpse clips, `pb_stand_death_legs` for a rifle body kill — the victim's seat stepped after his
+killer's, the case the old lookup lost), `ZHBO_MPTEST_ROUNDS=3` 34/34 (4,730 frames, 2 shellshocks
+on both), `--rts` 16/16, `--classpick` 12/12, `--drops` 9/9, `--splash` 5/5, `--equipment` 8/8,
+`--showcase` (the default standing death held). Images in `~/.opencode/plan/death-anims/shots/`
+(the headless sheet draws a corpse per kind: default, headshot front, shotgun front/back, shield
+bash front, knife back, explosive front, crouched shotgun left, running backward, prone).
+
+## Follow-up: the torso by walk or run, the flinch by side, Zero Hour's weapons as BO2 blows (2026-11-04, branch `v1/death-anims`)
+
+The three "found elsewhere" items of the death work, by the same evidence.
+
+* **The torso asks by walk or run and the keys.** The upper-body actions asked the script with
+  `movestatus run` for any movement and `direction forward`. The engine's updaters
+  (`FUN_008ad980`, `FUN_008adb70`, see the entry above) set `movestatus` walk above 2 in/s and run
+  above 110 in/s, and `direction` from the movement keys; the `EVENTS` read them (`reload`'s crouched
+  `movestatus stationary` entries, `jump`/`land`'s `movestatus run` and `direction
+  backward/left/right`). The action context is now stance × movestatus × direction × aimed (90, was
+  12), read through `crate::death::move_status`/`move_direction`.
+* **The flinch by side.** BO2: `finishplayerdamage` (`FUN_005ed360`) keeps the blow's `vDir` as the
+  damage direction (none: "from the world"); `P_DamageFeedback` (`FUN_005d1800`) and
+  `CG_DamageFeedback` (`FUN_004e8ab0`) kick the view yaw `-(vDir · left) × kick` and pitch
+  `(vDir · forward) × kick` (engine angles, pitch down), straight up with no direction. The sim's
+  `Flinch` now carries yaw and pitch (`weapons::recoil::flinch_kick`); the client adds both to the
+  camera. The third-person flinch is the script's `flinch` by `dmgDirection` (ps `+0xec`, the same
+  `vDir` sectors as the death): four actions (`torso::FLINCH`, `FLINCH_BACK`, `FLINCH_LEFT`,
+  `FLINCH_RIGHT`) picked from `Damaged { dir }`. The blow's way reaches the health-diff hurt through
+  `LogicHost::last_blow` (the step's scoring host) and `Sim::blows` (blows scored after the
+  victim's seat stepped, and Zero Hour's): presentation, not hashed (`blows: _` with its reason).
+* **Zero Hour's own weapons as BO2 blows.** The engine's damage hook (`Zhbo_ShieldDamage`, host
+  patch 0017) now reports every damage it applies to a new, appended ABI function
+  `zhbo_logic_engine_damage(victim, kind, dir)`: the full `DamageType` as its `ZHBO_DAMAGE_*` code
+  (`zhboDamageKind`), the way it travelled (Zero Hour's shock-wave vector when the blast has one,
+  `Weapon.cpp`'s victim less the exploding object, else victim less the source unit). The core queues
+  it lock-free and hands it to the sim before the next step, in the engine's order
+  (`crate::enginedamage`); the sim's own damage is muted around `LogicApi.damage`. The tuning pack's
+  new `[ZeroHourDamage]` table maps every one of the 38 types to a BO2 means of death (rounds
+  `MOD_RIFLE_BULLET`, the blow `MOD_MELEE`, blasts and shells `MOD_EXPLOSIVE`, missiles
+  `MOD_PROJECTILE_SPLASH`, crushing and toppling `MOD_CRUSH`, falling, fire/lasers/particle
+  beam/microwave `MOD_BURNED`, radiation/poison `MOD_GAS`, water `MOD_DROWN`, the unconditional kill
+  `MOD_TRIGGER_HURT`, the harmless and non-weapon types `MOD_UNKNOWN`); a General killed by them gets
+  `KilledBy` with `DmgType::of` (no BO2 weapon) and the blow's way, his hurt its flinch side.
+  **Decision:** no BO2 weapon for Zero Hour's damage, so an overhead General's own shotgun fired by
+  Zero Hour reads `normal`, not `normal_shotgun` (the engine's report names no weapon).
+
+**Verified (follow-up).** `cargo test --workspace` 1,226 passed; clippy clean (workspace
+`--all-targets`, zhbo-core `--features harness`); real install (`--ignored --skip conformance`) 77
+passed (the torso sweep: 340 clips, the new spot picks); conformance byte-identical to integration9.
+In game (own dist, fresh archive): default 16/16 — all 66 of the General's hurts from Zero Hour's
+units logged with a way (`took N damage along (x, y)`, none without: the engine hook reaches the
+sim); `--rts` 16/16; `--mp` short 25/25 (2,831 common frames; both machines logged the same
+`was killed: dmgType normal along (-0.19, 0.98)` and corpse clip); `ZHBO_MPTEST_ROUNDS=3` 34/34
+(4,724 frames, 2 shellshocks on both); on the build before the log line also `--classpick` 12/12,
+`--drops` 9/9, `--splash` 5/5, `--equipment` 8/8, `--showcase`. Images:
+`~/.opencode/plan/death-anims/shots/torso-flinch-sides-and-corpses-headless.png` (the four flinch
+sides, then a corpse per kind), `mp-followup-corpse-normal.png`.

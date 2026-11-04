@@ -654,6 +654,12 @@ void zhbo_native_body_reset(void);
    source's feet and height when `source_known`. Lock-free (safe inside any core callback).
    ABI 27. */
 float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, float from_y, float from_z, float from_height, int32_t source_known, int32_t kind, float amount);
+/* Zero Hour applied damage to `victim` (the same hook, after the shield's share): `kind` is its
+   DamageType as a ZHBO_DAMAGE_* code (every one), `dir_*` the way it travelled (BO2's vDir: the
+   blast's shock-wave vector when Zero Hour has one, else from the source to the victim; zero when
+   unknown). The core shows a General's hurt and death by it (zhbo_core::enginedamage); the core's
+   own damage is not reported back. Lock-free. Pending for the next ABI bump. */
+void zhbo_logic_engine_damage(uint32_t victim, int32_t kind, float dir_x, float dir_y, float dir_z);
 /* The first-person sim's share of Zero Hour's logic CRC (host patch 0020, GameLogic::getCRC after
    MARKER:TheAI): Sim::state_hash (the multiplayer gate's fingerprint) and its parts. Returns 1 when
    the sim holds state (the bridge xfers `hash` into the CRC), 0 when it is idle (no General deployed

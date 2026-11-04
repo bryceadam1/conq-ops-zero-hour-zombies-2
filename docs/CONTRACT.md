@@ -50,7 +50,11 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   a ballistic knife, a combat axe), else its missile handler's direct means (`MOD_GRENADE` for a
   `weapType` grenade, `FUN_00607730`; `MOD_PROJECTILE` for anything launched, `FUN_0060d330`; the
   handler table at `0x00c8c0e4`); radius damage the handler's splash means (`MOD_GRENADE_SPLASH`,
-  `MOD_PROJECTILE_SPLASH`, `FUN_00604240`). `LogicHost::damage` takes the means of death; the FFI
+  `MOD_PROJECTILE_SPLASH`, `FUN_00604240`). `LogicHost::damage` takes the blow
+  (`damage::Blow`: the means of death, the weapon that dealt it and the way it travelled, BO2's
+  `G_Damage` `mod`/`weapon`/`vDir`: a round along its trace, a blow the way the striker faces, a
+  missile along its flight, radius damage from the blast to the victim; the weapon and direction are
+  only the victim's death animation's, `crate::death`); the FFI
   host sends `LogicApi.damage` the **Zero Hour damage type** the tuning pack's `[MeansOfDeath]`
   table names for it (`MOD_IMPACT = EXPLOSION`; the kind is an ABI code, `ZHBO_DAMAGE_*`, one per
   Zero Hour `DamageType` by name, `damage::ZH_DAMAGE_TYPES`; the bridge's `s_zhboDamageTypes`
@@ -162,7 +166,10 @@ replicated messages alone. The rules, and what enforces each:
   list (BO2 health, decayed by his regeneration, `decayplayerdamages`), and a seat's killing blow
   credits every other attacker on the killer's side and not the victim's (Zero Hour's alliance:
   a free-for-all credits none) an `Assist { level }` event (`assist_25/50/75`) and one assist on
-  `Score::assists`. The lists, the counts and each seat's last Generals are hashed (the world part).
+  `Score::assists`. The step's blows are scored after every seat has stepped, and a dead General's
+  record ends in his own seat's step, so the victim's seat is found among each seat's last
+  Generals and his attacker list ends only after the scoring (`Sim::step` forgets the Generals
+  `step_frame` reports dead): a kill scores whichever of the two seats steps first. The lists, the counts and each seat's last Generals are hashed (the world part).
   The scoreboard's ASSISTS is that count; the client adds the points (`client::ASSIST_POINTS`,
   `mp/scoreinfo.csv`'s tdm column) to the SCORE column. A concussion, flashbang, EMP grenade or
   Shock Charge that reached a first-person General (the sim's shock hits name the weapon and its
@@ -572,8 +579,11 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `nativebody::ffi::publish_offhands`) and drawn only while that one is primed or thrown, the gun
   then hidden (t6mp `FUN_0052a470`). A General who dies stays drawn: `client::remote` keeps a
   corpse (`Corpse`, for `CORPSE_TIME`) whose pose `zhbo_client_native_poses` appends, playing the
-  script's `DEATH` clip for how he was killed (`EventKind::KilledBy`, `torso::death_context`)
-  whole-body, faded in and held at its end, without the gun (BO2's corpse goes ragdoll part-way;
+  script's `DEATH` clip in the context BO2's engine sets (`crate::death`: his stance, `movestatus`
+  by speed, `direction` by his movement keys, the killing blow's `dmgType` by its means and weapon
+  — `player_die`'s rule, so a shotgun's kill is `normal_shotgun` and the shield's bash `meleebash` —
+  and `dmgDirection` by the blow's direction against his view, `finishplayerdamage`'s sectors;
+  `EventKind::KilledBy { dmg, dir }`, `torso::death_context`) whole-body, faded in and held at its end, without the gun (BO2's corpse goes ragdoll part-way;
   Zero Hour has no ragdoll, so the clip's last pose lies until the body is removed). Overhead, the
   rounds Zero Hour spends (`Arsenal::rts_shot`) start the gun's shot torso, client-side.
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
@@ -650,8 +660,11 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `PlayerSim::view_kick`: BO2 adds it to every user command's angles, so the sim's aim — the
   ray — is the input's view angles plus the kick the previous logic frame left, and the camera
   axis is the client's mouse aim plus the same kick, interpolated across the logic frame like the
-  eye. Only the damage flinch, `hud.flinch_pitch`, is camera-only; the crosshair is drawn on the
-  camera axis.)
+  eye. Only the damage flinch, `hud.flinch_yaw`/`flinch_pitch`, is camera-only; the crosshair is
+  drawn on the camera axis. The flinch turns by the last blow's way, BO2's `vDir`
+  (`weapons::recoil::flinch_kick`: `P_DamageFeedback` `FUN_005d1800` and `CG_DamageFeedback`
+  `FUN_004e8ab0` kick yaw `-(dir · left) × kick` and pitch `(dir · forward) × kick`, straight up
+  with no direction).)
   - **The engine cross-fades 0x55/0x56 by the fraction (Ghidra G12, answered).** `FUN_0052b750`
     weights slot 0x55 by `fWeaponPosFrac` and 0x56 by its complement — no time-scale into the
     def's ADS times (those live in the fraction integrator, G3), and a direction flip passes no
@@ -1518,6 +1531,29 @@ millisecond `LightPulse`, the four equipment-breaking effects, and the smoke gre
 and death clips are new ids in the body's clip list, an alt mode's world weapon and an offhand's are
 ordinary `.zbw` files at their own index).
 
+**Pending for the next bump (archive `hud::VERSION`, death-anims):** the `death` rows of
+`sound_layers.txt` are keyed by the new death context (`torso::death_context`: stance × `movestatus`
+3 × `direction` 5 × BO2's ten `dmgType`s × `dmgDirection` 5 = 2,250 contexts, was 144); an archive
+converted before reads as the wrong deaths (never a crash: every context still finds a clip or
+none). The tuning pack gains `player_runThreshhold`, `player_moveThreshhold` and
+`player_strafeAnimCosAngle` and the `[ZeroHourDamage]` table (the content CRC moves with them).
+The torso rows are keyed by the new action context (`torso::context`: stance × `movestatus` 3 ×
+`direction` 5 × aimed = 90, was 12) and three new actions (the flinch's back, left and right sides;
+`torso::DEATH` is now 15), so the archive's torso table and body clips change too (340 torso and
+death clips on this install, was 283).
+
+**Pending for the next bump (ABI, death-anims):** the free function
+`zhbo_logic_engine_damage(victim, kind, dir_x, dir_y, dir_z)` is appended (`zhbo_core.h`; the
+header test holds it exported). The bridge's damage hook (`Zhbo_ShieldDamage`, host patch 0017)
+calls it for every damage Zero Hour applies after the shield's share: `kind` the `DamageType` as
+its `ZHBO_DAMAGE_*` code (`zhboDamageKind`, the inverse of `s_zhboDamageTypes`), `dir` the blast's
+shock-wave vector when Zero Hour has one, else the victim less the source unit. The core queues it
+lock-free (`crate::enginedamage`) and hands it to the sim before the next step (`Sim::engine_blow`):
+a seat's General's hurt gets its side and a death to Zero Hour's weapons its `KilledBy`, BO2's
+means of death from the tuning pack's `[ZeroHourDamage]` table. The sim's own damage is not
+reported back (`enginedamage::dealing` around `LogicApi.damage`). Presentation only; an older
+bridge never calls it (no flinch side or report for Zero Hour's damage). No struct moves.
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the
@@ -1562,8 +1598,9 @@ ordinary `.zbw` files at their own index).
   longer plays Zero Hour's hero death voice.
 * **More of another player** (follow-up): his dry fire (`NpcSounds` `empty_fire`, BO2's
   `emptyFireSound`, once per trigger pull on an empty magazine), his jump and landing
-  (`_footsteps.csc`: the step alias and `ZHBO_BO2_LandNpc`), the script's `flinch` (asked from the
-  front: the sim's damage has no direction) and its whole-body `jump`/`land` clips as torso
+  (`_footsteps.csc`: the step alias and `ZHBO_BO2_LandNpc`), the script's `flinch` (per
+  `dmgDirection` since death-anims: `torso::FLINCH`, `FLINCH_BACK`, `FLINCH_LEFT`, `FLINCH_RIGHT`,
+  by the last blow's way, `Damaged { dir }`) and its whole-body `jump`/`land` clips as torso
   actions (`torso::FLINCH`, `JUMP`, `LAND`; the last two replace every bone while they run), and
   BO2's battle chatter (`_battlechatter_mp.gsc` `reloadtracking`/`grenadetracking`:
   `ZHBO_BO2_Bc_<F><n>_<line>`, `sounds::CHATTER_LINES`; at the dvars' odds by a roll hashed from

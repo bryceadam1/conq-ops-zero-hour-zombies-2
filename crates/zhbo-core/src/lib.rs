@@ -18,6 +18,8 @@ pub mod config;
 pub mod content;
 pub mod conformance;
 pub mod damage;
+pub mod death;
+pub mod enginedamage;
 pub mod equipment;
 pub mod sensor;
 pub mod ffi;

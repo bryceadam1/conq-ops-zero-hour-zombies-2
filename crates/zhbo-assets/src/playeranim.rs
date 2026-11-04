@@ -198,7 +198,17 @@ impl Script {
     /// `direction`, `dmgtype`, `dmgdirection`): the first entry whose every condition holds, its
     /// alternatives (empty when none holds).
     pub fn death(&self, ctx: Context) -> &[String] {
-        self.deaths.iter().find(|(c, _)| c.iter().all(|(k, vals)| self.holds(k, vals, ctx))).map_or(&[], |(_, a)| a.as_slice())
+        self.death_entry(ctx).map_or(&[], |i| self.deaths[i].1.as_slice())
+    }
+
+    /// Which `DEATH` entry (its index in the section) holds first in `ctx`.
+    pub fn death_entry(&self, ctx: Context) -> Option<usize> {
+        self.deaths.iter().position(|(c, _)| c.iter().all(|(k, vals)| self.holds(k, vals, ctx)))
+    }
+
+    /// How many entries the `DEATH` section has.
+    pub fn death_entries(&self) -> usize {
+        self.deaths.len()
     }
 
     fn define(&mut self, line: &str) {

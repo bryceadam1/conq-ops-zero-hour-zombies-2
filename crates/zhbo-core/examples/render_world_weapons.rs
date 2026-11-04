@@ -260,16 +260,30 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
     let frag = table.weapons.iter().find(|d| d.id == "frag_grenade_mp");
     zhbo_core::config::init(zhbo_core::config::Config { native_body: 2, ..Default::default() });
     let shot = open_renderer()?;
-    let stand = torso::context(0, false, false);
+    let stand = torso::context(0, 0, 0, false);
     let mut poses: Vec<(String, Option<(u8, u16)>)> = vec![("idle".into(), None)];
-    for (name, d, action) in [("reload", Some(def), torso::RELOAD), ("knife", Some(def), torso::MELEE), ("fire", Some(def), torso::FIRE), ("raise", Some(def), torso::RAISE), ("throw", frag, torso::THROW)] {
+    for (name, d, action) in [("reload", Some(def), torso::RELOAD), ("knife", Some(def), torso::MELEE), ("fire", Some(def), torso::FIRE), ("raise", Some(def), torso::RAISE), ("throw", frag, torso::THROW), ("flinch_front", Some(def), torso::FLINCH), ("flinch_back", Some(def), torso::FLINCH_BACK), ("flinch_left", Some(def), torso::FLINCH_LEFT), ("flinch_right", Some(def), torso::FLINCH_RIGHT)] {
         if let Some(c) = d.and_then(|d| torso::pick_for(d, action, stand)) {
             poses.push((name.into(), Some((action, c))));
         }
     }
-    // And dead: the script's default standing death, held as the corpse.
-    if let Some(&c) = torso::get().death(torso::death_context(0, false, 0, 0)).first() {
-        poses.push(("death".into(), Some((torso::DEATH, c))));
+    // And dead: the corpse BO2's `DEATH` gives each kind of death (`zhbo_core::death`), held.
+    use zhbo_core::death::DmgType as D;
+    for (name, stance, ms, dir, dmg, from) in [
+        ("death", 0, 0, 0, D::Normal, 2),
+        ("death_headshot_front", 0, 0, 0, D::HeadShot, 1),
+        ("death_shotgun_front", 0, 0, 0, D::NormalShotgun, 1),
+        ("death_shotgun_back", 0, 0, 0, D::NormalShotgun, 2),
+        ("death_shieldbash_front", 0, 0, 0, D::MeleeBash, 1),
+        ("death_knife_back", 0, 0, 0, D::Melee, 2),
+        ("death_explosive_front", 0, 0, 0, D::Explosive, 1),
+        ("death_crouch_shotgun_left", 1, 0, 0, D::NormalShotgun, 3),
+        ("death_run_backward", 0, 2, 2, D::Normal, 2),
+        ("death_prone", 2, 0, 0, D::HeadShot, 1),
+    ] {
+        if let Some(&c) = torso::get().death(torso::death_context(stance, ms, dir, dmg as u8, from)).first() {
+            poses.push((name.into(), Some((torso::DEATH, c))));
+        }
     }
     let mut tiles = Vec::new();
     for (k, (name, clip)) in poses.iter().enumerate() {
@@ -283,7 +297,7 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
         println!("{id} {name}: {clip_name} at {t:.2} s");
         tiles.push(to_rgb(&px));
     }
-    write_sheet_cols(&out.join(format!("torso_{}.png", id.replace(['+', '~'], "_"))), &tiles, tiles.len() as u32)?;
+    write_sheet_cols(&out.join(format!("torso_{}.png", id.replace(['+', '~'], "_"))), &tiles, tiles.len().min(8) as u32)?;
     // The cost of several Generals at once: `n` bodies (each his own rig, half of them reloading),
     // drawn and presented `FRAMES` times; the core's pose and submit per General, and the frame.
     for n in [1u32, 4, 8, 16] {
