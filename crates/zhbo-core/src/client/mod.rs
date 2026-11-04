@@ -947,6 +947,7 @@ impl Client {
         }
         if ap.mp {
             ap.mp_aim = autopilot_aim(sim, inp.local_player).map(|(yaw, pitch)| (wrap_angle(yaw - off_aim.0), pitch - off_aim.1));
+            ap.mp_over_drop = sim.player(inp.local_player).is_some_and(|p| sim.use_target(p).is_some());
             // What his General shows in third person on the other machines: the weapon in hand and
             // the camo it wears (`Sim::third_person_camo`, what their native pass composes).
             let holds = sim

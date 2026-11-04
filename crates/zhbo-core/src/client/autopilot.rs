@@ -123,6 +123,9 @@ pub struct Autopilot {
     pub(crate) mp_declined: bool,
     /// When this session's fight ended and the field computer went down (the short fight).
     pub(crate) mp_leave_at: Option<f32>,
+    /// Whether the use key would take a dropped weapon now (`Sim::use_target`): the field
+    /// computer's key is the use key, so over a drop it swaps instead of leaving.
+    pub(crate) mp_over_drop: bool,
     /// The short fight's target went down (the shooter's burst stops for good).
     pub(crate) mp_target_down: bool,
     /// First-person sessions so far (the client counts each take-control).
@@ -486,11 +489,7 @@ impl Autopilot {
         // (or the time is up), the target only if he outlived it.
         let done = (self.mp_shooter && !target_up && c >= 15.0) || c >= MP_KILL_TIME + 2.0;
         if done {
-            let at = c;
-            let start = *self.mp_leave_at.get_or_insert(at);
-            if (start..start + 0.1).contains(&c) {
-                keys.set_down(b.field_computer, true);
-            }
+            self.mp_leave(b, c, &mut keys);
         }
         Scripted { keys, class_pick: change_pick.or(pick), pick_force, look, ..Default::default() }
     }
@@ -590,10 +589,24 @@ impl Autopilot {
             }
         }
         let leave_at = if self.mp_shooter { 21.0 } else { 13.0 };
-        if !changing && (leave_at..leave_at + 0.1).contains(&c) {
-            keys.set_down(b.field_computer, true);
+        if !changing && c >= leave_at {
+            self.mp_leave(b, c, &mut keys);
         }
         Scripted { keys, class_pick, pick_force, look, ..Default::default() }
+    }
+
+    /// Out by the field computer, once, from `c` on. Its key is also the use key (`sim::drops`):
+    /// standing over a dropped weapon (where the other General died) it would swap for it and
+    /// keep him in first person, so he first backs off until nothing is in reach.
+    fn mp_leave(&mut self, b: &Bindings, c: f32, keys: &mut KeySet) {
+        if self.mp_leave_at.is_none() && self.mp_over_drop {
+            keys.set_down(b.back, true);
+            return;
+        }
+        let start = *self.mp_leave_at.get_or_insert(c);
+        if (start..start + 0.1).contains(&c) {
+            keys.set_down(b.field_computer, true);
+        }
     }
 
     /// The scope-overlay run (`ZHBO_AUTOPILOT=scope`): pick the seeded AS50 class and hold ADS from
@@ -779,5 +792,30 @@ mod tests {
             let held = tactical.last().unwrap() - tactical.first().unwrap();
             assert!(held >= lock, "{armed_at}: held {held} s, the drone's lock needs {lock}");
         }
+    }
+
+    /// The long run's lives end by the field computer, whose key is also the use key: over a
+    /// dropped weapon (the meeting point, where the other General died) the press would swap for it
+    /// and keep him in first person for good. He backs off until nothing is in reach, then presses
+    /// once.
+    #[test]
+    fn the_mp_leave_backs_off_a_dropped_weapon_first() {
+        let b = Bindings::default();
+        let mut ap = Autopilot { mp: true, mp_rounds: 5, session: 3, mp_fight: Some(0.0), mp_aim: Some((0.0, 0.0)), mp_over_drop: true, ..Default::default() };
+        let (mut presses, mut backed) = (Vec::new(), false);
+        for f in 0..(30 * 20) {
+            ap.t = f as f32 * crate::units::LOGIC_DT;
+            if ap.t >= 14.0 {
+                ap.mp_over_drop = false;
+            }
+            let keys = ap.mp_round(&b, 2).keys;
+            if keys.is_down(b.field_computer) {
+                assert!(!ap.mp_over_drop, "no press over a drop (t {})", ap.t);
+                presses.push(ap.t);
+            }
+            backed |= keys.is_down(b.back);
+        }
+        assert!(backed, "he steps back off the drop");
+        assert!(!presses.is_empty() && presses.iter().all(|t| *t >= 14.0 && *t < 14.15), "one press (0.1 s) once clear: {presses:?}");
     }
 }
