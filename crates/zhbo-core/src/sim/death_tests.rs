@@ -178,3 +178,40 @@ fn a_blow_scored_after_his_step_gives_the_next_steps_hurt_its_side() {
     });
     assert_eq!(dir, Some(Vec3::new(1.0, 0.0, 0.0)), "from behind, the blow's own way");
 }
+
+/// The Sensor Grenade's timed fuse (`timedDetonation`, conformance-final) runs out beside him: its
+/// radius damage (`iExplosionInnerDamage` 15, `FUN_005f2130`) is a grenade's splash
+/// (`MOD_GRENADE_SPLASH`, so `dmgType` `explosive`) by the sensor, from where it lay (BO2's radius
+/// `vDir`), not from the thrower: his hurt flinches from that side.
+#[test]
+fn a_sensor_grenades_detonation_is_explosive_from_where_it_lay() {
+    let (host, mut sim) = duel(Loadout::test_kit(), 60.0, 0.0);
+    let frag = crate::weapons::catalog().get("frag_grenade_mp").expect("frag");
+    let sensor: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+        id: "sensor_grenade_mp".into(),
+        effect: crate::weapons::Effect::None,
+        equipment_kind: crate::equipment::Kind::Sensor,
+        timed_detonation: true,
+        laser_sensor: true,
+        explosion_inner_damage: 15.0,
+        explosion_outer_damage: 15.0,
+        explosion_radius: 256.0,
+        ..frag.clone()
+    }));
+    // Off his right side (-Y; he faces +X); the thrower stands behind him at the origin.
+    let mut p = crate::equipment::Placed::new(sensor, 0, 1, 0, Vec3::new(60.0, -20.0, 0.0), 0.0, None);
+    p.fuse = Some(2.0 * crate::units::LOGIC_DT);
+    sim.equipment.add(p);
+    step(&mut sim, &host, FpsInput::default(), 0.0, 4);
+    assert!(sim.equipment.placed.is_empty(), "it went off");
+    let blows = host.damage_blows.borrow();
+    let (_, b) = blows.iter().find(|(v, _)| *v == 2).expect("its radius damage reached him");
+    assert_eq!(b.how, crate::damage::MeansOfDeath::GrenadeSplash);
+    assert_eq!(b.weapon.map(|w| w.id.as_str()), Some("sensor_grenade_mp"));
+    assert_eq!(DmgType::of(b.how, b.weapon, false), DmgType::Explosive);
+    let hurt = sim.events.iter().find_map(|e| match e.kind {
+        EventKind::Damaged { dir, .. } if e.player == 1 => Some(dir),
+        _ => None,
+    });
+    assert_eq!(hurt.map(|d| dmg_direction(d, 0.0)), Some(4), "from his right, where it lay: {hurt:?}");
+}
