@@ -12691,3 +12691,138 @@ distance ranges are played).
 * **Bumps for the integrator:** archive `hud::VERSION` 85 → 86 (CONTRACT "Pending"); no ABI,
   struct or native blob change. The content CRC's "engine INI" part changes with the converted
   INIs (the projectile objects gain `ParticleSysBone` lines), as any archive change does.
+
+## Integration: round 4, parity and bug sweep (2026-11-03, `v1/integration9`)
+
+Merged onto main dc6bede, in this order: `v1/remote-presentation` (which already carried
+`v1/damage-rules`), `v1/weapon-drops` (built on an older remote-presentation head; its three own
+commits on top), `v1/bug-sweep-4`, `v1/conformance-gaps`, `v1/graphics-high`, `v1/fx-flipbook`.
+Every branch entry above is kept as written.
+
+**Conflicts.** Textual ones were unions: the MODLOG entries; nativebody's tests (the `Lying` mode in
+the mode sweep, remote-presentation's `offhands` on every `Request`, bug-sweep-4's weapon-only shield
+refusal after the corpse's kept rig in the stowed test); the UI text keys and their stand-ins
+(the pickup and swap prompts beside the low-ammo warning and the hold-breath hint); the tuning pack's
+`[Drops]` keys beside bug-sweep-4's regen constants (`RegenFullTime` stays gone); the autopilot's
+drops and equipment modes; the hashed-state doc and the perturbation list; the presentation-member
+map; the built-in catalog's offhands; the weapon schema; the autotest's `--drops` and `--detail`;
+CONTRACT's pending notes; `props.rs` (the drops' lying props beside the projectile trails).
+
+**Semantic resolutions.**
+* *Weapon table.* `WEAPON_FIELDS` 154 → 169: `NpcSounds`, `TorsoAnims` (remote-presentation);
+  `Drop`, `DropObject`, `HudIconRatio` and the four pickup sounds (drops); `LowAmmoWarning`
+  (bug-sweep-4); `FireStartSoundNpc`, `FireLastSoundNpc`, `ScreenFx`, `HudIcon`, `WorldWeapon`
+  (conformance-gaps). Roles as the branches set them: `Drop` and `DropObject` are sim (the drop
+  rules, and the object the sim spawns), `ScreenFx` sim (the sim plays the cloud), the rest
+  presentation; the content tests and the real-install roster lockstep gate pass.
+  `def_sound_events` takes conformance-gaps' `Heard`: the pickup sounds `Player`, their Npc pair
+  and `NpcSounds` `World`, the NPC fire start/last `Remote`.
+* *The pickup hint and `HudIcon`.* The drops' hint drew `classicons::weapon_icon`, which
+  conformance-gaps now resolves to the def's `HudIcon` sprite; the hint now takes the base gun's
+  `HudIcon` and its `HudIconRatio` from the same def (BO2's cursor hint draws `hudIcon` by
+  `hudIconRatio`), and its test checks the sprite is the one the class screens draw.
+* *nativebody.* The native pose sends -1 at the tablet (remote-presentation), else the def's
+  `world_index()` (conformance-gaps' alt models). The corpse's weapon, the mp autopilot's hold log
+  and the drops' poses now also send `world_index()` (they used `viewmodel`): a General dying with
+  his launcher up keeps the rig he died with instead of recomposing. The W3D shield carry model
+  keeps bug-sweep-4's `tag_weapon_left` pivot with conformance-gaps' `model_w`; `native_audit`
+  audits the shield in body mode with the offhands.
+* *Damage and death.* Bug-sweep-4's equipment breaking keeps damage-rules' `Hit { stuck_to }` with
+  the breaker as the attacker for the chained detonation; the Trophy System's `radiusdamage` (no
+  means named in `_trophy_system.gsc:233`) now deals `MOD_EXPLOSIVE`, the script's default and what
+  the other scripts pass explicitly for the same blast (`radiusdamage( …, "MOD_EXPLOSIVE" )`), so
+  Flak Jacket and the vehicle splash rule apply to it. **Scavenger** now takes the kill's means of
+  death (`MeansOfDeath::drops_scavenger`, `_globallogic_player.gsc:1913`): no pack for
+  `MOD_GRENADE`, `MOD_GRENADE_SPLASH`, `MOD_EXPLOSIVE` or `MOD_PROJECTILE_SPLASH`; the strike kills
+  pass `damage::strike`'s means (always `MOD_IMPACT` for a strike that does not end in a blast).
+  BO2's pack and weapon drop are independent (`dropscavengerfordeath` then `dropweaponfordeath`,
+  both outside the grace period, the weapon also not for a team kill or suicide), as the two rules
+  already were. Health regen's `very_hurt` lives on the record and is hashed with it; `score`,
+  `drops`, `kills` and `class_waits` are all in the fingerprint and the perturbation test.
+* *Render rate.* The body pass keeps remote-presentation's `fillNativeScene` and takes
+  graphics-high's `getRenderTransformMatrix`; corpses go through the same pass. The drops' lying
+  draw took the sim's `pos`; it now takes its prop's render transform (the prop is posed exactly
+  where the sim lays the drop), so a tossed drop moves at the render rate.
+* *Smoke.* conformance-gaps' `ScreenFx` cloud is converted by `add_area` (`Role::Area`), so it keeps
+  `AREA_EFFECT` under fx-flipbook's priorities and graphics-high's never-thinned area effects.
+* *Host patches.* fx-flipbook's `0025-particle-flipbook` collided with graphics-high's
+  `0025-graphics-detail-default`; it is now **`0028-particle-flipbook`** (it applies on 0025–0027)
+  and the code/doc references to the flipbook patch follow. 0001–0028 all apply in `cargo xtask build`.
+* *mptest.* remote-presentation's leaver comparison until spectator, bug-sweep-4's any-N checks and
+  the drops' `ZHBO_MPTEST_SHOTS` merged on their own. With graphics-high's 0027 the capture's
+  `GGC_BGFX_SCREENSHOT_AFTER`/`_INTERVAL` count logic frames, so `ZHBO_MPTEST_SHOTS`' 300/150 mean
+  10 s and 5 s of game time.
+
+**Bumps.** `ZHBO_ABI_VERSION` 31 → 32 on both sides (damage-rules' kind codes 3–37, the drops'
+`ZhboDroppedWeapon`/`zhbo_client_dropped_weapons`/`ZHBO_BODY_LYING`, the `zhbo_world_mesh_count(-3)`
+meaning); `hud::VERSION` 85 → 86. CONTRACT's five Pending notes are folded into "Versioning"'s
+ABI 32 paragraph. No `zhbo_native` format moves (`BODY_VERSION` 1, `WEAPON_VERSION` 3).
+
+**Fixed in the integration (each also on its branch, by construction).**
+* *The autopilot at the render rate* (graphics-high): `--classpick` failed 9/12 (Escape kept
+  playing, respawned a General, came back with the class). `autopilotFrame` runs from
+  `Zhbo_ClientFrame`, which host patch 0026 runs at the display's rate, about four times a logic
+  frame; a take-control request lands on the next logic frame, so the retake was counted and sent
+  once per client frame in between (`autopilot: taking control again` three times at frame 242)
+  and the script's third session never came. graphics-high ran no `--classpick`. Everything past
+  the showcase camera now acts once per logic frame, as before 0026: 12/12.
+* *mptest without captures* (weapon-drops): `finish()`'s capture conversion loop ended on a failed
+  `[[ -f ]]` when nothing was captured, and under `set -e` the EXIT-trapped `finish` called at the
+  top level ended the script with status 1 before any check (the long runs printed nothing; the
+  short leg passed only with `ZHBO_MPTEST_SHOTS=1`). The loop skips a missing file and returns 0.
+  `ZHBO_MPTEST_SHOT_INTERVAL` sets the capture interval (logic frames, default 150).
+* *The long run's leave over a drop* (weapon-drops × the long run): the first `ZHBO_MPTEST_ROUNDS=5`
+  run never ended. The host never dies in the long run, so he never resupplies; by round 4 his
+  AN-94 was dry and the target outlived the round, and the target's scripted leave pressed the field
+  computer's key at the meeting point where his earlier Generals' MP7s lay. The drops make that
+  key the use key over a drop: he swapped his 870 for an MP7 (`player 3 picked up the mp7_mp`,
+  frame 6496) and stayed in first person through 40 more host rounds until the 1,800 s limit
+  (30/32: the joiner's run never finished; the state hash agreed on all 51,376 common frames).
+  weapon-drops ran only the short run and bug-sweep-4's long runs had no drops. The mp scripts now
+  back off while `Sim::use_target` has something in reach and then press once
+  (`Autopilot::mp_leave`, `the_mp_leave_backs_off_a_dropped_weapon_first`); TESTING says so.
+* *The planted shield vanished* (bug-sweep-4's footing × W3D culling): in the shield capture the
+  planted shield disappeared a second after it went down, as the first-person view rose from it
+  (frame 338 → 339; the same at Low detail, so not graphics-high's). W3D culls a skinned model by
+  its meshes' header box and sphere, read in the hierarchy root's space
+  (`HLodClass::Update_Obj_Space_Bounding_Volumes`), but the writer took them from the vertices as
+  stored, relative to their bones; bug-sweep-4 draws the shield from its box's footing
+  (`Rig::placed`, 26 in below the model's origin), so the bounds sat that far below the panel and
+  the model was culled once its feet left the view. `character::skin` now records each vertex
+  where the rig's bind pose stands it (`SkinMesh::bind_positions`) and the header bounds come from
+  those (`a_skins_bounds_are_where_the_rig_stands_it`); `skin_rigid`'s meshes keep the old bounds.
+* *The --build leg's site* (pre-existing): 11/18 in two of four runs (hammer placed, turned,
+  built, repaired). When the General finished his first stash at (1261, 1891) the search chose open
+  ground at 255°, and the first-person placement at site angle 2.09 rad overlapped that stash
+  (legal-build code 3). The script's wheel window (3.6..3.65 s) caught one logic frame or two, so
+  the structure turned 30° or 45° from run to run (integration8 logged 45, bug-sweep-4 30), while the
+  search checked one and two notches. The wheel now turns on the one logic frame at 3.6 s and the
+  search checks every turn from none to three: 18/18 three times (the 255° spot is now rejected).
+* *Gotcha:* never edit `scripts/mptest-mac.sh` (or any script) while a leg runs it: bash reads the
+  file as it goes, and the first long run died on `syntax error near unexpected token 'fi'` after
+  an edit mid-run.
+
+**Verification.**
+* `cargo test --workspace` 1,210 passed, 0 failed; clippy `--workspace --all-targets` and zhbo-core
+  `--features harness` and `harness,renderer` clean.
+* Real install (`--ignored`, release): zhbo-assets 78 passed, 0 failed — the enumerator test
+  `conformance_the_enumerator_matches_the_expected_rows` now passes too (it failed on integration8), the
+  roster lockstep gate, the fx preview gate (95 %), the props scale and drops sweeps, the offhand and
+  torso sweeps, the splash sweep; zhbo-core 1, zhbo-formats 18 and one more passed. The conformance
+  gate stays red only for the remaining clusters.
+* Conformance: all ten files byte-identical to conformance-gaps' (weapons 12,163 rows, 22 cells in 3
+  column clusters over 2 areas — the offhands' `anim_ads_up`/`anim_ads_down` 10 + 10, the sensor
+  grenade's and Trophy System's `projectile_explosion_effect` 2; cac 0 cells, 4 BO2-only rows).
+* In game (final build): default 16/16, `--input` 3/3, `--equipment` 8/8, `--rts` 16/16, `--rts-dry`
+  5/5, `--build` 18/18 (three runs after its fix), `--classpick` 12/12, `--scope` 1/1, `--w3d-ads` 2/2,
+  `--replay` 5/5, `--splash` 5/5, `--smoke` 7/7, `--detail` 10/10, `--drops` 9/9, `--mp` 25/25; long
+  runs `ZHBO_MPTEST_ROUNDS=3` 34/34 (4,813 common frames) and `=5` 34/34 (9,612 common frames, 6
+  shellshocks on both machines, CQB worn), on the build before the skin-bounds and build-script
+  fixes (neither touches the sim or the mp scripts). No desync, mismatch or panic line in any log.
+  Frame rate: the display's 120 Hz with the logic at 30 (splash and default 5 s averages 104–142,
+  median 120; the long run 72–122, median 120).
+* Captures (`~/.opencode/plan/integration9/`): another General mid-throw as the joiner saw him
+  (`shot-other-general-mid-throw*.png`), his corpse (`shot-corpse*.png`), the dropped AN-94 with its
+  launcher and camo with "Press F for AN-94 Launcher" and its HUD icon (`shot-dropped-weapon-hint.png`),
+  the SMAW's blast (`shot-explosion-flipbook*.png`), the low-ammo "[R] Reload" (`shot-low-ammo.png`),
+  the planted shield standing (`shot-planted-shield.png`).
