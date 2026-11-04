@@ -377,10 +377,23 @@ impl Sim {
         true
     }
 
-    /// Every dropped weapon's world model now: its object, where it lies and the weapon (the
-    /// third person and tests read it; presentation).
-    pub fn dropped_weapons(&self) -> impl Iterator<Item = (&'static crate::weapons::WeaponDef, Vec3)> + '_ {
-        self.drops.iter().map(|d| (d.weapon.def, d.pos))
+    /// What the native third person draws for each dropped weapon with a Zero Hour object (Track
+    /// R7, `zhbo_client_dropped_weapons`): its object (the draw's key, and the W3D prop it hides),
+    /// the combination's converted index (its `ZW<vm>` world weapon: the attachments), where it
+    /// lies and its yaw. Presentation only.
+    pub fn dropped_poses(&self) -> Vec<(u32, i32, Vec3, f32)> {
+        self.drops
+            .iter()
+            .filter(|d| d.object != 0 && d.weapon.def.viewmodel >= 0) // content: presentation (dropped_poses: the third-person draw)
+            .map(|d| (d.object, d.weapon.def.viewmodel, d.pos, d.yaw)) // content: presentation (dropped_poses: the third-person draw)
+            .collect()
+    }
+
+    /// The camo the dropped weapon drawn as object `object` wears on its world weapon `vm` (the
+    /// options it was dropped with: `FUN_005fb0e0` keeps them on the item), if any.
+    pub fn dropped_camo(&self, object: u32, vm: i32) -> Option<String> {
+        let d = self.drops.iter().find(|d| d.object == object)?;
+        crate::nativebody::camo_for(d.weapon.def, &d.weapon.options.camo, vm)
     }
 }
 
@@ -590,5 +603,22 @@ mod tests {
         assert_eq!(sim.drops.len(), cap);
         assert!(sim.drops.iter().any(|d| d.weapon.def.id == "riotshield_mp"), "avoidDropCleanup spares the farthest");
         assert!(!sim.drops.iter().any(|d| d.pos.x == 100.0 + (cap - 2) as f32 * 10.0), "the farthest other one went");
+    }
+
+    /// The native third person's view of the drops: each with an object, keyed by it, as its
+    /// combination's world weapon, where it lies; its camo is the options it was dropped with.
+    #[test]
+    fn the_third_person_draws_each_drop_as_its_combination_with_its_camo() {
+        let mut sim = Sim::new();
+        let def = crate::weapons::catalog().get("an94_mp+reflex").expect("a combination");
+        let mut d = lying("an94_mp", Vec3::new(5.0, 6.0, 0.0));
+        d.weapon.def = def;
+        d.object = 900;
+        d.yaw = 0.5;
+        sim.drops.push(d);
+        sim.drops.push(lying("svu_mp", Vec3::ZERO)); // no object: the prop never spawned
+        let poses = sim.dropped_poses();
+        assert_eq!(poses, vec![(900, def.viewmodel, Vec3::new(5.0, 6.0, 0.0), 0.5)].into_iter().filter(|p| p.1 >= 0).collect::<Vec<_>>());
+        assert_eq!(sim.third_person_camo(900, def.viewmodel), crate::nativebody::camo_for(def, "camo_dot", def.viewmodel), "the drop's own camo, by its object");
     }
 }

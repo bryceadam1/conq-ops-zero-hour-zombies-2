@@ -990,6 +990,42 @@ pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::f
     n as i32
 }
 
+/// One dropped weapon the native third person draws lying on the ground (`ZhboDroppedWeapon`,
+/// appended for ABI 32): its Zero Hour object, its world weapon's converted index, where it lies
+/// (world units) and its yaw.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ZhboDroppedWeapon {
+    pub object: u32,
+    pub vm: i32,
+    pub pos: [f32; 3],
+    pub yaw: f32,
+}
+
+const _: () = assert!(std::mem::size_of::<ZhboDroppedWeapon>() == 24);
+
+/// The dropped weapons to draw this frame (`Sim::dropped_poses`): up to `cap` into `out`, returns
+/// how many. The bridge draws each through [`crate::nativebody::ffi::zhbo_native_body`] in
+/// `ZHBO_BODY_LYING` mode, keyed by its object, and hides that object's W3D prop while it draws.
+///
+/// # Safety
+/// `out` must be writable for `cap` entries.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_dropped_weapons(out: *mut ZhboDroppedWeapon, cap: i32) -> i32 {
+    if out.is_null() || cap <= 0 {
+        return 0;
+    }
+    let drops = with_state(|s| s.sim.dropped_poses()).unwrap_or_default();
+    // The rigs of drops gone since (taken, expired) are released; the third person's lock is
+    // taken after the sim's is let go.
+    crate::nativebody::ffi::retain_dropped(&drops.iter().map(|d| d.0).collect::<Vec<_>>());
+    let n = drops.len().min(cap as usize);
+    for (i, (object, vm, pos, yaw)) in drops.into_iter().take(n).enumerate() {
+        *out.add(i) = ZhboDroppedWeapon { object, vm, pos: [pos.x, pos.y, pos.z], yaw };
+    }
+    n as i32
+}
+
 /// The class camo option General `general`'s weapon `vm` wears in third person (the sim's
 /// [`crate::sim::Sim::third_person_camo`]); `None` before a game or for any other weapon.
 pub(crate) fn third_person_camo(general: u32, vm: i32) -> Option<String> {

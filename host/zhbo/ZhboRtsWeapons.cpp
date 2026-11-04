@@ -88,6 +88,8 @@ std::map<uint32_t, WorldLook> s_worldLooks;
 // the draw modules, not Drawable::m_hidden: that flag also deselects the General
 // (Drawable::updateHiddenStatus) and makes CanSelectDrawable refuse him.
 std::set<uint32_t> s_nativeBodyHidden;
+// The dropped weapons whose W3D prop the native pass hides (drawDroppedWeapons).
+std::set<uint32_t> s_nativeDropHidden;
 } // namespace
 
 // The General under RTS control: Zero Hour's AI fights with his class's weapons: PRIMARY and
@@ -394,6 +396,7 @@ void ResetRtsWeapons()
 			setDrawModuleHidden(draw, draw->isDrawableEffectivelyHidden());
 	}
 	s_nativeBodyHidden.clear();
+	s_nativeDropHidden.clear();
 	memset(s_rtsHitFx, 0, sizeof(s_rtsHitFx));
 	s_rtsHitFxLoaded = FALSE;
 	s_rtsShots.clear();
@@ -450,6 +453,97 @@ void serveNativeBody()
 }
 } // namespace
 
+// The scene's lights, the camera and the views as the native pass takes them (the viewmodel's
+// sceneLights, same source): Zero Hour's global lights for the time of day (lightPos is the
+// direction the light travels, so the light is the other way), the RTS camera's position for the
+// shader's specular term, and the scene view drawn into before the composite.
+static void fillNativeScene(ZhboNativeBodyIn &in)
+{
+	if (TheGlobalData)
+	{
+		const int lightCount = std::min(std::max(TheGlobalData->m_numGlobalLights, 0), 3);
+		for (int l = 0; l < lightCount; ++l)
+		{
+			const GlobalData::TerrainLighting &tl = TheGlobalData->m_terrainObjectsLighting[TheGlobalData->m_timeOfDay][l];
+			in.lights[l].dir[0] = -tl.lightPos.x;
+			in.lights[l].dir[1] = -tl.lightPos.y;
+			in.lights[l].dir[2] = -tl.lightPos.z;
+			in.lights[l].color[0] = tl.diffuse.red;
+			in.lights[l].color[1] = tl.diffuse.green;
+			in.lights[l].color[2] = tl.diffuse.blue;
+			in.ambient[0] += tl.ambient.red;
+			in.ambient[1] += tl.ambient.green;
+			in.ambient[2] += tl.ambient.blue;
+		}
+		in.light_count = lightCount;
+	}
+	if (TheTacticalView)
+	{
+		const Coord3D camPos = TheTacticalView->get3DCameraPosition();
+		in.eye[0] = camPos.x;
+		in.eye[1] = camPos.y;
+		in.eye[2] = camPos.z;
+	}
+	in.target_view = 1; // k_scene_view (the scene the drawable renders into)
+	in.before_view = 9; // k_composite_view (the pass this runs before)
+	if (const char *dbg = getenv("ZHBO_BO2_DEBUG"))
+		in.debug = static_cast<float>(atoi(dbg));
+}
+
+// The dropped weapons lying on the ground (sim/drops.rs): each through the native pass in
+// ZHBO_BODY_LYING mode, keyed by its prop object, as BO2 draws the item (the combination, its camo).
+// While a drop draws natively its W3D prop (the base weapon's world model) is hidden; a refusal or a
+// rig still loading shows the prop again within the frame, as the body mode's hide does.
+static void drawDroppedWeapons()
+{
+	std::set<uint32_t> drawn;
+	ZhboDroppedWeapon drops[32];
+	const int32_t count = zhbo_client_dropped_weapons(drops, 32);
+	static Bool s_logged = FALSE;
+	for (int32_t i = 0; i < count; ++i)
+	{
+		const ZhboDroppedWeapon &d = drops[i];
+		Object *obj = TheGameLogic->findObjectByID((ObjectID)d.object);
+		Drawable *draw = obj ? obj->getDrawable() : nullptr;
+		if (!draw)
+			continue;
+		ZhboNativeBodyIn in = {};
+		in.general = d.object;
+		in.mode = ZHBO_BODY_LYING;
+		in.vm = d.vm;
+		in.faction = 'U';
+		in.rate = 1.0f;
+		in.pos[0] = d.pos[0];
+		in.pos[1] = d.pos[1];
+		in.pos[2] = d.pos[2];
+		in.yaw = d.yaw;
+		fillNativeScene(in);
+		if (zhbo_native_body(&in) != ZHBO_NATIVE_DRAWN)
+			continue;
+		drawn.insert(d.object);
+		if (s_nativeDropHidden.insert(d.object).second)
+			setDrawModuleHidden(draw, TRUE);
+		if (!s_logged)
+		{
+			s_logged = TRUE;
+			logf("native body: dropped weapon %u (weapon %d) drawn lying, its W3D prop hidden", (unsigned)d.object, (int)d.vm);
+		}
+	}
+	for (std::set<uint32_t>::iterator it = s_nativeDropHidden.begin(); it != s_nativeDropHidden.end();)
+	{
+		if (drawn.count(*it) == 0)
+		{
+			Object *obj = TheGameLogic->findObjectByID((ObjectID)*it);
+			Drawable *draw = obj ? obj->getDrawable() : nullptr;
+			if (draw)
+				setDrawModuleHidden(draw, draw->isDrawableEffectivelyHidden());
+			it = s_nativeDropHidden.erase(it);
+		}
+		else
+			++it;
+	}
+}
+
 void applyWorldPoses()
 {
 	enum { MAX_VIEWMODELS = 160 };
@@ -487,39 +581,7 @@ void applyWorldPoses()
 			in.state = np.state;
 			in.time = np.time;
 			in.rate = np.rate;
-			// The scene's lights as the native pass takes them (the viewmodel's sceneLights, same
-			// source): Zero Hour's global lights for the time of day. lightPos is the direction the
-			// light travels, so the light is the other way.
-			if (TheGlobalData)
-			{
-				const int lightCount = std::min(std::max(TheGlobalData->m_numGlobalLights, 0), 3);
-				for (int l = 0; l < lightCount; ++l)
-				{
-					const GlobalData::TerrainLighting &tl = TheGlobalData->m_terrainObjectsLighting[TheGlobalData->m_timeOfDay][l];
-					in.lights[l].dir[0] = -tl.lightPos.x;
-					in.lights[l].dir[1] = -tl.lightPos.y;
-					in.lights[l].dir[2] = -tl.lightPos.z;
-					in.lights[l].color[0] = tl.diffuse.red;
-					in.lights[l].color[1] = tl.diffuse.green;
-					in.lights[l].color[2] = tl.diffuse.blue;
-					in.ambient[0] += tl.ambient.red;
-					in.ambient[1] += tl.ambient.green;
-					in.ambient[2] += tl.ambient.blue;
-				}
-				in.light_count = lightCount;
-			}
-			// The RTS camera's position: the shader's specular term.
-			if (TheTacticalView)
-			{
-				const Coord3D camPos = TheTacticalView->get3DCameraPosition();
-				in.eye[0] = camPos.x;
-				in.eye[1] = camPos.y;
-				in.eye[2] = camPos.z;
-			}
-			in.target_view = 1; // k_scene_view (the scene the drawable renders into)
-			in.before_view = 9; // k_composite_view (the pass this runs before)
-			if (const char *dbg = getenv("ZHBO_BO2_DEBUG"))
-				in.debug = static_cast<float>(atoi(dbg));
+			fillNativeScene(in);
 			if (const Matrix3D *world = draw->getTransformMatrix())
 			{
 				const Vector3 pos = world->Get_Translation();
@@ -547,6 +609,7 @@ void applyWorldPoses()
 					nativeBodyDrawn.insert(np.general);
 			}
 		}
+		drawDroppedWeapons();
 		// Answer this frame's requests after the draw calls, as the viewmodel does, so the next
 		// frame's load can use them.
 		serveNativeBody();

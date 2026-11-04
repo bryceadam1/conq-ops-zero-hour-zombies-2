@@ -294,7 +294,7 @@ fn each_world_part_wears_its_own_camo_asset() {
         (zhbo_native::camo_path("camo_gun"), blob("camo_gun", "gun_atacs.tga").to_bytes()),
         (zhbo_native::camo_path("camo_optic"), blob("camo_optic", "optic_atacs.tga").to_bytes()),
     ];
-    for mode in [Mode::Weapon, Mode::Body] {
+    for mode in [Mode::Weapon, Mode::Body, Mode::Lying] {
         let req = Request { vm: 7, faction: b'U', mode, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
         let mut files = Files::default();
         let mut loaded = None;
@@ -311,7 +311,7 @@ fn each_world_part_wears_its_own_camo_asset() {
         let l = loaded.expect("the rig loads");
         let camos: Vec<Option<&str>> = l.mesh.surfaces.iter().map(|s| s.camo.as_deref()).collect();
         let want: &[Option<&str>] = match mode {
-            Mode::Weapon => &[Some("gun_atacs.tga"), Some("optic_atacs.tga")],
+            Mode::Weapon | Mode::Lying => &[Some("gun_atacs.tga"), Some("optic_atacs.tga")],
             Mode::Body => &[None, Some("gun_atacs.tga"), Some("optic_atacs.tga")],
         };
         assert_eq!(camos, want, "{mode:?}");
@@ -441,4 +441,70 @@ fn a_torso_clip_moves_the_upper_body_over_the_legs() {
     let rigid = Request { mode: Mode::Weapon, ..req };
     l.pose(&rigid, None, Some((&torso, 0.5)), &mut out);
     assert!(out.local.iter().all(|x| x.0 != turn));
+}
+
+/// A dropped weapon (`Mode::Lying`): the world weapon alone, on its side — its length along the
+/// drop's yaw, its height (model z) across, its width (model y) up — at the General's drawn scale,
+/// its lowest point on the ground at `pos`.
+#[test]
+fn a_dropped_weapon_lies_on_its_side_on_the_ground() {
+    let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3])]);
+    let manifest = Weapon { id: "test_mp".into(), parts: vec![ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: None, ads_swap: None }], hide: vec![] };
+    let files_in = [(zhbo_native::world_weapon_path(7), manifest.to_bytes()), (zhbo_native::model_path("gun"), gun.to_bytes())];
+    let req = Request { vm: 7, faction: b'U', mode: Mode::Lying, state: 0, time: 0.0, rate: 1.0, pos: [100.0, 50.0, 3.0], yaw: std::f32::consts::FRAC_PI_2, tag: None, stowed: -1 };
+    let mut files = Files::default();
+    let mut loaded = None;
+    for _ in 0..8 {
+        if let Some(l) = load(&mut files, &req, None).unwrap() {
+            loaded = Some(l);
+            break;
+        }
+        let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+        for w in &wanted {
+            files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+        }
+    }
+    let l = loaded.expect("the weapon rig loads");
+    assert!(l.body.is_none(), "no body");
+    let mut out = Posed::default();
+    l.pose(&req, None, None, &mut out);
+    assert!((l.lowest(&out.palette) - 3.0).abs() < 1e-4, "on the ground at pos");
+    // The triangle (0,0,0), (0,5,0), (0,0,5) in inches: model y (the side) points up, model z
+    // (the height) across; facing +Y (yaw 90°), model +z goes to world +X.
+    let k = ART_SCALE * crate::units::GENERAL_SCALE;
+    let at = |p: [f32; 3]| {
+        let m = &out.palette[0];
+        [0, 1, 2].map(|r| m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r])
+    };
+    let (o, side, up) = (at([0.0; 3]), at([0.0, 5.0, 0.0]), at([0.0, 0.0, 5.0]));
+    assert!((side[2] - o[2] - 5.0 * k).abs() < 1e-3, "its side points up: {o:?} {side:?}");
+    assert!((up[0] - o[0] - 5.0 * k).abs() < 1e-3 && (up[2] - o[2]).abs() < 1e-3, "its height lies across: {up:?}");
+    assert!((o[0] - 100.0).abs() < 1e-3 && (o[1] - 50.0).abs() < 1e-3, "where it lies");
+}
+
+/// A dropped weapon's rig goes with the drop (each drop is a new object): `retain_dropped` keeps
+/// the lying rigs still listed and a General's whatever it is given.
+#[test]
+fn a_gone_drops_rig_is_released() {
+    let f = fixture();
+    with_state(|s| {
+        for (general, mode) in [(1u32, 1), (900, super::ffi::LYING), (901, super::ffi::LYING)] {
+            let mut inp = ZhboNativeBodyIn { general, mode, vm: 7, faction: b'U' as i32, rate: 1.0, tag_valid: 1, ..Default::default() };
+            inp.tag[0] = 1.0;
+            inp.tag[5] = 1.0;
+            inp.tag[10] = 1.0;
+            for _ in 0..8 {
+                if s.frame(&inp, 1, None) != LOADING {
+                    break;
+                }
+                let wanted: Vec<String> = s.files.wanted().map(str::to_string).collect();
+                for w in &wanted {
+                    s.files.provide(w, f.files.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+                }
+            }
+        }
+        let before = s.rig_count();
+        s.retain_dropped(&[901]);
+        assert_eq!(s.rig_count(), before - 1, "the drop that went is released, the General and the lying one stay");
+    });
 }

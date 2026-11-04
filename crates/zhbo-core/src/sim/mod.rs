@@ -1078,7 +1078,8 @@ impl Sim {
     /// The class camo option General `general`'s weapon `vm` wears in third person
     /// ([`crate::nativebody::camo_for`]).
     pub fn third_person_camo(&self, general: u32, vm: i32) -> Option<String> {
-        let p = self.players.iter().flatten().find(|p| p.general == general)?;
+        // A dropped weapon's draw is keyed by its object (`Sim::dropped_poses`).
+        let Some(p) = self.players.iter().flatten().find(|p| p.general == general) else { return self.dropped_camo(general, vm) };
         // A picked-up weapon wears the camo it was dropped with.
         let picked = p.arsenal.weapons.iter().filter_map(|w| w.options.as_ref().map(|o| (w.main, o.camo.as_str())));
         if let Some(c) = picked.filter_map(|(d, camo)| crate::nativebody::camo_for(d, camo, vm)).next() {

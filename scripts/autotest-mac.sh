@@ -492,6 +492,10 @@ EOF
     check "the General was killed" "autopilot drops: killing General"
     check "his rifle dropped" "General dropped his an94_mp\+gl at"
     check "  ...as its ground prop" "drops: an94_mp\+gl down at .* as ZHBO_Drop_an94_mp object [1-9]"
+    # The native third person (ZHBO_NATIVE_BODY, on by default) draws the combination on the
+    # ground in its camo and hides the W3D prop.
+    check "  ...drawn natively in its camo" "native body: General [0-9]+ weapon [0-9]+ camo camo_gold composed"
+    check "  ...lying, its prop hidden" "native body: dropped weapon [0-9]+ \(weapon [0-9]+\) drawn lying"
     check "the next took its stock" "took ammo from a dropped an94_mp\+gl"
     check "  ...and swapped for it" "picked up the an94_mp\+gl"
     check "  ...putting his own down" "drops: an94_mp\+reflex down at .* as ZHBO_Drop_an94_mp object [1-9]"

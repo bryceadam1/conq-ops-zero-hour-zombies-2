@@ -60,6 +60,10 @@ pub enum Mode {
     Weapon,
     /// The body and the weapon on the body's own tag (the W3D body is hidden by the bridge).
     Body,
+    /// A dropped weapon on the ground: the world weapon alone (its attachments, its camo), at the
+    /// General's drawn scale, a quarter turn about its length onto its side (as the converter's
+    /// W3D prop, `zhbo_assets::props::lying`), its lowest point on the ground at `pos`, yawed.
+    Lying,
 }
 
 /// One general's frame.
@@ -375,6 +379,31 @@ impl Loaded {
         self.skeleton.model_space(&out.local, &mut out.model);
         out.root = self.placement(req, &out.model);
         self.skeleton.palette(&out.model, &out.root, &mut out.palette);
+        if req.mode == Mode::Lying {
+            // Its lowest point onto the ground: the posed mesh's least height, moved to `pos`.
+            let low = self.lowest(&out.palette);
+            if low.is_finite() {
+                out.root[14] += req.pos[2] - low;
+                self.skeleton.palette(&out.model, &out.root, &mut out.palette);
+            }
+        }
+    }
+
+    /// The least world height of the mesh's vertices under `palette` (each skinned by its bones).
+    pub fn lowest(&self, palette: &[Mat4]) -> f32 {
+        let mut low = f32::INFINITY;
+        for v in &self.mesh.vertices {
+            let mut z = 0.0;
+            for (b, w) in v.bones.iter().zip(v.weights) {
+                if w == 0.0 {
+                    continue;
+                }
+                let Some(m) = palette.get(*b as usize) else { continue };
+                z += w * (m[2] * v.position[0] + m[6] * v.position[1] + m[10] * v.position[2] + m[14]);
+            }
+            low = low.min(z);
+        }
+        low
     }
 
     /// The model-to-world matrix for this frame.
@@ -382,6 +411,7 @@ impl Loaded {
         match req.mode {
             Mode::Weapon => req.tag.as_ref().map_or(MAT4_IDENTITY, root_from_tag),
             Mode::Body => root_from_object(req.pos, req.yaw),
+            Mode::Lying => mat4_mul(&root_from_object(req.pos, req.yaw), &mat4((axis_angle([1.0, 0.0, 0.0], std::f32::consts::FRAC_PI_2), [0.0; 3]))),
         }
     }
 

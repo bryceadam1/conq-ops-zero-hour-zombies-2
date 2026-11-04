@@ -11987,3 +11987,46 @@ through the HUD's own primitives.
   check: the state hash differed on the last common frame only (7919, two frames after the
   joiner left; the host's seat, the world equal); its log ran one frame further past the leave than
   the runs that pass — the leaving machine's last frame, not a drop (none touched the host's seat).
+
+### Follow-up: the dropped combination drawn natively; the dist keeps its archive (branch `v1/weapon-drops`)
+
+Merged `origin/v1/remote-presentation` first (the native full body is the default there and it
+changes `nativebody`). The conflicts were kept on both sides: the world hash takes the drops, the
+kills and the score; the step runs through the drop witness inside the score's tally; a death drops
+and forgets the score; 163 weapon fields; the witness takes the new `MeansOfDeath`.
+
+**The ground model is now BO2's item.** The native third person draws each drop as
+the combination's world weapon (`ZW<vm>`: its attachments) in the camo it was dropped with, through
+`zhbo_native_body` in a new mode, `ZHBO_BODY_LYING` (`nativebody::Mode::Lying`), keyed by the
+drop's Zero Hour object. The rig is placed at the General's drawn scale, turned a quarter turn about
+its length onto its side (the W3D prop's own turn), and lifted so its lowest posed vertex sits on
+the ground (`Loaded::lowest`, over the skinned palette, so attachment parts count). The bridge
+(`ZhboRtsWeapons.cpp` `drawDroppedWeapons`) asks `zhbo_client_dropped_weapons` (new, ABI 32 pending)
+each frame after the Generals and hides each drawn drop's W3D prop through its draw modules. The
+prop shows again the frame a draw is refused or still loading, and it is the fallback for
+`ZHBO_NATIVE_BODY=0` and DX8. `Sim::third_person_camo` finds a drop by its object. The core
+releases the rig of a drop that is gone, since each drop is a new object and its rig would
+otherwise live until the reset. The lens reticle stays dark, as on every BO2 world model (the
+reticle fade is the local viewmodel's only, `nativebody/gpu.rs`), so there is no reticle to draw.
+
+**`cargo xtask build --dist X` kept deleting the converted archive.** The dist sync
+(`copy_dir_if_changed`) mirrors the staged build and removes everything the stage does not have,
+including `ConquerOps_BO2.big`, which the launcher writes into the dist at first launch, so every
+rebuilt dist reconverted (minutes; the first in-game leg after a build could time out waiting for
+first person). The sync now takes a keep rule: the dist keeps an archive the launcher's own check
+accepts (`zhbo_assets::hud::archive_current`: this `hud::VERSION`, this loadout; the launcher now
+calls the same function) and removes a stale one for the launcher to rebuild. xtask depends on
+zhbo-assets for it (ARCHITECTURE's graph says so). Test:
+`xtask::tests::the_dist_keeps_a_current_bo2_archive_and_drops_a_stale_one`. In practice a build,
+`build-archive` into the dist, then a second build: the 1.45 GB archive was kept, untouched.
+
+`scripts/mptest-mac.sh` gains `ZHBO_MPTEST_SHOTS=1`: each instance captures its own screen
+(`host-shot.*`, `join-shot.*`).
+
+**Verification.** `cargo test --workspace` 1,168 passed; clippy clean (workspace; zhbo-core
+`harness,renderer`). In game: `--drops` 9/9 (the native draw of `an94_mp+gl` in `camo_gold`, lying,
+its prop hidden; capture `at-drops/shot.bmp.001050.png` shows the gold rifle with its launcher on
+the ground), default 16/16, short mptest 25/25 with captures: both machines drew the joiner's
+dropped MP7 natively (`native body: dropped weapon 151 (weapon 6) drawn lying` in host.log and
+join.log). The host's capture of that spot (`at-mp/host-shot.bmp.016800.png`) shows the body, with
+the small gun beside it not distinguishable at that range.

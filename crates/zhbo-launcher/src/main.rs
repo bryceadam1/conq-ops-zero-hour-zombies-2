@@ -100,7 +100,7 @@ fn launch(game_args: &[String], check_only: bool) -> Result<(), String> {
 fn prepare_bo2_art(here: &Path, bo2: &Path) {
     use zhbo_assets::hud;
     let out = here.join(hud::ARCHIVE_NAME);
-    if hud::archive_version(&out) == Some(hud::VERSION) {
+    if hud::archive_current(&out) {
         return;
     }
     let line = match hud::build_archive(bo2) {

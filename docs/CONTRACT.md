@@ -535,6 +535,15 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   base clip and its size is unchanged. The left clip id is the matching right slot with
   `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). Each hand's shot has its own fired flag
   (`viewmodel_fired`, `viewmodel_fired_left`; see the effects above).
+* **Dropped weapons.** Each frame, after the Generals, the bridge asks `zhbo_client_dropped_weapons`
+  and draws each drop through `zhbo_native_body` in `ZHBO_BODY_LYING` mode, keyed by its Zero Hour
+  object: the combination's world weapon (`ZW<vm>`: its attachments), the camo it was dropped with
+  (`Sim::third_person_camo` finds the drop by its object), at the General's drawn scale, a quarter
+  turn about its length onto its side, its lowest posed vertex on the ground at `pos`. While it
+  draws, the bridge hides that object's W3D prop (`ZHBO_Drop_<base>`, the base weapon's world model)
+  through its draw modules, and shows it again the frame a draw is refused or still loading;
+  with `ZHBO_NATIVE_BODY=0` (and on DX8) the prop is what shows. Its optic's lens reticle stays dark,
+  as on every BO2 world model (the reticle fade is the local viewmodel's only).
 * **The core cannot open the archive; it asks.** After each call the bridge answers every
   `zhbo_native_wanted(i)` path with `zhbo_native_provide(path, bytes, len)` (`len < 0`: not in the
   archive, after which that viewmodel is given up and logged once) and prints every
@@ -1431,6 +1440,14 @@ the flinch/jump/land torso actions (12 actions per set), `ZHBO_BO2_LandNpc` and 
 chatter events. Until the archive is rebuilt the core finds no
 torso picks and no new events (the engine logs a missing event once).
 
+
+**Pending for the next bump (ABI 32, weapon-drops; beside damage-rules' below):** the dropped
+weapon's native draw. Appended: `ZhboDroppedWeapon` (24 bytes: `object`, `vm`, `pos[3]`, `yaw`;
+size-asserted on both sides), `zhbo_client_dropped_weapons(out, cap)` (the sim's drops with a
+Zero Hour object, `Sim::dropped_poses`; it also releases the rigs of drops gone since) and the
+`ZhboNativeBodyIn.mode` value `ZHBO_BODY_LYING` (3: `general` is the drop's object, `pos`/`yaw`
+where it lies, no tag). No struct grows; an older core answers mode 3 as weapon-only without a tag
+(not native), so an older core with a newer bridge draws the W3D prop.
 
 **Pending for the next bump (ABI 32):** `ZhboLogicApi.damage`'s `kind` widens from three codes to
 one per Zero Hour `DamageType`: `ZHBO_DAMAGE_SMALL_ARMS`/`MELEE`/`EXPLOSION` keep 0–2 and

@@ -13,7 +13,7 @@ zhbo-conformance → zhbo-formats
 zhbo-core        → zhbo-requirements, zhbo-native, (feature "renderer") zhbo-gfx
 zhbo-assets      → zhbo-core, zhbo-formats, zhbo-native, zhbo-conformance, zhbo-requirements
 zhbo-launcher    → zhbo-requirements, zhbo-assets
-xtask            → zhbo-core, zhbo-formats
+xtask            → zhbo-core, zhbo-formats, zhbo-assets (the dist keeps a current BO2 archive: `hud::archive_current`)
 
 host/zhbo (C++) ←─ ABI ─→ zhbo-core
 ```
