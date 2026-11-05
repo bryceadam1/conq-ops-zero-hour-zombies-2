@@ -860,13 +860,24 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
 * **Archive.** These are more files in `ConquerOps_BO2.big`; `zhbo_assets::hud::VERSION` must be
   bumped whenever converter output changes.
 * **The bridge asks each frame, the core decides (M2, the weapon).** `applyWorldPoses`
-  (`ZhboRtsWeapons.cpp`) calls `zhbo_client_native_poses` for the overhead Generals' poses (the sim's
+  (`ZhboRtsWeapons.cpp`) calls `zhbo_client_native_poses_moving` for the Generals' poses (the sim's
   `Sim::native_poses`: the held weapon's converted index, stance, body clip (the held weapon's
   animation set and movement state, below), clip time and rate, whether the second gun is up;
-  first-person Generals are left to the viewmodel), fills one `ZhboNativeBodyIn` per
+  the General this machine looks through in first person is left to the viewmodel): once to learn
+  which Generals, then with each one's engine motion (`ZhboGeneralMotion`: his drawable's `MOVING`
+  condition and his horizontal physics speed × the logic rate), which an overhead General's body
+  clip takes (below; `zhbo_client_native_poses`, which took one General's flag, is kept for the
+  ABI). It skips every General Zero Hour would not draw (`nativeBodyVisible`: the drawable
+  effectively hidden — first person's own body, a transport or building holding him — under the
+  shroud, or fogged for the local player past `renderOneObject`'s two-second grace), so the
+  native pass never shows an enemy through the shroud; the dropped weapons' pass takes the same
+  rule. It fills one `ZhboNativeBodyIn` per
   General from the drawable's `getTransformMatrix` (feet and yaw), the drawable's
   `getCurrentWorldspaceClientBonePositions("tag_weapon_right")` (the engine's own world transform the
-  W3D gun hung from), Zero Hour's global lights and the RTS camera position, and calls
+  W3D gun hung from), Zero Hour's global lights (for a General, as Zero Hour lights infantry:
+  each light's diffuse and ambient times the map's `InfantryLightScale` for the time of day or a
+  script's override, capped at 1, plus the drawable's tint and selection flash, as
+  `RTS3DScene::renderOneObject` does) and the RTS camera position, and calls
   `zhbo_native_body`. `DRAWN` (1): the bridge hides the W3D `W<vm><k>` sub-objects. Anything else
   (0 not native, 2 still loading) leaves the W3D weapon showing — and the `s_worldLooks` cache
   remembers the native flag, so a failed native draw brings the W3D weapon back instead of leaving
@@ -899,7 +910,7 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   (`state::id`, at most `state::MAX_SETS` = 9 sets); the body manifest lists set 0's every state
   and another set's only where it differs, and `state::fallbacks` tries each nearer state in the
   set, then the rifleman's same state. `NativePose.state`/`ZhboNativePose.state` and the hit boxes'
-  `HitBox` state carry the full id. **The W3D body** (the default third person) plays set `k`'s idle,
+  `HitBox` state carry the full id. **The W3D body** (`ZHBO_NATIVE_BODY` 0/1, DX8, a rig still loading) plays set `k`'s idle,
   run, aim, fire and reload (`ZHBO_PLR_<IDL|RUN|ADS|FIR|RLD><k>`; the fire and reload are the set's
   plain-`default` weapon's `EVENTS` torso clips over its aim and idle) under the model condition
   `names::ANIM_SET_CONDITIONS[k − 1]` (`RIDER1..RIDER8`, which Zero Hour raises only on vehicles
@@ -916,7 +927,49 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   leaves `m_hidden` false, so the General stays selected and commandable. The bridge re-asserts the
   hide every frame and restores the body to the drawable's own effective-hidden state as soon as
   the native pass stops returning `DRAWN`, so a refused draw never leaves an invisible,
-  uncommandable General.
+  uncommandable General. The hide takes the decal shadow too (`W3DModelDraw::setHidden`); the
+  bridge turns it back on through the draw modules (`setShadowsEnabled`, as the drawable has it),
+  so the native body keeps the W3D body's shadow.
+* **What the hidden W3D body did, done for the native one (host patches 0029, 0030).** Zero Hour
+  places a shot's `FireFX` at the W3D model's fire bone, falls back to the hidden model's logic
+  position (his feet) when the render object is hidden (`W3DModelDraw::handleWeaponFireFX`), and
+  picks drawables by casting the view's ray against visible W3D meshes only
+  (`RTS3DScene::castRay`). For a General in `s_nativeBodyHidden` (drawn natively this frame):
+  * *His shots* (Zero Hour's own weapon overhead, and the FX weapons another player's
+    first-person shots play, `fire_fx`): `Drawable::handleWeaponFireFX` asks
+    `Zhbo_NativeFireFx` first, which plays the `FireFX` (BO2's flash, the placed brass, the
+    tracer) from `zhbo_native_body_flash(general)`: the held weapon's `tag_flash` world
+    transform from the pose the native pass drew last (`nativebody::FLASH_TAG`; its basis made
+    orthonormal, X down the barrel, as the W3D fire bone's), none while the gun is not drawn (a
+    pin or throw, a corpse) or in the other modes. Presentation only: the FX are client effects;
+    the logic's shot (a hitscan round, a projectile's launch from the template's bones) is
+    untouched, so nothing here is render state feeding the logic.
+  * *A click* (`W3DView::pickDrawable`, every pick: selection, the cursor's hint, attack
+    orders): after the scene's own ray test, `Zhbo_PickNativeDrawable` tests each such selectable,
+    living General with `zhbo_client_pick_general(general, feet, yaw, height, origin, end)`:
+    `Sim::pick_general`, his BO2 hit boxes in the pose the sim traces him in (`hit_states`; an
+    overhead General stands) at his drawn size, at his logic object's place and facing — the boxes
+    the bullets strike and the native body is drawn over, deterministic. The nearer of the two hits
+    wins. A pick that takes no selectable units (`PICK_TYPE_SELECTABLE`) ignores him, as Zero
+    Hour's collision type does.
+  * *His tracer* is BO2's (patch 0030): a beam tracer's FXList nugget names a client drawable
+    (`TracerName = ZHBO_BO2TracerDraw_<tracer>`, `Data\INI\Object\ZHBO_BO2_Tracers.ini`) whose
+    `W3DTracerDraw` takes a `Texture` (module data): it draws a camera-facing `SegmentedLineClass`
+    beam of the tracer's `beamWidth` and `beamLength` with that texture, blended additively, its
+    opacity on the colour, flying and fading by the render update's share of a logic frame,
+    instead of the untextured `Line3D`. The texture (`zhbo_tracer_<tracer>.tga`,
+    `fx::tracer_texture`) is the material's colour map (`gfx_tracer`: a streak whose U runs from
+    the tail to its pointed head) turned so the beam's V runs along it, times BO2's five colour
+    stops spread from the tail (stop 0, transparent) to the head, premultiplied. Every tracer
+    draws so (overhead, another player's, your own from the viewmodel); a trail tracer (`kind` 1,
+    the snipers' smoke) and one whose image is not in the packs keep the line in the tint.
+* **An overhead General's body clip.** `PlayerSim::body_state` under RTS control: he stands
+  (whatever stance, aim or sprint his body kept from his last first person; Zero Hour has none of
+  them overhead), walking or running at the engine's speed (`ZhboGeneralMotion`; the walk/run
+  split is `nativebody::state_of`'s share of `g_speed`) while `MOVING`, idle otherwise. The sim's
+  own hit pose for him (`hit_states`, no engine motion) is the standing idle. The first time the
+  body pass draws each movement state it logs `native body: General G body clip <name> (movement
+  state S)`.
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
   trigger, each with its own magazine), so its left gun plays its own `_LEFT` slot while the hands
   fire, reload or idle apart. The client hands that clip and time to the native pass with
@@ -932,8 +985,11 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   manifest and models are in; its textures fill in as they arrive.
 * **Where it draws.** Through the same native pass as the viewmodel: `target_view` 1 just before
   `before_view` 9, with the scene's own view and projection (`view_proj = None`, so the world camera
-  frames it). The draw's frame carries the RTS camera's eye, Zero Hour's global lights and the scene
-  ambient.
+  frames it), depth-tested against the scene's own depth (the pass's world-camera draws load and
+  store the target's depth attachment; only the viewmodel's draws take the pass's cleared depth),
+  so a building or hill in front of a General hides him as it hides any W3D model — never the
+  X-ray an own cleared depth gave, through walls in first person too. The draw's frame carries the
+  RTS camera's eye, Zero Hour's global lights and the scene ambient.
 * **Placement.** BO2 inches are scaled once at the root: `root = transform × ART_SCALE`, so a skinned
   vertex is `root × pose × inv_bind × vertex`. The weapon-only mode's transform is the engine's own
   `tag_weapon_right` world matrix, so the native gun sits exactly where the W3D gun did. `state`,
@@ -1575,6 +1631,19 @@ Grenade and compass keys (`sensor_scan_cycle_ms` … `compassSatellitePingFadeTi
 `player_runThreshhold`, `player_moveThreshhold`, `player_strafeAnimCosAngle` and the
 `[ZeroHourDamage]` table. The native blob formats are unchanged (`BODY_VERSION` 1,
 `WEAPON_VERSION` 3: the new torso clips are new ids in the body's clip list).
+
+**Pending for the next bump** (appended after ABI 33; the integrator bumps `ZHBO_ABI_VERSION`
+once for the round). Overhead General (`v1/overhead-general`): the struct `ZhboGeneralMotion`
+(12 bytes: `general`, `moving`, `speed`; size-asserted in the header and `ffi.rs`) and the free
+functions `zhbo_client_native_poses_moving(out, cap, motion, count)` (the poses with every
+overhead General's engine motion; `zhbo_client_native_poses` stays), `zhbo_native_body_flash(general,
+out12)` (his drawn muzzle) and `zhbo_client_pick_general(general, feet, yaw, height, origin, end)`
+(the pick by his hit boxes). No struct or API table moves. Host patches 0029 (`Drawable::
+handleWeaponFireFX` asks `Zhbo_NativeFireFx`; `W3DView::pickDrawable` asks
+`Zhbo_PickNativeDrawable`) and 0030 (`W3DTracerDraw`'s `Texture` module data and the textured
+beam). Archive: the beam tracers' drawables (`ZHBO_BO2_Tracers.ini`), their baked textures and
+the nuggets' `TracerName` are converter output, so `hud::VERSION` must go to 88 with the bump (an
+engine without patch 0030 refuses the `Texture` field; a stale archive draws the line).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

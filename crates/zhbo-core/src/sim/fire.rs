@@ -130,6 +130,24 @@ impl Sim {
         self.hit_body.or_else(|| crate::weapons::catalog().hit_body())
     }
 
+    /// How far along a pick ray (`origin`, unit `dir`, at most `max_t`; world units) it strikes
+    /// General `general` (a seat's General, else `None`) standing at `feet` facing `yaw`: his hit
+    /// boxes in the pose the sim traces him in, at his drawn size — the boxes the bullets strike and
+    /// the native body is drawn over — or, with no converted table, the soldier's cylinder up to
+    /// `height`. A click picks the General this way while the native pass draws him in place of
+    /// the W3D body (whose hidden mesh Zero Hour's own pick skips). Deterministic: the sim's state
+    /// and the logic object's place; it reads nothing and steps nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pick_general(&self, general: u32, feet: Vec3, yaw: f32, height: f32, origin: Vec3, dir: Vec3, max_t: f32) -> Option<f32> {
+        let states = self.hit_states();
+        if !states.iter().any(|(g, _)| *g == general) {
+            return None;
+        }
+        let bodies = HitBodies { poses: self.hit_body(), states: &states };
+        let o = ObjInfo { id: general, pos: feet, yaw, flags: objflags::INFANTRY, geom_type: crate::host::geom::CYLINDER, major_radius: INFANTRY_HIT_RADIUS, height, ..Default::default() };
+        crate::hitscan::ray_vs_target(origin, dir, max_t, &target_from(&o, &bodies, false))
+    }
+
     /// A bullet strikes (`FUN_005cfc60`: the range curve's damage times the multiplier; a
     /// penetrated round's next surface plays its impact only past `bullet_penetrationMinFxDist`).
     fn bullet_hit(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, dir: Vec3, s: Strike) -> BulletHit {

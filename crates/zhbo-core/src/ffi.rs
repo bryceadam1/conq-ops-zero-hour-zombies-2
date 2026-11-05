@@ -977,17 +977,52 @@ pub unsafe extern "C" fn zhbo_client_world_poses(out: *mut WorldPose, cap: i32) 
 
 /// Fill `out` with up to `cap` native third-person poses (Track R7): the weapon in each General's
 /// hand and the body clip his movement state picks. `local_moving` is the engine's answer for
-/// `local_general` while he is under RTS control. Returns how many.
+/// `local_general` while he is under RTS control (one General only: the bridge passes every
+/// General's motion through [`zhbo_client_native_poses_moving`]). Returns how many.
 ///
 /// # Safety
 /// `out` must be writable for `cap` entries.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::ffi::ZhboNativePose, cap: i32, local_general: u32, local_moving: i32) -> i32 {
+    let one = ZhboGeneralMotion { general: local_general, moving: local_moving, speed: 0.0 };
+    unsafe { zhbo_client_native_poses_moving(out, cap, &one, (local_general != 0) as i32) }
+}
+
+/// How Zero Hour moves one General under RTS control, as the bridge reads it from the engine each
+/// frame (`ZhboGeneralMotion`, appended after ABI 33): his drawable's `MOVING` model condition and
+/// his horizontal speed in world units per second (the physics velocity × the logic rate).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ZhboGeneralMotion {
+    pub general: u32,
+    pub moving: i32,
+    pub speed: f32,
+}
+
+const _: () = assert!(std::mem::size_of::<ZhboGeneralMotion>() == 12);
+
+/// [`zhbo_client_native_poses`] with every overhead General's engine motion (`motion`, `count`
+/// entries; null or 0 for none): his body walks or runs at the speed Zero Hour moves him
+/// (`PlayerSim::body_state`). Presentation only. Returns how many poses.
+///
+/// # Safety
+/// `out` must be writable for `cap` entries; `motion` readable for `count` entries when not null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_native_poses_moving(out: *mut crate::nativebody::ffi::ZhboNativePose, cap: i32, motion: *const ZhboGeneralMotion, count: i32) -> i32 {
     if out.is_null() || cap <= 0 {
         return 0;
     }
+    let motion: Vec<crate::sim::EngineMotion> = if motion.is_null() || count <= 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(motion, count as usize) }
+            .iter()
+            .filter(|m| m.general != 0)
+            .map(|m| crate::sim::EngineMotion { general: m.general, moving: m.moving != 0, speed: if m.speed.is_finite() { m.speed.max(0.0) } else { 0.0 } })
+            .collect()
+    };
     let poses = with_state(|s| {
-        let mut poses = s.sim.native_poses((local_general != 0).then_some((local_general, local_moving != 0)), s.client.first_person_general());
+        let mut poses = s.sim.native_poses(&motion, s.client.first_person_general());
         // The dead Generals' bodies: their death clips through to the corpse (`client::remote`).
         let corpses: Vec<crate::sim::NativePose> = s.client.remote.corpses().iter().filter(|c| c.vm >= 0 && !poses.iter().any(|p| p.general == c.general)).map(|c| crate::sim::NativePose { general: c.general, weapon: c.vm, stance: 0, state: c.state, time: 0.0, rate: 1.0, sidearm: false }).collect();
         poses.extend(corpses);
@@ -999,6 +1034,27 @@ pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::f
         *out.add(i) = crate::nativebody::ffi::ZhboNativePose { general: p.general, weapon: p.weapon, stance: p.stance, state: p.state as i32, time: p.time, rate: p.rate, sidearm: p.sidearm as i32 };
     }
     n as i32
+}
+
+/// Where a click's pick ray strikes General `general` (`Sim::pick_general`, appended after ABI 33):
+/// `feet`/`yaw` his logic object's place and facing, `height` his geometry's (the fallback without
+/// a hit table), `origin`/`end` the view's pick ray (world units). Returns the fraction along the
+/// ray (0..1) where it first enters his hit boxes, or -1 for a miss (or no such seat General).
+/// The bridge asks it for each General the native pass draws in place of the hidden W3D body
+/// (host patch 0029, `W3DView::pickDrawable`). Presentation only.
+///
+/// # Safety
+/// `feet`, `origin` and `end` must be readable when not null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_pick_general(general: u32, feet: *const crate::math::Vec3, yaw: f32, height: f32, origin: *const crate::math::Vec3, end: *const crate::math::Vec3) -> f32 {
+    let (Some(&feet), Some(&origin), Some(&end)) = (unsafe { feet.as_ref() }, unsafe { origin.as_ref() }, unsafe { end.as_ref() }) else { return -1.0 };
+    let ray = end - origin;
+    let length = ray.length();
+    if !length.is_finite() || length <= 1e-4 {
+        return -1.0;
+    }
+    let dir = ray * (1.0 / length);
+    with_state(|s| s.sim.pick_general(general, feet, yaw, height, origin, dir, length)).flatten().map_or(-1.0, |t| t / length)
 }
 
 /// One dropped weapon the native third person draws lying on the ground (`ZhboDroppedWeapon`,

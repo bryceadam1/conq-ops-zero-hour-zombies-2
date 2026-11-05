@@ -105,7 +105,7 @@ impl Sim {
             .iter()
             .flatten()
             .filter(|p| p.is_first_person())
-            .map(|p| Pose { general: p.general, pos: p.body.pos, yaw: p.yaw, state: p.body_state(false, run_speed) })
+            .map(|p| Pose { general: p.general, pos: p.body.pos, yaw: p.yaw, state: p.body_state(None, run_speed) })
             .collect();
         let frame = Frame { frame: self.frame, bodies, shields: self.shield_bearers() };
         self.history.record(frame, self.antilag_frames as usize + 1);

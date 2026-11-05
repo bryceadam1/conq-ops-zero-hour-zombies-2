@@ -4,11 +4,14 @@
 //! The core uploads a model's mesh once ([`Renderer::native_create_mesh`]: 56-byte vertices with
 //! four bone influences, `u16` indices, surfaces with their blend and textures) and, each frame,
 //! queues a draw with the bone palette it posed ([`Renderer::native_submit`]). At `frame()` the
-//! queued draws run in one render pass **just before view `before_view`** (the engine's scene
-//! composite), into view `target_view`'s frame buffer (the engine's scene) with the target view's
-//! rect, so the viewmodel sits in the scene before bloom and the tonemap see it. The pass has a
-//! depth buffer of its own, cleared, so the viewmodel draws over the world (BO2 draws its
-//! viewmodel in a separate depth range) and its parts sort among themselves. Opaque surfaces draw
+//! queued draws run **just before view `before_view`** (the engine's scene composite), into view
+//! `target_view`'s frame buffer (the engine's scene) with the target view's rect, so the viewmodel
+//! sits in the scene before bloom and the tonemap see it. Two passes per target: the draws the
+//! world camera frames (`view_proj: None`: the third-person bodies, the dropped weapons) test and
+//! write the target's own depth, so the world in front of them hides them as it hides the W3D
+//! models they stand in for; then the viewmodel's on a depth buffer of its own, cleared, so it
+//! draws over the world (BO2 draws its viewmodel in a separate depth range) and its parts sort
+//! among themselves (a target without depth draws both on that one). Opaque surfaces draw
 //! first, then blended ones in BO2's sort-key order. Each surface culls the faces its material's
 //! `cullFace` says to (R4); the pass keeps BO2's index order, whose front faces are clockwise in
 //! the framebuffer (the engine's content winds the other way — the W3D conversion swaps for that,
@@ -352,6 +355,7 @@ struct PipelineKey {
     cull: NativeCull,
     stage: Stage,
     color: wgpu::TextureFormat,
+    depth: wgpu::TextureFormat,
     samples: u32,
 }
 
@@ -925,7 +929,7 @@ impl Renderer {
             // BO2's own order, so its front faces are clockwise in the framebuffer.
             primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, front_face: wgpu::FrontFace::Cw, cull_mode, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
+                format: key.depth,
                 depth_write_enabled: Some(!blended),
                 depth_compare: Some(if blended { wgpu::CompareFunction::LessEqual } else { wgpu::CompareFunction::Less }),
                 stencil: Default::default(),
@@ -1094,51 +1098,65 @@ impl Renderer {
             if w == 0 || h == 0 {
                 continue;
             }
-            let depth = self.native_depth(target.width, target.height, target.samples);
+            let own_depth = self.native_depth(target.width, target.height, target.samples);
             let Some((_, frame_group, _)) = self.native.gpu_ring.clone() else { break };
-            // Pipelines first (building needs &mut self, the pass borrows the encoder).
-            plans.clear();
-            for blended in [false, true] {
-                for (qi, q) in now.iter().enumerate().filter(|(_, q)| q.target_view == tv) {
-                    for (si, s) in q.mesh.surfaces.iter().enumerate().filter(|(_, s)| s.blend.blended() == blended) {
-                        let key = PipelineKey { blend: s.blend, cull: s.cull, stage: s.stage, color: color_format, samples: target.samples };
-                        if let Some(p) = self.native_pipeline(key) {
-                            plans.push((p, qi, si));
+            // Two passes: the draws the world camera frames (a third-person body, a dropped
+            // weapon) test and write the scene's own depth, so the world in front of them hides
+            // them as it hides the W3D models they stand in for; then the viewmodel's, over the
+            // world on a depth of its own, cleared (BO2's separate viewmodel depth range). A
+            // target without a depth attachment draws both on the pass's own.
+            for world in [true, false] {
+                let scene_depth = target.depth.clone().filter(|_| world);
+                let (depth, depth_format) = scene_depth.clone().unwrap_or_else(|| (own_depth.clone(), DEPTH_FORMAT));
+                // Pipelines first (building needs &mut self, the pass borrows the encoder).
+                plans.clear();
+                for blended in [false, true] {
+                    for (qi, q) in now.iter().enumerate().filter(|(_, q)| q.target_view == tv && q.view_proj_from_view == world) {
+                        for (si, s) in q.mesh.surfaces.iter().enumerate().filter(|(_, s)| s.blend.blended() == blended) {
+                            let key = PipelineKey { blend: s.blend, cull: s.cull, stage: s.stage, color: color_format, depth: depth_format, samples: target.samples };
+                            if let Some(p) = self.native_pipeline(key) {
+                                plans.push((p, qi, si));
+                            }
                         }
                     }
                 }
-            }
-            // The MMS screen reads the scene's depth: resolve it first (the sky without one).
-            let scene_z = if plans.iter().any(|&(_, qi, si)| now[qi].mesh.surfaces[si].stage == Stage::Sonar) { self.native_scene_z(encoder, view.frame_buffer, target.width, target.height) } else { None };
-            let scene_group = scene_z.unwrap_or_else(|| self.native.sky_z.clone());
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("native"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color,
-                    depth_slice: None,
-                    resolve_target: resolve.as_ref(),
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
-            pass.set_scissor_rect(x, y, w, h);
-            pass.set_bind_group(2, &scene_group, &[]);
-            for (pipeline, qi, si) in &plans {
-                let (q, s) = (&now[*qi], &now[*qi].mesh.surfaces[*si]);
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, &frame_group, &[q.frame_offset, q.palette_offset]);
-                pass.set_bind_group(1, &s.bind_group, &[]);
-                pass.set_vertex_buffer(0, q.mesh.vertices.slice(..));
-                pass.set_index_buffer(q.mesh.indices.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(s.first_index..s.first_index + s.index_count, 0, 0..1);
+                if plans.is_empty() {
+                    continue;
+                }
+                // The MMS screen reads the scene's depth: resolve it first (the sky without one).
+                let scene_z = if plans.iter().any(|&(_, qi, si)| now[qi].mesh.surfaces[si].stage == Stage::Sonar) { self.native_scene_z(encoder, view.frame_buffer, target.width, target.height) } else { None };
+                let scene_group = scene_z.unwrap_or_else(|| self.native.sky_z.clone());
+                let depth_ops = if scene_depth.is_some() {
+                    wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }
+                } else {
+                    wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }
+                };
+                let stencil_ops = (scene_depth.is_some() && depth_format.has_stencil_aspect()).then_some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("native"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: color,
+                        depth_slice: None,
+                        resolve_target: resolve.as_ref(),
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &depth, depth_ops: Some(depth_ops), stencil_ops }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
+                pass.set_scissor_rect(x, y, w, h);
+                pass.set_bind_group(2, &scene_group, &[]);
+                for (pipeline, qi, si) in &plans {
+                    let (q, s) = (&now[*qi], &now[*qi].mesh.surfaces[*si]);
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, &frame_group, &[q.frame_offset, q.palette_offset]);
+                    pass.set_bind_group(1, &s.bind_group, &[]);
+                    pass.set_vertex_buffer(0, q.mesh.vertices.slice(..));
+                    pass.set_index_buffer(q.mesh.indices.slice(..), wgpu::IndexFormat::Uint16);
+                    pass.draw_indexed(s.first_index..s.first_index + s.index_count, 0, 0..1);
+                }
             }
         }
         // Back to the scratch: the meshes are released with the draws, the capacity is kept.

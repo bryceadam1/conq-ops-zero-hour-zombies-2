@@ -278,10 +278,98 @@ fn zero_hour_infantry_stand() {
 fn the_body_state_takes_the_held_weapons_animation_set() {
     let mut p = PlayerSim::spawn_for_tests();
     let run = 31.7;
-    assert_eq!(p.body_state(false, run), state::id(p.arsenal.current().def.body_anims, state::STAND_IDLE));
+    assert_eq!(p.body_state(None, run), state::id(p.arsenal.current().def.body_anims, state::STAND_IDLE));
     let mut pistol = p.arsenal.current().def.clone();
     pistol.body_anims = 5;
     p.arsenal.current_mut().def = Box::leak(Box::new(pistol));
-    assert_eq!(p.body_state(false, run), state::id(5, state::STAND_IDLE));
-    assert_eq!(p.body_state(true, run), state::id(5, state::STAND_WALK), "moving under RTS control walks the set's walk");
+    assert_eq!(p.body_state(None, run), state::id(5, state::STAND_IDLE));
+    p.mode = super::Mode::Rts;
+    let walking = super::EngineMotion { general: p.general, moving: true, speed: 0.3 * run };
+    assert_eq!(p.body_state(Some(walking), run), state::id(5, state::STAND_WALK), "moving under RTS control walks the set's walk");
+}
+
+/// Under RTS control Zero Hour walks the General: his drawn body (and his hit pose) stands — never
+/// the crouch, prone, ADS or sprint his body kept from his last first person — and walks or runs
+/// at the engine's speed while Zero Hour says he moves (the same split as first person's,
+/// `nativebody::state_of`), idle when it says he does not.
+#[test]
+fn an_overhead_general_walks_and_runs_at_the_engines_speed_standing() {
+    let mut p = PlayerSim::spawn_for_tests();
+    let run = 31.7;
+    let set = p.arsenal.current().def.body_anims;
+    p.body.stance = crate::movement::Stance::Prone;
+    p.body.sprinting = true;
+    p.arsenal.ads = 1.0;
+    p.mode = super::Mode::Rts;
+    let motion = |moving: bool, speed: f32| Some(super::EngineMotion { general: p.general, moving, speed });
+    assert_eq!(p.body_state(None, run), state::id(set, state::STAND_IDLE), "no motion reported: he stands idle");
+    assert_eq!(p.body_state(motion(false, 0.0), run), state::id(set, state::STAND_IDLE));
+    assert_eq!(p.body_state(motion(true, 0.4 * run), run), state::id(set, state::STAND_WALK));
+    assert_eq!(p.body_state(motion(true, run), run), state::id(set, state::STAND_RUN), "Zero Hour's speed past the walk/run split runs");
+    // Back in first person his own stance rules again.
+    p.mode = super::Mode::Fps;
+    assert_eq!(p.body_state(motion(true, run), run), state::id(set, state::PRONE_IDLE), "first person ignores the engine's motion");
+}
+
+/// A click picks a General the native pass draws (`Sim::pick_general`, host patch 0029) by the hit
+/// boxes the bullets strike and the body is drawn over, at his drawn size, where his logic object
+/// stands and faces: a pick ray down through his drawn chest strikes him, one beside him misses,
+/// and overhead he is picked standing even when his body kept a prone stance from first person.
+/// Only a seat's General is picked this way.
+#[test]
+fn a_click_picks_the_general_by_his_drawn_hit_boxes() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.hit_body = Some(Box::leak(Box::new(Poses::new(&stance_poses()))));
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    wait_until_ready(&mut sim, &host);
+    let feet = Vec3::new(100.0, 50.0, 3.0);
+    let s = GENERAL_SCALE;
+    // The overhead camera's ray: from up and behind, down through a point.
+    let pick = |sim: &Sim, through: Vec3| {
+        let origin = through + Vec3::new(-150.0, 0.0, 200.0);
+        let dir = (through - origin).normalized_or_zero();
+        sim.pick_general(1, feet, 0.0, 14.0, origin, dir, 1000.0)
+    };
+    let chest = feet + Vec3::new(0.0, 0.0, inches(40.0) * s);
+    let t = pick(&sim, chest).expect("a click on his chest picks him");
+    assert!(t < 250.0 && 250.0 - t < inches(24.0), "it enters his torso just before the chest: {t}");
+    assert!(pick(&sim, feet + Vec3::new(0.0, inches(30.0) * s, inches(40.0) * s)).is_none(), "beside him misses");
+    assert!(sim.pick_general(9, feet, 0.0, 14.0, chest + Vec3::new(-150.0, 0.0, 200.0), Vec3::new(150.0, 0.0, -200.0).normalized_or_zero(), 1000.0).is_none(), "no seat's General: no pick");
+    // Overhead, a prone body from first person: Zero Hour has him standing, and so does the pick.
+    let p = sim.players[0].as_mut().unwrap();
+    p.body.stance = crate::movement::Stance::Prone;
+    p.mode = Mode::Rts;
+    assert!(pick(&sim, chest).is_some(), "overhead he is picked standing");
+}
+
+/// The native third person's poses take each overhead General's engine motion by his object id
+/// (`zhbo_client_native_poses_moving`): the General Zero Hour moves walks or runs, standing, and
+/// one it does not stays idle; a first-person General's own state ignores it.
+#[test]
+fn the_native_poses_take_each_overhead_generals_engine_motion() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.add(general(2, 1));
+    let mut sim = Sim::new();
+    for (seat, g) in [(0, 1), (1, 2)] {
+        sim.take_control(&host, seat, g);
+        sim.choose_class(seat, g, 0, &[]);
+    }
+    wait_until_ready(&mut sim, &host);
+    let run = sim.tuning.run_speed(false);
+    for p in sim.players.iter_mut().flatten() {
+        p.mode = Mode::Rts;
+        p.body.stance = crate::movement::Stance::Crouch;
+    }
+    let motion = [EngineMotion { general: 2, moving: true, speed: run }];
+    let poses = sim.native_poses(&motion, None);
+    let of = |g: u32| poses.iter().find(|p| p.general == g).map(|p| (p.stance, state::split(p.state).1)).unwrap();
+    assert_eq!(of(2), (0, state::STAND_RUN), "Zero Hour runs General 2: his body runs, standing");
+    assert_eq!(of(1), (0, state::STAND_IDLE), "General 1 is not moving: idle, standing");
+    sim.players[0].as_mut().unwrap().mode = Mode::Fps;
+    let poses = sim.native_poses(&[EngineMotion { general: 1, moving: true, speed: run }], None);
+    assert_eq!(poses.iter().find(|p| p.general == 1).map(|p| (p.stance, state::split(p.state).1)), Some((1, state::CROUCH_IDLE)), "first person: his own crouch, not the engine's");
 }

@@ -150,7 +150,7 @@ fn open_renderer() -> Result<Shot, String> {
     with_renderer((), |r| {
         r.set_screenshot_fn(Box::new(move |_, _, _, _, data| *target.lock().unwrap() = Some(data.to_vec())));
         r.set_view_rect(VIEW, 0, 0, W as u16, H as u16);
-        r.set_view_clear(VIEW, zhbo_gfx::state::CLEAR_COLOR, BACKGROUND, 1.0, 0);
+        r.set_view_clear(VIEW, zhbo_gfx::state::CLEAR_COLOR | zhbo_gfx::state::CLEAR_DEPTH, BACKGROUND, 1.0, 0);
     });
     Ok(sink)
 }

@@ -108,6 +108,11 @@ pub(crate) struct State {
     torso: HashMap<u16, super::AnimClip>,
     pub(crate) log: VecDeque<String>,
     logged: HashSet<String>,
+    /// Each General's muzzle in his last drawn pose: the held weapon's `tag_flash` world transform
+    /// (body mode, the gun in hand), for the effects of his shots (`zhbo_native_body_flash`).
+    flash: HashMap<u32, [[f32; 4]; 3]>,
+    /// The movement states drawn so far (`state::split`'s state), each logged once.
+    moves: HashSet<u16>,
 }
 
 impl State {
@@ -141,7 +146,13 @@ impl State {
             r.release();
         }
         self.rigs.clear();
+        self.flash.clear();
         self.last = None;
+    }
+
+    /// General `general`'s muzzle as last drawn ([`State::flash`]).
+    pub(crate) fn flash_of(&self, general: u32) -> Option<[[f32; 4]; 3]> {
+        self.flash.get(&general).copied()
     }
 
     /// The lines logged so far (tests).
@@ -265,6 +276,24 @@ impl State {
             rig.loaded.hide_weapon(&mut self.posed);
         }
         rig.loaded.show_offhand(&mut self.posed, in_hand.map(|a| if a.lethal { 0 } else { 1 }));
+        // Where his shots' flash, brass and tracer start: the drawn gun's muzzle (none while it is
+        // hidden, or in the other modes, where the W3D body's fire bone serves).
+        let gun_drawn = mode == Mode::Body && in_hand.is_none() && !action.is_some_and(|a| a.action == zhbo_native::thirdperson::torso::DEATH);
+        match rig.loaded.bone_world(&self.posed, super::FLASH_TAG).filter(|_| gun_drawn).map(|m| super::orthonormal(&m)) {
+            Some(m) => {
+                self.flash.insert(general, m);
+            }
+            None => {
+                self.flash.remove(&general);
+            }
+        }
+        if mode == Mode::Body {
+            let movement = zhbo_native::thirdperson::state::split(req.state).1;
+            if self.moves.insert(movement) {
+                let name = clip.map_or("none", |c| c.name.as_str());
+                self.log.push_back(format!("native body: General {general} body clip {name} (movement state {movement})"));
+            }
+        }
         self.last = Some(general);
         #[cfg(feature = "renderer")]
         let answer = super::gpu::draw(self, &mut rig, inp);
@@ -507,6 +536,30 @@ pub unsafe extern "C" fn zhbo_native_body_bone(name: *const c_char, out: *mut f3
         unsafe { std::ptr::copy_nonoverlapping(flat.as_ptr(), out, 12) };
         1
     })
+}
+
+/// General `general`'s muzzle in his last drawn pose (3 rows of 4, the bridge's `Matrix3D`, an
+/// orthonormal frame with X down the barrel, as the W3D fire bone's): the held weapon's `tag_flash`
+/// while the body mode draws him with the gun in hand. Returns 1, or 0 when there is none (another
+/// mode, the gun hidden, nothing drawn yet) and the engine's own placement stands. Presentation
+/// only: the bridge plays his shots' effects there (host patch 0029).
+///
+/// # Safety
+/// `out` must hold 12 floats.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_native_body_flash(general: u32, out: *mut f32) -> i32 {
+    with(|s| unsafe { zhbo_native_body_flash_in(s, general, out) })
+}
+
+/// [`zhbo_native_body_flash`] on a given state (the tests hold the state's lock already).
+///
+/// # Safety
+/// `out` must hold 12 floats when not null.
+pub(crate) unsafe fn zhbo_native_body_flash_in(s: &State, general: u32, out: *mut f32) -> i32 {
+    let Some(m) = s.flash_of(general).filter(|_| !out.is_null()) else { return 0 };
+    let flat: Vec<f32> = m.iter().flatten().copied().collect();
+    unsafe { std::ptr::copy_nonoverlapping(flat.as_ptr(), out, 12) };
+    1
 }
 
 /// Keep only the dropped weapons' rigs still lying (`objects`): the core calls this with every

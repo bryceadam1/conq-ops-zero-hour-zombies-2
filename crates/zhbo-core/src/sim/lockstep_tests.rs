@@ -778,7 +778,7 @@ fn a_remote_first_person_general_keeps_his_third_person() {
     super::tests::spawn(&mut sim, &host, 0, 1);
     super::tests::spawn(&mut sim, &host, 1, 2);
     assert!(sim.player(0).unwrap().is_first_person() && sim.player(1).unwrap().is_first_person());
-    let posed = |viewer: Option<u32>| sim.native_poses(None, viewer).iter().map(|p| p.general).collect::<Vec<_>>();
+    let posed = |viewer: Option<u32>| sim.native_poses(&[], viewer).iter().map(|p| p.general).collect::<Vec<_>>();
     assert_eq!(posed(Some(1)), vec![2], "player 0's machine draws player 1's General, not its own");
     assert_eq!(posed(Some(2)), vec![1], "and player 1's machine the other way round");
     assert_eq!(posed(None), vec![1, 2], "an overhead viewer sees both");

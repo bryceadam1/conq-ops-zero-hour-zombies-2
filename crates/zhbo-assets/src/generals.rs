@@ -266,6 +266,8 @@ pub use zhbo_core::names::RTS_FX_PATH;
 /// client's, layer by layer — `FireSound = NONE`, `zhbo_core::soundlayers`) and the overhead
 /// General's weapons.
 pub const FX_WEAPONS_INI_PATH: &str = "Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini";
+/// The client drawables BO2's beam tracers fly as (`fx::Converted::tracer`).
+pub const TRACERS_INI_PATH: &str = "Data\\INI\\Object\\ZHBO_BO2_Tracers.ini";
 /// The box a BO2 soldier is clicked by (inches: a man standing, with some room).
 const SOLDIER_BOX_CENTRE: [f32; 3] = [0.0, 0.0, 36.0];
 const SOLDIER_BOX_EXTENT: [f32; 3] = [18.0, 18.0, 38.0];
@@ -761,6 +763,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     summary.push(format!("{} BO2 effects ({} textures)", effects.fxlists.matches("FXList ").count(), effects.textures.len()));
     out.insert("Data\\INI\\ParticleSystem\\ZHBO_BO2_Effects.ini".into(), effects.particles.clone().into_bytes());
     out.insert("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini".into(), effects.fxlists.clone().into_bytes());
+    // The client drawables BO2's beam tracers fly as (their nuggets' `TracerName`, host patch 0030).
+    out.insert(TRACERS_INI_PATH.into(), effects.tracer_objects.clone().into_bytes());
     out.extend(std::mem::take(&mut effects.textures));
 
     // The General under RTS control fights with the loadout's rifle, pistol and lethal: their BO2
@@ -1608,6 +1612,17 @@ mod tests {
         assert!(placed.contains("OrientToObject = Yes") && placed.contains("Offset = X:") && placed.contains("RotateZ = "), "{placed}");
         let tracer = block(&fxs, &format!("FXList {}\n", crate::fx::tracer_fxlist("assaultrifle", 1.0)));
         assert!(tracer.contains("  Tracer\n") && tracer.contains("Probability = 1.00"), "{tracer}");
+        // It flies as BO2 draws it: the client drawable whose textured beam draws `gfx_tracer`'s
+        // streak baked with the stops (host patch 0030), the enemy one `gfx_tracer_enemy`'s.
+        for name in ["assaultrifle", "assaultrifle_enemy"] {
+            let draw = crate::fx::tracer_draw_object(name);
+            let list = block(&fxs, &format!("FXList {}\n", crate::fx::tracer_fxlist(name, 1.0)));
+            assert!(list.contains(&format!("TracerName = {draw}\n")), "{list}");
+            let object = block(&text(TRACERS_INI_PATH), &format!("Object {draw}\n"));
+            let file = crate::fx::tracer_texture_file(name);
+            assert!(object.contains("Draw = W3DTracerDraw") && object.contains(&format!("Texture = {file}")) && object.contains("KindOf = DRAWABLE_ONLY"), "{object}");
+            assert!(files.iter().any(|(p, b)| p == &format!("Art\\Textures\\{file}") && !b.is_empty()), "the baked {file} ships");
+        }
         // The overhead General: flash, brass and a 1-in-3 tracer in one FireFX.
         let rts_fx = block(&fxs, "FXList ZHBO_BO2FX_Rts_an94_mp\n");
         assert!(rts_fx.contains("RotateZ = ") && rts_fx.contains("Probability = 0.33"), "{rts_fx}");

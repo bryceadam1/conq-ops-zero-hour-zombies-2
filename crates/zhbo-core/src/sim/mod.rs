@@ -463,10 +463,19 @@ impl PlayerSim {
     }
 
     /// The body clip his movement state picks in the held weapon's animation set
-    /// (`nativebody::state_of`); `engine_moving`: Zero Hour is walking him (RTS control).
-    pub fn body_state(&self, engine_moving: bool, run_speed: f32) -> u16 {
+    /// (`nativebody::state_of`). In first person the sim's own stance, gait, sprint and ADS pick
+    /// it. Under RTS control Zero Hour moves him and the sim does not step his body: he stands
+    /// (the stance, aim and sprint his body kept from his last first person are not his overhead
+    /// pose; Zero Hour has none of them), walking or running at `engine`'s speed when Zero Hour
+    /// says he moves, idle otherwise.
+    pub fn body_state(&self, engine: Option<EngineMotion>, run_speed: f32) -> u16 {
         let a = &self.arsenal;
-        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, a.current().def.body_anims, engine_moving, run_speed)
+        let set = a.current().def.body_anims;
+        if !self.is_first_person() {
+            let m = engine.unwrap_or_default();
+            return crate::nativebody::state_of(0, m.speed, false, 0.0, set, m.moving, run_speed);
+        }
+        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, set, false, run_speed)
     }
 
     #[cfg(test)]
@@ -511,6 +520,16 @@ impl PlayerSim {
             spawned: true,
         }
     }
+}
+
+/// How Zero Hour moves a General under RTS control (the bridge's answer, `ZhboGeneralMotion`): the
+/// drawable's `MOVING` condition and his horizontal speed (world units/s). Presentation only: it
+/// picks his drawn body clip ([`PlayerSim::body_state`]) and nothing in the sim reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EngineMotion {
+    pub general: u32,
+    pub moving: bool,
+    pub speed: f32,
 }
 
 /// One General's native third-person frame: what the bridge needs to draw his body and the weapon
@@ -1193,14 +1212,14 @@ impl Sim {
 
     /// What each General's native third person needs this frame (Track R7): the weapon in hand
     /// (`WeaponDef::world_index`, -1 for none), the stance and the body clip the sim's movement
-    /// state picks, the clip's clock and the pistol stance. `moving` is the engine's answer for
-    /// the General the bridge asks about while he is under RTS control (the sim does not step his
-    /// body then), ignored while first person. `viewer` is the General this machine is looking
+    /// state picks, the clip's clock and the pistol stance. `motion` is the engine's answer for
+    /// the Generals under RTS control (Zero Hour walks them; the sim does not step their bodies),
+    /// ignored while first person. `viewer` is the General this machine is looking
     /// through in first person: his body is hidden and the viewmodel draws his arms, so he gets no
     /// third person. Every other General does, in first person or not — in a network game the
     /// other players' Generals are in first person on their own machines, and here they must show
     /// their class weapon (attachments, camo) in their hands.
-    pub fn native_poses(&self, moving: Option<(u32, bool)>, viewer: Option<u32>) -> Vec<NativePose> {
+    pub fn native_poses(&self, motion: &[EngineMotion], viewer: Option<u32>) -> Vec<NativePose> {
         let run_speed = self.tuning.run_speed(false);
         let time = self.frame as f32 * LOGIC_DT;
         self.players
@@ -1209,15 +1228,15 @@ impl Sim {
             .filter(|p| !(p.is_first_person() && Some(p.general) == viewer))
             .map(|p| {
                 let a = &p.arsenal;
-                let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();
+                let engine = motion.iter().find(|m| m.general == p.general).copied();
                 // The field computer's tablet is the W3D body's (`world_poses`): no native weapon
                 // or body meanwhile, so the W3D one shows it.
                 let tablet = matches!(p.mode, Mode::FieldComputer { .. }) || (matches!(p.mode, Mode::Fps) && a.raise_left > a.raise_total + 1e-4);
                 NativePose {
                     general: p.general,
                     weapon: if tablet { -1 } else { a.current().def.world_index() }, // content: presentation (native_poses: the third-person draw)
-                    stance: p.stance_index(),
-                    state: p.body_state(engine_moving, run_speed),
+                    stance: if p.is_first_person() { p.stance_index() } else { 0 },
+                    state: p.body_state(engine, run_speed),
                     time,
                     rate: 1.0,
                     sidearm: a.active == 1,
@@ -1244,10 +1263,11 @@ impl Sim {
     }
 
     /// Every General's body state now (`nativebody::state_of`, from the sim's own stance, gait,
-    /// sprint and ADS — never the render clock): the pose his hit boxes take in a trace.
+    /// sprint and ADS — never the render clock): the pose his hit boxes take in a trace. An
+    /// overhead General stands (the engine's motion is presentation, so the sim poses him idle).
     pub(super) fn hit_states(&self) -> Vec<(u32, u16)> {
         let run_speed = self.tuning.run_speed(false);
-        self.players.iter().flatten().map(|p| (p.general, p.body_state(false, run_speed))).collect()
+        self.players.iter().flatten().map(|p| (p.general, p.body_state(None, run_speed))).collect()
     }
 
     /// The enemies `player`'s Sensor Grenades put on his compass ([`crate::sensor`]), and how

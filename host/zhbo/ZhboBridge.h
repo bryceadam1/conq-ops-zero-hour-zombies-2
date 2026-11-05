@@ -20,6 +20,8 @@ class GameWindow;
 enum NameKeyType CPP_11(: Int); // Common/STLTypedefs.h
 class Object;
 class DamageInfo;
+class Drawable;
+class FXList;
 class Path;
 class Xfer;
 
@@ -128,6 +130,18 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir);
 void ZhboViewmodel_Reset();
 /// Load the tablet and these weapon viewmodels of a faction ('U', 'C', 'G'), and their clips.
 void ZhboViewmodel_Preload(char faction, const int *weapons, int count);
+/// A General the native pass draws in place of his hidden W3D body (ZhboRtsWeapons.cpp): Zero Hour
+/// placed his shots' FireFX at the hidden model's logic position (his feet) and picks drawables by
+/// their visible W3D meshes, which his is not. Host patch 0029 asks these instead.
+/// Drawable::handleWeaponFireFX: play `fxl` from his drawn gun's muzzle (`tag_flash` in the pose
+/// the native pass drew last) and return true; false leaves the shot to the draw modules.
+/// Presentation only (the FX are client effects; the logic's shot is untouched).
+Bool Zhbo_NativeFireFx(Drawable *draw, const FXList *fxl, Real weaponSpeed, const Coord3D *victimPos, Real damageRadius);
+/// W3DView::pickDrawable, after the scene's own ray test: a natively drawn General the pick ray
+/// (`start` to `end`) strikes before fraction `*nearest` along it (1: its end; the W3D hit's
+/// fraction when there was one), by his BO2 hit boxes (zhbo_client_pick_general). Returns him and
+/// lowers `*nearest`, or null. Only for a pick that takes selectable units (`pickType`).
+Drawable *Zhbo_PickNativeDrawable(const Coord3D *start, const Coord3D *end, Int pickType, Real *nearest);
 /// After the in-game UI is drawn.
 void Zhbo_DrawHud();
 /// Before the 3D views are drawn: paints a sky gradient while first person owns the camera.

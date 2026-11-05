@@ -11,6 +11,8 @@
 // ObjectDrawInterface: the selection-safe body hide goes through the draw modules
 // (Drawable::getDrawModules()) instead of Drawable::setDrawableHidden.
 #include "Common/DrawModule.h"
+// The overhead General's speed (PhysicsBehavior::getVelocity) for his native body's gait.
+#include "GameLogic/Module/PhysicsUpdate.h"
 namespace
 {
 // The overhead General's BO2 bullet impacts, by gun slot: on a soldier, a vehicle, anything else
@@ -457,10 +459,34 @@ void serveNativeBody()
 // sceneLights, same source): Zero Hour's global lights for the time of day (lightPos is the
 // direction the light travels, so the light is the other way), the RTS camera's position for the
 // shader's specular term, and the scene view drawn into before the composite.
-static void fillNativeScene(ZhboNativeBodyIn &in)
+//
+// A General's body (`draw`) is lit as Zero Hour lights the W3D infantry it stands in for
+// (RTS3DScene::renderOneObject, updateFixedLightEnvironments): every light's diffuse and ambient
+// scaled by the map's InfantryLightScale for the time of day (or a script's override), each
+// capped at 1, and the drawable's tint (a damage or EMP envelope, the selection flash) added to
+// every light and to the ambient.
+static void fillNativeScene(ZhboNativeBodyIn &in, const Drawable *draw = nullptr)
 {
 	if (TheGlobalData)
 	{
+		Real scale = 1.0f;
+		if (draw && draw->isKindOf(KINDOF_INFANTRY))
+			scale = TheGlobalData->m_scriptOverrideInfantryLightScale != -1.0f ? TheGlobalData->m_scriptOverrideInfantryLightScale
+				: TheGlobalData->m_infantryLightScale[TheGlobalData->m_timeOfDay];
+		Real tint[3] = { 0.0f, 0.0f, 0.0f };
+		if (draw)
+		{
+			const Vector3 *colors[2] = { draw->getTintColor(), draw->getSelectionColor() };
+			for (const Vector3 *c : colors)
+			{
+				if (!c)
+					continue;
+				tint[0] += c->X;
+				tint[1] += c->Y;
+				tint[2] += c->Z;
+			}
+		}
+		const auto lit = [scale](Real v) { return std::min(v * scale, 1.0f); };
 		const int lightCount = std::min(std::max(TheGlobalData->m_numGlobalLights, 0), 3);
 		for (int l = 0; l < lightCount; ++l)
 		{
@@ -468,13 +494,15 @@ static void fillNativeScene(ZhboNativeBodyIn &in)
 			in.lights[l].dir[0] = -tl.lightPos.x;
 			in.lights[l].dir[1] = -tl.lightPos.y;
 			in.lights[l].dir[2] = -tl.lightPos.z;
-			in.lights[l].color[0] = tl.diffuse.red;
-			in.lights[l].color[1] = tl.diffuse.green;
-			in.lights[l].color[2] = tl.diffuse.blue;
-			in.ambient[0] += tl.ambient.red;
-			in.ambient[1] += tl.ambient.green;
-			in.ambient[2] += tl.ambient.blue;
+			in.lights[l].color[0] = lit(tl.diffuse.red) + tint[0];
+			in.lights[l].color[1] = lit(tl.diffuse.green) + tint[1];
+			in.lights[l].color[2] = lit(tl.diffuse.blue) + tint[2];
+			in.ambient[0] += lit(tl.ambient.red);
+			in.ambient[1] += lit(tl.ambient.green);
+			in.ambient[2] += lit(tl.ambient.blue);
 		}
+		for (int c = 0; c < 3; ++c)
+			in.ambient[c] += tint[c];
 		in.light_count = lightCount;
 	}
 	if (TheTacticalView)
@@ -489,6 +517,53 @@ static void fillNativeScene(ZhboNativeBodyIn &in)
 	if (const char *dbg = getenv("ZHBO_BO2_DEBUG"))
 		in.debug = static_cast<float>(atoi(dbg));
 }
+
+namespace
+{
+// Whether Zero Hour would draw this object's W3D model this frame (a General's body, a dropped weapon's prop) (RTS3DScene::Visibility_Check and
+// renderOneObject): not hidden (first person's own body, a transport or building holding him,
+// stealth), not under the shroud, and not fogged for the local player, unless he was in the clear
+// less than two seconds ago (five once dead), as renderOneObject keeps showing units leaving the
+// player's sight. The native pass draws only those: the shroud must hide an enemy General the
+// native pass would otherwise draw through it.
+Bool nativeBodyVisible(Object *obj, Drawable *draw)
+{
+	if (draw->isDrawableEffectivelyHidden() || draw->getFullyObscuredByShroud())
+		return FALSE;
+	const Player *local = ThePlayerList ? ThePlayerList->getLocalPlayer() : nullptr;
+	if (!local)
+		return TRUE;
+	ObjectShroudStatus ss = obj->getShroudedStatus(local->getPlayerIndex());
+	const UnsignedInt now = TheGameLogic->getFrame();
+	if (ss == OBJECTSHROUD_CLEAR)
+		draw->setShroudClearFrame(now);
+	else if (ss >= OBJECTSHROUD_FOGGED && draw->getShroudClearFrame() != InvalidShroudClearFrame)
+	{
+		UnsignedInt limit = 2 * LOGICFRAMES_PER_SECOND;
+		if (obj->isEffectivelyDead())
+			limit += 3 * LOGICFRAMES_PER_SECOND;
+		if (now < limit + draw->getShroudClearFrame())
+			ss = OBJECTSHROUD_PARTIAL_CLEAR;
+	}
+	return ss < OBJECTSHROUD_FOGGED;
+}
+
+// How Zero Hour moves a General overhead (zhbo_client_native_poses_moving): the MOVING condition
+// his locomotor raises and his horizontal speed, the physics velocity per logic frame at the
+// logic rate.
+ZhboGeneralMotion engineMotion(const Object *obj, const Drawable *draw)
+{
+	ZhboGeneralMotion m = {};
+	m.general = (uint32_t)obj->getID();
+	m.moving = draw->getModelConditionFlags().test(MODELCONDITION_MOVING) ? 1 : 0;
+	if (const PhysicsBehavior *physics = obj->getPhysics())
+	{
+		const Coord3D *v = physics->getVelocity();
+		m.speed = sqrtf(v->x * v->x + v->y * v->y) * LOGICFRAMES_PER_SECOND;
+	}
+	return m;
+}
+} // namespace
 
 // The dropped weapons lying on the ground (sim/drops.rs): each through the native pass in
 // ZHBO_BODY_LYING mode, keyed by its prop object, as BO2 draws the item (the combination, its camo).
@@ -505,7 +580,7 @@ static void drawDroppedWeapons()
 		const ZhboDroppedWeapon &d = drops[i];
 		Object *obj = TheGameLogic->findObjectByID((ObjectID)d.object);
 		Drawable *draw = obj ? obj->getDrawable() : nullptr;
-		if (!draw)
+		if (!draw || !nativeBodyVisible(obj, draw))
 			continue;
 		ZhboNativeBodyIn in = {};
 		in.general = d.object;
@@ -554,6 +629,7 @@ static void drawDroppedWeapons()
 	}
 }
 
+
 void applyWorldPoses()
 {
 	// Every third-person index the soldier model carries meshes for: the converted viewmodels' and
@@ -578,14 +654,39 @@ void applyWorldPoses()
 	const int32_t nativeBodyMode = zhbo_native_body_enabled();
 	if (nativeBodyMode != 0)
 	{
+		// The Generals to pose, then each one's engine motion (an overhead General walks or runs as
+		// Zero Hour moves him), then the poses that take it.
 		ZhboNativePose nativePoses[16];
-		const int32_t nativeCount = zhbo_client_native_poses(nativePoses, 16, 0, 0);
+		int32_t nativeCount = zhbo_client_native_poses_moving(nativePoses, 16, nullptr, 0);
+		ZhboGeneralMotion motion[16];
+		int32_t motionCount = 0;
+		for (int32_t i = 0; i < nativeCount; ++i)
+		{
+			const Object *obj = TheGameLogic->findObjectByID((ObjectID)nativePoses[i].general);
+			const Drawable *draw = obj ? obj->getDrawable() : nullptr;
+			if (draw)
+				motion[motionCount++] = engineMotion(obj, draw);
+		}
+		if (motionCount > 0)
+			nativeCount = zhbo_client_native_poses_moving(nativePoses, 16, motion, motionCount);
 		for (int32_t i = 0; i < nativeCount; ++i)
 		{
 			const ZhboNativePose &np = nativePoses[i];
 			Object *obj = TheGameLogic->findObjectByID((ObjectID)np.general);
 			Drawable *draw = obj ? obj->getDrawable() : nullptr;
 			if (!draw)
+				continue;
+			// Whether the local player sees him, logged as it changes (the multiplayer test tells a
+			// General out of sight from one the native pass failed to draw).
+			const Bool visible = nativeBodyVisible(obj, draw);
+			static std::map<uint32_t, Bool> s_inSight;
+			std::map<uint32_t, Bool>::iterator sight = s_inSight.find(np.general);
+			if (sight == s_inSight.end() || sight->second != visible)
+			{
+				s_inSight[np.general] = visible;
+				logf("native body: General %u %s the local player's sight", (unsigned)np.general, visible ? "in" : "out of");
+			}
+			if (!visible)
 				continue;
 			// The General's world frame: feet and facing come from the drawable's transform.
 			ZhboNativeBodyIn in = {};
@@ -597,7 +698,7 @@ void applyWorldPoses()
 			in.state = np.state;
 			in.time = np.time;
 			in.rate = np.rate;
-			fillNativeScene(in);
+			fillNativeScene(in, draw);
 			// Where the drawable is drawn this frame (between logic frames, host patch 0026).
 			if (const Matrix3D *world = draw->getRenderTransformMatrix())
 			{
@@ -724,7 +825,63 @@ void applyWorldPoses()
 	{
 		Object *obj = TheGameLogic->findObjectByID((ObjectID)*it);
 		if (Drawable *draw = obj ? obj->getDrawable() : nullptr)
+		{
 			setDrawModuleHidden(draw, TRUE);
+			// W3DModelDraw::setHidden takes the decal shadow with the model; the native body
+			// stands where the model did, so his shadow stays as the drawable has it.
+			for (DrawModule **dm = draw->getDrawModules(); *dm; ++dm)
+				(*dm)->setShadowsEnabled(draw->getShadowsEnabled());
+		}
 	}
 	s_nativeBodyHidden.swap(nativeBodyDrawn);
+}
+
+// Host patch 0029: a General the native pass draws in place of his hidden W3D body.
+Bool Zhbo_NativeFireFx(Drawable *draw, const FXList *fxl, Real weaponSpeed, const Coord3D *victimPos, Real damageRadius)
+{
+	const Object *obj = draw ? draw->getObject() : nullptr;
+	if (!obj || !fxl || s_nativeBodyHidden.count((uint32_t)obj->getID()) == 0)
+		return FALSE;
+	float m[12];
+	if (!zhbo_native_body_flash((uint32_t)obj->getID(), m))
+		return FALSE;
+	Matrix3D mtx(true);
+	mtx[0].Set(m[0], m[1], m[2], m[3]);
+	mtx[1].Set(m[4], m[5], m[6], m[7]);
+	mtx[2].Set(m[8], m[9], m[10], m[11]);
+	Coord3D at;
+	at.set(m[3], m[7], m[11]);
+	FXList::doFXPos(fxl, &at, &mtx, weaponSpeed, victimPos, damageRadius);
+	// The --rts check reads this: the shot leaves his drawn gun, well above his feet.
+	static std::set<uint32_t> s_logged;
+	if (s_logged.insert((uint32_t)obj->getID()).second)
+		logf("General %u fires from his drawn muzzle (tag_flash %.1f units above his feet)", (unsigned)obj->getID(), at.z - obj->getPosition()->z);
+	return TRUE;
+}
+
+Drawable *Zhbo_PickNativeDrawable(const Coord3D *start, const Coord3D *end, Int pickType, Real *nearest)
+{
+	if (!start || !end || !nearest || !(pickType & PICK_TYPE_SELECTABLE))
+		return nullptr;
+	Drawable *best = nullptr;
+	for (std::set<uint32_t>::iterator it = s_nativeBodyHidden.begin(); it != s_nativeBodyHidden.end(); ++it)
+	{
+		Object *obj = TheGameLogic->findObjectByID((ObjectID)*it);
+		Drawable *draw = obj ? obj->getDrawable() : nullptr;
+		// The W3D model's collision type is what Zero Hour's own pick filters by: selectable
+		// while the object is (W3DModelDraw::setSelectable), none once dead.
+		if (!draw || obj->isEffectivelyDead() || !obj->isSelectable())
+			continue;
+		const Coord3D *feet = obj->getPosition();
+		const ZhboVec3 f = { feet->x, feet->y, feet->z };
+		const ZhboVec3 o = { start->x, start->y, start->z };
+		const ZhboVec3 e = { end->x, end->y, end->z };
+		const float hit = zhbo_client_pick_general((uint32_t)obj->getID(), &f, obj->getOrientation(), obj->getGeometryInfo().getMaxHeightAbovePosition(), &o, &e);
+		if (hit >= 0.0f && hit < *nearest)
+		{
+			*nearest = hit;
+			best = draw;
+		}
+	}
+	return best;
 }

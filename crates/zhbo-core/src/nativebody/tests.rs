@@ -575,3 +575,68 @@ fn a_gone_drops_rig_is_released() {
         assert_eq!(s.rig_count(), before - 1, "the drop that went is released, the General and the lying one stay");
     });
 }
+
+/// A General drawn in body mode keeps his drawn gun's muzzle (`tag_flash` in the pose just drawn,
+/// an orthonormal frame at the drawn scale) for his shots' effects (`zhbo_native_body_flash`): where
+/// the body holds the gun, yawed with him — never his feet. The weapon-only mode keeps none (the
+/// W3D body's own fire bone serves), nor does a General whose gun is not drawn.
+#[test]
+fn the_drawn_muzzle_is_kept_for_the_shots_effects() {
+    let body = model("body", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon_right", Some(0), [10.0, -8.0, 40.0])]);
+    let bmanifest = zhbo_native::thirdperson::Body { faction: b'U', model: zhbo_native::model_path("body"), weapon_tag: "tag_weapon_right".into(), clips: Vec::new() };
+    let rifle = model("rifle", vec![bone("j_gun", None, [0.0; 3]), bone(FLASH_TAG, Some(0), [24.0, 0.0, 2.0])]);
+    let part = ViewmodelPart { model: zhbo_native::model_path("rifle"), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: None, ads_swap: None };
+    let f = Fixture {
+        files: vec![
+            (zhbo_native::body_path('U'), bmanifest.to_bytes()),
+            (zhbo_native::model_path("body"), body.to_bytes()),
+            (zhbo_native::world_weapon_path(3), Weapon { id: "rifle_mp".into(), parts: vec![part], hide: Vec::new() }.to_bytes()),
+            (zhbo_native::model_path("rifle"), rifle.to_bytes()),
+        ],
+    };
+    let yaw = std::f32::consts::FRAC_PI_2;
+    let feet = [100.0, 200.0, 5.0];
+    let body_input = ZhboNativeBodyIn { mode: 2, pos: feet, yaw, ..input(3, None) };
+    with_state(|s| {
+        *s = ffi::State::default();
+        ffi::publish_stowed(&[]);
+        ffi::publish_torso(std::iter::empty());
+        for _ in 0..20 {
+            s.frame(&body_input, 2, None);
+            answer(s, &f);
+        }
+        s.frame(&body_input, 2, None);
+        assert!(s.loaded().is_some(), "{:?}", s.logged().collect::<Vec<_>>());
+        let m = s.flash_of(1).expect("the drawn muzzle is kept");
+        // The muzzle in the body's frame is the hand's tag plus the flash's offset on the gun,
+        // (34, -8, 42) inches at the drawn scale; yawed +90° about Z, +X goes to +Y.
+        let local = [10.0 + 24.0, -8.0, 40.0 + 2.0].map(crate::units::drawn_inches);
+        let want = [feet[0] - local[1], feet[1] + local[0], feet[2] + local[2]];
+        let at = [m[0][3], m[1][3], m[2][3]];
+        assert!((0..3).all(|k| (at[k] - want[k]).abs() < 1e-3), "{at:?} vs {want:?}");
+        assert!(at[2] - feet[2] > 5.0, "well above his feet");
+        // The frame is orthonormal (the root's art scale taken out), its X down the barrel: +Y here.
+        let lengths = [0, 1, 2].map(|c| (m[0][c] * m[0][c] + m[1][c] * m[1][c] + m[2][c] * m[2][c]).sqrt());
+        assert!(lengths.iter().all(|l| (l - 1.0).abs() < 1e-4), "the basis' lengths: {lengths:?}");
+        assert!((m[1][0] - 1.0).abs() < 1e-4, "X down the barrel, yawed with him: {m:?}");
+        let mut out = [0.0f32; 12];
+        assert_eq!(unsafe { ffi::zhbo_native_body_flash_in(s, 1, out.as_mut_ptr()) }, 1);
+        assert!((out[3] - want[0]).abs() < 1e-3 && (out[7] - want[1]).abs() < 1e-3 && (out[11] - want[2]).abs() < 1e-3, "{out:?}");
+        assert_eq!(unsafe { ffi::zhbo_native_body_flash_in(s, 2, out.as_mut_ptr()) }, 0, "no muzzle for a General not drawn");
+        // While a grenade is in his hand the gun is not drawn, and his shots have no muzzle there.
+        ffi::publish_torso(std::iter::once(ffi::TorsoAction { general: 1, action: zhbo_native::thirdperson::torso::THROW, clip: 0x1000, t: 0.1, lethal: true }));
+        s.frame(&body_input, 2, None);
+        assert!(s.flash_of(1).is_none(), "the gun is hidden for the throw");
+        ffi::publish_torso(std::iter::empty());
+        s.frame(&body_input, 2, None);
+        assert!(s.flash_of(1).is_some());
+        // The weapon-only mode: the W3D body's fire bone places his effects.
+        *s = ffi::State::default();
+        let weapon_input = input(3, Some(tag([0.0; 3])));
+        for _ in 0..20 {
+            s.frame(&weapon_input, 1, None);
+            answer(s, &f);
+        }
+        assert!(s.loaded().is_some() && s.flash_of(1).is_none(), "no muzzle kept in the weapon-only mode");
+    });
+}

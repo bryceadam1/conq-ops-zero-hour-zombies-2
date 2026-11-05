@@ -1,0 +1,47 @@
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
+@@ -79,6 +79,7 @@
+ #include "GameClient/LanguageFilter.h"
+ #include "GameClient/Shadow.h"
+ #include "GameClient/GameText.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "WW3D2/ww3d.h"
+ 
+@@ -4209,6 +4210,11 @@
+ 			m_locoInfo->m_accelerationRollRate += recoilAmount * Sin(recoilAngle);
+ 		}
+ 	}
++
++	// ZHBO: a General the native pass draws in place of his hidden W3D body fires from the drawn
++	// gun's muzzle, not the hidden model's logic position
++	if (Zhbo_NativeFireFx(this, fxl, weaponSpeed, victimPos, damageRadius))
++		return true;
+ 
+ 	for (DrawModule** dm = getDrawModules(); *dm; ++dm)
+ 	{
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+@@ -2564,6 +2564,20 @@
+ 		drawInfo = (DrawableInfo *)renderObj->Get_User_Data();
+ 	if (drawInfo)
+ 		draw=drawInfo->m_drawable;
++
++	// ZHBO: a General drawn by the native pass in place of his hidden W3D body (which the ray test
++	// skips) is picked by his hit boxes, when the ray meets him before what it hit
++	{
++		const Real rayLength = (rayEnd - rayStart).Length();
++		Real nearest = 1.0f;
++		if (renderObj && rayLength > 0.0f)
++			nearest = (raytest.Ray.Get_P1() - rayStart).Length() / rayLength;
++		Coord3D zhboStart, zhboEnd;
++		zhboStart.set(rayStart.X, rayStart.Y, rayStart.Z);
++		zhboEnd.set(rayEnd.X, rayEnd.Y, rayEnd.Z);
++		if (Drawable *zhboDraw = Zhbo_PickNativeDrawable(&zhboStart, &zhboEnd, (Int)pickType, &nearest))
++			draw = zhboDraw;
++	}
+ 
+ 	return draw;
+ 

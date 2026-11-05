@@ -339,3 +339,54 @@ fn a_particle_starts_its_death_effect_where_and_when_it_dies() {
     let at = Spawn::START.run(&wisp, 1.0);
     assert_eq!(at.times, 1.0);
 }
+
+/// A BO2 beam tracer flies as BO2 draws it: its nugget names a client drawable whose textured beam
+/// (host patch 0030) draws the tracer's baked texture, written once for every FXList that plays
+/// it (the sim's every-Nth cadence and the overhead General's 1-in-N), with the beam's BO2 width
+/// and length; a tracer without its material image keeps Zero Hour's line in the tint.
+#[test]
+fn a_beam_tracer_flies_with_its_baked_texture() {
+    let t = zhbo_formats::weapon::Tracer {
+        name: "assaultrifle".into(),
+        kind: 0,
+        material: Some("gfx_tracer".into()),
+        draw_interval: 3,
+        speed: 4500.0,
+        beam_length: 50.0,
+        beam_width: 2.0,
+        colors: [[1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.5], [1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0]],
+        ..Default::default()
+    };
+    let image = zhbo_formats::iwi::Rgba { width: 8, height: 2, pixels: vec![200; 8 * 2 * 4] };
+    let mut c = Converted::default();
+    let every = c.tracer(&t, [1.0, 1.0, 0.8], Some(&image), 1.0);
+    let some = c.tracer(&t, [1.0, 1.0, 0.8], Some(&image), 1.0 / 3.0);
+    let draw = tracer_draw_object("assaultrifle");
+    for list in [&every, &some] {
+        let body = c.body(list).unwrap();
+        assert!(body.contains(&format!("TracerName = {draw}\n")) && body.contains("Length = 8.33") && body.contains("Width = 0.333"), "{body}");
+    }
+    assert_eq!(c.tracer_objects.matches("Object ").count(), 1, "one drawable for the tracer: {}", c.tracer_objects);
+    assert!(c.tracer_objects.contains(&format!("Object {draw}\n")) && c.tracer_objects.contains("Draw = W3DTracerDraw ModuleTag_01\n    Texture = zhbo_tracer_assaultrifle.tga\n"), "{}", c.tracer_objects);
+    assert!(c.textures.contains_key("Art\\Textures\\zhbo_tracer_assaultrifle.tga"));
+    // No image: the line.
+    let mut c = Converted::default();
+    let line = c.tracer(&t, [1.0, 1.0, 0.8], None, 1.0);
+    assert!(!c.body(&line).unwrap().contains("TracerName") && c.tracer_objects.is_empty());
+}
+
+/// The baked tracer texture: BO2's streak (its U along the beam, tail to head) turned so the beam's
+/// V runs along it, each texel times the stop colour at its place along the beam and premultiplied
+/// by that stop's alpha (tail transparent, head whole), opaque for the additive blend.
+#[test]
+fn the_tracer_texture_runs_the_stops_from_tail_to_head() {
+    // A 5 x 2 streak, every texel (100, 200, 40); its stops ramp the alpha 0 → 1 and redden the head.
+    let image = zhbo_formats::iwi::Rgba { width: 5, height: 2, pixels: [100u8, 200, 40, 255].repeat(10) };
+    let colors = [[1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.25], [1.0, 1.0, 1.0, 0.5], [1.0, 1.0, 1.0, 0.75], [1.0, 0.5, 0.5, 1.0]];
+    let out = tracer_texture(&image, &colors);
+    assert_eq!((out.width, out.height), (2, 5), "across the beam, then along it");
+    let px = |x: usize, y: usize| &out.pixels[(y * 2 + x) * 4..(y * 2 + x) * 4 + 4];
+    assert_eq!(px(0, 0), &[0, 0, 0, 255], "the tail: stop 0, transparent");
+    assert_eq!(px(1, 2), &[50, 100, 20, 255], "half way: stop 2's half alpha");
+    assert_eq!(px(0, 4), &[100, 100, 20, 255], "the head: stop 4, whole and reddened");
+}

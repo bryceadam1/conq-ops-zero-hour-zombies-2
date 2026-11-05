@@ -268,14 +268,18 @@ left=$( (grep -oE "leaving the game in first person \(General [0-9]+, frame [0-9
 left_general=$(sed -E 's/.*General ([0-9]+),.*/\1/' <<<"$left")
 left_frame=$(sed -E 's/.*frame ([0-9]+)\)/\1/' <<<"$left")
 remote_look() { # name, the holder's log, the viewer's log
-    local held seen=0 missing=0 line g v c
+    local held seen=0 missing=0 unseen= line g v c
     held=$( (grep -E "autopilot mp: General [0-9]+ weapon [0-9]+ camo [A-Za-z0-9_]+ in hand" "$2" || true) | awk -v f="${left_frame:-999999999}" -F'[][]' '$2 + 0 < f' | grep -oE "autopilot mp: General [0-9]+ weapon [0-9]+ camo [A-Za-z0-9_]+ in hand" | sort -u || true)
     while read -r line; do
         [[ -z "$line" ]] && continue
         g=$(awk '{print $4}' <<<"$line"); v=$(awk '{print $6}' <<<"$line"); c=$(awk '{print $8}' <<<"$line")
-        if grep -q "native body: General $g weapon $v camo $c composed" "$3"; then seen=$((seen + 1)); else missing=$((missing + 1)); echo "    not drawn on the other machine: General $g weapon $v camo $c"; fi
+        if grep -q "native body: General $g weapon $v camo $c composed" "$3"; then seen=$((seen + 1));
+        # Zero Hour's shroud hides a General the viewer's units cannot see, and the native pass with it
+        # (as it hides the W3D body): a look he never showed in sight is not a missing draw.
+        elif grep -q "native body: General $g out of the local player's sight" "$3"; then unseen=$((unseen + 1)); echo "    out of sight on the other machine: General $g weapon $v camo $c";
+        else missing=$((missing + 1)); echo "    not drawn on the other machine: General $g weapon $v camo $c"; fi
     done <<<"$held"
-    if [[ $seen -ge 1 && $missing -eq 0 ]]; then pass "$1 ($seen looks)"; else fail "$1" "$seen drawn, $missing missing"; fi
+    if [[ $seen -ge 1 && $missing -eq 0 ]]; then pass "$1 ($seen looks${unseen:+, $unseen out of sight})"; else fail "$1" "$seen drawn, $missing missing"; fi
 }
 remote_look "the joiner draws the host's weapon and camo" "$h" "$j"
 remote_look "the host draws the joiner's weapon and camo" "$j" "$h"

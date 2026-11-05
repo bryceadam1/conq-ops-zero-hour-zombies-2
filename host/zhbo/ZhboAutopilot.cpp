@@ -932,6 +932,40 @@ void rtsAutopilotFrame(UnsignedInt frame)
 		group->appendObjectIDArgument(general->getID());
 		logLine("autopilot: selected the General");
 	}
+	// A player's click on the General: the view's pick at his drawn chest (two thirds of his height
+	// over his feet, on screen) must find him, as SelectionXlat's left click does, while the native
+	// pass draws him in place of his hidden W3D body (host patch 0029). The selection is left as
+	// it is: the orders below go to the selected group.
+	if (t >= 100 && !s_autopilot.rtsPicked && zhbo_native_body_enabled() == ZHBO_BODY_FULL)
+	{
+		s_autopilot.rtsPicked = TRUE;
+		Coord3D chest = *general->getPosition();
+		chest.z += general->getGeometryInfo().getMaxHeightAbovePosition() * 2.0f / 3.0f;
+		ICoord2D pixel;
+		if (TheTacticalView->worldToScreen(&chest, &pixel))
+		{
+			const Drawable *picked = TheTacticalView->pickDrawable(&pixel, FALSE, PICK_TYPE_SELECTABLE);
+			const Object *pickedObj = picked ? picked->getObject() : nullptr;
+			if (pickedObj == general)
+				logf("autopilot: a click on the General's body at (%d, %d) picks General %u", pixel.x, pixel.y, (unsigned)general->getID());
+			else
+				logf("autopilot: a click on the General's body at (%d, %d) picks %s", pixel.x, pixel.y, pickedObj ? pickedObj->getTemplate()->getName().str() : "nothing");
+		}
+	}
+	// He walks: Zero Hour moves him (his body's gait is the engine's, zhbo_client_native_poses_moving)
+	// 80 units back the way he faces, after the knife order is carried out and before first person.
+	if (t >= 600 && !s_autopilot.rtsWalked)
+	{
+		s_autopilot.rtsWalked = TRUE;
+		if (AIUpdateInterface *ai = general->getAI())
+		{
+			Coord3D to = *general->getPosition();
+			to.x -= Cos(general->getOrientation()) * 80.0f;
+			to.y -= Sin(general->getOrientation()) * 80.0f;
+			ai->aiMoveToPosition(&to, CMD_FROM_PLAYER);
+			logf("autopilot: ordered General %u to walk to (%.0f, %.0f)", (unsigned)general->getID(), to.x, to.y);
+		}
+	}
 	// The command bar's orders as its buttons give them: the order's action first (what
 	// Zhbo_OnFireWeaponCommand sends), then Zero Hour's own weapon message for the third slot.
 	const Object *rebel = TheAI ? TheAI->findClosestEnemy(general, 250.0f, AI::CAN_SEE) : nullptr;

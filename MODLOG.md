@@ -13252,3 +13252,116 @@ the overhead fix had passed every leg up to the short mp too. Screenshots in
 equipment leg the C4's own blast shellshocks the view over it), a corpse from the showcase's
 scripted kill (`shot-corpse-scriptkill-frontspin.png`; no leg kills by a non-rifle weapon: every mp
 kill is `dmgType normal`), the overhead General hurt (`shot-overhead-general-hurt*.png`).
+
+## The overhead General, BO2's body in full (2026-11-04, branch `v1/overhead-general`)
+
+The user played main 4e9089f: overhead, the General did not walk, his bullets came from his feet,
+the tracers looked like Zero Hour's, and a click did not select him (only a drag box). **Root
+cause:** round 4 made the native body the default (`ZHBO_NATIVE_BODY=2`). It hides the W3D body
+through the draw modules (`W3DModelDraw::setHidden`), and four things Zero Hour does by that W3D
+render object went with it. They were never carried over to the native one:
+* *Walking.* The bridge called `zhbo_client_native_poses(…, 0, 0)` (no General's engine motion)
+  since milestone 2, so an overhead General's native body stood idle while Zero Hour moved him; the
+  hidden W3D body had walked by its `MOVING` condition.
+* *The shots' effects.* `W3DModelDraw::handleWeaponFireFX` plays a `FireFX` at the model's fire
+  bone, and falls back to the logic position (the feet) when the render object is hidden. Every
+  General drawn natively flashed, ejected brass and started tracers at his feet: overhead, and
+  another player's first-person shots too (the FX weapons go the same way).
+* *The pick.* `RTS3DScene::castRay` tests only visible render objects, and `MeshClass::Cast_Ray`
+  skips hidden meshes: a click (`W3DView::pickDrawable`: selection, the cursor's hint, a
+  right-click attack on an enemy General) found nothing. The drag box selects by position.
+* *The tracer's look* was not this regression: every tracer was Zero Hour's untextured `Line3D`
+  tinted with the material's mean colour (the brass-tracers entry's documented gap), now the more
+  visible because it started at the feet.
+
+**The decision: complete mode 2, not revert to 1** (toward BO2 feel: mode 2 is BO2's body with
+its own movement, torso and death clips, camo and attachments on the body, the hit boxes the
+bullets strike). Modes 1 and 0 stay opt-outs, nothing is deprecated.
+
+**Fixes.**
+* *Gait:* `zhbo_client_native_poses_moving` (new, pending ABI) takes each General's
+  `ZhboGeneralMotion` (the drawable's `MOVING`, his physics speed × the logic rate); the bridge asks
+  for the Generals, then passes their motion. `PlayerSim::body_state` overhead: standing (not the
+  crouch, prone, ADS or sprint his body kept from his last first person: a prone overhead General
+  had been drawn prone while Zero Hour walked him), walk or run by the engine's speed on
+  `state_of`'s split, idle otherwise. The sim's hit pose for him is the standing idle (it was
+  his stale first-person stance: a sim change, deterministic, the lockstep gates below).
+* *Shots:* host patch 0029. `Drawable::handleWeaponFireFX` asks `Zhbo_NativeFireFx` first, which
+  plays the `FireFX` from `zhbo_native_body_flash` (new): the held weapon's `tag_flash` in the pose
+  the body pass drew last, its basis made orthonormal (the root carries the art scale; the W3D fire
+  bone's frame is rotation only), none while the gun is not drawn. Presentation only. The logic's
+  shot is untouched.
+* *Pick:* the same patch. `W3DView::pickDrawable` asks `Zhbo_PickNativeDrawable` after the scene's
+  ray: each selectable, living General drawn natively is tested by `zhbo_client_pick_general`
+  (new) → `Sim::pick_general`, his BO2 hit boxes in the sim's pose at his drawn size and his logic
+  object's place. The nearer hit wins.
+* *Tracer:* host patch 0030 and the converter. `W3DTracerDraw` takes a `Texture` (module data) and
+  then draws a camera-facing `SegmentedLineClass` beam of the nugget's width and length with that
+  texture, additive, its opacity on the colour, flying and fading by the render update's share of
+  a logic frame. (The stock `Line3D` moves per draw call, so at the display's rate it flies 4×
+  fast; not touched for Zero Hour's own units.) The converter writes a client drawable per beam
+  tracer (`ZHBO_BO2TracerDraw_<tracer>`, `Data\INI\Object\ZHBO_BO2_Tracers.ini`, named by the
+  nugget's `TracerName`) and its texture `zhbo_tracer_<tracer>.tga`: the material's colour map
+  (`gfx_tracer` is a 128×32 streak, its U from the tail to the pointed head) turned so the beam's V
+  runs along it, times BO2's five stops (white, alpha 0 → 0.5 → 1 → 1 → 1, so stop 0 is the tail:
+  the image's pointed bright end and the alpha ramp agree), premultiplied. Every tracer gets it
+  (overhead, another player's, your own); the snipers' smoke trails (`kind` 1) keep the line.
+
+**Found in the audit, fixed.**
+* *X-ray:* the native pass drew every draw on its own cleared depth. A General (or a dropped weapon)
+  behind a building or hill drew over it, overhead and **in first person through walls**: a
+  multiplayer wallhack since the native body became the default. The world-camera draws
+  (`view_proj: None`) now run in a first pass that loads and stores the target's own depth
+  attachment (pipelines keyed by its format). The viewmodel keeps its own cleared depth in a
+  second pass.
+* *The shroud:* the native pass drew every seat's General whatever Zero Hour would show: an enemy
+  General under the shroud, in the fog, or inside a transport or building was drawn. The bridge now
+  draws only what `RTS3DScene` would (`nativeBodyVisible`: not effectively hidden, not fully under
+  the shroud, not fogged for the local player past `renderOneObject`'s two-second grace). The
+  dropped weapons' pass takes the same rule.
+* *The shadow:* `W3DModelDraw::setHidden` hid the decal shadow too. It is turned back on through the
+  draw modules (`setShadowsEnabled` as the drawable has it).
+* *Lighting:* the native body was lit by the plain object lights, darker than the W3D infantry it
+  replaced. Zero Hour lights infantry with every light's diffuse and ambient × `InfantryLightScale`
+  (capped at 1) and adds the drawable's tint and selection flash (`renderOneObject`). The bridge now
+  does the same for a General's body.
+* Not carried, on purpose: Zero Hour's `InfantryDustTrails` (the hidden model's particles; BO2 has
+  none) and the behind-building silhouette (an occluded General is hidden, as BO2 hides him).
+
+**Gotcha: there is no `timeout` on macOS.** `timeout 900 cargo check …` fails at once with
+"command not found", and a `| grep` after it prints nothing, which looks like a clean build.
+**Gotcha: the RTS autopilot's orders go to the logic's selected group.** A check that deselects
+and reselects only on the client (`selectDrawable`) leaves the group empty, and every later order
+silently goes nowhere. The pick check leaves the selection alone.
+* *The mp check for drawing the other player's look* assumed the host draws every look the joiner
+  holds. With the shroud rule a General out of the viewer's sight is not drawn (as the W3D body is
+  not). The bridge logs `native body: General G in/out of the local player's sight` when it changes,
+  and `mptest-mac.sh` counts a look the viewer never had in sight as out of sight, not missing.
+
+**Tests.** Headless: `an_overhead_general_walks_and_runs_at_the_engines_speed_standing`,
+`the_native_poses_take_each_overhead_generals_engine_motion`,
+`a_click_picks_the_general_by_his_drawn_hit_boxes`, `the_drawn_muzzle_is_kept_for_the_shots_effects`,
+`the_world_hides_a_world_draw_but_not_the_viewmodel` (zhbo-gfx: it fails on the old own-depth
+pass), `a_beam_tracer_flies_with_its_baked_texture`, `the_tracer_texture_runs_the_stops_from_tail_to_head`,
+and the install's AN-94 / `_enemy` tracer drawables in `generals::tests`. `--rts` gains three
+checks: a click at his drawn chest picks him (`TheTacticalView->pickDrawable`), his body walks or
+runs (movement state 2/3, after the script orders a walk), and his shots leave the drawn muzzle,
+3 or more units above his feet (logged at 9.9).
+
+**Verified.** `cargo test --workspace` 1,242 passed, 0 failed (run without `ZHBO_BO2_DIR` set:
+zhbo-requirements' prefix-library test reads it); clippy clean (workspace `--all-targets`, zhbo-core
+`harness,renderer` and `autopilot`). Real install: zhbo-assets `--ignored --skip conformance` 78/78
+(the roster lockstep gate among them); the other crates' `--lib --tests --ignored` pass; the
+conformance gate is red only for the 4 BO2-only cac rows. Conformance CLI: weapons 0 / cac 0 + 4
+BO2-only, all eight CSVs byte-identical to integration10's. `cargo xtask build` with host patches
+0001–0030; the archive rebuilt locally (`build-archive`, 3.3 min, still labelled 87). Every leg on
+the final build: `--rts` 19/19, `--rts-dry` 5/5, default 16/16, `--build` 18/18, `--classpick` 12/12,
+`--drops` 10/10, `--equipment` 12/12, `--detail` 10/10, `--showcase` (walks, runs, falls by
+`pb_stand_death_frontspin`, the corpse sinking with Zero Hour's body), `--splash` 5/5, `--smoke` 7/7,
+`--scope` 1/1, `--w3d-ads` 2/2, `--replay` 5/5, `--input` 3/3, `--mp` 26/26 (2,934 common frames),
+`ZHBO_MPTEST_ROUNDS=3` 35/35 (7,067 frames). The first long run before the sight log failed one
+timing check (the joiner's last life left before a second round line, 1 of 2) with the hash equal
+on all 4,795 frames; the rerun passed. Images in `~/.opencode/plan/overhead-general/`:
+`before-walk.png`/`after-walk.png`, `before-muzzle.png`/`after-muzzle.png`, `tracer-zoom.png`
+(textured BO2 streak top right), `cmp-mode2-vs-mode1.png` (main's darker body and flash at the feet),
+`sheet-showcase.png`.

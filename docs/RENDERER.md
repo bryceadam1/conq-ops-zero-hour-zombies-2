@@ -94,11 +94,14 @@ skinned mesh once (`native_create_mesh`: 56-byte vertices with four bone influen
 indices, surfaces with BO2's blend, emissive flag, colour map, packed normal/gloss/specular map
 and specular colour map from `native_create_texture`, which builds the mip chain; both upload raw — see shading) and
 queues a draw per frame with its bone palette (`native_submit`, at most 256 bones). Queued draws
-run in one pass immediately before their `before_view` (the scene composite), into the
+run immediately before their `before_view` (the scene composite), into the
 `target_view`'s frame buffer and rect; a draw whose before-view never comes runs at the end of the
-frame. A `None` `view_proj` takes the target view's own view × projection at `frame()`. The pass
-has its own `Depth32Float` buffer, cleared and discarded, so the viewmodel draws over the world
-and its parts sort among themselves; opaque surfaces draw first, blended ones after in BO2's
+frame. A `None` `view_proj` takes the target view's own view × projection at `frame()`: such a
+world-camera draw (a third-person body, a dropped weapon) runs in a first pass that loads and
+stores the target's own depth attachment, so the world in front of it hides it (pipelines are
+keyed by the depth format too; `the_world_hides_a_world_draw_but_not_the_viewmodel`). The
+viewmodel's draws run in a second pass on the pass's own `Depth32Float` buffer, cleared and
+discarded, so the viewmodel draws over the world and its parts sort among themselves; opaque surfaces draw first, blended ones after in BO2's
 sort-key order, and each surface culls the faces its material's `cullFace` says to
 (`GFXS0_CULL_*`, bits 14-15 of `GfxStateBits::loadBits[0]` — ordinary lit surfaces cull their
 back faces, cutouts and glows draw double-sided; the pass keeps BO2's index order, so front is
@@ -204,7 +207,7 @@ non-finite constant is skipped at upload.
 BO2's two shellshock screen effects, from the materials' own state bits and DXBC
 (`code_post_gfx_mp`'s `shellshock` / `shellshock_flashed`, technique `trivial`): one layer per
 frame, `Renderer::shock_submit(&ShockDraw { target_view, before_view, layer })`, run like a native
-draw — after the native pass before `before_view` (the scene composite), into the target view's
+draw — after the native passes before `before_view` (the scene composite), into the target view's
 colour, so the UI view draws over it.
 
 * `Blurred { alpha }` — `shellshock` (`SRC_ALPHA, INV_SRC_ALPHA`, the texture at the vertex

@@ -97,6 +97,25 @@ pub struct Request {
 /// `tag_inhand` (t6mp `FUN_0052a470`; the throw and prime clips animate it).
 pub const OFFHAND_TAG: &str = "tag_inhand";
 
+/// The world weapon's muzzle tag: BO2 plays a shot's flash there (`worldFlashEffect`) and starts
+/// its tracer there (`FUN_00535f80`), and the converter's W3D fire bone is the same tag.
+pub const FLASH_TAG: &str = "tag_flash";
+
+/// A 3x4 bone transform with its basis made orthonormal (the posed root carries the art scale):
+/// the frame effects are placed in, as the engine's own bone transforms are.
+pub fn orthonormal(m: &[[f32; 4]; 3]) -> [[f32; 4]; 3] {
+    let col = |c: usize| [m[0][c], m[1][c], m[2][c]];
+    let norm = |v: [f32; 3]| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if l > 1e-6 { [v[0] / l, v[1] / l, v[2] / l] } else { v }
+    };
+    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let x = norm(col(0));
+    let z = norm(cross(x, col(1)));
+    let y = cross(z, x);
+    [[x[0], y[0], z[0], m[0][3]], [x[1], y[1], z[1], m[1][3]], [x[2], y[2], z[2], m[2][3]]]
+}
+
 /// What a composed rig is: `(faction, vm, mode, stowed vm, offhand vms)`.
 pub type RigKey = (u8, i32, u8, i32, [i32; 2]);
 

@@ -1,0 +1,171 @@
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTracerDraw.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTracerDraw.h
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTracerDraw.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTracerDraw.h
+@@ -33,6 +33,29 @@
+ #include "Common/DrawModule.h"
+ #include "WW3D2/line3d.h"
+ 
++class SegmentedLineClass;
++
++// ZHBO: a tracer drawn as Black Ops II draws one: a camera-facing beam textured with the tracer's
++// material (Texture: the converter bakes its colour map with the five colour stops, tail to head,
++// along the texture's V) and blended additively, instead of the untextured Line3D.
++class W3DTracerDrawModuleData : public ModuleData
++{
++public:
++	AsciiString m_texture;
++
++	W3DTracerDrawModuleData() { }
++	static void buildFieldParse(MultiIniFieldParse& p)
++	{
++		ModuleData::buildFieldParse(p);
++		static const FieldParse dataFieldParse[] =
++		{
++			{ "Texture", INI::parseAsciiString, nullptr, offsetof( W3DTracerDrawModuleData, m_texture ) },
++			{ 0, 0, 0, 0 }
++		};
++		p.add(dataFieldParse);
++	}
++};
++
+ //-------------------------------------------------------------------------------------------------
+ /** W3D tracer draw */
+ //-------------------------------------------------------------------------------------------------
+@@ -40,7 +63,7 @@
+ {
+ 
+ 	MEMORY_POOL_GLUE_WITH_USERLOOKUP_CREATE( W3DTracerDraw, "W3DTracerDraw" )
+-	MAKE_STANDARD_MODULE_MACRO( W3DTracerDraw )
++	MAKE_STANDARD_MODULE_MACRO_WITH_MODULE_DATA( W3DTracerDraw, W3DTracerDrawModuleData )
+ 
+ public:
+ 
+@@ -63,6 +86,7 @@
+ protected:
+ 
+ 	Line3DClass *m_theTracer;			///< the tracer render object in the W3D scene
++	SegmentedLineClass *m_theBeam;	///< ZHBO: the textured beam drawn instead when the module data names a texture
+ 	Real m_length;								///< length of tracer
+ 	Real m_width;									///< width of tracer
+ 	RGBColor m_color;							///< color of tracer
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp
+@@ -33,12 +33,15 @@
+ #include "Common/Thing.h"
+ #include "Common/ThingTemplate.h"
+ #include "Common/Xfer.h"
++#include "Common/FramePacer.h"
+ #include "GameClient/Drawable.h"
+ #include "GameClient/GameClient.h"
+ #include "GameLogic/GameLogic.h"
+ #include "W3DDevice/GameClient/W3DDisplay.h"
+ #include "W3DDevice/GameClient/Module/W3DTracerDraw.h"
+ #include "WW3D2/line3d.h"
++#include "WW3D2/segline.h"
++#include "WW3D2/assetmgr.h"
+ #include "W3DDevice/GameClient/W3DScene.h"
+ 
+ 
+@@ -60,9 +63,21 @@
+ 	m_color.blue = 0.7f;
+ 	m_speedInDistPerFrame = 1.0f;
+ 	m_theTracer = nullptr;
++	m_theBeam = nullptr;
+ 
+ }
+ 
++// ZHBO: the textured beam's points (tail at the origin, head `length` along +X) and look. Additive:
++// the opacity scales the colour (white: the texture carries the tracer's colours).
++static void zhboShapeBeam(SegmentedLineClass *beam, Real length, Real width, Real opacity)
++{
++	Vector3 points[2] = { Vector3( 0.0f, 0.0f, 0.0f ), Vector3( length, 0.0f, 0.0f ) };
++	beam->Set_Points( 2, points );
++	beam->Set_Width( width );
++	beam->Set_Color( Vector3( opacity, opacity, opacity ) );
++	beam->Set_Opacity( 1.0f );
++}
++
+ //-------------------------------------------------------------------------------------------------
+ //-------------------------------------------------------------------------------------------------
+ void W3DTracerDraw::setTracerParms(Real speed, Real length, Real width, const RGBColor& color, Real initialOpacity)
+@@ -72,6 +87,11 @@
+ 	m_width = width;
+ 	m_color = color;
+ 	m_opacity = initialOpacity;
++	if (m_theBeam)
++	{
++		zhboShapeBeam( m_theBeam, m_length, m_width, m_opacity );
++		m_theBeam->Set_Transform( *getDrawable()->getTransformMatrix() );
++	}
+ 	if (m_theTracer)
+ 	{
+ 		Vector3 start( 0.0f, 0.0f, 0.0f );
+@@ -94,6 +114,11 @@
+ 		W3DDisplay::m_3DScene->Remove_Render_Object( m_theTracer );
+ 		REF_PTR_RELEASE( m_theTracer );
+ 	}
++	if( m_theBeam )
++	{
++		W3DDisplay::m_3DScene->Remove_Render_Object( m_theBeam );
++		REF_PTR_RELEASE( m_theBeam );
++	}
+ }
+ 
+ //-------------------------------------------------------------------------------------------------
+@@ -103,6 +128,8 @@
+ {
+ 	if( m_theTracer )
+ 		m_theTracer->Set_Transform( *getDrawable()->getTransformMatrix() );
++	if( m_theBeam )
++		m_theBeam->Set_Transform( *getDrawable()->getTransformMatrix() );
+ }
+ 
+ //-------------------------------------------------------------------------------------------------
+@@ -110,6 +137,46 @@
+ void W3DTracerDraw::doDrawModule(const Matrix3D* transformMtx)
+ {
+ 
++	// ZHBO: the textured beam, when the module data names its texture
++	const W3DTracerDrawModuleData *data = getW3DTracerDrawModuleData();
++	if( m_theBeam == nullptr && m_theTracer == nullptr && data && data->m_texture.isNotEmpty() )
++	{
++		TextureClass *texture = WW3DAssetManager::Get_Instance()->Get_Texture( data->m_texture.str() );
++		if( texture )
++		{
++			m_theBeam = NEW SegmentedLineClass;
++			m_theBeam->Set_Texture( texture );
++			REF_PTR_RELEASE( texture );
++			m_theBeam->Set_Shader( ShaderClass::_PresetAdditiveShader );
++			// One texture over the beam: U across it, V from the tail (0) to the head (1).
++			m_theBeam->Set_Texture_Mapping_Mode( SegLineRendererClass::TILED_TEXTURE_MAP );
++			m_theBeam->Set_Texture_Tile_Factor( 1.0f );
++			zhboShapeBeam( m_theBeam, m_length, m_width, m_opacity );
++			W3DDisplay::m_3DScene->Add_Render_Object( m_theBeam );
++			m_theBeam->Set_Transform( *transformMtx );
++		}
++	}
++	if( m_theBeam )
++	{
++		// Its flight and fade per logic frame, in this render update's share of one (the render
++		// runs at the display's rate, host patch 0026).
++		const Real ratio = TheFramePacer ? TheFramePacer->getActualLogicTimeScaleOverFpsRatio() : 1.0f;
++		const Real step = ratio < 1.0f ? ratio : 1.0f;
++		UnsignedInt expDate = getDrawable()->getExpirationDate();
++		if (expDate != 0 && expDate > TheGameLogic->getFrame())
++		{
++			m_opacity -= m_opacity * step / (expDate - TheGameLogic->getFrame());
++			zhboShapeBeam( m_theBeam, m_length, m_width, m_opacity );
++		}
++		if (m_speedInDistPerFrame != 0.0f)
++		{
++			Matrix3D pos = m_theBeam->Get_Transform();
++			pos.Translate( Vector3( m_speedInDistPerFrame * step, 0.0f, 0.0 ) );
++			m_theBeam->Set_Transform( pos );
++		}
++		return;
++	}
++
+ 	// create tracer
+ 	if( m_theTracer == nullptr )
+ 	{

@@ -103,9 +103,7 @@ pub fn rotate_xyz(q: [f32; 4]) -> [f32; 3] {
 /// is 1 (BO2's tracer colours carry the brightness). White when the material has no colour map.
 pub fn material_tint(zones: &[&Zone], material: Option<&str>, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> [f32; 3] {
     let white = [1.0; 3];
-    let Some(name) = material else { return white };
-    let Some(img) = zones.iter().find_map(|z| zhbo_formats::xmodel::find_material(z, name).and_then(|m| m.color_map().cloned())) else { return white };
-    let Some(rgba) = paks(img.key()) else { return white };
+    let Some(rgba) = material_image(zones, material, paks) else { return white };
     let mut sum = [0.0f64; 3];
     for p in rgba.pixels.as_chunks::<4>().0 {
         let a = p[3] as f64 / 255.0;
@@ -118,6 +116,13 @@ pub fn material_tint(zones: &[&Zone], material: Option<&str>, paks: &dyn Fn(zhbo
         return white;
     }
     [(sum[0] / max) as f32, (sum[1] / max) as f32, (sum[2] / max) as f32]
+}
+
+/// A material's colour map from the packs (the first zone in `zones` that holds the material).
+pub fn material_image(zones: &[&Zone], material: Option<&str>, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> Option<zhbo_formats::iwi::Rgba> {
+    let name = material?;
+    let img = zones.iter().find_map(|z| zhbo_formats::xmodel::find_material(z, name).and_then(|m| m.color_map().cloned()))?;
+    paks(img.key())
 }
 
 /// Sets every def's `world_shell_fx_weapon`, `world_last_shot_shell_fx_weapon`,
@@ -176,7 +181,8 @@ pub fn convert(
                 .entry(t.name.clone())
                 .or_insert_with(|| {
                     let tint = material_tint(zones, t.material.as_deref(), paks);
-                    let list = effects.tracer(t, tint, 1.0);
+                    let image = material_image(zones, t.material.as_deref(), paks);
+                    let list = effects.tracer(t, tint, image.as_ref(), 1.0);
                     let name = tracer_fx_weapon(&t.name);
                     ini.push_str(&fx_weapon_block(&name, &list));
                     name
@@ -205,7 +211,8 @@ pub fn rts_fire_fx(
     let mut extra = String::new();
     if let Some(t) = w.tracer.as_ref().filter(|t| t.draw_interval > 0) {
         let tint = material_tint(zones, t.material.as_deref(), paks);
-        let list = effects.tracer(t, tint, 1.0 / t.draw_interval as f32);
+        let image = material_image(zones, t.material.as_deref(), paks);
+        let list = effects.tracer(t, tint, image.as_ref(), 1.0 / t.draw_interval as f32);
         extra = effects.body(&list).unwrap_or_default().to_string();
     }
     let brass = placed.get(id).map(String::as_str).unwrap_or("");

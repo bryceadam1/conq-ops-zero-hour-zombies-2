@@ -490,6 +490,12 @@ if [[ $mode == rts ]]; then
     # only): the overhead General's gun composes through nativebody (ZHBO_NATIVE_BODY=0 opts out,
     # and this fails).
     check "native third-person weapon" "native body: General [0-9]+ weapon [0-9]+ camo [^ ]+ composed \\(ZW[0-9]+[A-Z]\\)"
+    # The native body stands in for the hidden W3D one overhead (host patch 0029): a click on his
+    # drawn body picks him, his body walks while Zero Hour moves him (movement state 2 walk, 3 run),
+    # and his shots' flash, brass and tracer leave his drawn gun's tag_flash, not his feet.
+    check "click on his body picks him" "autopilot: a click on the General's body at \\([0-9-]+, [0-9-]+\\) picks General [0-9]+"
+    check "walks as Zero Hour moves him" "native body: General [0-9]+ body clip [^ ]+ \\(movement state [23]\\)"
+    check "shots leave his drawn muzzle" "General [0-9]+ fires from his drawn muzzle \\(tag_flash ([3-9]|[1-9][0-9])\\.[0-9] units above his feet\\)"
     echo "screenshots and log: $out"
     exit $ok
 fi

@@ -221,7 +221,7 @@ pub(super) struct Target {
     /// (attachment view, resolve view) per colour target.
     pub(super) colors: Vec<(wgpu::TextureView, Option<wgpu::TextureView>)>,
     pub(super) color_formats: Vec<wgpu::TextureFormat>,
-    depth: Option<(wgpu::TextureView, wgpu::TextureFormat)>,
+    pub(super) depth: Option<(wgpu::TextureView, wgpu::TextureFormat)>,
     pub(super) samples: u32,
     pub(super) width: u32,
     pub(super) height: u32,

@@ -370,6 +370,38 @@ fn takes_the_target_views_transform_when_given_none() {
     assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
 }
 
+/// A draw the world camera frames (`view_proj: None`: a third-person body, a dropped weapon) is
+/// hidden by the scene's own depth, as the W3D models it stands in for are — the world in front
+/// of a General hides him — while a viewmodel draw (its own projection) still draws over the world
+/// on its own cleared depth. The scene's depth here is a clear nearer than the quads (0.25 < 0.5).
+#[test]
+fn the_world_hides_a_world_draw_but_not_the_viewmodel() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let red = texture(&mut r, [255, 0, 0, 255]);
+    let green = texture(&mut r, [0, 255, 0, 255]);
+    let body = r.native_create_mesh(&quad(0.0, 0.0, 16.0, 16.0, 0), &[0, 2, 1, 0, 3, 2], &[surface(red, true, 6)]);
+    let gun = r.native_create_mesh(&quad(32.0, 0.0, 48.0, 16.0, 0), &[0, 2, 1, 0, 3, 2], &[surface(green, true, 6)]);
+    r.set_view_transform(1, Some(&IDENTITY), Some(&ortho()));
+    r.set_view_clear(1, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x000000ff, 0.25, 0);
+    let mut world = frame(0);
+    world.view_proj = None;
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh: body, palette: &[IDENTITY], frame: world }));
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh: gun, palette: &[IDENTITY], frame: frame(0) }));
+    r.request_screenshot(INVALID, "depth.png");
+    r.frame();
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+    assert!(close(pixel(&shot, 8, 8), [0, 0, 0]), "the world in front hides the body: {:?}", pixel(&shot, 8, 8));
+    assert!(close(pixel(&shot, 40, 8), [0, 255, 0]), "the viewmodel draws over the world: {:?}", pixel(&shot, 40, 8));
+    // With the world behind it, the body shows.
+    r.set_view_clear(1, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x000000ff, 1.0, 0);
+    r.touch(1);
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh: body, palette: &[IDENTITY], frame: world }));
+    r.request_screenshot(INVALID, "depth2.png");
+    r.frame();
+    assert!(close(pixel(&shot, 8, 8), [0, 0, 255]), "the body in front of the world draws: {:?}", pixel(&shot, 8, 8));
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
 #[test]
 fn runs_before_its_view_or_at_the_end() {
     let Some((mut r, log, shot)) = renderer() else { return };

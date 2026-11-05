@@ -649,6 +649,28 @@ void zhbo_native_body_provide(const char *path, const uint8_t *data, int32_t len
 int32_t zhbo_native_body_take_log(char *buf, int32_t cap);
 int32_t zhbo_native_body_bone(const char *name, float *out12); /* world 3x4 rows of the last pose */
 void zhbo_native_body_reset(void);
+/* Pending for the next ABI bump (overhead General, after ABI 33; CONTRACT.md "Pending for the next
+   bump"). How Zero Hour moves one General under RTS control, read by the bridge each frame: his
+   drawable's MOVING condition and his horizontal speed in world units per second. */
+typedef struct ZhboGeneralMotion
+{
+	uint32_t general;
+	int32_t moving;
+	float speed;
+} ZhboGeneralMotion;
+/* zhbo_client_native_poses with every overhead General's motion (`count` entries; null/0 none): his
+   native body walks or runs at Zero Hour's speed. */
+int32_t zhbo_client_native_poses_moving(ZhboNativePose *out, int32_t cap, const ZhboGeneralMotion *motion, int32_t count);
+/* General `general`'s muzzle in his last native pose: the held weapon's tag_flash, 3x4 rows with an
+   orthonormal basis (X down the barrel), as the W3D fire bone's. 1, or 0 when none (another mode,
+   the gun hidden, nothing drawn): the engine's own placement stands. Host patch 0029 plays his
+   shots' FireFX there while his W3D body is hidden. */
+int32_t zhbo_native_body_flash(uint32_t general, float *out12);
+/* Where the view's pick ray (origin to end, world units) enters General `general`'s hit boxes (the
+   sim's pose for him, at his drawn size) standing at `feet` facing `yaw` (his logic object's), or
+   his cylinder up to `height` without a hit table: the fraction along the ray, or -1 for a miss.
+   Host patch 0029 picks a General drawn natively (his W3D render object hidden) by it. */
+float zhbo_client_pick_general(uint32_t general, const ZhboVec3 *feet, float yaw, float height, const ZhboVec3 *origin, const ZhboVec3 *end);
 /* The Assault Shield in Zero Hour's damage path (host patch 0017, Object::attemptDamage): the share
    of `amount` the engine applies to `victim` (0..1). `kind` is ZHBO_DAMAGE_* or -1; `from_*` is the
    source's feet and height when `source_known`. Lock-free (safe inside any core callback).
@@ -746,4 +768,5 @@ static_assert(sizeof(ZhboNativePose) == 28, "ZhboNativePose layout must match na
 static_assert(sizeof(ZhboNativeBodyIn) == 204, "ZhboNativeBodyIn layout must match nativebody/ffi.rs");
 static_assert(sizeof(ZhboDroppedWeapon) == 24, "ZhboDroppedWeapon layout must match ffi.rs");
 static_assert(sizeof(ZhboContentCrc) == 32, "ZhboContentCrc layout must match content.rs");
+static_assert(sizeof(ZhboGeneralMotion) == 12, "ZhboGeneralMotion layout must match ffi.rs");
 #endif

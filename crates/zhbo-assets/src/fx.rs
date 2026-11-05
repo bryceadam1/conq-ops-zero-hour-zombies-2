@@ -142,6 +142,9 @@ pub struct Converted<'a> {
     roles: BTreeMap<String, Role>,
     /// Images an element named that the packs did not have (its element is not drawn).
     pub missing: std::collections::BTreeSet<String>,
+    /// The client drawables BO2's tracers fly as ([`Converted::tracer`]): one Object block per
+    /// beam tracer, whose `W3DTracerDraw` draws its baked texture (host patch 0030).
+    pub tracer_objects: String,
 }
 
 impl<'a> Converted<'a> {
@@ -276,12 +279,34 @@ impl<'a> Converted<'a> {
     /// A BO2 tracer (`TracerDef`) as an FXList of one Zero Hour `Tracer` nugget, which flies a
     /// beam from the flash bone towards the shot's end (`TracerFXNugget`). `tint` is the tracer
     /// material's mean colour; `probability` < 1 only where no sim decides the cadence.
-    pub fn tracer(&mut self, t: &zhbo_formats::weapon::Tracer, tint: [f32; 3], probability: f32) -> String {
+    ///
+    /// A beam (`kind` 0) whose material's colour map `image` is in the packs flies as BO2 draws it:
+    /// the nugget's `TracerName` is a client drawable ([`tracer_draw_object`]) whose
+    /// `W3DTracerDraw` draws a camera-facing beam of the tracer's width and length with the baked
+    /// texture ([`tracer_texture`]: the colour map along the beam, its five colour stops from the
+    /// tail to the head) blended additively, as the `gfx_tracer` materials are (host patch 0030).
+    /// Without one, Zero Hour's untextured line in the tint.
+    pub fn tracer(&mut self, t: &zhbo_formats::weapon::Tracer, tint: [f32; 3], image: Option<&zhbo_formats::iwi::Rgba>, probability: f32) -> String {
         let name = tracer_fxlist(&t.name, probability);
         if !self.bodies.contains_key(&name) {
-            self.write(&name, tracer_nugget(t, tint, probability));
+            let draw = image.filter(|i| t.kind == 0 && i.width > 0 && i.height > 0).map(|img| self.tracer_draw(t, img));
+            self.write(&name, tracer_nugget(t, tint, probability, draw.as_deref()));
         }
         name
+    }
+
+    /// The client drawable a beam tracer flies as (written once per tracer): its baked texture
+    /// and its Object block.
+    fn tracer_draw(&mut self, t: &zhbo_formats::weapon::Tracer, image: &zhbo_formats::iwi::Rgba) -> String {
+        let object = tracer_draw_object(&t.name);
+        let file = tracer_texture_file(&t.name);
+        if let std::collections::btree_map::Entry::Vacant(slot) = self.textures.entry(format!("Art\\Textures\\{file}")) {
+            slot.insert(images::tga_bytes(&tracer_texture(image, &t.colors)));
+            self.tracer_objects.push_str(&format!(
+                "Object {object}\n  KindOf = DRAWABLE_ONLY\n  EditorSorting = SYSTEM\n  Draw = W3DTracerDraw ModuleTag_01\n    Texture = {file}\n  End\nEnd\n\n"
+            ));
+        }
+        object
     }
 
     /// The particle systems a converted FXList starts, in order (a projectile's trail is attached
@@ -514,17 +539,55 @@ pub fn tracer_fxlist(tracer: &str, probability: f32) -> String {
     }
 }
 
+/// The client drawable a BO2 beam tracer flies as ([`Converted::tracer`]).
+pub fn tracer_draw_object(tracer: &str) -> String {
+    format!("ZHBO_BO2TracerDraw_{tracer}")
+}
+
+/// The baked texture a BO2 beam tracer draws with.
+pub fn tracer_texture_file(tracer: &str) -> String {
+    format!("zhbo_tracer_{tracer}.tga")
+}
+
+/// A beam tracer's texture as the engine's textured beam maps it (host patch 0030: U across the
+/// beam, V along it from the tail at 0 to the head at 1): BO2's material colour map, whose U runs
+/// along the streak from its tail to its pointed head, turned a quarter (its rows become columns),
+/// each texel times the tracer's colour at that point along the beam — BO2's five stops spread
+/// evenly from the tail (stop 0, the transparent one) to the head and lerped between — and
+/// premultiplied by that stop's alpha for the additive blend. Opaque (the blend ignores alpha).
+pub fn tracer_texture(image: &zhbo_formats::iwi::Rgba, colors: &[[f32; 4]; 5]) -> zhbo_formats::iwi::Rgba {
+    let (w, h) = (image.width as usize, image.height as usize);
+    // Out: `h` texels across (the image's V), `w` down (its U, along the beam).
+    let mut pixels = vec![0u8; w * h * 4];
+    for along in 0..w {
+        let f = if w > 1 { along as f32 / (w - 1) as f32 } else { 0.0 } * 4.0;
+        let i = (f.floor() as usize).min(3);
+        let k = f - i as f32;
+        let stop: [f32; 4] = std::array::from_fn(|c| colors[i][c] + (colors[i + 1][c] - colors[i][c]) * k);
+        for across in 0..h {
+            let src = (across * w + along) * 4;
+            let dst = (along * h + across) * 4;
+            for c in 0..3 {
+                pixels[dst + c] = (image.pixels[src + c] as f32 * stop[c] * stop[3]).round().clamp(0.0, 255.0) as u8;
+            }
+            pixels[dst + 3] = 255;
+        }
+    }
+    zhbo_formats::iwi::Rgba { width: image.height, height: image.width, pixels }
+}
+
 /// BO2's tracer as Zero Hour's `Tracer` nugget. A beam (`kind` 0) flies at its `speed` with its
 /// `beamLength` and `beamWidth`; BO2's head-to-tail colours become the beam's colour at its most
 /// opaque stop, tinted by the material. A trail (`kind` 1, the snipers' smoke) spans its length at
 /// once and fades over `fadeTime` in BO2 (`Tracer_Spawn`, `FUN_007c6150`); Zero Hour's beam must
 /// move, so it crosses its own length in that time.
-fn tracer_nugget(t: &zhbo_formats::weapon::Tracer, tint: [f32; 3], probability: f32) -> String {
+fn tracer_nugget(t: &zhbo_formats::weapon::Tracer, tint: [f32; 3], probability: f32, draw: Option<&str>) -> String {
     let stop = t.colors.iter().copied().fold([0.0f32; 4], |best, c| if c[3] > best[3] { c } else { best });
     let c = |i: usize| ((stop[i] * tint[i]).clamp(0.0, 1.0) * 255.0).round() as u32;
     let speed = if t.kind == 0 { t.speed } else { t.beam_length / t.fade_time.max(0.1) };
+    let draw = draw.map_or(String::new(), |d| format!("    TracerName = {d}\n"));
     format!(
-        "  Tracer\n    DecayAt = 1.0\n    Length = {:.2}\n    Width = {:.3}\n    Color = R:{} G:{} B:{}\n    Speed = {:.2}\n    Probability = {:.2}\n  End\n",
+        "  Tracer\n{draw}    DecayAt = 1.0\n    Length = {:.2}\n    Width = {:.3}\n    Color = R:{} G:{} B:{}\n    Speed = {:.2}\n    Probability = {:.2}\n  End\n",
         units(t.beam_length),
         units(t.beam_width),
         c(0),

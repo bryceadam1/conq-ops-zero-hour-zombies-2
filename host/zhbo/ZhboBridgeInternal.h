@@ -288,6 +288,8 @@ struct Autopilot
 	// process (function-local statics could not).
 	UnsignedInt buildStep; // buildAutopilotFrame
 	UnsignedInt rtsDone;	 // rtsAutopilotFrame
+	Bool rtsPicked;				 // rtsAutopilotFrame: the click on the General's drawn body was checked
+	Bool rtsWalked;				 // rtsAutopilotFrame: the General was ordered to walk
 	Bool manualSelected;	 // the manual scene's one selection of the General
 	UnsignedInt controlledFrame; // classpick: when the third session took control; mp: the last controlled frame
 	Bool respawned;							 // classpick: the General was killed and a new one spawned
