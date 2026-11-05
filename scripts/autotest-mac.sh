@@ -496,6 +496,15 @@ if [[ $mode == rts ]]; then
     check "click on his body picks him" "autopilot: a click on the General's body at \\([0-9-]+, [0-9-]+\\) picks General [0-9]+"
     check "walks as Zero Hour moves him" "native body: General [0-9]+ body clip [^ ]+ \\(movement state [23]\\)"
     check "shots leave his drawn muzzle" "General [0-9]+ fires from his drawn muzzle \\(tag_flash ([3-9]|[1-9][0-9])\\.[0-9] units above his feet\\)"
+    # The render runs at the display's rate (host patch 0026): presentation written per 30 Hz frame
+    # (tracers, recoil, vehicle springs and treads, ropes; host patch 0031) steps by the W3D clock in
+    # logic frames, which must keep logic time while drawing more often than the logic steps.
+    clock=$(grep -E "W3D clock: [0-9.]+ logic frames of W3D time in [0-9]+ logic frames, [0-9]+ draws" "$out/ConquerOps.log" | tail -1)
+    if awk '{w = $4; l = $11; d = $14; exit !(l > 0 && w / l > 0.95 && w / l < 1.05 && d > l)}' <<<"$clock"; then
+        printf '%-28s PASS\n' "W3D clock keeps logic time"
+    else
+        printf '%-28s FAIL  (%s)\n' "W3D clock keeps logic time" "${clock:-no W3D clock line}"; ok=1
+    fi
     echo "screenshots and log: $out"
     exit $ok
 fi

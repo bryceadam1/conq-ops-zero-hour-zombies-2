@@ -1632,18 +1632,22 @@ Grenade and compass keys (`sensor_scan_cycle_ms` … `compassSatellitePingFadeTi
 `[ZeroHourDamage]` table. The native blob formats are unchanged (`BODY_VERSION` 1,
 `WEAPON_VERSION` 3: the new torso clips are new ids in the body's clip list).
 
-**Pending for the next bump** (appended after ABI 33; the integrator bumps `ZHBO_ABI_VERSION`
-once for the round). Overhead General (`v1/overhead-general`): the struct `ZhboGeneralMotion`
-(12 bytes: `general`, `moving`, `speed`; size-asserted in the header and `ffi.rs`) and the free
-functions `zhbo_client_native_poses_moving(out, cap, motion, count)` (the poses with every
-overhead General's engine motion; `zhbo_client_native_poses` stays), `zhbo_native_body_flash(general,
+**ABI 34** (the overhead General's round, one bump): the struct `ZhboGeneralMotion` (12 bytes:
+`general`, `moving`, `speed`; size-asserted in the header and `ffi.rs`) and the free functions
+`zhbo_client_native_poses_moving(out, cap, motion, count)` (the poses with every overhead
+General's engine motion; `zhbo_client_native_poses` stays), `zhbo_native_body_flash(general,
 out12)` (his drawn muzzle) and `zhbo_client_pick_general(general, feet, yaw, height, origin, end)`
-(the pick by his hit boxes). No struct or API table moves. Host patches 0029 (`Drawable::
-handleWeaponFireFX` asks `Zhbo_NativeFireFx`; `W3DView::pickDrawable` asks
-`Zhbo_PickNativeDrawable`) and 0030 (`W3DTracerDraw`'s `Texture` module data and the textured
-beam). Archive: the beam tracers' drawables (`ZHBO_BO2_Tracers.ini`), their baked textures and
-the nuggets' `TracerName` are converter output, so `hud::VERSION` must go to 88 with the bump (an
-engine without patch 0030 refuses the `Texture` field; a stale archive draws the line).
+(the pick by his hit boxes). No struct or API table moves. Host patches at the same point:
+0029 (`Drawable::handleWeaponFireFX` asks `Zhbo_NativeFireFx`; `W3DView::pickDrawable` asks
+`Zhbo_PickNativeDrawable`), 0030 (`W3DTracerDraw`'s `Texture` module data and the textured beam)
+and 0031 (presentation written per 30 Hz frame steps by the W3D clock in logic frames,
+`Common/ZhboRenderStep.h`: the tracer's flight and fade, the recoil, `Drawable`'s physics
+transform, the tank, truck and tank-truck draws, the rope, the debris frame count).
+
+Archive `hud::VERSION` 88 at the same point: the beam tracers' client drawables
+(`ZHBO_BO2_Tracers.ini`), their baked textures (`zhbo_tracer_<tracer>.tga`) and the nuggets'
+`TracerName`. An engine without patch 0030 refuses the `Texture` field; an older archive draws the
+untextured line. The native blob formats are unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

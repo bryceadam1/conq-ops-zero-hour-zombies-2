@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 33u
+#define ZHBO_ABI_VERSION 34u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -649,9 +649,9 @@ void zhbo_native_body_provide(const char *path, const uint8_t *data, int32_t len
 int32_t zhbo_native_body_take_log(char *buf, int32_t cap);
 int32_t zhbo_native_body_bone(const char *name, float *out12); /* world 3x4 rows of the last pose */
 void zhbo_native_body_reset(void);
-/* Pending for the next ABI bump (overhead General, after ABI 33; CONTRACT.md "Pending for the next
-   bump"). How Zero Hour moves one General under RTS control, read by the bridge each frame: his
-   drawable's MOVING condition and his horizontal speed in world units per second. */
+/* ABI 34 (the overhead General; CONTRACT.md "Versioning"). How Zero Hour moves one General under
+   RTS control, read by the bridge each frame: his drawable's MOVING condition and his horizontal
+   speed in world units per second. */
 typedef struct ZhboGeneralMotion
 {
 	uint32_t general;

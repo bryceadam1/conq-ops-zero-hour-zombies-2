@@ -174,6 +174,12 @@ fn patch_files() -> Result<Vec<PathBuf>> {
     Ok(v)
 }
 
+/// The files a patch creates (`--- /dev/null` then `+++ b/<path>`).
+fn added_files(patch: &str) -> Vec<&str> {
+    let lines: Vec<&str> = patch.lines().collect();
+    lines.windows(2).filter(|w| w[0] == "--- /dev/null").filter_map(|w| w[1].strip_prefix("+++ b/")).map(str::trim).collect()
+}
+
 fn fnv1a(data: &[u8], mut h: u64) -> u64 {
     for &b in data {
         h ^= b as u64;
@@ -215,6 +221,14 @@ fn prepare_engine() -> Result<PathBuf> {
         run_cmd(git(&engine).args(["fetch", ENGINE_URL, &commit]))?;
     }
     run_cmd(git(&engine).args(["reset", "--hard", "--quiet", &commit]))?;
+    // A patch that adds a file leaves it behind untracked, which `reset --hard` keeps and the next
+    // `git apply` refuses ("already exists"): remove every file a patch creates first.
+    for p in &patches {
+        let text = fs::read_to_string(p).map_err(|e| e.to_string())?;
+        for added in added_files(&text) {
+            let _ = fs::remove_file(engine.join(added));
+        }
+    }
     for p in &patches {
         run_cmd(git(&engine).arg("apply").arg("--whitespace=nowarn").arg(p))?;
     }
@@ -737,6 +751,13 @@ fn run(dist: &Path, game_args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The files a patch adds are found (and removed before the patches are applied again).
+    #[test]
+    fn a_patch_names_the_files_it_adds() {
+        let patch = "diff --git a/x.cpp b/x.cpp\n--- a/x.cpp\n+++ b/x.cpp\n@@ -1 +1 @@\ndiff --git a/Core/New.h b/Core/New.h\nnew file mode 100644\n--- /dev/null\n+++ b/Core/New.h\n@@ -0,0 +1,1 @@\n+x\n";
+        assert_eq!(added_files(patch), vec!["Core/New.h"]);
+    }
 
     /// The dist sync mirrors the stage but keeps a current BO2 archive; a stale one (another
     /// converter version) and any other stray file go.

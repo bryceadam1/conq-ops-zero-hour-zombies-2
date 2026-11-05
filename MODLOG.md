@@ -13365,3 +13365,69 @@ on all 4,795 frames; the rerun passed. Images in `~/.opencode/plan/overhead-gene
 `before-walk.png`/`after-walk.png`, `before-muzzle.png`/`after-muzzle.png`, `tracer-zoom.png`
 (textured BO2 streak top right), `cmp-mode2-vs-mode1.png` (main's darker body and flash at the feet),
 `sheet-showcase.png`.
+
+## Round 6's integration: per-frame presentation at the display's rate, ABI 34, archive 88 (2026-11-05, branch `v1/overhead-general`)
+
+The only branch of the round, landed by its own agent as integrator.
+
+**Presentation written per 30 Hz frame ran fast at the display's rate.** Host patch 0026 renders at
+the display's rate and steps `WW3D::Sync` every render update by its share of a logic frame. Two
+kinds of client code still assumed one draw per logic frame. Measured on the 120 Hz display, each ran
+about four times fast:
+* code that advances a fixed amount per draw call: Zero Hour's `W3DTracerDraw` line (its flight
+  and fade; every Zero Hour unit's tracers flew 4× fast and vanished early), `W3DModelDraw`'s
+  barrel recoil, `W3DRopeDraw`'s wobble and fall, and `W3DDebrisDraw`'s frame count;
+* SuperHackers' "Update the draw on every WW Sync only. All calculations are originally catered
+  to a 30 fps logic step" gates, written when `Sync` only moved on a logic update: `Drawable`'s
+  physics transform (every vehicle's and infantry's pitch, roll and bounce springs) and the
+  tank, truck and tank-truck draws (treads, wheels, cab and trailer swing, the dust they kick up).
+SuperHackers had already decoupled the rest themselves (tints, fades, decals, particles, trees,
+water, the police car, camera moves, GUI transitions, the snow; their `@tweak` comments), and
+the sweep found nothing else in the draw modules or client updates (the beacon and the bone
+particle update read the logic frame).
+
+**Fix (host patch 0031).** `Common/ZhboRenderStep.h`: `zhboSyncLogicFrames()` is this render
+update's W3D time in logic frames (`Get_Sync_Frame_Time` / a logic frame's ms; 0 while paused; the
+W3D clock carries its fraction, so it sums to logic time exactly). `zhboSyncLogicSteps(carry)` gives
+the whole logic frames passed and keeps the rest. Linear rates scale by the factor: the tracer's
+flight and fade (Zero Hour's line and patch 0030's beam, which had used the frame pacer's ratio)
+and the rope. Steps that are not linear (springs, the recoil's damping, state machines) run once
+per whole logic frame of W3D time, as they ran before 0026: the physics transform, the recoil, the
+three vehicle draws, the debris count. Presentation only: none of it is logic state.
+
+**Test.** `--rts` checks the W3D clock against the logic. The bridge logs `W3D clock: <w> logic
+frames of W3D time in <l> logic frames, <d> draws` every 5 s (`ZhboDetail.cpp`); the check wants
+`w` within 5 % of `l` with more draws than logic frames, i.e. the factor every fixed site takes is
+logic time at a render rate above it. The engine's draw modules have no headless harness, so the
+per-module behaviour is checked in game (the overhead captures: Zero Hour's rebels' tracers now
+cross at their speed).
+
+**Also.** The `statehash::state_hash` example was an `ignore` doctest, so `cargo test -- --ignored`
+compiled it and failed to find the crate-private macro. It is now a `text` block.
+
+**Bumps.** `ZHBO_ABI_VERSION` 33 → 34 (both sides): `ZhboGeneralMotion`,
+`zhbo_client_native_poses_moving`, `zhbo_native_body_flash`, `zhbo_client_pick_general`.
+`hud::VERSION` 87 → 88: the beam tracers' drawables and textures. The CONTRACT pending note is
+folded into "Versioning" (ABI 34). Host patches 0001–0031.
+
+**Gotcha: a host patch that adds a file broke the next patch round.** `prepare_engine` resets the
+checkout (`reset --hard`), which leaves an untracked file a patch created, and `git apply` then
+refuses that patch ("already exists"). 0031 is the first patch to add a file. xtask now removes every
+file a patch adds (`--- /dev/null`, `added_files`) before applying them again (test:
+`a_patch_names_the_files_it_adds`).
+
+**Verified (final head, ABI 34, archive 88, host patches 0001–0031).** `cargo test --workspace`
+1,243 passed, 0 failed; clippy clean (workspace `--all-targets`; zhbo-core `harness,renderer` and
+`autopilot`). Real install: zhbo-assets `--ignored --skip conformance` 78/78 (the roster lockstep
+gate among them); zhbo-core, -formats, -native and -gfx `--ignored` pass, doctests included (the
+statehash example). The conformance gate is red only for the 4 BO2-only cac rows. Conformance CLI:
+weapons 0 / cac 0 + 4 BO2-only, all eight CSVs byte-identical to integration10's. `cargo xtask
+build` from a fresh work dir; archive built at 88 (`build-archive`). Legs: `--rts` 20/20 (W3D clock
+1,355.9 logic frames of W3D time in 1,336, 5,119 draws), default 16/16, `--rts-dry` 5/5, `--build`
+18/18, `--splash` 5/5, `--smoke` 7/7, `--drops` 10/10, `--equipment` 12/12, `--detail` 10/10,
+`--replay` 5/5, `--classpick` 12/12, `--mp` 26/26 (2,902 frames), `ZHBO_MPTEST_ROUNDS=3` 35/35
+(6,869 frames). Earlier `ROUNDS=3` runs on this branch failed the same coverage check twice, 34/35:
+"rounds after the first fight (join.log) 1 of 2", where the joiner lost each fight fast and his last
+life left before a second round started. The state hash was equal on every frame of every run. Which
+side wins depends on when inputs land (render cadence), not on a divergence, so this is flaky
+coverage, not a sync fault.

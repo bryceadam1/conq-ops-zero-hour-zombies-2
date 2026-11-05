@@ -1,0 +1,360 @@
+diff --git a/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h b/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h
+--- a/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h
++++ b/GeneralsMD/Code/GameEngine/Include/GameClient/Drawable.h
+@@ -699,6 +699,7 @@
+ 	DrawableLocoInfo*	m_locoInfo;	// lazily allocated
+ 
+ 	PhysicsXformInfo* m_physicsXform;
++	Real m_zhboPhysicsCarry;	///< ZHBO: W3D time not yet stepped into the physics transform (host patch 0031)
+ 
+ 	RefCountPtr<DynamicAudioEventRTS> m_ambientSound;		///< sound module for ambient sound (lazily allocated)
+ 
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp
+@@ -82,6 +82,7 @@
+ #include "ZhboBridge.h" // ZHBO
+ 
+ #include "WW3D2/ww3d.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ 
+ #define VERY_TRANSPARENT_MATERIAL_PASS_OPACITY (0.001f)
+ #define MATERIAL_PASS_OPACITY_FADE_SCALAR (0.8f)
+@@ -394,6 +395,7 @@
+ 
+ 	m_locoInfo = nullptr;
+ 	m_physicsXform = nullptr;
++	m_zhboPhysicsCarry = 0.0f;
+ 
+ 	// sanity
+ 	if( TheGameClient == nullptr || thingTemplate == nullptr )
+@@ -1372,7 +1374,8 @@
+ 	{
+ 		// TheSuperHackers @tweak Update the physics transform on every WW Sync only.
+ 		// All calculations are originally catered to a 30 fps logic step.
+-		if (WW3D::Get_Sync_Frame_Time() != 0)
++		// ZHBO: W3D syncs every render update now (host patch 0026): one step per logic frame of W3D time.
++		for (Int zhboSteps = zhboSyncLogicSteps(m_zhboPhysicsCarry); zhboSteps > 0; --zhboSteps)
+ 		{
+ 			calcPhysicsXform(*m_physicsXform);
+ 		}
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankDraw.cpp
+@@ -44,6 +44,7 @@
+ #include "GameLogic/Module/AIUpdate.h"
+ #include "GameClient/Drawable.h"
+ #include "GameClient/ParticleSys.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ #include "W3DDevice/GameClient/W3DGameClient.h"
+ #include "W3DDevice/GameClient/Module/W3DTankDraw.h"
+ #include "WW3D2/matinfo.h"
+@@ -93,7 +94,7 @@
+ //-------------------------------------------------------------------------------------------------
+ W3DTankDraw::W3DTankDraw( Thing *thing, const ModuleData* moduleData )
+ : W3DModelDraw( thing, moduleData )
+-, m_prevRenderObj(nullptr)
++, m_prevRenderObj(nullptr), m_zhboSyncCarry(0.0f)
+ {
+ 	std::fill(m_treadDebrisIDs, m_treadDebrisIDs + ARRAY_SIZE(m_treadDebrisIDs), INVALID_PARTICLE_SYSTEM_ID);
+ 
+@@ -303,7 +304,8 @@
+ 
+ 	// TheSuperHackers @tweak Update the draw on every WW Sync only.
+ 	// All calculations are originally catered to a 30 fps logic step.
+-	if (WW3D::Get_Sync_Frame_Time() == 0)
++	// ZHBO: W3D syncs every render update now (host patch 0026): once per logic frame of W3D time.
++	if (zhboSyncLogicSteps(m_zhboSyncCarry) == 0)
+ 		return;
+ 
+ 	const Real DEBRIS_THRESHOLD = 0.00001f;
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankDraw.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankDraw.h
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankDraw.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankDraw.h
+@@ -78,6 +78,7 @@
+ 	ParticleSystemID m_treadDebrisIDs[2];
+ 
+ 	RenderObjClass *m_prevRenderObj;
++	Real m_zhboSyncCarry;	///< ZHBO: W3D time not yet stepped (host patch 0031)
+ 
+ 	enum TreadType { TREAD_LEFT, TREAD_RIGHT, TREAD_MIDDLE };	//types of treads for different vehicles
+ 	enum {MAX_TREADS_PER_TANK=4};
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTruckDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTruckDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTruckDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTruckDraw.cpp
+@@ -46,6 +46,7 @@
+ #include "GameLogic/Module/BodyModule.h"
+ #include "GameLogic/Module/AIUpdate.h"
+ #include "GameLogic/ScriptEngine.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ #include "W3DDevice/GameClient/W3DGameClient.h"
+ #include "W3DDevice/GameClient/Module/W3DTruckDraw.h"
+ 
+@@ -102,7 +103,7 @@
+ m_frontWheelRotation(0), m_rearWheelRotation(0), m_midFrontWheelRotation(0), m_midRearWheelRotation(0),
+ m_frontRightTireBone(0), m_frontLeftTireBone(0), m_rearLeftTireBone(0),m_rearRightTireBone(0),
+ m_midFrontRightTireBone(0), m_midFrontLeftTireBone(0), m_midRearLeftTireBone(0),m_midRearRightTireBone(0),
+-m_midMidRightTireBone(0), m_midMidLeftTireBone(0), m_prevRenderObj(nullptr)
++m_midMidRightTireBone(0), m_midMidLeftTireBone(0), m_prevRenderObj(nullptr), m_zhboSyncCarry(0.0f)
+ {
+ 	std::fill(m_truckEffectIDs, m_truckEffectIDs + ARRAY_SIZE(m_truckEffectIDs), INVALID_PARTICLE_SYSTEM_ID);
+ 
+@@ -361,7 +362,8 @@
+ 
+ 	// TheSuperHackers @tweak Update the draw on every WW Sync only.
+ 	// All calculations are originally catered to a 30 fps logic step.
+-	if (WW3D::Get_Sync_Frame_Time() == 0)
++	// ZHBO: W3D syncs every render update now (host patch 0026): once per logic frame of W3D time.
++	if (zhboSyncLogicSteps(m_zhboSyncCarry) == 0)
+ 		return;
+ 
+ 	const Real ACCEL_THRESHOLD = 0.01f;
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTruckDraw.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTruckDraw.h
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTruckDraw.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTruckDraw.h
+@@ -132,6 +132,7 @@
+ 	AudioEventRTS		m_landingSound;
+ 
+ 	RenderObjClass *m_prevRenderObj;
++	Real m_zhboSyncCarry;	///< ZHBO: W3D time not yet stepped (host patch 0031)
+ 
+ 	void createWheelEmitters(); ///< Create particle effects for wheels.
+ 	void tossWheelEmitters(); ///< Destroy particle effects for wheels.
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankTruckDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankTruckDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankTruckDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTankTruckDraw.cpp
+@@ -43,6 +43,7 @@
+ #include "GameLogic/Module/AIUpdate.h"
+ #include "GameClient/Drawable.h"
+ #include "GameClient/ParticleSys.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ #include "W3DDevice/GameClient/W3DGameClient.h"
+ #include "W3DDevice/GameClient/Module/W3DTankTruckDraw.h"
+ #include "WW3D2/matinfo.h"
+@@ -103,7 +104,7 @@
+ W3DTankTruckDraw::W3DTankTruckDraw( Thing *thing, const ModuleData* moduleData ) : W3DModelDraw( thing, moduleData ),
+ m_effectsInitialized(false), m_wasAirborne(false), m_isPowersliding(false), m_frontWheelRotation(0), m_rearWheelRotation(0),
+ m_frontRightTireBone(0), m_frontLeftTireBone(0), m_rearLeftTireBone(0),m_rearRightTireBone(0),
+-m_prevRenderObj(nullptr)
++m_prevRenderObj(nullptr), m_zhboSyncCarry(0.0f)
+ {
+ 	//Truck Data
+ 	std::fill(m_truckEffectIDs, m_truckEffectIDs + ARRAY_SIZE(m_truckEffectIDs), INVALID_PARTICLE_SYSTEM_ID);
+@@ -500,7 +501,8 @@
+ 
+ 	// TheSuperHackers @tweak Update the draw on every WW Sync only.
+ 	// All calculations are originally catered to a 30 fps logic step.
+-	if (WW3D::Get_Sync_Frame_Time() == 0)
++	// ZHBO: W3D syncs every render update now (host patch 0026): once per logic frame of W3D time.
++	if (zhboSyncLogicSteps(m_zhboSyncCarry) == 0)
+ 		return;
+ 
+ 	const Real ACCEL_THRESHOLD = 0.01f;
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankTruckDraw.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankTruckDraw.h
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankTruckDraw.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DTankTruckDraw.h
+@@ -140,6 +140,7 @@
+ 	Int m_treadCount;
+ 
+ 	RenderObjClass *m_prevRenderObj;
++	Real m_zhboSyncCarry;	///< ZHBO: W3D time not yet stepped (host patch 0031)
+ 
+ 	void createTreadEmitters(); ///< Create particle effects for treads.
+ 	void tossTreadEmitters(); ///< Destroy particle effects for treads.
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.cpp
+@@ -54,6 +54,7 @@
+ #include "GameLogic/FPUControl.h"
+ #include "GameLogic/Module/AIUpdate.h"
+ #include "GameLogic/Module/PhysicsUpdate.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ #include "W3DDevice/GameClient/Module/W3DModelDraw.h"
+ #include "W3DDevice/GameClient/W3DAssetManager.h"
+ #include "W3DDevice/GameClient/W3DDisplay.h"
+@@ -1725,6 +1726,7 @@
+ 	int i;
+ 	m_animationMode = RenderObjClass::ANIM_MODE_LOOP;
+ 	m_hideHeadlights = true;
++	m_zhboRecoilCarry = 0.0f;
+ 	m_pauseAnimation = false;
+ 	m_curState = nullptr;
+ 	m_hexColor = 0;
+@@ -2501,6 +2503,8 @@
+ 	}
+ 
+ 	const W3DModelDrawModuleData* d = getW3DModelDrawModuleData();
++	// ZHBO: the recoil's rates are per 30 Hz frame; W3D syncs every render update now (host patch 0026).
++	const Int zhboRecoilSteps = zhboSyncLogicSteps(m_zhboRecoilCarry);
+ 
+ 	// do recoil, if any
+ 	for (int wslot = 0; wslot < WEAPONSLOT_COUNT; ++wslot)
+@@ -2526,6 +2530,7 @@
+ 			const Real TINY_RECOIL = 0.01f;
+ 			if (barrels[i].m_recoilBone != 0)
+ 			{
++				for (Int zhboStep = 0; zhboStep < zhboRecoilSteps; ++zhboStep)
+ 				switch (recoils[i].m_state )
+ 				{
+ 					case WeaponRecoilInfo::IDLE:
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DModelDraw.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DModelDraw.h
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DModelDraw.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DModelDraw.h
+@@ -495,6 +495,7 @@
+ 	Int														m_hexColor;
+ 	Int														m_whichAnimInCurState;						///< the index of the currently playing anim in cur state (if any)
+ 	WeaponRecoilInfoVec						m_weaponRecoilInfoVec[WEAPONSLOT_COUNT];
++	Real													m_zhboRecoilCarry;	///< ZHBO: W3D time not yet stepped into the recoil (host patch 0031)
+ 	Bool													m_needRecalcBoneParticleSystems;
+ 	Bool													m_fullyObscuredByShroud;
+ 	Bool													m_shadowEnabled;	///< cached state of shadow.  Used to determine if shadows should be enabled via options screen.
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DRopeDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DRopeDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DRopeDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DRopeDraw.cpp
+@@ -38,6 +38,7 @@
+ #include "GameClient/Drawable.h"
+ #include "GameClient/GameClient.h"
+ #include "GameLogic/GameLogic.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ #include "W3DDevice/GameClient/W3DDisplay.h"
+ #include "W3DDevice/GameClient/Module/W3DRopeDraw.h"
+ #include "WW3D2/line3d.h"
+@@ -201,12 +202,14 @@
+ 		}
+ 	}
+ 
+-	m_curWobblePhase += m_wobbleRate;
++	// ZHBO: these rates are per 30 Hz frame; this draw advanced zhboSyncLogicFrames() of them (host patch 0031).
++	const Real zhboFrames = zhboSyncLogicFrames();
++	m_curWobblePhase += m_wobbleRate * zhboFrames;
+ 	if (m_curWobblePhase > 2*PI)
+ 		m_curWobblePhase -= 2*PI;
+ 
+-	m_curZOffset += m_curSpeed;
+-	m_curSpeed += m_accel;
++	m_curZOffset += m_curSpeed * zhboFrames;
++	m_curSpeed += m_accel * zhboFrames;
+ 	if (m_curSpeed > m_maxSpeed)
+ 		m_curSpeed = m_maxSpeed;
+ 	else if (m_curSpeed < -m_maxSpeed)
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DDebrisDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DDebrisDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DDebrisDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DDebrisDraw.cpp
+@@ -42,6 +42,7 @@
+ #include "WW3D2/hanim.h"
+ #include "WW3D2/hlod.h"
+ #include "WW3D2/rendobj.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ #include "W3DDevice/GameClient/Module/W3DDebrisDraw.h"
+ #include "W3DDevice/GameClient/W3DAssetManager.h"
+ #include "W3DDevice/GameClient/W3DDisplay.h"
+@@ -53,6 +54,7 @@
+ W3DDebrisDraw::W3DDebrisDraw(Thing *thing, const ModuleData* moduleData) : DrawModule(thing, moduleData)
+ {
+   m_renderObject = nullptr;
++  m_zhboFrameCarry = 0.0f;
+ 	for (int i = 0; i < STATECOUNT; ++i)
+ 		m_anims[i] = nullptr;
+ 	m_fxFinal = nullptr;
+@@ -256,7 +258,7 @@
+ 			}
+ 			m_renderObject->Set_Animation(hanim, 0, m);
+ 		}
+-		++m_frames;
++		m_frames += zhboSyncLogicSteps(m_zhboFrameCarry); // ZHBO: logic frames of W3D time, not draws (host patch 0031)
+ 	}
+ }
+ 
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DDebrisDraw.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DDebrisDraw.h
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DDebrisDraw.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/Module/W3DDebrisDraw.h
+@@ -91,6 +91,7 @@
+ 	const FXList*							m_fxFinal;
+ 	Int												m_state;
+ 	Int												m_frames;
++	Real											m_zhboFrameCarry;	///< ZHBO: W3D time not yet counted into m_frames (host patch 0031)
+ 	Bool											m_finalStop;
+ 	Shadow*										m_shadow;													///< Updates/Renders shadows of this object
+ 
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/Drawable/Draw/W3DTracerDraw.cpp
+@@ -37,6 +37,7 @@
+ #include "GameClient/Drawable.h"
+ #include "GameClient/GameClient.h"
+ #include "GameLogic/GameLogic.h"
++#include "Common/ZhboRenderStep.h" // ZHBO
+ #include "W3DDevice/GameClient/W3DDisplay.h"
+ #include "W3DDevice/GameClient/Module/W3DTracerDraw.h"
+ #include "WW3D2/line3d.h"
+@@ -160,8 +161,7 @@
+ 	{
+ 		// Its flight and fade per logic frame, in this render update's share of one (the render
+ 		// runs at the display's rate, host patch 0026).
+-		const Real ratio = TheFramePacer ? TheFramePacer->getActualLogicTimeScaleOverFpsRatio() : 1.0f;
+-		const Real step = ratio < 1.0f ? ratio : 1.0f;
++		const Real step = zhboSyncLogicFrames();
+ 		UnsignedInt expDate = getDrawable()->getExpirationDate();
+ 		if (expDate != 0 && expDate > TheGameLogic->getFrame())
+ 		{
+@@ -200,10 +200,13 @@
+ 
+ 	}
+ 
+-	UnsignedInt expDate = getDrawable()->getExpirationDate();
+-	if (expDate != 0)
++	// ZHBO: the speed and the fade are per logic frame; this draw advanced zhboSyncLogicFrames()
++	// of them (the render runs at the display's rate, host patch 0026; patch 0031).
++	const Real zhboFrames = zhboSyncLogicFrames();
++	UnsignedInt expDate = getDrawable()->getExpirationDate();
++	if (expDate != 0 && expDate > TheGameLogic->getFrame())
+ 	{
+-		Real decay = m_opacity / (expDate - TheGameLogic->getFrame());
++		Real decay = m_opacity * zhboFrames / (expDate - TheGameLogic->getFrame());
+ 		m_opacity -= decay;
+ 		m_theTracer->Set_Opacity( m_opacity );
+ 	}
+@@ -212,7 +215,7 @@
+ 	if (m_speedInDistPerFrame != 0.0f)
+ 	{
+ 		Matrix3D pos = m_theTracer->Get_Transform();
+-		pos.Translate( Vector3( m_speedInDistPerFrame, 0.0f, 0.0 ) );
++		pos.Translate( Vector3( m_speedInDistPerFrame * zhboFrames, 0.0f, 0.0 ) );
+ 		m_theTracer->Set_Transform( pos );
+ 	}
+ 
+diff --git a/Core/GameEngine/Include/Common/ZhboRenderStep.h b/Core/GameEngine/Include/Common/ZhboRenderStep.h
+new file mode 100644
+--- /dev/null
++++ b/Core/GameEngine/Include/Common/ZhboRenderStep.h
+@@ -0,0 +1,30 @@
++/*
++** Conquer Ops (ZHBO, host patch 0031): presentation written for one 30 Hz step at the display's rate.
++**
++** Since host patch 0026 the render follows the display and WW3D::Sync steps W3D's clock every render
++** update by its share of a logic frame (W3DDisplay::update). Code that advanced a fixed amount per
++** draw call, or per W3D sync on the assumption that the clock only moved on a logic update ("Update
++** the draw on every WW Sync only"), then ran several times per logic frame. These say how much W3D
++** time this render update advanced, in logic frames; they read no logic state.
++*/
++#pragma once
++
++#include "Common/GameCommon.h"
++#include "WW3D2/ww3d.h"
++
++/// This render update's W3D time in logic frames (0 while the game is paused): the factor for a
++/// rate written per 30 Hz frame.
++inline Real zhboSyncLogicFrames()
++{
++	return (Real)WW3D::Get_Sync_Frame_Time() / MSEC_PER_LOGICFRAME_REAL;
++}
++
++/// How many whole logic frames of W3D time have passed, keeping the remainder in `carry`: run a step
++/// written for one 30 Hz frame (a spring, a state machine) that many times.
++inline Int zhboSyncLogicSteps(Real &carry)
++{
++	carry += zhboSyncLogicFrames();
++	const Int steps = (Int)carry;
++	carry -= (Real)steps;
++	return steps;
++}

@@ -276,9 +276,11 @@ impl<T: StateHash + ?Sized> StateHash for std::cell::RefCell<T> {
     }
 }
 
-/// `StateHash` for a struct or an enum, naming every field.
+/// `StateHash` for a struct or an enum, naming every field. (The macro is the crate's own, not
+/// exported, so the example is text, not a doctest: `cargo test -- --ignored` would run an
+/// `ignore` block and fail to find it.)
 ///
-/// ```ignore
+/// ```text
 /// state_hash!(struct Body { pos, vel, on_ground } skip { scratch });
 /// state_hash!(enum Mode { Fps, FieldComputer { t }, Rts });
 /// ```

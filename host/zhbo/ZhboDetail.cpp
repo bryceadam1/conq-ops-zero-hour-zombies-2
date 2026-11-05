@@ -17,6 +17,7 @@
 #include "Common/GlobalData.h"
 #include "Common/OptionPreferences.h"
 #include "GameClient/Display.h"
+#include "Common/ZhboRenderStep.h" // host patch 0031
 
 // Presentation only: the static detail is per machine and the dynamic one follows the render frame
 // rate, so nothing here (or in GameLOD) may reach the sim. GameLOD's two logic-side knobs, the
@@ -71,10 +72,29 @@ void zhboDetailFrame()
 			ParticlePriorityNames[TheGameLODManager->getMinDynamicParticlePriority()]);
 		s_lastDynamicLevel = dynamic;
 	}
+	// The W3D clock in logic frames (host patch 0031's zhboSyncLogicFrames, the step every
+	// presentation written per 30 Hz frame takes at the display's rate) against the logic frames
+	// that passed: equal at any render rate, or those steps run fast or slow.
+	static Real s_clockFrames = 0.0f;
+	static UnsignedInt s_clockDraws = 0, s_clockSince = 0;
+	const UnsignedInt logicFrame = TheGameLogic ? TheGameLogic->getFrame() : 0;
+	if (logicFrame < s_clockSince || s_clockSince == 0)
+	{
+		s_clockSince = logicFrame;
+		s_clockFrames = 0.0f;
+		s_clockDraws = 0;
+	}
+	else
+	{
+		s_clockFrames += zhboSyncLogicFrames();
+		++s_clockDraws;
+	}
 	const double now = zhbo_platform::now();
 	if (now < s_nextFrameRateLog)
 		return;
 	s_nextFrameRateLog = now + FRAME_RATE_LOG_SECONDS;
+	if (s_clockDraws > 0 && logicFrame > s_clockSince)
+		logf("W3D clock: %.1f logic frames of W3D time in %u logic frames, %u draws", s_clockFrames, logicFrame - s_clockSince, s_clockDraws);
 	logf("frame rate: %.1f fps average, dynamic LOD %s, %u of %d particles",
 		fps, dynamic == (Int)DYNAMIC_GAME_LOD_UNKNOWN ? "unset" : TheGameLODManager->getDynamicGameLODLevelName((DynamicGameLODLevel)dynamic),
 		particles, TheGlobalData->m_maxParticleCount);

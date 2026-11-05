@@ -190,7 +190,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 33;
+pub const ABI_VERSION: u32 = 34;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -989,7 +989,7 @@ pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::f
 }
 
 /// How Zero Hour moves one General under RTS control, as the bridge reads it from the engine each
-/// frame (`ZhboGeneralMotion`, appended after ABI 33): his drawable's `MOVING` model condition and
+/// frame (`ZhboGeneralMotion`, ABI 34): his drawable's `MOVING` model condition and
 /// his horizontal speed in world units per second (the physics velocity × the logic rate).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1036,7 +1036,7 @@ pub unsafe extern "C" fn zhbo_client_native_poses_moving(out: *mut crate::native
     n as i32
 }
 
-/// Where a click's pick ray strikes General `general` (`Sim::pick_general`, appended after ABI 33):
+/// Where a click's pick ray strikes General `general` (`Sim::pick_general`, ABI 34):
 /// `feet`/`yaw` his logic object's place and facing, `height` his geometry's (the fallback without
 /// a hit table), `origin`/`end` the view's pick ray (world units). Returns the fraction along the
 /// ray (0..1) where it first enters his hit boxes, or -1 for a miss (or no such seat General).
