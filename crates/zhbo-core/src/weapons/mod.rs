@@ -6,6 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
+pub mod aim_spread;
 pub mod arsenal;
 pub mod weapon_state;
 pub mod catalog;

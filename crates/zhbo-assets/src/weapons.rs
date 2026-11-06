@@ -1274,6 +1274,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         spread_decay: w.hip_spread_decay,
         spread_fire_add: w.hip_spread_fire_add,
         spread_move_add: w.hip_spread_move_add,
+        spread_turn_add: w.hip_spread_turn_add,
+        spread_stance_decay: w.hip_spread_stance_decay,
         ads_spread: w.ads_spread,
         ads_kick: kick(w.ads_view_kick),
         hip_kick: kick(w.hip_view_kick),

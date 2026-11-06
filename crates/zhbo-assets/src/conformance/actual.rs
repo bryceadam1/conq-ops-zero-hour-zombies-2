@@ -478,6 +478,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .float("hip_spread_decay", fl(d.spread_decay))
         .float("hip_spread_fire_add", fl(d.spread_fire_add))
         .float("hip_spread_move_add", fl(d.spread_move_add))
+        .float("hip_spread_turn_add", fl(d.spread_turn_add))
+        .floats("hip_spread_stance_decay", &fls(&[d.spread_stance_decay.0, d.spread_stance_decay.1]))
         .float("ads_spread", fl(d.ads_spread))
         .float("stack_fire_spread", fl(d.traits.stack_fire.0))
         .float("stack_fire_accuracy_decay", fl(d.traits.stack_fire.1));

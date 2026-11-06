@@ -494,10 +494,10 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         crate::config::Autopilot::Manual => {
             state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
         }
-        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops } => {
+        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops, hipfire } => {
             #[cfg(feature = "autopilot")]
             {
-                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, splash, drops, ..Default::default() });
+                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, splash, drops, hipfire, ..Default::default() });
             }
             let _ = (equipment, build, classpick, scope, smoke, splash, drops);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
@@ -699,6 +699,10 @@ fn fingerprint_parts(f: &crate::sim::Fingerprint) -> String {
 fn log_step(s: &State, first_new_event: usize, frame: u32) {
     use crate::host::LogicHost;
     log_events(s, first_new_event);
+    #[cfg(feature = "autopilot")]
+    if s.client.autopilot.as_ref().is_some_and(|a| a.hipfire) {
+        log_hip_shots(s, first_new_event);
+    }
     // R8d: count the Impact events into the per-player accumulator EVERY frame (the client clears
     // `sim.events` per client frame, so the events must be counted before they go); the print +
     // reset happens on the 30s, so a kill on a non-print frame still shows in the next line.
@@ -745,6 +749,32 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
                 }
             }
         }
+    }
+}
+
+/// The hip-fire autotest's oracle (`ZHBO_AUTOPILOT=hipfire`): each first-person shot's cone, the
+/// stance cone it sits in, the aim spread scale it opens to by then, and the round's offset from
+/// the aim as the trace left it (`r`: the offset's tangent over the cone's, BO2's uniform draw).
+#[cfg(feature = "autopilot")]
+fn log_hip_shots(s: &State, first_new_event: usize) {
+    use crate::host::LogicHost;
+    for e in s.sim.events.iter().skip(first_new_event) {
+        let crate::sim::EventKind::Shot { origin, end, spread, .. } = e.kind else { continue };
+        let Some(p) = s.sim.player(e.player).filter(|p| p.is_first_person()) else { continue };
+        let a = &p.arsenal;
+        let aim = crate::math::dir_from_angles(p.fire_yaw, p.fire_pitch);
+        let c = (end - origin).normalized_or_zero().dot(aim).clamp(-1.0, 1.0);
+        let offset = c.acos().to_degrees();
+        let r = if spread > 1e-4 { offset.to_radians().tan() / spread.to_radians().tan() } else { 0.0 };
+        let (min, max) = a.spread_cone(a.view_height());
+        s.logic.log(&format!(
+            "player {} hip shot: {} spread {spread:.3} deg (cone {min:.3}..{max:.3}, ads {:.2}, moving {}) offset {offset:.3} deg r {r:.3} range {:.0}",
+            e.player,
+            a.current().def.id,
+            a.ads,
+            a.spread_in.moving as u8,
+            (end - origin).length()
+        ));
     }
 }
 

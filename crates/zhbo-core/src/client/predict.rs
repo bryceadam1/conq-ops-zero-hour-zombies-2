@@ -340,7 +340,7 @@ mod tests {
     use crate::impacts::Surface;
 
     fn shot() -> EventKind {
-        EventKind::Shot { origin: Vec3::ZERO, end: Vec3::new(1.0, 0.0, 0.0), left: false }
+        EventKind::Shot { origin: Vec3::ZERO, end: Vec3::new(1.0, 0.0, 0.0), left: false, spread: 0.0 }
     }
 
     /// The sim's own events of the predicted kinds are matched one for one against what the

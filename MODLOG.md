@@ -13431,3 +13431,125 @@ build` from a fresh work dir; archive built at 88 (`build-archive`). Legs: `--rt
 life left before a second round started. The state hash was equal on every frame of every run. Which
 side wins depends on when inputs land (render cadence), not on a divergence, so this is flaky
 coverage, not a sync fault.
+
+## Hip fire: BO2's aim spread scale, not a degree bloom (hipfire-accuracy)
+
+**Report: "the hip-fire accuracy seemed really bad". Real.** The mod's hip spread was the first
+core's placeholder (2026-10-13), never ported to BO2's rule, and it was wider than BO2 in every
+state. Mean angular offset of a shot from the aim, mod before → BO2, from BO2's own weapon values
+(`probe/compare.py` over the conformance expected CSV; `probe/before.csv` in the plan dir):
+
+| | first shot from rest | 10-shot string standing | running string |
+|---|---|---|---|
+| AN-94 | 2.00° → 1.50° | 2.61° → 2.43° | 5.94° → 3.19° |
+| MP7 | 1.33° → 1.00° | 2.33° → 1.92° | 5.67° → 2.34° |
+| Five-seven | 2.00° → 1.50° | 3.06° → 2.11° | 6.06° → 2.40° |
+| M8A1 | 2.00° → 1.50° | 3.19° → 2.78° | 6.52° → 3.18° |
+| DSR 50 | 9.33° → 7.07° | 9.33° → 7.07° | 12.67° → 8.94° |
+
+Every gun of the roster: +33 % from rest, more in a string, roughly double while moving.
+
+**Root causes (four, all in one model).**
+1. The pellet's radius was area-uniform (`sqrt` of a uniform draw: mean 2/3 of the cone). BO2's
+   `Bullet_Fire` (t6mp `FUN_005d0c20`) draws the angle (× 360°) then the radius **linearly** in
+   0..1 and offsets the end point by `r · tan(spread)` on the view's tangent plane: mean 1/2.
+2. Moving added `fHipSpreadMoveAdd` **degrees** on top of the bloomed spread (5° on an AN-94,
+   whose cone tops out at 6.75°): up to min + bloom + 5°, past the cone's maximum. BO2's move add
+   is a rate on the spread scale (below), which saturates at the maximum and never passes it.
+3. The bloom was in degrees: `fHipSpreadFireAdd` 0.6 added 0.6° a shot and decayed at
+   `fHipSpreadDecayRate` °/s. BO2's are shares of the cone's min..max: 0.6 of it a shot (two
+   AN-94 shots reach the maximum), 4 of it a second back to the minimum.
+4. ADS lerped hip → `fAdsSpread` by the ADS fraction. BO2 uses the hip cone until fully aimed, then
+   `fAdsSpread + (max − fAdsSpread) · scale`, and zeroes the scale there (`adsZeroSpread`).
+The crosshair read the weapon's raw stance pair and the per-weapon bloom (no `bulletaccuracy`, no
+eye-height blend, no move term), so while moving it drew a cone far smaller than the bullets'.
+
+**BO2 (t6mp, Ghidra; disassembly checked where the decompiler lost a float return).**
+* `FUN_008e0080` (`PM_UpdateAimSpreadScale`, first in `Pmove` `FUN_008c8420`): `ps->aimSpreadScale`
+  (`ps+0x588`, 0..255). Decay rate `fHipSpreadDecayRate` × `fHipSpreadDuckedDecay`/`ProneDecay`
+  (pm flags 4/8), × 0.5 off the ground (`0x00c733cc`); a zero rate zeroes the scale. Fully aimed
+  with no anti-quickscope timer: `adsZeroSpread` (default 1, registered in `FUN_008b7bb0`) zeroes it
+  and nothing adds. Else the increase is the anti-quickscope term (`FUN_008dbfb0`: `(aqs − 1) ×
+  fAntiQuickScopeSpreadMultiplier` while the timer sits at its full time and the scale is under
+  `fAntiQuickScopeSpreadMax`; Ghidra decompiles it `void` and shows the increase starting at the
+  ADS fraction — the disassembly stores its XMM0 into the accumulator) + turn `(|Δyaw| + |Δpitch|)`
+  of `cmd.angles` vs `oldcmd.angles` × 0.01 (`0x00c73410`) × `fHipSpreadTurnAdd` / dt + move (a
+  move key down and speed over `bg_aimSpreadMoveSpeedThreshold` 11: `speed × fHipSpreadMoveAdd /
+  ps->speed`) + air (1.28 at `0x00bd73a0`, added twice). Increase × dt > 0 grows the scale by it ×
+  255, else it decays by rate × dt × 255; clamped.
+* `FUN_008dc710`: a shot from the hip `+= fHipSpreadFireAdd × 255`, capped.
+* `FUN_0066e590` (`FireWeapon`): spread = `min + (max − min) · s` from the hip, `fAdsSpread + (max −
+  fAdsSpread) · s` when `fWeaponPosFrac == 1`; `s` is `client+0x56dc`, set to `scale / 255` before
+  `Pmove` (`FUN_005dbfa0`), so a shot flies with the scale the previous frame left.
+* Events: a jump `+= jump_spreadAdd` (64, `FUN_008b5000`, registered in `FUN_008b4c20`); with
+  `bg_ads`, a view height above its target maxes it (`FUN_008c1120`); prone with a move key down
+  and not fully aimed, or weapon states 0x13–0x15 (melee), max it (`FUN_008e4da0`); a weapon raise
+  maxes it, an alt pair's raise keeps at least 128 (`FUN_008df320`, `FUN_008db3f0`, `0x00c735a8`);
+  a hurt adds `min(damage × 100 / maxHealth, 127)` (`FUN_005d1800`).
+* Not ported: the script's spread override (`ps+0x1e8/0x1ec`; no MP GSC calls
+  `setspreadoverride`) and the moving-platform branch (`pm_flags & 0x4000`).
+* The cone itself (`FUN_008e41a0`, G6) was already right (`recoil::spread_range`).
+
+**Fix.** `weapons::aim_spread` holds the scale (one per player on the `Arsenal`, hashed) and
+ports each rule above; `Arsenal::step` updates it first and fires with the frame-start scale (a
+hand's later shot in the same frame takes its earlier shot's add, standing for BO2's next command;
+the two guns of a dual-wield pair fire on one command, so the left gun's first shot does not);
+the sim fills `SpreadIn` from the replicated input and the body before the move (keys, ground
+speed, run speed, air, the idle sway's AQS) and the eye height after it, and applies the jump,
+lowering and hurt; `fire_round` places the pellet with `aim_spread::cone_dir`; the crosshair draws
+the same spread. Every number is the weapon table's or the tuning pack's: the table's new
+`SpreadRates` (`fHipSpreadTurnAdd`, `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`, converted from
+the install and added to the conformance schema: 0 cells, every MP gun's turn add 0, the INSAS,
+MP7 and Vector crouched decay 4), the tuning pack's `bg_aimSpreadMoveSpeedThreshold`,
+`jump_spreadAdd`, `adsZeroSpread`, `bg_ads` and `AimSpread*` constants. `WeaponState::bloom` and
+`spread_deg` are gone. `EventKind::Shot` carries the cone it flew in (the in-game oracle's).
+
+**Perks and attachments.** Nothing in BO2's MP grants `specialty_bulletaccuracy` (no perk, no
+attachment in the conformance CSV); the mod keeps `perk_weapSpreadMultiplier` behind it. The Laser
+Sight (`steadyaim`) is `fHipSpreadMinScale`/`MaxScale` (0.65 on the minimum), already in the
+table's cones (conformance `hip_spread`). No other attachment or perk touches spread.
+
+**Units and rate.** Spread is an angle: no Zero Hour units in it. The eye height reaches the cone
+in BO2 inches (`eye_height / DRAWN_ZH_PER_INCH`), the ground speed in inches/s. The rates are per
+second and the shots per shot, so the 30 Hz step gives BO2's numbers (BO2's client runs a command a
+frame; the only quantisation left is that a frame's later shot stands for a later command).
+**Rounds 4–6 did not change it**: the old model dates from the first core (`61253b5`, `47ca786`);
+the render rate is presentation only (the crosshair reads the sim), and the overhead hit pose and
+the Blow API do not touch the arsenal — though a hurt now opens the scale, as `FUN_005d1800` does.
+
+**Tests.** `weapons::aim_spread::tests` (the rules), `sim::spread_tests` (rounds traced from the eye
+in the right cone with mean share 0.5, the crouched eye's cone, lowering and jumping, the crosshair
+equal to the next shot's spread), and the real-install `hipfire_gate`
+(`the_install_roster_hip_fires_as_bo2`): every converted bullet gun — 11,556 with the combinations
+and the dual-wield pairs — fires through the real `Arsenal` from rest, in standing, crouched and
+prone strings, running, crawling, airborne and aimed; each shot's spread is held to BO2's rules
+written out on their own and the pellets to BO2's radius law (KS) and a level angle. The old model
+could not pass it: a string's second shot (min + 0.6° against min + 0.6 of the range), the first
+shot running (min + 5° against min) and the radius law (KS 0.25 against a bound near 0.004). In game: `autotest-mac.sh
+--hipfire`.
+
+**Gotcha: Ghidra drops a float return.** `FUN_008dbfb0` decompiles as `void` and `FUN_008e0080`'s C
+then reads as if the increase starts at the ADS fraction. The function returns in XMM0 and the
+caller stores it into the accumulator (`MOVSS [ESP+0x30], XMM0` at `0x008e0263`); read the
+disassembly (`Disasm.java`) whenever an SSE function's result looks unused.
+
+**Gotcha: a scripted tap is not one logic frame.** The autopilot's taps are 0.07 s of held fire
+sampled at 30 Hz, so the MP7 (64 ms) fires a second round on the next frame, at the first's add
+(spread 3.8° after 2.0°), exactly as BO2's next command would. The leg counts a first shot from
+rest as a shot 10 or more frames after the last, standing still.
+
+**Verified.** `cargo test --workspace` green (without `ZHBO_BO2_DIR`); clippy clean (workspace
+`--all-targets`; zhbo-core `autopilot,harness`). Real install: zhbo-assets `--ignored --skip
+conformance` 79/79 (the roster lockstep gate and the new hip-fire gate among them: 11,556 guns, 8
+states, 1.57 M shots checked). Conformance CLI: weapons 0 cells (with the two new columns), cac 0 +
+4 BO2-only; every old column's cells and all three cac CSVs equal to overhead-general's baseline.
+In game (`cargo xtask build`, a fresh dist and archive): `--hipfire` 5/5 (120 shots, 0 outside their
+cone, mean r 0.520, 21/21 first shots at the 2.0° minimum, 32/32 running shots at the 5.0° maximum;
+the MP7 of the first default class), default 16/16, `--input` 3/3, `--scope` 1/1, `--w3d-ads` 2/2,
+`--rts` 20/20, `--mp` 26/26 (state hash equal on every frame). `ZHBO_MPTEST_ROUNDS=3`: run 1 34/35,
+the state hash equal on all 5,042 common frames, failing only the known flaky "rounds after the
+first fight (join.log) 1 of 2" (round 6's note); run 2, with two other agents' builds loading the
+machine (load 17), saw Zero Hour end the match at frame 2,673 with no sim kill line (the host's
+General gone from 500 hp in one frame, then the joiner's on the joiner only) and the hashes
+parting on that last frame alone — the engine's teardown, not a sim divergence. The long runs were
+then dropped by the round's testing-scope change; the integrator's ladder reruns them.

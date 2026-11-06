@@ -112,6 +112,16 @@ tuning! {
     player_standing_view_height: "player_standingViewHeight" = 60.0, "Standing eye height, inches: spread blends crouched->standing up to it (G2, G6).";
     view_height_crouch: "ViewHeightCrouch" = 40.0, "Crouched eye height, inches (the engine's 40; G6).";
     view_height_prone: "ViewHeightProne" = 11.0, "Prone eye height, inches (the engine's 11; G6).";
+    // The aim spread scale (`weapons::aim_spread`; `FUN_008e0080` and its events).
+    bg_aim_spread_move_speed_threshold: "bg_aimSpreadMoveSpeedThreshold" = 11.0, "Ground speed (inches/s) past which a move key grows the spread scale (`FUN_008e0080`; `dvars-t6mp.tsv`).";
+    jump_spread_add: "jump_spreadAdd" = 64.0, "Spread scale (of 255) a jump adds (`FUN_008b5000`; registered in `FUN_008b4c20`, default `0x00b12d88`).";
+    ads_zero_spread: "adsZeroSpread" = 1.0, "1: the spread scale is zeroed while fully aimed (`FUN_008e0080`; registered in `FUN_008b7bb0`).";
+    bg_ads: "bg_ads" = 1.0, "1: lowering the stance opens the spread scale fully (`FUN_008c1120`; `dvars-t6mp.tsv`).";
+    aim_spread_air_add: "AimSpreadAirAdd" = 2.56, "Spread scale growth per second off the ground, shares of 255 (`FUN_008e0080`: 1.28 at `0x00bd73a0`, added twice).";
+    aim_spread_air_decay_scale: "AimSpreadAirDecayScale" = 0.5, "The spread decay's scale off the ground (`FUN_008e0080`, `0x00c733cc`).";
+    aim_spread_turn_scale: "AimSpreadTurnScale" = 0.01, "Spread scale share per degree turned, times `fHipSpreadTurnAdd` (`FUN_008e0080`, `0x00c73410`).";
+    aim_spread_alt_raise_min: "AimSpreadAltRaiseMin" = 128.0, "The spread scale an alt toggle's raise keeps at least (`FUN_008df320`, `0x00c735a8`).";
+    aim_spread_damage_cap: "AimSpreadDamageCap" = 127.0, "The most a hurt adds to the spread scale (`FUN_005d1800`: damage x 100 / max health, at most 0x7f).";
     cg_fov: "cg_fov" = 65.0, "Field of view, degrees (G4).";
     cg_fov_min: "cg_fovMin" = 10.0, "The narrowest view FOV, degrees (`FUN_004a0920`).";
     cg_fov_scale: "cg_fovScale" = 1.0, "Scale on the view FOV after the ADS zoom (`FUN_004a0920`).";

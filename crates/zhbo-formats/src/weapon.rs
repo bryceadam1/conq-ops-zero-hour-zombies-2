@@ -782,6 +782,11 @@ pub struct Weapon {
     pub hip_spread_decay: f32,
     pub hip_spread_fire_add: f32,
     pub hip_spread_move_add: f32,
+    /// `fHipSpreadTurnAdd`: the spread scale's growth per degree the view turns (`FUN_008e0080`).
+    pub hip_spread_turn_add: f32,
+    /// `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`: the decay rate's crouched and prone scales
+    /// (`FUN_008e0080`).
+    pub hip_spread_stance_decay: (f32, f32),
     pub ads_spread: f32,
     pub ads_zoom_fov: f32,
     pub ads_view_kick: Kick,
@@ -1323,6 +1328,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.hip_spread_decay = z.f32(d + WD::fHipSpreadDecayRate);
     w.hip_spread_fire_add = z.f32(d + WD::fHipSpreadFireAdd);
     w.hip_spread_move_add = z.f32(d + WD::fHipSpreadMoveAdd);
+    w.hip_spread_turn_add = z.f32(d + WD::fHipSpreadTurnAdd);
+    w.hip_spread_stance_decay = (z.f32(d + WD::fHipSpreadDuckedDecay), z.f32(d + WD::fHipSpreadProneDecay));
     w.ads_spread = z.f32(d + WD::fAdsSpread);
     w.ads_view_kick = kick(z, d + WD::fAdsViewKickPitchMin, d + WD::fAdsViewKickPitchMax, d + WD::fAdsViewKickYawMin, d + WD::fAdsViewKickYawMax);
     w.hip_view_kick = kick(z, d + WD::fHipViewKickPitchMin, d + WD::fHipViewKickPitchMax, d + WD::fHipViewKickYawMin, d + WD::fHipViewKickYawMax);

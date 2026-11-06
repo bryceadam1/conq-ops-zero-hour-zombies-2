@@ -460,6 +460,7 @@ struct Round<'a> {
     left: bool,
     gun_kick: (f32, f32),
     eye: Vec3,
+    spread: f32,
 }
 
 impl Sim {
@@ -477,10 +478,9 @@ impl Sim {
             p.idle.breath.fired(def, p.arsenal.ads, &p.arsenal.tuning, extra);
         }
         let eye = p.body.eye();
-        // Random point in the spread cone (polar mapping of two uniform samples).
-        let angle = jitter.0 * std::f32::consts::PI;
-        let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
-        let dir = dir_from_angles(p.fire_yaw + radius * det::cos(angle), p.fire_pitch + radius * det::sin(angle));
+        // The pellet's place in the cone (`Bullet_Fire`: the angle, then a linear radius, on the
+        // view's tangent plane).
+        let dir = crate::weapons::aim_spread::cone_dir(p.fire_yaw, p.fire_pitch, spread_deg, jitter.0, jitter.1);
 
         let range = def.bullet_range(self.bullet_range);
         // The players as the shooter saw them (BO2's antilag rewind, `sim::antilag`).
@@ -508,7 +508,7 @@ impl Sim {
             }
         }
         let tracer = !def.tracer_fx_weapon.is_empty() && tracer_due(&mut p.tracer_count, def.tracer_interval);
-        let round = Round { shooter: p.general, def, fx, tracer, pellet, left, gun_kick, eye };
+        let round = Round { shooter: p.general, def, fx, tracer, pellet, left, gun_kick, eye, spread: spread_deg };
         // Enemy equipment in the way takes the shot.
         let reach = match hit {
             HitResult::Object { distance, .. } => distance,
@@ -629,7 +629,7 @@ impl Sim {
     /// The shot and recoil cues, once per shot (the first pellet), ending at `end`.
     fn round_done(&mut self, idx: usize, r: &Round, end: Vec3) {
         if r.pellet == 0 {
-            self.emit(idx, EventKind::Shot { origin: r.eye, end, left: r.left });
+            self.emit(idx, EventKind::Shot { origin: r.eye, end, left: r.left, spread: r.spread });
             self.emit(idx, EventKind::Recoil { gun_kick: r.gun_kick });
         }
     }

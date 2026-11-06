@@ -1152,8 +1152,9 @@ fn random_input_never_breaks_the_arsenal() {
                         assert!(w.ammo <= w.def.clip.max(w.main.clip), "{}: {} has {} rounds", at(), w.def.id, w.ammo);
                     }
                     assert!(w.left.as_ref().is_none_or(|h| h.ammo <= w.def.clip), "{}: the left gun", at());
-                    assert!(w.cooldown.is_finite() && w.bloom.is_finite(), "{}: timers", at());
+                    assert!(w.cooldown.is_finite(), "{}: timers", at());
                 }
+                assert!((0.0..=crate::weapons::aim_spread::SCALE_MAX).contains(&a.aim_spread.scale), "{}: spread scale {}", at(), a.aim_spread.scale);
             }
         }
     }

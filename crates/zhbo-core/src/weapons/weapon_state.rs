@@ -46,8 +46,6 @@ pub struct WeaponState {
     pub cooldown: f32,
     pub reload: Option<Reload>,
     pub burst_left: u8,
-    /// Hip spread bloom above the stance minimum, degrees.
-    pub bloom: f32,
     /// Minigun barrel spin, seconds toward `spin_up_time`.
     pub spin: f32,
     /// Has been raised before (the first raise is BO2's longer "first raise").
@@ -87,7 +85,7 @@ pub struct WeaponState {
 }
 
 crate::statehash::state_hash!(struct WeaponState {
-    def, main, alt_mode, ammo, reserve, cooldown, reload, burst_left, bloom, spin, raised_once, alt_ammo, alt_reserve,
+    def, main, alt_mode, ammo, reserve, cooldown, reload, burst_left, spin, raised_once, alt_ammo, alt_reserve,
     string, recoil_acc, since_shot, rechamber_pending, rechamber_shots, rechamber, reload_owed, zoom, quick_reload, left,
     options,
 });
@@ -156,7 +154,6 @@ impl WeaponState {
             cooldown: 0.0,
             reload: None,
             burst_left: 0,
-            bloom: 0.0,
             spin: 0.0,
             raised_once: false,
             alt_ammo: 0,
@@ -395,13 +392,6 @@ impl WeaponState {
             }
         }
         false
-    }
-
-    /// Hip cone half-angle (degrees) for a stance (0 stand, 1 crouch, 2 prone) and ADS fraction.
-    pub fn spread_deg(&self, stance: usize, ads: f32) -> f32 {
-        let (min, max) = self.def.hip_spread[stance.min(2)];
-        let hip = (min + self.bloom).min(max);
-        hip + (self.def.ads_spread - hip) * ads
     }
 }
 

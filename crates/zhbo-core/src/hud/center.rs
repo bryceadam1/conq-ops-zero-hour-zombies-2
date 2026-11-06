@@ -111,16 +111,13 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
     if p.body.sprinting || p.arsenal.is_busy() {
         return;
     }
-    let stance = match p.body.stance {
-        crate::movement::Stance::Stand => 0,
-        crate::movement::Stance::Crouch => 1,
-        crate::movement::Stance::Prone => 2,
-    };
-    let spread = wpn.spread_deg(stance, ads);
+    // The cone a hip shot would fly with now (`FUN_004b5d70`: the hip lerp by `aimSpreadScale`
+    // over `BG_GetSpreadForWeapon`'s stance-blended, perk-scaled min..max) — the same numbers the
+    // sim fires with ([`crate::weapons::aim_spread`]).
+    let a = &p.arsenal;
+    let spread = crate::weapons::aim_spread::AimSpread::shot_spread(a.aim_spread.scale, a.spread_cone(a.view_height()), wpn.def, 0.0);
     let gap = crosshair_offset(spread, client.last_hfov, w, h);
-    // aimSpreadScale: how far the bloom has opened the cone between its stance min and max.
-    let (min, max) = wpn.def.hip_spread[stance];
-    let aim_spread = if max > min { (wpn.bloom / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
+    let aim_spread = a.aim_spread.fraction();
     let fade = zoom.map_or(1.0, |z| 1.0 - crate::weapons::scope::overlay_alpha(wpn.def, z));
     let alpha = (fade * (1.0 - aim_spread)).max(CROSSHAIR_ALPHA_MIN);
     let col = argb((1.0, 1.0, 1.0), alpha);

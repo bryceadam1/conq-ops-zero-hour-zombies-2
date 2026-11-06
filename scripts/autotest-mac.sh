@@ -60,6 +60,11 @@
 #                                      file holds the old detector's Low, one who chose Low and one who
 #                                      chose Custom; the first two must get High, the others keep theirs.
 #                                      Options.ini is put back afterwards
+#   scripts/autotest-mac.sh --hipfire  hip fire against BO2's cone: the first default class (no profile
+#                                      class), no enemy about; twelve taps from rest, a held string and a
+#                                      running string at the ground ahead. Every shot's logged offset must
+#                                      sit inside its cone with BO2's linear radius (mean r near 0.5), the
+#                                      taps fly in the stance minimum and the running string at the maximum
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -94,6 +99,7 @@ mode=autopilot
 [[ "${1:-}" == "--splash" ]] && mode=splash
 [[ "${1:-}" == "--drops" ]] && mode=drops
 [[ "${1:-}" == "--detail" ]] && mode=detail
+[[ "${1:-}" == "--hipfire" ]] && mode=hipfire
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -762,6 +768,43 @@ EOF
     fi
     grep -E "smoke" "$l" | head -40
     echo "screenshots and log: $out"
+    exit $ok
+fi
+
+if [[ "$mode" == "hipfire" ]]; then
+    # BO2's hip-fire cone in game (weapons::aim_spread): the bridge logs each first-person shot as
+    # `[<frame>] … hip shot: <weapon> spread <s> deg (cone <min>..<max>, ads <a>, moving <m>) offset <o>
+    # deg r <r>`, the offset measured from the aim to where the engine's trace put the round. A shot
+    # 10 or more frames after the last, standing still, is a first shot from rest (a tap may fire a
+    # second round on the next frame, at the first's add, as BO2's next command would). No profile
+    # class: the spawn pick takes the first default class.
+    rm -f "$userdata/ConquerOps.profile"
+    # A capture every half second (the shared default above is every 5 s), to catch the impacts.
+    export ZHBO_AUTOPILOT=hipfire GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-40} GGC_BGFX_SCREENSHOT_INTERVAL=${ZHBO_HIPFIRE_SHOT_INTERVAL:-15}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    l="$out/ConquerOps.log"
+    grep "hip shot:" "$l" >"$out/hipshots.txt" || true
+    awk '
+        { for (i = 1; i <= NF; i++) { if ($i == "spread") s = $(i + 1); if ($i == "(cone") { split($(i + 1), c, "\\.\\."); mn = c[1]; mx = c[2] }
+              if ($i == "moving") m = $(i + 1) + 0; if ($i == "r") r = $(i + 1) } }
+        { f = substr($1, 2) + 0; rest = (n == 0 || f - last >= 10); last = f }
+        { n++; sum += r; if (r > 1.001) out++; if (m) { mv++; if (mx - s < 0.01) wide++ } else if (rest) { firsts++; if (s - mn < 0.01) atmin++ } }
+        END {
+            ok = 1
+            printf "%-46s %s (%d)\n", "hip shots logged", (n >= 40 ? "PASS" : "FAIL"), n; if (n < 40) ok = 0
+            printf "%-46s %s (%d outside)\n", "every round inside its cone", (out == 0 ? "PASS" : "FAIL"), out; if (out) ok = 0
+            mean = n ? sum / n : 0
+            printf "%-46s %s (mean r %.3f)\n", "BO2 linear radius (mean r 0.5 +- 0.15)", (mean > 0.35 && mean < 0.65 ? "PASS" : "FAIL"), mean; if (!(mean > 0.35 && mean < 0.65)) ok = 0
+            printf "%-46s %s (%d of %d)\n", "a first shot from rest flies in the minimum", (firsts >= 12 && atmin == firsts ? "PASS" : "FAIL"), atmin, firsts; if (!(firsts >= 12 && atmin == firsts)) ok = 0
+            printf "%-46s %s (%d of %d)\n", "running opens the cone to its maximum", (mv > 0 && wide * 2 >= mv ? "PASS" : "FAIL"), wide, mv; if (!(mv > 0 && wide * 2 >= mv)) ok = 0
+            exit ok ? 0 : 1
+        }' "$out/hipshots.txt" && ok=0 || ok=1
+    head -16 "$out/hipshots.txt"
+    echo "screenshots, log and hipshots.txt: $out"
     exit $ok
 fi
 
