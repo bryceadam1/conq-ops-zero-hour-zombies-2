@@ -760,8 +760,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   name-derived alias. The `.zcm` format is `camo::VERSION`; the model blob's material record
   carries the camo layer (see the version list below).
   The material record (model and camo blobs alike, `Material::write`) then appends `specular`, the
-  converted spec colour map (`*_spec.tga`, RENDERER.md "The specular colour"); model `VERSION`
-  is 4, camo `VERSION` 2 (the parity burn-down's integration, see "Versioning"). A
+  converted spec colour map (`*_spec.tga`, RENDERER.md "The specular colour"), and later
+  `reticle`, `emblem`, `sonar` and `polygon_offset`; model `VERSION` is 5, camo `VERSION` 3, the
+  reticle sets' 2 (see "Versioning"). A
   style camo replaces the surface's specular colour with the style's (gold's hue lives there).
   - **Third person.** The native third person (`ZHBO_NATIVE_BODY` ≥ 1) wears the class camo too:
     each `.zbw` part carries its `WeaponCamo` (`Part::camo`: the def's on the world model and its
@@ -826,7 +827,7 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   column and the reticle shader reads no code-set colour. The third-person body draws its world
   model's reticle with `ads = 0`, i.e. dark, as BO2 sets the fade for the local viewmodel only.
   The shared material record appends `reticle` and `emblem` (model `VERSION` 4, camo `VERSION` 2,
-  bumped once at the integration, see "Versioning").
+  bumped once at the integration; now 5 and 3 with `sonar` and `polygon_offset`, see "Versioning").
 
 ## The native third person (Track R7)
 
@@ -1662,30 +1663,31 @@ Archive `hud::VERSION` 88 at the same point: the beam tracers' client drawables
 `TracerName`. An engine without patch 0030 refuses the `Texture` field; an older archive draws the
 untextured line. The native blob formats are unchanged.
 
-**Pending for the next bump** (render-flicker): `ZhboClientOut.fps_near` and `near_scale` (`float`
-each, the first-person near plane in world units and the camera's distance from the eyes as a share
-of the overhead camera's) are appended after `input_seen_frame`: `ZhboClientOut` 4880 → 4888 bytes,
-asserted on both sides; `Zhbo_GetCameraOverride`'s `nearPlane` becomes in/out (patch 0001 passes
-`NearZ`). Host patch 0032 adds `GGC_SetBgfxShadowFocus`/`GGC_GetBgfxShadowFocus` (GlobalData.cpp),
-set by the W3DView camera hook and read by `SetupSunShadowView`. The native model and camo blobs'
-material record gains a trailing `polygon_offset` byte (BO2's `GFXS1_POLYGON_OFFSET_*`, 0-3): the
-model, camo and reticle-set `VERSION` bumps and `hud::VERSION` (the archive must be rebuilt: an older
-archive's records are a byte short and refused) belong to the integrator. The tuning pack gains
-`r_znear` (4, inches; `tuning.ini`'s `[View]`).
+**ABI 35** (round 7's integration, one bump for the round): `ZhboClientOut.fps_near` and
+`near_scale` (`float` each, the first-person near plane in world units and the camera's distance
+from the eyes as a share of the overhead camera's) are appended after `input_seen_frame`:
+`ZhboClientOut` 4880 → 4888 bytes, asserted on both sides. `Zhbo_GetCameraOverride`'s `nearPlane`
+becomes in/out (patch 0001 passes the RTS view's `NearZ`; the bridge returns `max(fps_near, NearZ ×
+near_scale)`). No API table moves. `ZhboNativeIn.vm` may now be -1 with a tablet or hammer clip (a
+meaning, not a layout: the core maps a tool clip to the tool's own manifest). Host patch 0032 at the
+same point adds `GGC_SetBgfxShadowFocus`/`GGC_GetBgfxShadowFocus` (GlobalData.cpp), set by the
+W3DView camera hook and read by `SetupSunShadowView` (the first-person sun-shadow fit). The tuning
+pack (the content CRC's tuning part) gains `r_znear` (4 inches, `[View]`) and the aim spread
+scale's keys (`bg_aimSpreadMoveSpeedThreshold`, `jump_spreadAdd`, `adsZeroSpread`, `bg_ads`,
+`AimSpread*`).
 
-**Pending for the next bump (tablet-render).** Archive `hud::VERSION` 88 → 89 needed: the archive
-gains the tools' native manifests (`Art\Native\ZVTAB<F>.zbv`, `ZVHAM<F>.zbv`, their arms/tablet/
-hammer `.zbm` and the `viewmodel_tablet_*`/`viewmodel_strider_*` `.zba`), the hammer's bound
-`mtl_p_glo_tools_farmtools` art (its colour, normal and specular maps, from `mp_raid`), and BO2's
-unlit surfaces drawn self-lit (`Looks::unlit`); an archive at 88 is kept by the launcher and the
-tools fall back to the W3D models. No ABI struct or table moves: `ZhboNativeIn.vm` may now be -1
-with a tablet or hammer clip (a meaning, not a layout). The native blob formats are unchanged.
-
-**Pending for the next bump (hipfire-accuracy).** Archive: the weapon table's new `SpreadRates`
-key (`fHipSpreadTurnAdd`, `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`) and the tuning pack's
-aim-spread keys; `hud::VERSION` must move so launchers reconvert (an older table reads the
-defaults: no turn add, unscaled stance decay — every MP gun has a 0 turn add, but the SMGs'
-crouched 4× decay would be lost). No ABI change: `EventKind::Shot`'s `spread` is Rust-internal.
+Archive `hud::VERSION` 89 at the same point, with the native formats the material record carries:
+the record gains a trailing `polygon_offset` byte (BO2's `GFXS1_POLYGON_OFFSET_*`, 0-3), so
+`model::VERSION` 4 → 5, `camo::VERSION` 2 → 3 and `reticles::VERSION` 1 → 2 (an older blob is
+refused by its version, not misread a byte short; these moves also cover `sonar`, appended earlier
+without one). `viewmodel::VERSION` 3, `thirdperson` `BODY_VERSION` 1 / `WEAPON_VERSION` 3,
+`anim::VERSION` 1 and `display::VERSION` 1 are unchanged. The archive also gains the tools' native
+manifests (`Art\Native\ZVTAB<F>.zbv`, `ZVHAM<F>.zbv`, their arms/tablet/hammer `.zbm` and the
+`viewmodel_tablet_*`/`viewmodel_strider_*` `.zba`), the hammer's bound `mtl_p_glo_tools_farmtools`
+art (from `mp_raid`), BO2's unlit surfaces drawn self-lit (`Looks::unlit`), and the weapon table's
+`SpreadRates` key (`fHipSpreadTurnAdd`, `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`; a table
+converted before it reads no turn add and unscaled stance decay, losing the SMGs' crouched 4×
+decay). `EventKind::Shot`'s `spread` is Rust-internal, no ABI.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

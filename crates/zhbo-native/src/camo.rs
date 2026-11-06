@@ -8,7 +8,7 @@ use crate::io::{FormatError, Reader, Writer};
 use crate::model::Material;
 
 pub const MAGIC: [u8; 4] = *b"ZCM\0";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// Archive path of `asset`'s camo blob (`camo_<weapon>`).
 pub fn camo_path(asset: &str) -> String {

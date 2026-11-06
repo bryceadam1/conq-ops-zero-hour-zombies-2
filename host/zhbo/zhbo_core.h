@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 34u
+#define ZHBO_ABI_VERSION 35u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -347,8 +347,7 @@ typedef struct ZhboClientOut
 	uint32_t input_seen_frame;
 	/* While camera_override: the first-person near plane (world units, BO2's r_znear) and the
 	   camera's distance from the eyes as a share of the overhead camera's (1 overhead, 0 at the
-	   eyes). The W3DView hook's near is max(fps_near, NearZ * near_scale). Pending for the next
-	   bump. */
+	   eyes). The W3DView hook's near is max(fps_near, NearZ * near_scale). ABI 35. */
 	float fps_near;
 	float near_scale;
 } ZhboClientOut;
