@@ -299,6 +299,8 @@ impl<'a> Expected<'a> {
         .float("hip_spread_decay", fl(d.hip_spread_decay()))
         .float("hip_spread_fire_add", fl(d.hip_spread_fire_add()))
         .float("hip_spread_move_add", fl(d.hip_spread_move_add()))
+        .float("hip_spread_turn_add", fl(d.hip_spread_turn_add()))
+        .floats("hip_spread_stance_decay", &fls(&[d.hip_spread_ducked_decay(), d.hip_spread_prone_decay()]))
         .float("ads_spread", fl(d.ads_spread()))
         .float("stack_fire_spread", fl(w.atts_walk().iter().map(|a| a.stack_fire_spread()).find(|x| *x > 0.0).unwrap_or(d.stack_fire_spread())))
         .float("stack_fire_accuracy_decay", fl(w.atts_walk().iter().map(|a| a.stack_fire_accuracy_decay()).find(|x| *x > 0.0).unwrap_or(d.stack_fire_accuracy_decay())));

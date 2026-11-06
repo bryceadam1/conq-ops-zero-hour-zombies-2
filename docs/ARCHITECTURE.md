@@ -63,7 +63,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   `perks.rs` (the perk ids and tiers, each tied to its statstable row: name, description, specialty set), `specialty.rs` (BO2's 62
   specialty bits), `feel.rs` (gun kick, sway, viewmodel offsets, reticle data), `handling.rs`
   (the fire cycle's extra times, the zoom levels/fractions/DOF, BO2's per-weapon traits),
-  `recoil.rs` (per-shot kick, the gun kick spring, flinch, the spread cone), `view_kick.rs`
+  `recoil.rs` (per-shot kick, the gun kick spring, flinch, the spread cone's stance blend),
+  `aim_spread.rs` (BO2's aim spread scale, one per player: its per-frame update, shot and event adds, the
+  shot's spread in the cone and the pellet's place, `Bullet_Fire`'s linear radius), `view_kick.rs`
   (BO2's view kick integrator: the camera recoil that moves the sim's aim), `zoom.rs` (BO2's
   ADS zoom: the view FOV over the ADS lerp, the zoom levels, the hybrid's alt scope), `scope.rs`
   (the reticle zoom: when a 2D-overlay scope is looked through), `idle_sway.rs` (BO2's idle sway

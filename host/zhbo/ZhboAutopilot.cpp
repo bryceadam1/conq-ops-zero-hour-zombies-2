@@ -622,8 +622,10 @@ void autopilotSpawn()
 	}
 
 	// Three enemy riflemen ahead of the General (inside rifle range, outside the base). The smoke
-	// scene places its own units around the screen once it stands; the flicker scene stays still.
-	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash && !s_config.autopilot_drops && !s_config.autopilot_flicker)
+	// scene places its own units around the screen once it stands; the flicker scene stays still; the
+	// hip-fire run wants nobody shooting him (a hurt opens BO2's spread scale).
+	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash && !s_config.autopilot_drops &&
+		!s_config.autopilot_flicker && !s_config.autopilot_hipfire)
 	{
 		for (Int i = -1; i <= 1; ++i)
 		{

@@ -1409,7 +1409,7 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 `Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
-flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, `bulletrange` (how far a non-spread round is traced), the optic displays'
+flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, the aim spread scale's dvars and engine constants (`bg_aimSpreadMoveSpeedThreshold`, `jump_spreadAdd`, `adsZeroSpread`, `bg_ads`, `AimSpread*`; `weapons::aim_spread`), `bulletrange` (how far a non-spread round is traced), the optic displays'
 `cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the dropped weapons (`[Drops]`: `g_maxDroppedWeapons`, `player_useRadius`, the use list's facing scale, `_weapons.gsc`'s 60 s `deletepickupafterawhile`, the item's owner second and `Drop_Item`'s toss, its touch box and the player box's height; `sim::drops`), the smoke screen's time and sight blocker (`[Smoke]`: `_smokegrenade.gsc`'s `spawntimedfx` time and `blocksight` radii, t6mp's always-seen distance; `smoke::Params`), the melee reach and the knife's lunge (`player_meleeRange`, `player_meleeCharge*`, `[Melee]`; the lunge distance and times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
@@ -1680,6 +1680,12 @@ hammer `.zbm` and the `viewmodel_tablet_*`/`viewmodel_strider_*` `.zba`), the ha
 unlit surfaces drawn self-lit (`Looks::unlit`); an archive at 88 is kept by the launcher and the
 tools fall back to the W3D models. No ABI struct or table moves: `ZhboNativeIn.vm` may now be -1
 with a tablet or hammer clip (a meaning, not a layout). The native blob formats are unchanged.
+
+**Pending for the next bump (hipfire-accuracy).** Archive: the weapon table's new `SpreadRates`
+key (`fHipSpreadTurnAdd`, `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`) and the tuning pack's
+aim-spread keys; `hud::VERSION` must move so launchers reconvert (an older table reads the
+defaults: no turn add, unscaled stance decay — every MP gun has a 0 turn add, but the SMGs'
+crouched 4× decay would be lost). No ABI change: `EventKind::Shot`'s `spread` is Rust-internal.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

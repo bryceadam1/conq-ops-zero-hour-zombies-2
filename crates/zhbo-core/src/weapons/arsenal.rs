@@ -179,6 +179,14 @@ pub struct Arsenal {
     /// item this frame; the sim sets it from the world before [`Arsenal::step`]
     /// ([`crate::sim::can_plant`]). Only `plantable` items read it.
     pub plant_ok: [bool; 2],
+    /// BO2's aim spread scale (`ps->aimSpreadScale`, [`super::aim_spread`]): one per player, both
+    /// hands of a dual-wield pair and every weapon share it.
+    pub aim_spread: super::aim_spread::AimSpread,
+    /// What this frame's spread update reads; the sim sets it from the world before
+    /// [`Arsenal::step`] (the stance and the ground speed come in through `step` itself).
+    pub spread_in: super::aim_spread::SpreadIn,
+    /// The scale this frame's shots start from: the one the last frame left.
+    shot_scale: f32,
     /// Weapon-switch presses made during an offhand, applied when it is done.
     pub swaps_pending: u8,
     held_last: u32,
@@ -197,7 +205,7 @@ pub struct Arsenal {
 crate::statehash::state_hash!(struct Arsenal {
     loadout, weapons, active, lethal, tactical, melee, class_melee, raise_left, raise_total, raise_kind, drop_left,
     drop_total, previous, alt_pending, ads, since_sprint, melee_left, melee_recover_left, melee_delay_left, offhand,
-    plant_ok, swaps_pending, held_last, since_reload_press, cooked,
+    plant_ok, aim_spread, spread_in, shot_scale, swaps_pending, held_last, since_reload_press, cooked,
 } skip { tuning });
 
 /// One of BO2's weapon-state families, each of which a specialty speeds up (Ghidra G3,
@@ -257,6 +265,9 @@ impl Arsenal {
             melee_delay_left: 0.0,
             offhand: None,
             plant_ok: [true, true],
+            aim_spread: Default::default(),
+            spread_in: Default::default(),
+            shot_scale: 0.0,
             swaps_pending: 0,
             held_last: 0,
             since_reload_press: 10.0,
@@ -342,6 +353,9 @@ impl Arsenal {
             melee_delay_left: 0.0,
             offhand: None,
             plant_ok: [true, true],
+            aim_spread: Default::default(),
+            spread_in: Default::default(),
+            shot_scale: 0.0,
             swaps_pending: 0,
             held_last: 0,
             since_reload_press: 10.0,
@@ -525,15 +539,18 @@ impl Arsenal {
         super::recoil::spread_range(self.current().def, view_height, self.has_specialty(Specialty::BulletAccuracy), &self.tuning)
     }
 
-    /// The spread now (degrees) at a stance (0 stand, 1 crouch, 2 prone) and aim: the cone's
-    /// minimum plus the bloom, at most its maximum, blending to the ADS spread as the gun aims.
-    pub fn spread_now(&self, stance: usize, ads: f32) -> f32 {
+    /// The eye height (inches) the cone blends by: the sim's ([`super::aim_spread::SpreadIn`]),
+    /// else the stance's resting height.
+    pub fn view_height(&self) -> f32 {
         let t = &self.tuning;
-        let height = [t.player_standing_view_height, t.view_height_crouch, t.view_height_prone][stance.min(2)];
-        let (min, max) = self.spread_cone(height);
-        let w = self.current();
-        let hip = (min + w.bloom).min(max);
-        hip + (w.def.ads_spread - hip) * ads
+        let i = &self.spread_in;
+        i.view_height.unwrap_or([t.player_standing_view_height, t.view_height_crouch, t.view_height_prone][i.stance.min(2)])
+    }
+
+    /// The spread a shot would fly with now (degrees): the aim spread scale's place in the cone
+    /// (`FUN_0066e590`, [`super::aim_spread::AimSpread::shot_spread`]).
+    pub fn spread_now(&self) -> f32 {
+        super::aim_spread::AimSpread::shot_spread(self.aim_spread.scale, self.spread_cone(self.view_height()), self.current().def, self.ads)
     }
 
     /// `movefaster` (Lightweight): the run speed is `g_speed x perk_speedMultiplier` (G2).
@@ -580,6 +597,10 @@ impl Arsenal {
         };
         self.raise_total = self.raise_left;
         self.ads = 0.0;
+        // The raise opens the spread scale (`FUN_008df320`), once the drop is done.
+        if self.drop_left <= 0.0 {
+            self.aim_spread.open();
+        }
     }
 
     /// A shield was deployed: the engine's `deployriotshield` takes the weapon (it lies on the
@@ -605,6 +626,7 @@ impl Arsenal {
         (self.raise_left, self.raise_kind) = if first { (to.first_raise_time, RaiseKind::First) } else { (to.raise_time, RaiseKind::Normal) };
         self.raise_total = self.raise_left;
         self.ads = 0.0;
+        self.aim_spread.open();
         Some((slot, state, gave_knife))
     }
 
@@ -712,6 +734,11 @@ impl Arsenal {
         self.raise_left = raise;
         self.raise_total = raise;
         self.raise_kind = RaiseKind::Alt;
+        // An alt pair's raise keeps at least half the spread scale (`FUN_008df320`, `FUN_008db3f0`);
+        // two ADS-only modes skip the state setup that sets it (`FUN_008da850`).
+        if !ads_only {
+            self.aim_spread.alt_raised(&self.tuning);
+        }
     }
 
     /// A shot from the Zero Hour weapon in `slot` (0 primary, 1 secondary, 2 lethal) while the
@@ -781,6 +808,14 @@ impl Arsenal {
         let pressed = pressed | (held & !self.held_last);
         let released = self.held_last & !held;
         self.held_last = held;
+        // BO2's aim spread update is the frame's first step (`FUN_008e0080`, at the top of
+        // `Pmove`); this frame's shots fly with the scale the last frame left
+        // (`currentAimSpreadScale`, taken before `Pmove`).
+        self.spread_in.stance = stance;
+        self.spread_in.speed = speed / crate::units::ZH_PER_INCH;
+        self.shot_scale = self.aim_spread.scale;
+        let held_def = self.current().def;
+        self.aim_spread.update(&self.spread_in, held_def, self.ads, &self.tuning, dt);
 
         // Weapon timers run in weapon-data time: each family at its specialty's rate (G3).
         let (sprint_tick, melee_tick, switch_tick) = (self.tick(Timing::SprintOut), self.tick(Timing::Melee), self.tick(Timing::Switch));
@@ -810,15 +845,18 @@ impl Arsenal {
         }
         if self.drop_left > 0.0 {
             self.drop_left = (self.drop_left - switch_tick).max(0.0);
-            if self.drop_left <= 0.0 && self.alt_pending {
-                self.finish_alt();
+            if self.drop_left <= 0.0 {
+                if self.alt_pending {
+                    self.finish_alt();
+                } else {
+                    // The new weapon's raise begins: the spread scale opens (`FUN_008df320`).
+                    self.aim_spread.open();
+                }
             }
         } else {
             self.raise_left = (self.raise_left - switch_tick).max(0.0);
         }
         for w in &mut self.weapons {
-            let decay = w.def.spread_decay.max(0.1);
-            w.bloom = (w.bloom - decay * dt).max(0.0);
             w.since_shot += dt;
         }
 
@@ -950,12 +988,18 @@ impl Arsenal {
         // attack button for a single gun and a dual-wield pair's right gun, the ADS button for the
         // left gun. The reload button reaches both hands (each checks it, `FUN_008dfd50`).
         let dual = self.current().left.is_some();
-        self.step_hand(held, pressed, sprinting, stance, speed, rng, out, false);
+        self.step_hand(held, pressed, sprinting, rng, out, false);
         if dual {
             let trigger = |bits: u32| (bits & !buttons::FIRE) | if bits & buttons::ADS != 0 { buttons::FIRE } else { 0 };
             self.current_mut().swap_hand();
-            self.step_hand(trigger(held), trigger(pressed), sprinting, stance, speed, rng, out, true);
+            self.step_hand(trigger(held), trigger(pressed), sprinting, rng, out, true);
             self.current_mut().swap_hand();
+        }
+        // The weapon frame's own maxes (`FUN_008e4da0`): crawling (prone with a move key down, not
+        // fully aimed) and the melee states 0x13-0x15.
+        let crawling = self.spread_in.stance == 2 && self.spread_in.moving && self.ads < 1.0;
+        if crawling || self.melee_left > 0.0 || self.melee_recover_left > 0.0 {
+            self.aim_spread.open();
         }
     }
 
@@ -963,7 +1007,7 @@ impl Arsenal {
     /// hand's trigger as `FIRE`. The left hand runs with its state swapped in
     /// ([`WeaponState::swap_hand`]); its actions say so (`left`).
     #[allow(clippy::too_many_arguments)]
-    fn step_hand(&mut self, held: u32, pressed: u32, sprinting: bool, stance: usize, speed: f32, rng: &mut Rng, out: &mut Vec<WeaponAction>, left: bool) {
+    fn step_hand(&mut self, held: u32, pressed: u32, sprinting: bool, rng: &mut Rng, out: &mut Vec<WeaponAction>, left: bool) {
         let dt = LOGIC_DT;
         // Reload progress / requests.
         let reload_tick = self.tick(Timing::Reload);
@@ -1069,7 +1113,9 @@ impl Arsenal {
             }
             return;
         }
-        let spread_now = self.spread_now(stance, ads);
+        let cone = self.spread_cone(self.view_height());
+        let mut shot_scale = self.shot_scale;
+        let mut shots = 0u32;
         let w = self.current_mut();
         if !(held & buttons::FIRE != 0) {
             w.string = 0;
@@ -1093,7 +1139,7 @@ impl Arsenal {
                     out.push(WeaponAction::Launch { def, pellet: 0 });
                 }
             } else {
-                let spread = spread_now + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
+                let spread = super::aim_spread::AimSpread::shot_spread(shot_scale, cone, def, ads);
                 // BO2's per-shot kick (G5): the view kick's velocity and the gun spring's impulse.
                 // A dual-wield pair reads both hands' kicks with their firing states (this hand
                 // fires; the other is firing while its fire cycle runs). The left gun's def is
@@ -1108,7 +1154,8 @@ impl Arsenal {
                 let k = super::recoil::shot_kick_hands(def, hands, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
                 w.since_shot = 0.0;
                 for pellet in 0..def.rounds_per_shot() {
-                    let jitter = (rng.signed(), rng.signed());
+                    // `Bullet_Fire`'s two draws per pellet: the angle, then the radius.
+                    let jitter = (rng.next_f32(), rng.next_f32());
                     let (view_kick, gun_kick) = if pellet == 0 { (k.view, k.gun) } else { ((0.0, 0.0, 0.0), (0.0, 0.0)) };
                     out.push(WeaponAction::Fire { spread_deg: spread, jitter, view_kick, gun_kick, pellet, last: w.ammo == 1, left });
                 }
@@ -1123,7 +1170,8 @@ impl Arsenal {
             // A stack spends every loaded round in one pull.
             w.ammo -= if def.fire == FireMode::Stacked { w.ammo } else { 1 };
             w.string = w.string.saturating_add(1);
-            w.bloom += def.spread_fire_add;
+            shot_scale = super::aim_spread::AimSpread::after_shot(shot_scale, def, ads);
+            shots += 1;
             // A bolt or pump action owes a rechamber after every shot, or after every
             // `iShotsBeforeRechamber` shots (`FUN_008dc260`).
             if t.bolt_action {
@@ -1148,6 +1196,11 @@ impl Arsenal {
         }
         if w.ammo == 0 && w.reserve > 0 {
             w.reload_owed = true;
+        }
+        // Each shot opens the scale (`FUN_008dc710`); a later shot of this hand in the same frame
+        // already flew with it (`shot_scale`), as BO2's next command's would.
+        for _ in 0..shots {
+            self.aim_spread.fired(def, ads);
         }
     }
 

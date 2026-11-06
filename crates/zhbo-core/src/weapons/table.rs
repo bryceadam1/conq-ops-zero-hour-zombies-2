@@ -636,6 +636,13 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.spread_decay, d.spread_fire_add, d.spread_move_add, d.ads_spread) = (v.num(0), v.num(1), v.num(2), v.num(3));
             Ok(())
         }),
+    field!("SpreadRates", "The spread scale's turn add, and the decay's crouched and prone scales (`fHipSpreadTurnAdd`, `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`).", FieldKind::Nums(3),
+        |d: &WeaponDef| format!("{} {} {}", d.spread_turn_add, d.spread_stance_decay.0, d.spread_stance_decay.1),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(3)?;
+            (d.spread_turn_add, d.spread_stance_decay) = (v.num(0), (v.num(1), v.num(2)));
+            Ok(())
+        }),
     field!("AdsKick", "Per-shot view kick aimed: pitch min/max, yaw min/max.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.ads_kick.pitch.0, d.ads_kick.pitch.1, d.ads_kick.yaw.0, d.ads_kick.yaw.1),
         |d: &mut WeaponDef, v: Values| {
@@ -1350,7 +1357,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 172);
+        assert_eq!(WEAPON_FIELDS.len(), 173);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

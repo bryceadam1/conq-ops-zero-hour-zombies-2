@@ -289,6 +289,9 @@ getters!(Def, WD {
     f32 hip_spread_decay = fHipSpreadDecayRate;
     f32 hip_spread_fire_add = fHipSpreadFireAdd;
     f32 hip_spread_move_add = fHipSpreadMoveAdd;
+    f32 hip_spread_turn_add = fHipSpreadTurnAdd;
+    f32 hip_spread_ducked_decay = fHipSpreadDuckedDecay;
+    f32 hip_spread_prone_decay = fHipSpreadProneDecay;
     f32 ads_spread = fAdsSpread;
     f32 ads_view_kick_pitch_min = fAdsViewKickPitchMin;
     f32 ads_view_kick_pitch_max = fAdsViewKickPitchMax;

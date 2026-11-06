@@ -219,6 +219,7 @@ impl Arsenal {
             self.current_mut().raised_once = true;
             (self.raise_left, self.raise_kind) = if empty { (to.empty_raise_time, RaiseKind::Empty) } else { (to.first_raise_time, RaiseKind::First) };
             self.raise_total = self.raise_left;
+            self.aim_spread.open();
         } else {
             self.switch_to(index);
         }

@@ -142,6 +142,10 @@ pub struct Autopilot {
     pub(crate) view: (f32, f32),
     pub(crate) flicker_base: Option<(f32, f32)>,
     pub(crate) flicker_phase: Option<usize>,
+    /// The hip-fire run ([`Autopilot::hipfire_input`], `ZHBO_AUTOPILOT=hipfire`): taps from rest,
+    /// a held string, then a running string, at the ground ahead; the bridge logs each shot's place
+    /// in its cone (`ffi`'s `hip shot` lines).
+    pub hipfire: bool,
     /// The drops run: where the nearest dropped weapon is from the eye (yaw, pitch, the distance
     /// across the ground), set by the client from the sim, and when the use key was pressed.
     pub(crate) drop_aim: Option<(f32, f32, f32)>,
@@ -232,7 +236,7 @@ pub struct Scripted {
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, flicker: self.flicker, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, flicker: self.flicker, hipfire: self.hipfire, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
     }
 
     /// What it does at time `t`.
@@ -254,6 +258,9 @@ impl Autopilot {
         }
         if self.flicker {
             return self.flicker_input();
+        }
+        if self.hipfire {
+            return self.hipfire_input(b);
         }
         if self.equipment {
             let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
@@ -716,6 +723,31 @@ impl Autopilot {
             keys.set_down(b.ads, true);
         }
         Scripted { keys, class_pick: pick, ..Default::default() }
+    }
+
+    /// The hip-fire run: pick the first default class (the script seeds none), look down at the
+    /// ground ahead, then from the hip: twelve taps half a second apart (each a first shot from
+    /// rest), a held two-second string, and a string while running forward. The bridge logs every
+    /// shot's spread and its offset from the aim; the autotest holds them to BO2's cone.
+    pub fn hipfire_input(&self, b: &Bindings) -> Scripted {
+        let t = self.t;
+        let mut keys = KeySet::default();
+        let pick = (0.3..0.4).contains(&t).then(custom_class_key);
+        // About 12 degrees down: the rounds meet the ground a few dozen units ahead.
+        let dy = if (2.0..2.3).contains(&t) { 6.0 } else { 0.0 };
+        let tap = (3.0..9.0).contains(&t) && ((t - 3.0) % 0.5) < 0.07;
+        let string = (9.5..11.5).contains(&t);
+        let running = (12.5..15.0).contains(&t);
+        if tap || string || (13.5..15.0).contains(&t) {
+            keys.set_down(b.fire, true);
+        }
+        if running {
+            keys.set_down(b.forward, true);
+        }
+        if (16.0..16.1).contains(&t) {
+            keys.set_down(b.field_computer, true);
+        }
+        Scripted { keys, dy, class_pick: pick, ..Default::default() }
     }
 
     /// The smoke-screen run: pick the seeded class (its tactical the smoke grenade), throw it ahead,

@@ -40,6 +40,8 @@ mod hit_tests;
 mod lockstep_tests;
 #[cfg(test)]
 mod latency_tests;
+#[cfg(test)]
+mod spread_tests;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
@@ -149,8 +151,9 @@ pub enum EventKind {
     ClassAtNextSpawn { general: u32, class: ClassName },
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
-    /// `left`: the dual-wield left gun's shot (BO2's `EV_FIRE_WEAPON_LEFT`).
-    Shot { origin: Vec3, end: Vec3, left: bool },
+    /// `left`: the dual-wield left gun's shot (BO2's `EV_FIRE_WEAPON_LEFT`). `spread`: the cone it
+    /// flew in, degrees (`weapons::aim_spread`).
+    Shot { origin: Vec3, end: Vec3, left: bool, spread: f32 },
     /// One pellet landed on something (a miss emits nothing): where, the direction it was going,
     /// what it hit, and the shooting weapon's BO2 impact bucket. The client turns it into BO2's
     /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound. `exit`: the round
@@ -1110,14 +1113,32 @@ impl Sim {
                         move_faster: p.arsenal.move_faster(),
                         charge: self.melee_charge(host, p),
                     };
+                    // The aim spread's update reads the player as this frame's move finds him
+                    // (`FUN_008e0080` opens `Pmove`); a jump and a lowering stance land after it.
+                    let (fwd, side) = input.move_axes();
+                    let before = (p.body.on_ground, p.body.eye_height, p.body.horizontal_speed());
+                    p.arsenal.spread_in = crate::weapons::aim_spread::SpreadIn {
+                        view: (input.yaw, input.pitch),
+                        moving: fwd != 0.0 || side != 0.0,
+                        run_speed: self.tuning.run_speed(mods.move_faster) / crate::units::ZH_PER_INCH,
+                        airborne: !p.body.on_ground,
+                        aqs: p.idle.aqs,
+                        aqs_left: p.idle.aqs_left,
+                        // The step fills the stance and the ground speed.
+                        ..p.arsenal.spread_in
+                    };
                     movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
+                    p.arsenal.spread_in.view_height = Some(p.body.eye_height / crate::units::DRAWN_ZH_PER_INCH);
+                    let jumped = before.0 && !p.body.on_ground && p.body.vel.z > 0.0 && input.pressed & buttons::JUMP != 0;
+                    let lowering = p.body.eye_height < before.1 - 1e-4;
                     let mut actions = Vec::new();
                     let stance = match p.body.stance {
                         Stance::Stand => 0,
                         Stance::Crouch => 1,
                         Stance::Prone => 2,
                     };
-                    let speed = p.body.horizontal_speed();
+                    // The spread update's ground speed: the velocity the move started from.
+                    let speed = before.2;
                     // The hammer, or building, takes the hands: the gun gets no input meanwhile.
                     let busy = self.step_building(host, idx, p, &input);
                     let (held, pressed) = if busy { (0, 0) } else { (input.held, input.pressed) };
@@ -1125,6 +1146,15 @@ impl Sim {
                     p.arsenal.plant_ok = [true, false].map(|lethal| can_plant(p.arsenal.offhand_def(lethal), &p.body, p.yaw, p.pitch, p.general, host));
                     let prev_ads = p.arsenal.ads;
                     p.arsenal.step(held, pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
+                    // The move's events on the scale, after this frame's shots took theirs
+                    // (`FUN_008b5000`'s jump add; `FUN_008c1120`: with `bg_ads`, a view height
+                    // above its target opens it).
+                    if jumped {
+                        p.arsenal.aim_spread.jumped(&p.arsenal.tuning);
+                    }
+                    if lowering && p.arsenal.tuning.bg_ads != 0.0 {
+                        p.arsenal.aim_spread.open();
+                    }
                     // Hold breath and the idle clock run after the ADS update, before the shot
                     // (`FUN_008e4da0`: `FUN_008e4470`, …, `FUN_008e4860`, `FUN_008e3940`); the
                     // breath key is `+breath_sprint`, the sprint key.
@@ -1295,6 +1325,7 @@ impl Sim {
             let amount = p.health - info.health;
             let dir = self.last_blow(host, p.general).map_or(Vec3::ZERO, |b| b.dir);
             self.emit(idx, EventKind::Damaged { amount, dir });
+            p.arsenal.aim_spread.damaged(amount, info.max_health, &p.arsenal.tuning);
             let toughness = p.arsenal.class_specialties().has(Specialty::BulletFlinch);
             let flinch = crate::weapons::recoil::flinch_degrees(amount / crate::units::BO2_TO_ZH_DAMAGE, toughness, &p.arsenal.tuning);
             let (yaw_deg, pitch_deg) = crate::weapons::recoil::flinch_kick(flinch, dir, p.yaw, p.pitch);

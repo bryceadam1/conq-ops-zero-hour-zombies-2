@@ -91,6 +91,7 @@ struct ZhboConfig
 	Bool autopilot_splash = FALSE;	  // =splash: an enemy armour group and infantry for the SMAW's blast
 	Bool autopilot_flicker = FALSE;	  // =flicker: no enemies, a still scene for the flicker diff
 	Bool autopilot_drops = FALSE;	  // =drops: a General killed where he stands, the next one swaps for his rifle
+	Bool autopilot_hipfire = FALSE;	  // =hipfire: hip fire at the ground ahead with no enemy about (nothing hurts him)
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:

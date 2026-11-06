@@ -326,9 +326,18 @@ pub struct WeaponDef {
     pub max_range: f32,
     /// Hip spread cone (degrees) min/max standing, crouched, prone.
     pub hip_spread: [(f32, f32); 3],
+    /// The aim spread scale's rates ([`crate::weapons::aim_spread`]), each a share of the cone's
+    /// min..max per second or per event: `fHipSpreadDecayRate` (per second, at rest),
+    /// `fHipSpreadFireAdd` (per shot), `fHipSpreadMoveAdd` (per second at `g_speed`),
+    /// `fHipSpreadTurnAdd` (per hundred degrees the view turns).
     pub spread_decay: f32,
     pub spread_fire_add: f32,
     pub spread_move_add: f32,
+    pub spread_turn_add: f32,
+    /// `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`: the decay's crouched and prone scales.
+    pub spread_stance_decay: (f32, f32),
+    /// `fAdsSpread`: the aimed cone's minimum (degrees); it opens toward the hip maximum by the
+    /// same scale.
     pub ads_spread: f32,
     pub ads_kick: Kick,
     pub hip_kick: Kick,
@@ -1028,6 +1037,8 @@ impl Default for WeaponDef {
             spread_decay: 6.0,
             spread_fire_add: 0.5,
             spread_move_add: 0.5,
+            spread_turn_add: 0.0,
+            spread_stance_decay: (1.0, 1.0),
             ads_spread: 0.0,
             ads_kick: Kick::default(),
             hip_kick: Kick::default(),

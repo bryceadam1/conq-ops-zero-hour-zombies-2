@@ -206,6 +206,8 @@ pub fn schema() -> Schema {
         .col("hip_spread_decay", "spread", f, "fHipSpreadDecayRate")
         .col("hip_spread_fire_add", "spread", f, "fHipSpreadFireAdd")
         .col("hip_spread_move_add", "spread", f, "fHipSpreadMoveAdd")
+        .col("hip_spread_turn_add", "spread", f, "fHipSpreadTurnAdd")
+        .col("hip_spread_stance_decay", "spread", v3, "fHipSpreadDuckedDecay, fHipSpreadProneDecay (FUN_008e0080)")
         .col("ads_spread", "spread", f, "fAdsSpread")
         .col("stack_fire_spread", "spread", f, "first positive attachment value, else the def's (FUN_008ece60)")
         .col("stack_fire_accuracy_decay", "spread", f, "same rule (FUN_008ece00)");

@@ -90,15 +90,15 @@
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert_eq!(client.view, ViewMode::Fps);
         // Another player's shot is not the local viewmodel's effect.
-        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
+        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false, spread: 0.0 } });
         let out = client.frame(&mut sim, &inp);
         assert_eq!(out.viewmodel_fired, 0);
         // The sim's own `Shot` event is what the bridge's `fired` flag comes from.
-        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false, spread: 0.0 } });
         let out = client.frame(&mut sim, &inp);
         assert_eq!((out.viewmodel_fired, out.viewmodel_fired_left), (1, 0));
         // A dual-wield pair's left shot sets the left flag only (its flash at `tag_flash1`).
-        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: true } });
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: true, spread: 0.0 } });
         let out = client.frame(&mut sim, &inp);
         assert_eq!((out.viewmodel_fired, out.viewmodel_fired_left), (0, 1));
     }
@@ -126,7 +126,7 @@
         p.arsenal.weapons[active] = crate::weapons::WeaponState::new(def);
         for (left, want) in [(true, "ZHBO_BO2_FireLeft_test_dw_mp"), (false, "ZHBO_BO2_Fire_test_dw_mp")] {
             client.cues.queue.clear();
-            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left } });
+            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left, spread: 0.0 } });
             client.frame(&mut sim, &inp);
             let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
             assert!(cues.contains(&want), "left {left}: {cues:?}");
@@ -278,7 +278,7 @@
             ..crate::weapons::catalog().get("an94_mp").unwrap().clone()
         }));
         let at = Vec3::new(40.0, 30.0, 5.0);
-        let shot = crate::sim::EventKind::Shot { origin: at, end: at, left: false };
+        let shot = crate::sim::EventKind::Shot { origin: at, end: at, left: false, spread: 0.0 };
         // (rounds this frame, the string and the magazine after them) -> what plays.
         let mut hear = |rounds: usize, string: u16, ammo: u16| -> Vec<&'static str> {
             let p = sim.players[1].as_mut().unwrap();
@@ -317,8 +317,8 @@
             K::ClassAtNextSpawn { general: 1, class: crate::sim::ClassName::new("x") },
             K::FieldComputerOpened,
             K::ReturnedToRts { general: 1 },
-            K::Shot { origin: at, end: at, left: false },
-            K::Shot { origin: at, end: at, left: true },
+            K::Shot { origin: at, end: at, left: false, spread: 0.0 },
+            K::Shot { origin: at, end: at, left: true, spread: 0.0 },
             K::Impact { at, dir, surface: Surface::Concrete, head: false, fatal: false, impact_type: 1, exit: false },
             K::Impact { at, dir, surface: Surface::Flesh, head: true, fatal: true, impact_type: 1, exit: true },
             K::HitMarker { headshot: false, kill: true },
@@ -564,7 +564,7 @@
 
         // A shot on its own no longer plays an impact sound (the pellet's event does).
         client.cues.queue.clear();
-        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false, spread: 0.0 } });
         client.frame(&mut sim, &inp);
         let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
         assert!(!cues.contains(&sounds::IMPACT) && !cues.contains(&sounds::IMPACT_FLESH), "{cues:?}");
