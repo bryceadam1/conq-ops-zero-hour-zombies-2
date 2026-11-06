@@ -1071,6 +1071,48 @@ fn a_missing_manifest_gives_up_once() {
     });
 }
 
+/// The field computer's tablet draws through its own native manifest: the bridge passes no weapon
+/// (`vm` -1) with a tablet clip, and the core asks for `ZVTAB<F>.zbv` (never a weapon's), composes
+/// it and plays the tablet clip — the same pass, lighting and own depth as the guns. A tool clip
+/// with a weapon still in `vm` draws the tool too; a plain clip with no weapon draws nothing.
+#[test]
+fn the_tablet_draws_through_its_own_manifest() {
+    use zhbo_native::TABLET_VM;
+    let mut f = fixture();
+    // The fixture's viewmodel as the tablet's: the same parts, its clips under the tablet's ids.
+    let (_, bytes) = f.files.remove(0);
+    let mut manifest = Viewmodel::from_bytes(&bytes).unwrap();
+    manifest.id = "t6_wpn_tablet_view".into();
+    manifest.clips = vec![(crate::viewmodel::TABLET_IDLE as u16, zhbo_native::anim_path("idle"))];
+    f.files.insert(0, (zhbo_native::viewmodel_path(TABLET_VM, 'U'), manifest.to_bytes()));
+    with_state(|s| {
+        *s = ffi::State::default();
+        let mut inp = input(crate::viewmodel::TABLET_IDLE, 0.0);
+        inp.vm = crate::viewmodel::NONE;
+        assert_eq!(s.frame(&inp, true), LOADING);
+        let wanted: Vec<String> = s.files.wanted().map(str::to_string).collect();
+        assert_eq!(wanted, vec![zhbo_native::viewmodel_path(TABLET_VM, 'U')], "the tablet's manifest, not a weapon's");
+        for _ in 0..8 {
+            s.frame(&inp, true);
+            answer(s, &f);
+        }
+        let loaded = s.loaded.as_ref().expect("the tablet composed");
+        assert_eq!(loaded.key.0, TABLET_VM);
+        assert_eq!(loaded.clip_path(crate::viewmodel::TABLET_IDLE), Some(zhbo_native::anim_path("idle").as_str()));
+        // Posed on the tablet clip: the idle lifts `tag_weapon` 1" over its bind (-5").
+        let tag = loaded.bone_world(&s.posed, "tag_weapon").unwrap();
+        assert!((tag[2][3] - (-4.0 * ART_SCALE)).abs() < 1e-4, "{tag:?}");
+        // With a weapon still named, the tablet's clip draws the tablet all the same.
+        inp.vm = 7;
+        s.frame(&inp, true);
+        assert_eq!(s.loaded.as_ref().unwrap().key.0, TABLET_VM);
+        // A weapon clip with no weapon is not native (the W3D path decides).
+        let mut none = input(1, 0.0);
+        none.vm = crate::viewmodel::NONE;
+        assert_eq!(s.frame(&none, true), NOT_NATIVE);
+    });
+}
+
 /// A combination's viewmodel number has any width: its manifest is `ZV<vm><F>.zbv` with the
 /// faction letter right after the number (the user's silenced DSR-50 is viewmodel 8664).
 #[test]
@@ -1586,3 +1628,5 @@ fn the_aimed_meshs_own_textures_are_uploaded_too() {
     let single = Loaded { mesh_aimed: None, ..l };
     assert_eq!(single.drawn_mesh(true), &single.mesh, "no part swaps: the hip mesh draws aimed too");
 }
+
+

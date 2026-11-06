@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -104,6 +105,20 @@ namespace
 	}
 
 	int s_lastWeapon = -2;
+
+	// The native pass's last answer (ZHBO_NATIVE_*): a W3D draw while it is still loading is the
+	// expected first frame or two of a new viewmodel, not a fallback.
+	int32_t s_nativeResult = ZHBO_NATIVE_NOT_NATIVE;
+
+	// Which path drew each viewmodel, said once per model per game: the autotests check that the
+	// tablet and the hammer draw natively, in the guns' pass, and never through the W3D fallback.
+	std::set<std::string> s_drawnBy;
+	void logDrawnBy(const AsciiString &name, const char *path)
+	{
+		const std::string key = std::string(name.str()) + " " + path;
+		if (s_drawnBy.insert(key).second)
+			Zhbo_Log("viewmodel: %s drawn by the %s path", name.str(), path);
+	}
 
 	// Play the notes of the weapon's `clip` in (from, to]; a clip that (re)started plays from its
 	// beginning.
@@ -214,7 +229,7 @@ namespace
 		return TRUE;
 	}
 
-	// --- The native BO2 pass (Track R; zhbo-core nativevm, opt-in ZHBO_NATIVE_VIEWMODEL=1) -------
+	// --- The native BO2 pass (Track R; zhbo-core nativevm, the default; ZHBO_NATIVE_VIEWMODEL=0 opts out)
 
 	// BgfxBackend's view ids: the scene the viewmodel draws into (kBgfxEngineView) and the composite
 	// it draws before (kBgfxSceneCompositeView), so bloom and the tonemap see it.
@@ -368,7 +383,12 @@ namespace
 	Bool nativeViewmodel(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, char faction, Real time, Real ads,
 		const Coord3D &offset, const Coord3D &angles, Bool fired, Bool firedLeft)
 	{
-		if (weapon < 0 || name.getLength() < 5 || !name.startsWith("ZV"))
+		// A converted weapon's viewmodel (`ZV…`), or the tablet's or the hammer's (`…_TAB`, `…_HAM`):
+		// the tools pass no weapon, and the core picks their own native manifests by the clip
+		// (`zhbo_core::viewmodel::native_vm`), so they draw in the same pass as the guns.
+		const Bool tool = name.endsWith("_TAB") || name.endsWith("_HAM");
+		s_nativeResult = ZHBO_NATIVE_NOT_NATIVE;
+		if (!tool && (weapon < 0 || name.getLength() < 5 || !name.startsWith("ZV")))
 			return FALSE;
 		static const float s_debug = getenv("ZHBO_BO2_DEBUG") ? static_cast<float>(atoi(getenv("ZHBO_BO2_DEBUG"))) : 0.0f;
 		ZhboNativeIn in = {};
@@ -390,6 +410,7 @@ namespace
 		in.before_view = k_composite_view;
 		in.debug = s_debug;
 		const int32_t result = zhbo_native_viewmodel(&in);
+		s_nativeResult = result;
 		serveNative();
 		if (result != ZHBO_NATIVE_DRAWN)
 			return FALSE;
@@ -450,6 +471,7 @@ void ZhboViewmodel_Reset()
 	s_lastClip = -1;
 	s_lastWeapon = -2;
 	s_lastTime = 0.0f;
+	s_drawnBy.clear();
 	zhbo_native_reset();
 }
 
@@ -662,6 +684,8 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 		loadNotes();
 	playNotes(weapon, clip, time);
 	const Bool native = nativeViewmodel(eye, dir, clip, weapon, name, faction, time, ads, offset, angles, fired, firedLeft);
+	if (native)
+		logDrawnBy(name, "native");
 	if (native && !compareMode())
 		return;
 	if (!poseW3d(eye, dir, clip, weapon, name, time, ads, offset, angles))
@@ -673,6 +697,7 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 		return;
 	}
 	s_model->Set_Hidden(false);
+	logDrawnBy(name, s_nativeResult == ZHBO_NATIVE_LOADING ? "W3D (native loading)" : "W3D");
 	if (fired)
 		viewmodelFx(weapon, FALSE, FALSE);
 	if (firedLeft)

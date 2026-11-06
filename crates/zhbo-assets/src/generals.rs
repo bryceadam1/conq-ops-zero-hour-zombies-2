@@ -129,6 +129,10 @@ pub(crate) const KNIFE_VIEW: &str = "t6_wpn_knife_base_view";
 /// BO2's hammer, a campaign prop, and a small zone that has it.
 pub(crate) const HAMMER: &str = "p_glo_tools_hammer";
 pub(crate) const HAMMER_ZONE: &str = "haiti_gump_front_door";
+/// The prop's zone holds only a reference to its material (`,mtl_p_glo_tools_farmtools`, no
+/// images): the multiplayer map that defines it in full, with its colour and normal maps, so the
+/// reference binds as BO2's asset pool binds it (`viewmodels::resolve_materials`).
+pub(crate) const HAMMER_MATERIAL_ZONE: &str = "mp_raid";
 /// The hammer in the knife's grip, on `j_gun` (which points along the blade): the prop lies along
 /// its Y with the head at +Y, so its Y goes forward (X), gripped 2 inches from the end. Its face is
 /// at -X and its claw at +X; turned about the handle so the face, not the claw, leads the swing.
@@ -1123,6 +1127,24 @@ mod tests {
         assert_eq!((meshes[0].blend, meshes[0].bo2_maps.as_deref()), (w3d::Blend::Opaque, Some("gun_nsg.tga")));
         assert_eq!((meshes[1].blend, meshes[1].bo2_maps.as_deref()), (w3d::Blend::Alpha, None), "glass keeps its alpha");
         assert!(meshes[2].emissive, "glows are self-lit");
+    }
+
+    /// BO2's unlit surfaces (an `_unlit` technique set: the tablet's screen) draw self-lit in both
+    /// paths, whatever their blend; a lit opaque surface stays lit.
+    #[test]
+    fn unlit_materials_are_self_lit_in_both_paths() {
+        let mut looks = textures::Looks::default();
+        looks.unlit.insert("screen.tga".into());
+        let mesh = |t: &str| w3d::SkinMesh { texture: Some(t.into()), ..Default::default() };
+        let mut meshes = vec![mesh("screen.tga"), mesh("body.tga")];
+        textures::finish(&mut meshes, &looks);
+        assert!(meshes[0].emissive && !meshes[1].emissive);
+        let unlit = zhbo_formats::xmodel::Material { name: "mc/mtl_p6_screen_killstreaks".into(), techset: "mc_sw4_3d_unlit_4layer_jw0z1973".into(), ..Default::default() };
+        assert!(textures::is_unlit(&unlit));
+        let lit = zhbo_formats::xmodel::Material { name: "mc/mtl_t6_wpn_tablet".into(), techset: "mc_lit_sm_r0c0n0s0o0_3z86zq2z".into(), ..Default::default() };
+        assert!(!textures::is_unlit(&lit));
+        assert!(crate::native::material_record(Some(&unlit), Some("screen.tga"), &looks).emissive, "native: self-lit");
+        assert!(!crate::native::material_record(Some(&lit), Some("body.tga"), &looks).emissive, "native: lit");
     }
 
     #[test]

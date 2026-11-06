@@ -13431,3 +13431,102 @@ build` from a fresh work dir; archive built at 88 (`build-archive`). Legs: `--rt
 life left before a second round started. The state hash was equal on every frame of every run. Which
 side wins depends on when inputs land (render cadence), not on a divergence, so this is flaky
 coverage, not a sync fault.
+
+## The field computer's tablet draws as a BO2 viewmodel (2026-11-06, branch `v1/tablet-render`)
+
+The user: "The field computer tablet seems a little off." It was, and long-standing (the user
+confirmed it was not a round 4-6 regression). Captured in game at every phase (raise, held, screen,
+putaway, and the hammer in `--build`) against the guns and BO2's own model drawn headless through
+the converter. Images in `~/.opencode/plan/tablet-render/` (`sheet-before-*.png`, `sheet-after-*.png`,
+`sheet-headless-*.png`).
+
+**Root cause: the tablet (and the hammer) were the last viewmodels still on the W3D path.** Track R
+moved the guns to the native BO2 pass and left "Tablet and hammer viewmodels: still W3D". So the
+tablet was drawn by a different renderer from every gun beside it:
+* *materials:* the W3D arms showed flat black gloves and sleeves, the body flat grey, where the
+  same arms on a gun carry their normal, gloss and specular maps (`before-1320` vs `before-1242`);
+* *depth:* the W3D model sits in the scene and tests the scene's depth, so the world cut it: in
+  `--build` the site's timbers hid the hammer and the arm swinging it (`sheet-before-build2.png`,
+  frames 1620-1725), and the hammer vanished while repairing with the camera at the ground;
+* *lighting:* the scene's W3D lights, not the native pass's;
+* *the screen:* the converter special-cased the screen's composite as emissive in W3D only.
+The hammer additionally had no colour map (its zone holds only a reference to its material).
+
+**Fix.**
+* The converter writes a native manifest per faction for each tool (`zhbo_native::TABLET_VM` -2 →
+  `ZVTAB<F>.zbv`, `HAMMER_VM` -3 → `ZVHAM<F>.zbv`; `viewmodels::tool_viewmodel`): the arms, the
+  tablet on `tag_weapon` (the hammer: the knife's bones alone on `tag_weapon`, the prop rigid on
+  its `j_gun` at `HAMMER_GRIP`, as the W3D model has it), with BO2's `viewmodel_tablet_*` /
+  `viewmodel_strider_*` clips under the clip ids the core already plays (0x60-0x62, 0x64-0x67).
+* The core maps a tool clip to the tool's manifest (`viewmodel::native_vm`) whatever weapon the
+  bridge passes; the bridge (`ZhboViewmodel.cpp`) now lets `…_TAB`/`…_HAM` through to the native
+  pass (no ABI change: `ZhboNativeIn.vm` is -1 with a tool clip, as `Zhbo_GetViewmodel` always sent).
+  The W3D models stay as the fallback.
+* **BO2's unlit surfaces draw self-lit, data-driven** (`textures::is_unlit`: an `_unlit` technique
+  set; `Looks::unlit`, read by both paths). The tablet's screen is `mc_sw4_3d_unlit_4layer`, so it
+  is drawn at its own colours (the W3D special case is gone). The same rule reaches the Black
+  Hat's `mtl_t6_wpn_pda_screen` (opaque, was lit dark like a body) and the ACOG's crosshair and
+  shade (alpha). A sweep of the archive finds exactly those five materials.
+* **The hammer's material is bound** from `mp_raid`, the zone that defines
+  `mtl_p_glo_tools_farmtools` in full (`HAMMER_MATERIAL_ZONE`, `viewmodels::resolve_materials`):
+  textured in both paths now (the old "hammer renders untextured grey" open item).
+* **The tablet's raise follows the display's rate.** Its clip time was the sim's field-computer
+  timer, which moves at 30 Hz: at 120 Hz the tablet held each pose for four frames. The client
+  now interpolates it between the last two logic frames by the render clock, the eye's rule
+  (`client::tablet_time`). Presentation only; the sim is untouched.
+
+**What render-flicker fixes, not this branch.** In game the native tablet's screen lost to the body
+recess 0.025" behind it in slabs on many frames of the raise and hold (`sheet-after-raise1.png`,
+`cap-dbg6`: the losing pixels are the lit body, not the screen). That is depth resolution and
+order, shared with every gun's decals: `v1/render-flicker` (fc27bbf) puts the viewmodel on its own
+reversed depth with BO2's polygon offsets and BO2's 4" near, and splits the native pass by an
+explicit `NativeFrame.layer` (round 6 drew the viewmodel on the scene's depth: the tablet would
+have been cut by walls exactly as the W3D one was). This branch first carried its own `NativeLayer`
+and an eye-relative palette; both were dropped for render-flicker's, which the integrator merges.
+With render-flicker merged locally the tablet raise and hold capture clean (`sheet-merge-*.png`).
+`nativevm::tests::draws_into_a_headless_renderer` (renderer feature) fails on main for the same
+round-6 reason and passes with render-flicker merged.
+
+**Checked and found right.** Position and FOV (the scene's projection, BO2 has no viewmodel FOV;
+the clips place the tablet), the arms on the tablet, the three clips and their timing
+(`TABLET_PULLOUT_TIME` 41/30, putaway 18/30), the transition to overhead (the view leaves after
+`FIELD_COMPUTER_RAISE`, unchanged). The screen's composite (background, the satellite panels, the
+targeting reticle) matches the material's four layers; BO2's shader animates them, which the static
+composite does not (not changed).
+
+**Known, not fixed.** A viewmodel the native pass has not loaded yet draws its W3D model for one or
+two frames (`viewmodel: … drawn by the W3D (native loading) path`): the tablet's putaway as first
+person starts, and each gun's first raise. The raise starts off screen; the putaway's first frame
+does not.
+
+**Tests.** zhbo-native: the tool paths. zhbo-core: `the_tools_draw_through_their_own_native_viewmodels`,
+`the_tablet_draws_through_its_own_manifest` (the core asks for `ZVTAB`, composes and plays the
+tablet clip), `the_tablet_rises_at_the_display_rate` (fails on the 30 Hz timer). zhbo-assets:
+`unlit_materials_are_self_lit_in_both_paths`; the native audit (`audit-native` and the real-install
+`every_converted_weapon_draws`) now loads each faction's tablet and hammer, checks every clip is in
+the archive and the tablet's screen is self-lit. The headless sweep has `--tools` (every tool clip,
+`ZHBO_TOOLS_STEP`) and `ZHBO_SWEEP_EYE`. In game the bridge logs which path drew each viewmodel
+once per model; the default leg checks `ZHBO_VMUSA_TAB drawn by the native path` and never by W3D,
+`--build` the same for the hammer. `zhbo-assets model` prints each material's technique set, blend,
+cull, states and constants.
+
+**Found, not this branch's.** Three runs dropped the whole viewmodel and the damage vignette for
+one captured frame a few frames after the General took damage at the tablet (logic frames 652/656;
+`sheet-merge-vanish.png`): the world and the minimap are there, the native pass and the post
+effects are not, as if that frame skipped the scene composite (the native pass is queued before
+it). Not tablet-specific; left for the renderer's owner.
+
+**Verified** (scope per BRIEF8's testing update: the crates touched and the legs that show the
+tools). Unit tests: zhbo-native, zhbo-core (also with `renderer`: all pass but
+`draws_into_a_headless_renderer`, which fails on main for round 6's layer bug and passes with
+render-flicker merged), zhbo-assets lib; clippy clean on those crates (`--all-targets`, zhbo-core
+`renderer` too). Real install: `audit-native` on a fresh archive, 29,073 first-person loads (the
+tools included), 0 problems; `every_converted_weapon_draws`. In game on this branch: default leg
+18/18 (tablet drawn natively, never by W3D), `--build` 20/20 (the hammer natively, textured; the
+site's timbers still cut it until render-flicker's layer split is merged). With render-flicker
+merged locally: the default leg's two tablet raises and holds, 25 frames each at every second
+logic frame, without the screen fighting its recess (`sheet-merge-raise1.png`,
+`sheet-merge-raise2.png`). No sim change (presentation and converter only), so no `--mp`; no
+weapon-table change, so the conformance CSVs are untouched. Bump needed: `hud::VERSION` (CONTRACT
+"Pending for the next bump (tablet-render)"); the only merge conflict with render-flicker is that
+pending paragraph in CONTRACT.md (keep both).

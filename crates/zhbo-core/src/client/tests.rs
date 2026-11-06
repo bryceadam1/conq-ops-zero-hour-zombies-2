@@ -657,6 +657,44 @@
         assert!(look.is_some(), "RTS camera recentred on the General");
     }
 
+    /// At the display's rate the tablet's raise moves on every render frame, not once per logic
+    /// frame: four render frames to a logic frame give four distinct clip times, rising, with no
+    /// jump at the logic step (the sim's 30 Hz timer alone held each pose for four frames).
+    #[test]
+    fn the_tablet_rises_at_the_display_rate() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn::default();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        inp.keys.set_down(Key::F, true);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
+        inp.keys.set_down(Key::F, false);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 6);
+        assert!(matches!(sim.player(0).unwrap().mode, Mode::FieldComputer { .. }));
+        let mut times = Vec::new();
+        for _ in 0..3 {
+            for k in 0..4 {
+                inp.dt = LOGIC_DT / 4.0;
+                let out = client.frame(&mut sim, &inp);
+                assert_eq!(out.viewmodel, crate::viewmodel::TABLET_PULLOUT);
+                times.push(out.viewmodel_time);
+                if k == 3 {
+                    let f = sim.frame + 1;
+                    sim.step(&host, f);
+                    inp.logic_frame = f;
+                }
+            }
+        }
+        for w in times.windows(2) {
+            let step = w[1] - w[0];
+            assert!(step > 0.0 && step < LOGIC_DT * 0.5, "every render frame moves the clip a quarter of a logic frame: {times:?}");
+        }
+    }
+
     /// Entering and leaving first person never jump: every frame the camera moves a little, starting
     /// from (and ending on) the overhead camera's pose and field of view.
     #[test]
