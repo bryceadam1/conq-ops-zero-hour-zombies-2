@@ -776,11 +776,14 @@ fn loads_through_requests_then_poses_and_aims() {
         assert_eq!(answer(s, &f), 1);
         assert_eq!(s.frame(&input(1, 0.0), true), LOADING, "asks for the models");
         assert_eq!(answer(s, &f), 2);
+        // Composed: every clip the manifest names is asked for at once (idle, reload and their
+        // dual-wield left halves, not each when it first plays), and the frame still counts as
+        // loading until the idle it plays is here (never a frame of the bind pose).
+        assert_eq!(s.frame(&input(1, 0.0), true), LOADING, "composed, its idle on the way");
+        assert_eq!(answer(s, &f), 4);
+        // The first posed frame; the colour map is asked for as it draws (absent: draws white).
         s.frame(&input(1, 0.0), true);
-        // Every clip the manifest names (idle, reload and their dual-wield left halves, asked for
-        // at composition, not when each first plays) and the colour map were requested; the
-        // texture is absent (draws white).
-        assert_eq!(answer(s, &f), 4 + cfg!(feature = "renderer") as usize);
+        assert_eq!(answer(s, &f), cfg!(feature = "renderer") as usize);
         s.frame(&input(1, 0.0), true);
         let loaded = s.loaded.as_ref().expect("composed");
         assert_eq!(loaded.skeleton.bones.len(), 5);

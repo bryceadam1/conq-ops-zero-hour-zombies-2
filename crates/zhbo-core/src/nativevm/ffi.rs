@@ -234,8 +234,13 @@ impl State {
         let ads = layer_path.and_then(|p| loaded.anims.get(p)).map(|a| (a, ads_frame(req.ads, layer_down, a.num_frames)));
         // A clip whose file has not arrived yet (requested, neither provided nor missing) holds
         // this viewmodel's last pose for the frame instead of snapping to the bind pose.
+        // A freshly composed viewmodel has no pose to hold: it is still loading (the W3D path draws
+        // this frame, as for its models), never a frame of the bind pose.
         let pending = anim.is_none() && path.as_deref().is_some_and(|p| !self.bad_anims.contains(p) && !self.files.is_missing(p));
-        let base = if pending && self.posed_for == Some(key) { super::Base::Held } else { super::Base::Clip(anim) };
+        if pending && self.posed_for != Some(key) {
+            return LOADING;
+        }
+        let base = if pending { super::Base::Held } else { super::Base::Clip(anim) };
         loaded.pose_from(&req, base, left, ads, &mut self.posed);
         self.posed_for = Some(key);
         // BO2 poses and plays the viewmodel but does not add it to the scene while its scope
@@ -244,6 +249,9 @@ impl State {
         let under_overlay = loaded.overlay_art_present && super::gun_under_overlay(vm);
         if under_overlay {
             self.log_once("the viewmodel is not drawn under the scope overlay (reticle zoom up)".into());
+        }
+        if pending {
+            self.log_once(format!("{}: played before its file arrived (held the last pose)", path.as_deref().unwrap_or_default()));
         }
         #[cfg(feature = "renderer")]
         {

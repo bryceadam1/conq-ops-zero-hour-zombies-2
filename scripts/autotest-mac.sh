@@ -306,6 +306,11 @@ if [[ $mode == build ]]; then
     else
         printf '%-28s PASS\n' "  ...never by W3D"
     fi
+    if grep -q "native viewmodel: .* played before its file arrived" "$out/ConquerOps.log"; then
+        printf '%-28s FAIL\n' "  ...every clip on hand"; ok=1
+    else
+        printf '%-28s PASS\n' "  ...every clip on hand"
+    fi
     # Not an idle worker while in first person; one again once back overhead.
     if awk '/entered first-person control/ { in_fps = 1 } /left first-person control/ { in_fps = 0; back = 1 } /joined the idle workers/ { if (in_fps) bad = 1; else if (back) ok = 1 } END { exit !(ok && !bad) }' "$out/ConquerOps.log"; then
         printf '%-28s PASS\n' "back overhead: idle worker"
@@ -727,6 +732,14 @@ EOF
         printf '%-22s FAIL\n' "  ...never by W3D"; ok=1
     else
         printf '%-22s PASS\n' "  ...never by W3D"
+    fi
+    # Every clip is on hand when it first plays (composing asks for them all): a clip posed before
+    # its file arrived drew a frame of the bind pose (the tablet at the foot of the screen as its
+    # idle took over from the pullout, on every opening).
+    if grep -q "native viewmodel: .* played before its file arrived" "$out/ConquerOps.log"; then
+        printf '%-22s FAIL (%s)\n' "  ...every clip on hand" "$(grep -m1 -o "native viewmodel: .* played before its file arrived" "$out/ConquerOps.log")"; ok=1
+    else
+        printf '%-22s PASS\n' "  ...every clip on hand"
     fi
     check "returned to RTS" "returned General [0-9]+ to RTS control"
     check "re-entered" "taking control again"
