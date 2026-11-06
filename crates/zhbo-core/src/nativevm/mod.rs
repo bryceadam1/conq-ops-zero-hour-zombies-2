@@ -891,6 +891,15 @@ pub fn eye_frame(eye: [f32; 3], dir: [f32; 3]) -> Mat4 {
     [x[0], x[1], x[2], 0.0, y[0], y[1], y[2], 0.0, z[0], z[1], z[2], 0.0, eye[0], eye[1], eye[2], 1.0]
 }
 
+/// Where [`Loaded::pose_from`]'s base layer comes from.
+#[derive(Clone, Copy, Debug)]
+pub enum Base<'a> {
+    /// The clip at the request's time; `None` is the bind pose (a manifest without the clip).
+    Clip(Option<&'a Anim>),
+    /// Keep the local pose of this viewmodel's last frame (the clip's file is still on its way).
+    Held,
+}
+
 /// Reusable pose buffers (the frame path allocates nothing once warm).
 #[derive(Default)]
 pub struct Posed {
@@ -937,14 +946,22 @@ impl Loaded {
     /// root (BO2's second anim channel). Bones no clip names keep what the previous layer left them
     /// in (`zhbo_native::pose::sample_over`).
     pub fn pose(&self, req: &Request, anim: Option<&Anim>, left: Option<&Anim>, ads: Option<(&Anim, f32)>, out: &mut Posed) {
+        self.pose_from(req, Base::Clip(anim), left, ads, out);
+    }
+
+    /// [`Loaded::pose`] with the base layer's source spelled out: a clip (or none: the bind
+    /// pose), or [`Base::Held`], the local pose `out` already holds from this viewmodel's last
+    /// frame, for a clip whose animation has not arrived yet (see `ffi::State::frame`).
+    pub fn pose_from(&self, req: &Request, base: Base<'_>, left: Option<&Anim>, ads: Option<(&Anim, f32)>, out: &mut Posed) {
         let looping = crate::viewmodel::slot::loops(req.clip);
         let time = req.time * req.rate.max(0.0);
-        match anim {
-            Some(a) => {
+        match base {
+            Base::Clip(Some(a)) => {
                 let frame = a.frame_at(time, looping);
                 self.skeleton.sample(a, frame, &mut out.local);
             }
-            None => {
+            Base::Held if out.local.len() == self.skeleton.bones.len() => {}
+            Base::Clip(None) | Base::Held => {
                 out.local.clear();
                 out.local.extend(self.skeleton.bind_pose());
             }

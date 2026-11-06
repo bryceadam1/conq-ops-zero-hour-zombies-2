@@ -731,6 +731,41 @@ fn a_weapon_without_an_ads_clip_keeps_the_slide() {
     });
 }
 
+fn weapon_local(s: &ffi::State) -> [f32; 3] {
+    let i = s.loaded.as_ref().unwrap().skeleton.bone("tag_weapon").expect("tag_weapon");
+    s.posed.local[i].1
+}
+
+/// A clip first played after the viewmodel was composed draws from its first frame: composing asks
+/// for every clip, and a clip whose file is still on its way holds the last pose rather than the
+/// bind pose (the tablet's idle after its pullout drew the bind pose, the tablet at the foot of the
+/// screen, for a frame on every opening; a gun's first reload or sprint likewise).
+#[test]
+fn a_clip_still_on_its_way_holds_the_last_pose_not_the_bind_pose() {
+    let f = fixture();
+    let reload = zhbo_native::anim_path("reload");
+    with_state(|s| {
+        *s = ffi::State::default();
+        // Composed and idling, the reload never played: its file is asked for all the same.
+        for _ in 0..8 {
+            s.frame(&input(1, 0.0), true);
+            answer_except(s, &f, |p| p == reload);
+        }
+        assert!(s.files.wanted().any(|p| p == reload), "composing asks for every clip, the reload too");
+        near3(weapon_local(s), [20.0, 0.0, -4.0], "idling (the rest offset, 1 up)");
+        // The reload starts before its file arrived: the idle's pose holds (the bind pose put
+        // tag_weapon at its bare rest offset, [20, 0, -5]).
+        s.frame(&input(0x10, 0.0), true);
+        near3(weapon_local(s), [20.0, 0.0, -4.0], "held while the reload is on its way");
+        // It arrives: the reload's own pose.
+        answer(s, &f);
+        s.frame(&input(0x10, 0.0), true);
+        near3(weapon_local(s), [20.0, 0.0, -8.0], "the reload (3 down)");
+        s.frame(&input(1, 0.0), true);
+        near3(weapon_local(s), [20.0, 0.0, -4.0], "back to the idle");
+    });
+}
+
 #[test]
 fn loads_through_requests_then_poses_and_aims() {
     let f = fixture();
@@ -742,9 +777,10 @@ fn loads_through_requests_then_poses_and_aims() {
         assert_eq!(s.frame(&input(1, 0.0), true), LOADING, "asks for the models");
         assert_eq!(answer(s, &f), 2);
         s.frame(&input(1, 0.0), true);
-        // The idle clip, the dual-wield left idle (the fixture's manifest has the instance-bit
-        // entry) and the colour map were requested; the texture is absent (draws white).
-        assert_eq!(answer(s, &f), 2 + cfg!(feature = "renderer") as usize);
+        // Every clip the manifest names (idle, reload and their dual-wield left halves, asked for
+        // at composition, not when each first plays) and the colour map were requested; the
+        // texture is absent (draws white).
+        assert_eq!(answer(s, &f), 4 + cfg!(feature = "renderer") as usize);
         s.frame(&input(1, 0.0), true);
         let loaded = s.loaded.as_ref().expect("composed");
         assert_eq!(loaded.skeleton.bones.len(), 5);

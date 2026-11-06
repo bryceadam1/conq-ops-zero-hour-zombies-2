@@ -76,6 +76,9 @@ pub(crate) struct State {
     pub(crate) overlay_material_override: Option<String>,
     /// The dual-wield left gun's own clip and time this frame ([`set_left_clip`]).
     pub(crate) left: Option<(i32, f32)>,
+    /// Which loaded viewmodel `posed` last posed (its load key), so a frame whose clip is still
+    /// on its way can hold that pose ([`super::Base::Held`]); `None` after a new load.
+    posed_for: Option<(i32, u8, u64, u32)>,
 }
 
 impl State {
@@ -153,6 +156,18 @@ impl State {
                     self.ads_down = false;                    if camo_key != 0 && l.camo.is_none() {
                         self.log_once("native viewmodel: the camo art is not in the archive (reconvert the BO2 art)".into());
                     }
+                    // Ask for every clip the manifest names now, not when each first plays: a
+                    // file arrives on the frame after its request (the bridge serves the requests
+                    // after this call), and a clip not on hand drew a frame of the bind pose — the
+                    // tablet's idle after its pullout put the tablet at the foot of the screen for
+                    // a frame on every opening, a gun's first reload or sprint likewise. Decoding
+                    // stays lazy ([`State::anim`]).
+                    for (_, path) in &l.manifest.clips {
+                        if !l.anims.contains_key(path) {
+                            let _ = self.files.get(path);
+                        }
+                    }
+                    self.posed_for = None;
                     self.loaded = Some(l);
                 }
             }
@@ -217,7 +232,12 @@ impl State {
             _ => (None, false),
         };
         let ads = layer_path.and_then(|p| loaded.anims.get(p)).map(|a| (a, ads_frame(req.ads, layer_down, a.num_frames)));
-        loaded.pose(&req, anim, left, ads, &mut self.posed);
+        // A clip whose file has not arrived yet (requested, neither provided nor missing) holds
+        // this viewmodel's last pose for the frame instead of snapping to the bind pose.
+        let pending = anim.is_none() && path.as_deref().is_some_and(|p| !self.bad_anims.contains(p) && !self.files.is_missing(p));
+        let base = if pending && self.posed_for == Some(key) { super::Base::Held } else { super::Base::Clip(anim) };
+        loaded.pose_from(&req, base, left, ads, &mut self.posed);
+        self.posed_for = Some(key);
         // BO2 poses and plays the viewmodel but does not add it to the scene while its scope
         // overlay's reticle zoom is up (`FUN_005374c0`, drawGun = 0): arms, gun and scope all go.
         // Only when the overlay art exists — otherwise neither sight would show.
