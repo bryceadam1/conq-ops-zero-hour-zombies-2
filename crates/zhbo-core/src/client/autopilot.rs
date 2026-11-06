@@ -58,6 +58,33 @@ fn second_preset_key() -> Key {
         .unwrap_or(Key::Key2)
 }
 
+/// One phase of the flicker run: from `from` seconds in first person, the view turned by
+/// (`yaw`, `pitch`) from where it was when the phases began, nudged every other frame or held.
+pub struct FlickerPhase {
+    pub name: &'static str,
+    pub from: f32,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub nudge: bool,
+    /// The run is over: the script lets go of the view.
+    pub end: bool,
+}
+
+/// The flicker run's phases (the autotest reads their log lines, never these numbers). The first
+/// waits out the raise; each still phase gives the view a frame to settle before the nudged one.
+pub const FLICKER_PHASES: [FlickerPhase; 6] = [
+    FlickerPhase { name: "ground, still", from: 3.0, yaw: 0.0, pitch: -0.12, nudge: false, end: false },
+    FlickerPhase { name: "ground, nudged", from: 4.0, yaw: 0.0, pitch: -0.12, nudge: true, end: false },
+    FlickerPhase { name: "turning", from: 6.0, yaw: std::f32::consts::FRAC_PI_2, pitch: -0.15, nudge: false, end: false },
+    FlickerPhase { name: "base, still", from: 6.5, yaw: std::f32::consts::PI, pitch: -0.15, nudge: false, end: false },
+    FlickerPhase { name: "base, nudged", from: 7.5, yaw: std::f32::consts::PI, pitch: -0.15, nudge: true, end: false },
+    FlickerPhase { name: "done", from: 9.5, yaw: 0.0, pitch: 0.0, nudge: false, end: true },
+];
+
+/// The flicker run's nudge (radians of yaw): about a fifth of a pixel at the game's field of view
+/// on a 1280-pixel window.
+pub const FLICKER_NUDGE: f32 = 0.0002;
+
 /// The key a script re-picks with on a later General's class screen: every General is picked for
 /// (`sim/spawn.rs`), and the screen opens on the player's last class, so Enter takes it again in
 /// one press (and wears a class changed mid-life, which is what the screen opens on).
@@ -105,6 +132,16 @@ pub struct Autopilot {
     /// The weapon-drop run ([`Autopilot::drops_input`], `ZHBO_AUTOPILOT=drops`): the first General
     /// dies and drops his rifle; the next walks over it and swaps for it.
     pub drops: bool,
+    /// The flicker run ([`Autopilot::flicker_input`], `ZHBO_AUTOPILOT=flicker`): no enemies; the
+    /// General picks his class and stands, holding the view still and then nudging it a fraction of
+    /// a pixel each frame, first facing the open ground and then the Command Center, so the
+    /// autotest can diff consecutive captures of a static scene.
+    pub flicker: bool,
+    /// The view the client holds (yaw, pitch radians), set each frame; the flicker run holds its
+    /// look relative to the view it had when the phases began.
+    pub(crate) view: (f32, f32),
+    pub(crate) flicker_base: Option<(f32, f32)>,
+    pub(crate) flicker_phase: Option<usize>,
     /// The drops run: where the nearest dropped weapon is from the eye (yaw, pitch, the distance
     /// across the ground), set by the client from the sim, and when the use key was pressed.
     pub(crate) drop_aim: Option<(f32, f32, f32)>,
@@ -195,7 +232,7 @@ pub struct Scripted {
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, flicker: self.flicker, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
     }
 
     /// What it does at time `t`.
@@ -214,6 +251,9 @@ impl Autopilot {
         }
         if self.drops {
             return self.drops_input(b);
+        }
+        if self.flicker {
+            return self.flicker_input();
         }
         if self.equipment {
             let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
@@ -714,6 +754,35 @@ impl Autopilot {
             keys.set_down(b.field_computer, true);
         }
         Scripted { keys, class_pick: pick, ..Default::default() }
+    }
+
+    /// `ZHBO_AUTOPILOT=flicker`: pick the seeded class, wait for the gun to come up, then hold the
+    /// view through [`FLICKER_PHASES`]: a still look a little down at the open ground ahead, the same
+    /// look nudged by [`FLICKER_NUDGE`] every logic frame (a correct picture moves by a fraction of a
+    /// pixel; z-fighting flips whole patches), then the same two facing the Command Center behind
+    /// him (its shadow, its ground decals). Each phase is logged with its logic frame so the autotest
+    /// diffs exactly its captures.
+    pub fn flicker_input(&mut self) -> Scripted {
+        let t = self.t;
+        let pick = (0.3..0.4).contains(&t).then(custom_class_key);
+        let Some(first) = FLICKER_PHASES.first() else { return Scripted { class_pick: pick, ..Default::default() } };
+        if t < first.from {
+            return Scripted { class_pick: pick, ..Default::default() };
+        }
+        let (yaw0, pitch0) = *self.flicker_base.get_or_insert(self.view);
+        let Some(i) = FLICKER_PHASES.iter().rposition(|p| t >= p.from) else { return Scripted::default() };
+        let phase = &FLICKER_PHASES[i];
+        if self.flicker_phase != Some(i) {
+            self.flicker_phase = Some(i);
+            let frame = self.base_frame + (t / crate::units::LOGIC_DT).round() as u32;
+            self.log.push(format!("autopilot flicker: phase {} ({}) from logic frame {frame}", i, phase.name));
+        }
+        if phase.end {
+            return Scripted::default();
+        }
+        let frame = (t / crate::units::LOGIC_DT).round() as u32;
+        let nudge = if phase.nudge && frame % 2 == 1 { FLICKER_NUDGE } else { 0.0 };
+        Scripted { look: Some((yaw0 + phase.yaw + nudge, pitch0 + phase.pitch)), ..Default::default() }
     }
 
     /// `ZHBO_AUTOPILOT=drops`, two lives. The first General picks the profile's first custom (the

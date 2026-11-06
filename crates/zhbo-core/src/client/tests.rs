@@ -711,6 +711,30 @@
         };
         check(&outs, "entering");
         check(&leaving, "leaving");
+        // The near plane follows the camera in and out (`near_scale`): from the overhead view's own
+        // to BO2's first-person r_znear and back, keeping the overhead view's ratio of near to the
+        // camera's distance from the eyes, never at the eyes' near while the camera is still far up
+        // (the flicker on the ground as the camera dove). The near as the engine's hook computes it
+        // from Zero Hour's NearZ = 10.
+        let near = |o: &ClientOut| (10.0 * o.near_scale).max(o.fps_near);
+        let fps_near = crate::units::inches(crate::tuning::Tuning::default().r_znear);
+        for (outs, what, rising) in [(&outs, "entering", true), (&leaving, "leaving", false)] {
+            let eyes = if rising { outs.last().unwrap().eye } else { outs[0].eye };
+            let overhead = if rising { outs[0].eye } else { outs.last().unwrap().eye };
+            let ratio = 10.0 / (overhead - eyes).length();
+            for o in outs.iter() {
+                assert!((o.fps_near - fps_near).abs() < 1e-6, "{what}: the first-person near is BO2's r_znear ({} units)", o.fps_near);
+                let to_eyes = (o.eye - eyes).length();
+                assert!(near(o) >= (ratio * to_eyes).max(fps_near) * 0.9 - 1e-4 && near(o) <= 10.0 + 1e-4, "{what}: near {} with the camera {to_eyes} from the eyes", near(o));
+            }
+            for w in outs.windows(2) {
+                let step = near(&w[1]) / near(&w[0]);
+                assert!(step > 0.5 && step < 2.0, "{what}: the near jumps {} -> {}", near(&w[0]), near(&w[1]));
+            }
+        }
+        assert!((near(&outs[0]) - 10.0).abs() < 0.5, "entering starts at the overhead view's near: {}", near(&outs[0]));
+        assert!((near(outs.last().unwrap()) - fps_near).abs() < 1e-6, "entering ends at the eyes' near");
+        assert!((near(leaving.last().unwrap()) - 10.0).abs() < 0.5, "leaving ends at the overhead view's near: {}", near(leaving.last().unwrap()));
         let first = outs[0];
         assert!((first.eye - overhead_pos).length() < 15.0 && first.dir.dot(rts_dir) > 0.97, "starts at the overhead camera");
         assert!((first.hfov - 0.8).abs() < 0.05);

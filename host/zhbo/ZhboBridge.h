@@ -112,10 +112,11 @@ void Zhbo_MenuFrame();
 /// Before the display/views update (GameClient::update).
 void Zhbo_ClientFrame();
 /// W3DView::update: returns true and fills the camera when first person owns the camera.
-/// `nearPlane` is the viewmodel's near: the gun's rear sits at the eye, so the world's near
-/// (NearZ = MAP_XY_FACTOR = 10 in W3DView.cpp) clips it into jagged holes. The first-person view
-/// takes 0.1 units instead (the native pass's projection value; BO2's r_znear 4" is ~0.67 units),
-/// which leaves the world's near for the world when the RTS view takes over.
+/// `nearPlane` is in/out: the caller passes the overhead view's own near (NearZ = MAP_XY_FACTOR =
+/// 10 in W3DView.cpp) and gets this frame's: that near scaled by the camera's distance from the
+/// eyes as a share of the overhead camera's, never below BO2's first-person r_znear (4" ~ 0.67
+/// units; ZhboClientOut.fps_near, near_scale). The world's near is untouched when the RTS view
+/// takes over.
 Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Real *nearPlane, Real *roll);
 /// The first-person viewmodel this frame: clip (ZHBO_VM_*), seconds into it, aim-down-sights 0..1,
 /// the W3D model for the local General's faction, and that faction's letter (`U`, `C`, `G`: the

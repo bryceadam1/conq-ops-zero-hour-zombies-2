@@ -96,12 +96,31 @@ and specular colour map from `native_create_texture`, which builds the mip chain
 queues a draw per frame with its bone palette (`native_submit`, at most 256 bones). Queued draws
 run immediately before their `before_view` (the scene composite), into the
 `target_view`'s frame buffer and rect; a draw whose before-view never comes runs at the end of the
-frame. A `None` `view_proj` takes the target view's own view × projection at `frame()`: such a
-world-camera draw (a third-person body, a dropped weapon) runs in a first pass that loads and
-stores the target's own depth attachment, so the world in front of it hides it (pipelines are
-keyed by the depth format too; `the_world_hides_a_world_draw_but_not_the_viewmodel`). The
-viewmodel's draws run in a second pass on the pass's own `Depth32Float` buffer, cleared and
-discarded, so the viewmodel draws over the world and its parts sort among themselves; opaque surfaces draw first, blended ones after in BO2's
+frame. Each draw names its depth, `NativeFrame.layer`. A `World` draw (a third-person body, a
+dropped weapon) runs in a first pass that loads and stores the target's own depth attachment, so
+the world in front of it hides it; its `None` `view_proj` is the target view's own view ×
+projection at `frame()`, unchanged, so its depth is the scene's (pipelines are keyed by the depth
+format too; `the_world_hides_a_world_draw_but_not_the_viewmodel`). The `Viewmodel`'s draws run in a
+second pass on the pass's own `Depth32Float` buffer, cleared and discarded, so the viewmodel draws
+over the world and its parts sort among themselves; its `None` `view_proj` is the scene's
+projection with the near pulled in to 0.1 units. (The layer is explicit: inferring it from a
+`None` matrix sent the viewmodel, whose matrix is the view's too, into the world's pass, where it
+tested the scene's depth.) **The viewmodel's depth is reversed**, as BO2's whole renderer is
+(`t6mp` `FUN_0046b780` maps a material's `LESS` to `D3D11_COMPARISON_GREATER`): 1 at the near
+plane, 0 at the far, cleared to 0, solid surfaces passing `GREATER` and blended ones
+`GREATER_EQUAL`. The reversed projection's depth terms are computed from the planes in double
+precision (`-n/(f-n)`, `nf/(f-n)`), never by subtracting the standard ones, so nothing cancels and
+the float depth keeps its relative precision across the gun; an explicit matrix is reversed row by
+row (`z' = w − z`). **BO2's polygon offset** carries over with it: `NativeSurface.polygon_offset`
+is the material's `GFXS1_POLYGON_OFFSET_*` (`loadBits[1]` bits 4-5, `zhbo_formats::xmodel::
+polygon_offset_of`), and levels 1 and 2 draw with BO2's own rasterizer bias (`FUN_0046b8d0`:
+`DepthBias = 256·level`, `SlopeScaledDepthBias = level`, towards the eye on the reversed depth;
+negated on a world draw's standard depth). The levels are BO2's decals: the tritium dots and glows
+on iron sights (`mtl_t6_attach_tritium_*`, the shotgun's trinium sight), a lens's world coating,
+the shield's glass, the tablet's buttons; without the bias they fought the sight they lie on and
+flickered with the gun's sway (`a_polygon_offset_decal_wins_over_the_surface_it_lies_on`). Level 3
+is the shadow map's (`sm_polygonOffsetBias`, the shadow-caster technique) and none here. Opaque
+surfaces draw first, blended ones after in BO2's
 sort-key order, and each surface culls the faces its material's `cullFace` says to
 (`GFXS0_CULL_*`, bits 14-15 of `GfxStateBits::loadBits[0]` — ordinary lit surfaces cull their
 back faces, cutouts and glows draw double-sided; the pass keeps BO2's index order, so front is
@@ -273,7 +292,9 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
   palette, an emissive colour comes through exactly, a dark BO2 finish keeps its hue under Zero
   Hour's day lights and stays dark under a bright map ambient (the grey wash-out regression),
   light brightens a lit surface, surfaces cull the faces their materials say to (BO2's winding is
-  clockwise-front here), a `None` matrix takes the view's transform, the pass runs before its
+  clockwise-front here), a decal with BO2's polygon offset wins over the surface it lies on (and
+  without it the decal a hair behind is hidden) on the viewmodel's reversed depth and the world's
+  standard one, a `None` matrix takes the view's transform, the pass runs before its
   view (or at the end), and every refusal is counted without a wgpu error. The lens reticle
   stays on the screen's centre while the lens sways (a UV-painted dot moves), turns `tan(a)` with
   the optic, is sized by its scale, fades in with the aim and out with the optics knocked out, and
@@ -283,6 +304,35 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
 * `tests/ffi.rs` locks the Rust side of the ABI: it mirrors the header's struct layouts and the
   API-table field counts with compile-time asserts and round-trips the encode functions through
   a `Vec<u8>` cursor, so header and Rust drift fail a plain `cargo test`.
+
+## Depth precision in first person
+
+The engine's scene depth is a standard (0 at the near plane) `Depth24PlusStencil8` (on Metal a
+32-bit float with standard depth, the same 2^-24 resolution near 1). Its precision at a distance
+`z` is about `z² · 2^-24 / near`, so the near plane decides how far ground decals hold: Zero Hour
+floats its roads `MAP_HEIGHT_SCALE / 8` (0.08 units) over the terrain and draws its decals and the
+sun shadow's receivers with no depth bias, tuned for the overhead view's `NearZ = 10`. First person
+(host patch 0001's camera hook, the bridge's `Zhbo_GetCameraOverride`) takes BO2's `r_znear`, 4
+inches (0.67 units, the tuning pack's `r_znear`), and while the camera dives in or flies out it
+scales the overhead near by the camera's distance from the eyes (`ZhboClientOut.near_scale`), so the
+near keeps the overhead view's ratio to the ground the camera looks at until it reaches the eyes'.
+A 0.1-unit near for the whole dive (the value the W3D viewmodel once needed) left the depth a
+hundredth of the overhead precision with the camera hundreds of units up, and the roads and
+shadows fought the terrain. The native viewmodel keeps its own near and depth (above), so the
+world's near no longer has to serve the gun. Reversing the scene's depth too would need the
+engine's depth readers (the soft particles' `gl_FragCoord.z`, the R32F scene depth the SSAO and
+the MMS screen read, `u_zBias`) to follow; with BO2's near the standard depth holds the ground's
+decals over the first-person range, and the flicker autotest (`--flicker`) watches it.
+
+The sun's shadow map (`Bgfx.ini`'s `BgfxShadowMaps = Yes`, the engine's `SetupSunShadowView`) fits
+its ortho box to the camera's ground footprint, which suits the overhead view; a camera at eye
+height swings that footprint across the map with every turn (a corner ray above the horizon, the
+centre jumping between the eye and the far `z = 0` crossing, H stepping through its quanta), and
+every shadow re-rasterized at a new texel size each time. Host patch 0032 hands the backend the
+first-person camera (`GGC_SetBgfxShadowFocus`, from the same hook) and the backend then fits a fixed
+768-unit half-width box centred half its width ahead of the eye along the view's heading; with the
+size constant the existing texel snap keeps every shadow texel on one world grid, so turning and
+moving only cover and uncover ground at the box's edge.
 
 ## Engine integration notes
 

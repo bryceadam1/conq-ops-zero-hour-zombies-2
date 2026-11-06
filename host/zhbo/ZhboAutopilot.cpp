@@ -622,8 +622,8 @@ void autopilotSpawn()
 	}
 
 	// Three enemy riflemen ahead of the General (inside rifle range, outside the base). The smoke
-	// scene places its own units around the screen once it stands.
-	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash && !s_config.autopilot_drops)
+	// scene places its own units around the screen once it stands; the flicker scene stays still.
+	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash && !s_config.autopilot_drops && !s_config.autopilot_flicker)
 	{
 		for (Int i = -1; i <= 1; ++i)
 		{

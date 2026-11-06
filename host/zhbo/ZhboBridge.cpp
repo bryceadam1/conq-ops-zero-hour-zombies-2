@@ -225,6 +225,7 @@ void readConfig()
 	s_config.autopilot_mp = s_config.autopilot_enabled && strcmp(autopilot, "mp") == 0;
 	s_config.autopilot_smoke = s_config.autopilot_enabled && strcmp(autopilot, "smoke") == 0;
 	s_config.autopilot_splash = s_config.autopilot_enabled && strcmp(autopilot, "splash") == 0;
+	s_config.autopilot_flicker = s_config.autopilot_enabled && strcmp(autopilot, "flicker") == 0;
 	s_config.autopilot_drops = s_config.autopilot_enabled && strcmp(autopilot, "drops") == 0;
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
 	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
@@ -1060,12 +1061,20 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Rea
 	dir->set(s_out.dir.x, s_out.dir.y, s_out.dir.z);
 	*horizontalFov = s_out.hfov;
 	*roll = s_out.view_roll; // the view kick's roll, Look_At_Dir's argument
-	// The viewmodel's near: the gun sits at the eye, so Zero Hour's scene near (NearZ = MAP_XY_FACTOR
-	// = 10 world units, W3DView.cpp:106) would cut its rear into jagged holes. 0.1 units is the
-	// value the native pass's viewmodel projection uses (zhbo-gfx's runtime/native.rs), and the
-	// near-plane sweep in MODLOG's MP7 tear fix found 0.1 solid; BO2's r_znear is 4" ~ 0.67 units,
-	// so 0.1 is as small as needed, not a cosmetic tightening of the terrain's own near.
-	*nearPlane = 0.1f;
+	// The near plane: `*nearPlane` comes in as the overhead view's own (NearZ = MAP_XY_FACTOR = 10,
+	// W3DView.cpp) and leaves scaled by the camera's distance from the eyes as a share of the
+	// overhead camera's (ZhboClientOut.near_scale), never below the core's first-person near (BO2's
+	// r_znear, 4" ~ 0.67 units): the near keeps the overhead view's ratio to the ground the camera
+	// looks at as it dives. A 0.1 near through the whole dive left the depth buffer a hundredth of
+	// the overhead view's precision with the camera hundreds of units up: the roads and shadows on
+	// the ground fought the terrain. The native viewmodel draws on a depth and near of its own
+	// (zhbo-gfx native.rs); the W3D fallback's gun is solid at BO2's near (MODLOG's MP7 sweep found
+	// 0.1 and 1.0 solid, the tear at 2.0).
+	const Real worldNear = *nearPlane;
+	const Real fpsNear = s_out.fps_near;
+	const Real scale = s_out.near_scale < 0.0f ? 0.0f : (s_out.near_scale > 1.0f ? 1.0f : s_out.near_scale);
+	if (fpsNear > 0.0f)
+		*nearPlane = std::max(fpsNear, worldNear * scale);
 	return TRUE;
 }
 

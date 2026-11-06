@@ -151,7 +151,7 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     for (l, i) in lights.iter_mut().zip(&inp.lights) {
         *l = NativeLight { direction: i.dir, color: i.color };
     }
-    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
+    let frame = NativeFrame { view_proj: None, layer: zhbo_gfx::runtime::NativeLayer::Viewmodel, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
         // BO2's fWeaponPosFrac drives the lens reticle's fade (`weaponParam0.w`); the mod has no
         // effect that knocks optics out (BO2's EMP, `weaponParam0.y`).
         ads: inp.ads, optics_off: 0.0,

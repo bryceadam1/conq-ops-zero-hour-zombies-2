@@ -59,6 +59,7 @@ pub(crate) fn apply(mesh: &mut Mesh, camo: &Camo, option: &str, wears: impl Fn(u
                     s.emissive = material.emissive;
                     s.sort_key = material.sort_key;
                     s.cull = material.cull;
+                    s.polygon_offset = material.polygon_offset;
                     // A style material carries no camo layer: its own art is the whole look.
                     s.camo_layer = CamoLayer::None;
                     s.camo = None;

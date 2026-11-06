@@ -108,7 +108,7 @@ pub(crate) fn draw(s: &mut State, rig: &mut Rig, inp: &ZhboNativeBodyIn) -> i32 
     for (l, i) in lights.iter_mut().zip(&inp.lights) {
         *l = NativeLight { direction: i.dir, color: i.color };
     }
-    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
+    let frame = NativeFrame { view_proj: None, layer: zhbo_gfx::runtime::NativeLayer::World, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
         // Nobody aims through a third-person optic: BO2 sets the reticle's fade (`weaponParam0`)
         // for the local viewmodel only, so a world model's lens reticle stays dark.
         ads: 0.0, optics_off: 0.0,

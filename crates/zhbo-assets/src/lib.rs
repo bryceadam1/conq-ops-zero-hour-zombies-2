@@ -28,6 +28,7 @@ pub mod native_audit;
 pub mod thirdperson;
 pub mod playeranim;
 pub mod viewmodel_sweep;
+pub mod flicker;
 pub mod fx;
 pub mod detail;
 pub mod fx_preview;

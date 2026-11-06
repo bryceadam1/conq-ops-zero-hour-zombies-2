@@ -133,6 +133,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "walk" => cmd_walk(args),
         "assets" => cmd_assets(args),
         "material" => cmd_material(args),
+        "flicker" => cmd_flicker(args),
         "weapons" => cmd_weapons(args),
         "attachments" => cmd_attachments(args),
         "fx" => cmd_fx(args),
@@ -331,6 +332,62 @@ fn cmd_assets(args: &[String]) -> Result<(), String> {
         if want.is_none_or(|w| w == kind) {
             println!("{kind:<14} {}", zone.asset_name(a).unwrap_or_default());
         }
+    }
+    Ok(())
+}
+
+/// `zhbo-assets flicker`: the in-game flicker check over an autotest's captures (`shot.bmp.<logic
+/// frame>.png`): for each pair of consecutive frames in `first..=last`, the pixels in the rect that
+/// flipped (`zhbo_assets::flicker`). Prints one line per pair and a `flicker:` summary line.
+fn cmd_flicker(args: &[String]) -> Result<(), String> {
+    use zhbo_assets::flicker;
+    let usage = "flicker <captures dir> <first frame> <last frame> [x0 y0 x1 y1] [--glow]";
+    let glow = args.iter().any(|a| a == "--glow");
+    let args: Vec<String> = args.iter().filter(|a| *a != "--glow").cloned().collect();
+    let dir = PathBuf::from(args.get(1).ok_or(usage)?);
+    let num = |i: usize| args.get(i).ok_or(usage)?.parse::<usize>().map_err(|e| format!("{usage}: {e}"));
+    let (first, last) = (num(2)?, num(3)?);
+    let rect = if args.len() >= 8 { [num(4)?, num(5)?, num(6)?, num(7)?] } else { [0, 0, usize::MAX, usize::MAX] };
+    let path = |f: usize| dir.join(format!("shot.bmp.{f:06}.png"));
+    if glow {
+        // `--glow`: the sight's tritium dots must show in every frame (`flicker::tritium_glow`).
+        let (mut frames, mut low, mut high) = (0usize, (usize::MAX, 0usize), (0usize, 0usize));
+        for f in first..=last {
+            let Ok(frame) = flicker::read_png(&path(f)) else { continue };
+            let n = flicker::tritium_glow(&frame, rect);
+            println!("{f} {n}");
+            frames += 1;
+            if n < low.0 {
+                low = (n, f);
+            }
+            if n > high.0 {
+                high = (n, f);
+            }
+        }
+        println!("glow: {frames} frames in {first}..{last}, least {} glowing pixels at frame {}, most {} at frame {}", low.0, low.1, high.0, high.1);
+        return if frames == 0 { Err(format!("no captures in {first}..{last} under {}", dir.display())) } else { Ok(()) };
+    }
+    let mut prev: Option<(usize, flicker::Frame)> = None;
+    let (mut pairs, mut worst, mut worst_at, mut total) = (0usize, 0usize, 0usize, 0usize);
+    for f in first..=last {
+        let Ok(frame) = flicker::read_png(&path(f)) else { continue };
+        if let Some((pf, p)) = &prev {
+            if *pf + 1 == f {
+                let r = [rect[0], rect[1], rect[2].min(frame.width), rect[3].min(frame.height)];
+                let n = flicker::flipped(p, &frame, r, flicker::FLIP_THRESHOLD);
+                println!("{pf}->{f} {n}");
+                pairs += 1;
+                total = total.saturating_add(n);
+                if n > worst {
+                    (worst, worst_at) = (n, f);
+                }
+            }
+        }
+        prev = Some((f, frame));
+    }
+    println!("flicker: {pairs} pairs in {first}..{last}, worst {worst} flipped pixels at frame {worst_at}, total {total}");
+    if pairs == 0 {
+        return Err(format!("no consecutive captures in {first}..{last} under {}", dir.display()));
     }
     Ok(())
 }

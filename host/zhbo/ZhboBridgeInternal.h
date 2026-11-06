@@ -89,6 +89,7 @@ struct ZhboConfig
 	Bool autopilot_mp = FALSE;		  // =mp: the two-instance multiplayer run (no scene; each machine plays its own player)
 	Bool autopilot_smoke = FALSE;	  // =smoke: the smoke screen against Zero Hour's units (sight and pathing)
 	Bool autopilot_splash = FALSE;	  // =splash: an enemy armour group and infantry for the SMAW's blast
+	Bool autopilot_flicker = FALSE;	  // =flicker: no enemies, a still scene for the flicker diff
 	Bool autopilot_drops = FALSE;	  // =drops: a General killed where he stands, the next one swaps for his rifle
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
