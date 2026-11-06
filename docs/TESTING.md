@@ -233,7 +233,10 @@ Base weapons come from the player's converted `ConquerOps_BO2.big` (the launcher
 `--archive`/`ZHBO_BO2_ARCHIVE`); a combination the archive does not hold (anything but the
 loadout's own kit) is converted on demand from the Black Ops II install (`ZHBO_BO2_DIR`) by
 `zhbo_assets::viewmodel_sweep`, in memory for that render. `--weapon <id>` (repeatable) and
-`--no-attachments` narrow a run while iterating. The output is a review tool's images, not source:
+`--no-attachments` narrow a run while iterating. `--tools` draws the first-person tools instead:
+the field computer's tablet and the builder's hammer through their own native manifests
+(`zhbo_native::TABLET_VM`/`HAMMER_VM`), every clip they play at 0.1 s steps
+(`ZHBO_TOOLS_STEP=<seconds>` for finer), into `<outdir>/tools/<tool>_<clip>_<ms>.png`. The output is a review tool's images, not source:
 keep the folder outside the repository.
 
 **The poses and the notes.** A gun's pair samples its `IDLE` clip at frame 0 with the ADS layer's hip key over it (the layer is on at every fraction, BO2's rule — the XPR-50's hip rig root lives only there); its aimed half is
@@ -354,7 +357,9 @@ ui3d reticle and the MMS screen, which draw code-made inputs), a colour, maps, s
 file the archive lacks or that does not decode, or a solid-white colour map is a problem — each
 draws the renderer's white stand-in in game (the SMAW's third-person weapon did, overhead). The same
 audit runs as the real-install test `native_audit::every_converted_weapon_draws`
-(over the converter's output in memory, so it needs only `ZHBO_BO2_DIR`). It checks the art and the
+(over the converter's output in memory, so it needs only `ZHBO_BO2_DIR`). The tools are audited
+the same way: each faction's tablet and hammer manifest composes and draws with its textures, every
+clip it plays is in the archive, and the tablet's screen is self-lit (BO2 draws it unlit). It checks the art and the
 core's loading, not the bridge: the bridge's half is the `ZV<vm><F>` name and the faction letter it
 passes (`Zhbo_GetViewmodel`), which the core validates (`nativevm` refuses a non-letter faction
 with a log line). The sweep above passes its faction directly, so it cannot catch a bridge naming

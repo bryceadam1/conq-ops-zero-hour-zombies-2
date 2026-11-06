@@ -573,7 +573,7 @@ typedef struct ZhboNativeIn
 	float offset[3]; /* the gun's view-space offset and yaw/pitch/roll, as the W3D path takes them */
 	float angles[3];
 	int32_t clip;
-	int32_t vm;      /* converted weapon index (ZV<vm><faction>) */
+	int32_t vm;      /* converted weapon index (ZV<vm><faction>); -1 with a tablet/hammer clip, which draws the tool's own manifest (ZVTAB/ZVHAM) */
 	int32_t faction; /* the arms' letter: 'U', 'C', 'G' */
 	float time;
 	float ads;

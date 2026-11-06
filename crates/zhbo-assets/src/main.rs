@@ -214,6 +214,10 @@ fn cmd_model(args: &[String]) -> Result<(), String> {
             None => println!("  surface {i}: material shared or unreadable"),
             Some(m) => {
                 println!("  surface {i}: {}", m.name);
+                println!("      techset {} blend {:?} cull {:?} sort {} states {:x?}", m.techset, m.blend(), m.cull(), m.sort_key, m.state_bits);
+                for c in &m.constants {
+                    println!("      constant {:#010x} {:?}", c.name_hash, c.value);
+                }
                 for t in &m.textures {
                     match &t.image {
                         Some(img) => {

@@ -293,6 +293,13 @@ if [[ $mode == build ]]; then
     check "  ...turned with the wheel" "placed .* turned [1-9][0-9]* degrees"
     check "  ...held F to build it" "finished building .* in first person"
     check "  ...held F to repair it" "repaired .* in first person"
+    # The hammer draws in the guns' native pass (own depth: the site's timbers never cut it).
+    check "  ...hammer drawn natively" "viewmodel: ZHBO_VM..._HAM drawn by the native path"
+    if grep -q "viewmodel: ZHBO_VM..._HAM drawn by the W3D path" "$out/ConquerOps.log"; then
+        printf '%-28s FAIL\n' "  ...never by W3D"; ok=1
+    else
+        printf '%-28s PASS\n' "  ...never by W3D"
+    fi
     # Not an idle worker while in first person; one again once back overhead.
     if awk '/entered first-person control/ { in_fps = 1 } /left first-person control/ { in_fps = 0; back = 1 } /joined the idle workers/ { if (in_fps) bad = 1; else if (back) ok = 1 } END { exit !(ok && !bad) }' "$out/ConquerOps.log"; then
         printf '%-28s PASS\n' "back overhead: idle worker"
@@ -707,6 +714,14 @@ EOF
     check "grenade went off" "grenade went off"
     check "grenade launcher" "toggled the weapon's alt mode"
     check "field computer" "opened the field computer"
+    # The tablet draws in the guns' native pass (their materials, lights and own depth), never the
+    # W3D fallback (lit and depth-tested apart from every gun: the dark, flat tablet).
+    check "  ...tablet drawn natively" "viewmodel: ZHBO_VMUSA_TAB drawn by the native path"
+    if grep -q "viewmodel: ZHBO_VM..._TAB drawn by the W3D path" "$out/ConquerOps.log"; then
+        printf '%-22s FAIL\n' "  ...never by W3D"; ok=1
+    else
+        printf '%-22s PASS\n' "  ...never by W3D"
+    fi
     check "returned to RTS" "returned General [0-9]+ to RTS control"
     check "re-entered" "taking control again"
     check "took enemy fire" "General took [0-9]+ damage"

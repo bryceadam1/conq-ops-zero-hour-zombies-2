@@ -932,17 +932,28 @@ fn world_jobs<'a>(bo2: &'a [zhbo_formats::weapon::Weapon], defs: &[zhbo_core::we
     jobs
 }
 
-/// Each faction's arms holding the scorestreak tablet, with its lit screen.
+/// Each faction's arms holding the scorestreak tablet, with its lit screen: the W3D model (the
+/// fallback) and the native manifest the first-person pass draws ([`tool_viewmodel`]).
 pub(crate) fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Result<(), String> {
     let tablet = xmodel::find(common, TABLET).map_err(|e| e.to_string())?;
     let mut tablet_tex = textures(&tablet, paks, out, looks);
-    // The screen's material layers several images in a shader; draw one composite, self-lit.
+    // The screen's material layers several images in a BO2 shader; draw one composite. It is drawn
+    // unlit when BO2's own material is (its technique set: `textures::Looks::unlit`).
     let screen_surface = tablet.materials.iter().position(|m| m.as_ref().is_some_and(|m| m.name.contains("screen")));
     if let Some(i) = screen_surface {
         if let Some(img) = tablet.materials[i].as_ref().and_then(|m| tablet_screen(m, paks)) {
             out.insert(format!("Art\\Textures\\{TABLET_SCREEN}"), images::tga_bytes(&img));
+            if tablet.materials[i].as_ref().is_some_and(crate::textures::is_unlit) {
+                looks.unlit.insert(TABLET_SCREEN.to_string());
+            }
             tablet_tex[i] = Some(TABLET_SCREEN.to_string());
         }
+    }
+    let native_tablet = native::model(&tablet, &tablet_tex, looks);
+    let mut clips = Vec::with_capacity(TABLET_ANIMS.len());
+    for (i, (_, bo2_name)) in TABLET_ANIMS.iter().enumerate() {
+        let anim = xanim::find(common, bo2_name).map_err(|e| e.to_string())?;
+        clips.push(((zhbo_core::viewmodel::TABLET_PULLOUT + i as i32) as u16, native::put_anim(out, &anim)));
     }
     let mut rig: Option<Rig> = None;
     for (f, zone) in FACTIONS.iter().zip(zones) {
@@ -950,14 +961,12 @@ pub(crate) fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTre
         let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&tablet, "tag_weapon")]));
         let hands_tex = textures(&hands, paks, out, looks);
         let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
-        let mut screen = character::skin(rig, &tablet, "T", &tablet_tex);
-        for m in &mut screen {
-            m.emissive = m.texture.as_deref() == Some(TABLET_SCREEN);
-        }
-        meshes.extend(screen);
+        meshes.extend(character::skin(rig, &tablet, "T", &tablet_tex));
         finish(&mut meshes, looks);
         let name = tablet_model(f.viewmodel);
         out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, TABLET_HIERARCHY, &meshes));
+        let arms = native::model(&hands, &hands_tex, looks);
+        tool_viewmodel(out, zhbo_native::TABLET_VM, f.letter, TABLET, &arms, &[(&native_tablet, "tag_weapon", crate::xf::IDENTITY, false)], &clips);
     }
     let rig = rig.ok_or("no tablet arms")?;
     out.insert(format!("Art\\W3D\\{TABLET_HIERARCHY}.w3d"), rig.hierarchy_file(TABLET_HIERARCHY));
@@ -968,6 +977,29 @@ pub(crate) fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTre
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, TABLET_HIERARCHY, frames, fps, &channels));
     }
     Ok(())
+}
+
+/// A first-person tool's native manifest (the tablet, `zhbo_native::TABLET_VM`; the hammer,
+/// `HAMMER_VM`) for faction `letter`: the arms, then each `(model, tag, offset in inches, rigid)`
+/// part in order, with `clips` (clip id, animation blob). The tools draw through the same native
+/// pass as the guns — the same materials, lighting, own depth and render-rate posing.
+pub(crate) fn tool_viewmodel(
+    out: &mut BTreeMap<String, Vec<u8>>,
+    vm: i32,
+    letter: char,
+    id: &str,
+    arms: &zhbo_native::model::Model,
+    parts: &[(&zhbo_native::model::Model, &str, crate::xf::Xf, bool)],
+    clips: &[(u16, String)],
+) {
+    use zhbo_native::viewmodel::{Part, Viewmodel as Manifest};
+    let part = |model: String, tag: Option<String>, offset, rigid| Part { model, tag, offset, rigid, ads_only: false, camo: None, ads_swap: None };
+    let mut manifest_parts = vec![part(native::put_model(out, arms), None, zhbo_native::math::IDENTITY, false)];
+    for (model, tag, offset, rigid) in parts {
+        manifest_parts.push(part(native::put_model(out, model), Some(tag.to_string()), *offset, *rigid));
+    }
+    let manifest = Manifest { id: id.to_string(), faction: letter as u8, parts: manifest_parts, markers: Vec::new(), hide: Vec::new(), clips: clips.to_vec() };
+    out.insert(zhbo_native::viewmodel_path(vm, letter), manifest.to_bytes());
 }
 
 /// One faction's hammer viewmodel: its arms (`hands`, the rig's base, with the knife) and the
@@ -996,11 +1028,31 @@ pub fn hammer_preview(bo2_dir: &Path, clip: &str) -> Result<(Rig, Vec<w3d::SkinM
     Ok((rig, meshes, channels))
 }
 
-pub(crate) fn hammers(bo2_dir: &Path, common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Result<(), String> {
+/// BO2's hammer prop with its material bound: the prop's zone references the material, the map
+/// [`HAMMER_MATERIAL_ZONE`] defines it (without it the hammer has no colour map).
+fn hammer_model_bound(bo2_dir: &Path) -> Result<xmodel::Model, String> {
     let prop_zone = load_zone(bo2_dir, HAMMER_ZONE)?;
-    let hammer = xmodel::find(&prop_zone, HAMMER).map_err(|e| format!("{HAMMER}: {e}"))?;
+    let mut hammer = xmodel::find(&prop_zone, HAMMER).map_err(|e| format!("{HAMMER}: {e}"))?;
+    if hammer.materials.iter().flatten().any(|m| m.reference) {
+        let material_zone = load_zone(bo2_dir, HAMMER_MATERIAL_ZONE)?;
+        resolve_materials(&[&prop_zone, &material_zone], &mut hammer);
+    }
+    Ok(hammer)
+}
+
+pub(crate) fn hammers(bo2_dir: &Path, common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Result<(), String> {
+    let hammer = hammer_model_bound(bo2_dir)?;
     let knife = xmodel::find(common, KNIFE_VIEW).map_err(|e| format!("{KNIFE_VIEW}: {e}"))?;
     let hammer_tex = textures(&hammer, paks, out, looks);
+    // Native: the knife's bones alone (its `j_gun` is the grip the strider clips swing; the knife
+    // itself is not drawn), and the hammer riding `j_gun` at the grip, as the W3D model has it.
+    let native_hammer = native::model(&hammer, &hammer_tex, looks);
+    let grip = zhbo_native::model::Model { name: format!("{KNIFE_VIEW}_bones"), bones: native::bones(&knife), mins: knife.mins, maxs: knife.maxs, radius: knife.radius, ..Default::default() };
+    let mut clips = Vec::with_capacity(HAMMER_ANIMS.len());
+    for (i, (_, bo2_name)) in HAMMER_ANIMS.iter().enumerate() {
+        let anim = xanim::find(common, bo2_name).map_err(|e| e.to_string())?;
+        clips.push(((zhbo_core::viewmodel::HAMMER_PULLOUT + i as i32) as u16, native::put_anim(out, &anim)));
+    }
     let mut rig: Option<Rig> = None;
     for (f, zone) in FACTIONS.iter().zip(zones) {
         let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
@@ -1010,6 +1062,8 @@ pub(crate) fn hammers(bo2_dir: &Path, common: &Zone, zones: &[Zone], paks: &Paks
         finish(&mut meshes, looks);
         let name = hammer_model(f.viewmodel);
         out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, HAMMER_HIERARCHY, &meshes));
+        let arms = native::model(&hands, &hands_tex, looks);
+        tool_viewmodel(out, zhbo_native::HAMMER_VM, f.letter, HAMMER, &arms, &[(&grip, "tag_weapon", crate::xf::IDENTITY, false), (&native_hammer, "j_gun", HAMMER_GRIP, true)], &clips);
     }
     let rig = rig.ok_or("no hammer arms")?;
     out.insert(format!("Art\\W3D\\{HAMMER_HIERARCHY}.w3d"), rig.hierarchy_file(HAMMER_HIERARCHY));
@@ -1712,3 +1766,4 @@ mod tests {
         assert_eq!(super::DW_MOUNT, "tag_weapon1");
     }
 }
+

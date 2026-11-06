@@ -110,6 +110,18 @@ pub const HAMMER_PUTAWAY: i32 = 0x67;
 pub const HAMMER_PULLOUT_TIME: f32 = 21.0 / 30.0;
 pub const HAMMER_SWING_TIME: f32 = 21.0 / 30.0;
 
+/// The native viewmodel a frame draws through: the tablet's or the hammer's for their clips
+/// (`zhbo_native::TABLET_VM` / `HAMMER_VM`, whatever weapon `model` the bridge passed; a tool frame
+/// carries [`NONE`]), else the converted weapon `model` itself. The tools draw through the same
+/// native pass as the guns, so they share its materials, lighting and own depth.
+pub fn native_vm(model: i32, clip: i32) -> i32 {
+    match clip {
+        TABLET_PULLOUT..=TABLET_PUTAWAY => zhbo_native::TABLET_VM,
+        HAMMER_PULLOUT..=HAMMER_PUTAWAY => zhbo_native::HAMMER_VM,
+        _ => model,
+    }
+}
+
 /// How long the fire clip owns the viewmodel after a shot before idle resumes.
 const FIRE_HOLD: f32 = 0.3;
 
@@ -639,6 +651,20 @@ mod tests {
         def.anims |= 1u128 << slot::ALT_DROP;
         p.arsenal.weapons[w].def = Box::leak(Box::new(def.clone()));
         assert_eq!(vm.update(0.05, &p, Events::default()).clip, slot::ALT_DROP + def.clip_base);
+    }
+
+    #[test]
+    fn the_tools_draw_through_their_own_native_viewmodels() {
+        for clip in [TABLET_PULLOUT, TABLET_IDLE, TABLET_PUTAWAY] {
+            assert_eq!(native_vm(NONE, clip), zhbo_native::TABLET_VM);
+            assert_eq!(native_vm(7, clip), zhbo_native::TABLET_VM, "a tool clip never draws the weapon");
+        }
+        for clip in [HAMMER_PULLOUT, HAMMER_IDLE, HAMMER_SWING, HAMMER_PUTAWAY] {
+            assert_eq!(native_vm(NONE, clip), zhbo_native::HAMMER_VM);
+        }
+        assert_eq!(native_vm(7, slot::IDLE), 7);
+        assert_eq!(native_vm(7, crate::weapons::ALT_CLIPS + slot::IDLE), 7, "an alt mode's clips stay on the weapon");
+        assert_eq!(native_vm(NONE, slot::IDLE), NONE);
     }
 
     #[test]

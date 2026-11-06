@@ -490,7 +490,8 @@ class is the player's, so no conversion-time art can show it). Name slots are
 
 ## The native viewmodel (Track R)
 
-With `ZHBO_NATIVE_VIEWMODEL=1` in a wgpu build, the first-person weapon is drawn by the renderer's
+In a wgpu build (on by default; `ZHBO_NATIVE_VIEWMODEL=0` opts out), the first-person weapon, the
+field computer's tablet and the builder's hammer are drawn by the renderer's
 native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba/.zbv` in
 `ConquerOps_BO2.big`) instead of the W3D model. Free functions on the append-only ABI surface
 (`zhbo_core.h`, `nativevm/ffi.rs`); presentation only, nothing reaches the sim.
@@ -526,7 +527,19 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   bounce, a dud, the General's impacts) is the world copy, BO2's X (the normal) swapped to up;
   `vViewShellEjectOffset`/`Rotation` are not applied.
   `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Viewmodel sound notetracks
-  are unchanged (the bridge's `playNotes` runs before either path).
+  are unchanged (the bridge's `playNotes` runs before either path). The bridge logs once per
+  model and game which path drew it (`viewmodel: <name> drawn by the native path` / `W3D path` /
+  `W3D (native loading) path`); the autotests read it.
+* **The tools draw in the same pass.** The field computer's tablet and the builder's hammer are
+  native viewmodels of their own (`zhbo_native::TABLET_VM` -2 → `ZVTAB<F>.zbv`, `HAMMER_VM` -3 →
+  `ZVHAM<F>.zbv`): the faction's arms, the tablet on `tag_weapon` (the hammer: the knife's bones on
+  `tag_weapon` and the prop rigid on its `j_gun` at `HAMMER_GRIP`), with BO2's
+  `viewmodel_tablet_*` / `viewmodel_strider_*` clips under their clip ids (0x60-0x62, 0x64-0x67).
+  The bridge passes `vm` -1 with a tool clip, as `Zhbo_GetViewmodel` always did; the core maps the
+  clip to the tool (`viewmodel::native_vm`) whatever `vm` says. So the tools share the guns'
+  materials (normal, gloss and specular maps; BO2's unlit screen self-lit), lighting, projection,
+  the viewmodel's own depth and render-rate posing; the W3D `ZHBO_VM<side>_TAB`/`_HAM` models stay as the
+  fallback (`ZHBO_NATIVE_VIEWMODEL=0`, DX8, an archive without the manifests).
   - **Effects draw through the engine's `FXList` path, not the native pass.** The engine already
     owns particle systems, the blend modes from the material state bits, lifetimes and the world
     FX weapon pipeline; the native pass has no particle system and would duplicate all of it.
@@ -1659,6 +1672,14 @@ material record gains a trailing `polygon_offset` byte (BO2's `GFXS1_POLYGON_OFF
 model, camo and reticle-set `VERSION` bumps and `hud::VERSION` (the archive must be rebuilt: an older
 archive's records are a byte short and refused) belong to the integrator. The tuning pack gains
 `r_znear` (4, inches; `tuning.ini`'s `[View]`).
+
+**Pending for the next bump (tablet-render).** Archive `hud::VERSION` 88 → 89 needed: the archive
+gains the tools' native manifests (`Art\Native\ZVTAB<F>.zbv`, `ZVHAM<F>.zbv`, their arms/tablet/
+hammer `.zbm` and the `viewmodel_tablet_*`/`viewmodel_strider_*` `.zba`), the hammer's bound
+`mtl_p_glo_tools_farmtools` art (its colour, normal and specular maps, from `mp_raid`), and BO2's
+unlit surfaces drawn self-lit (`Looks::unlit`); an archive at 88 is kept by the launcher and the
+tools fall back to the W3D models. No ABI struct or table moves: `ZhboNativeIn.vm` may now be -1
+with a tablet or hammer clip (a meaning, not a layout). The native blob formats are unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

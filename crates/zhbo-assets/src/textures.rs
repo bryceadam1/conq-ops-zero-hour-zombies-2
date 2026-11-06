@@ -39,6 +39,18 @@ pub(crate) struct Looks {
     /// Keys of surfaces with no texture file of their own (the ui3d reticle draws a code texture):
     /// their native material names no colour map.
     pub(crate) no_file: BTreeSet<String>,
+    /// Surfaces BO2 draws unlit (`*_unlit*` technique sets: the tablet's screen, its buttons'
+    /// glow), by colour map: self-lit in both paths, never shaded by the scene's lights.
+    pub(crate) unlit: BTreeSet<String>,
+}
+
+/// BO2's unlit technique sets (`mc_sw4_3d_unlit_4layer_*`, `mc_sw4_3d_viewmodel_unlit_*`): the
+/// material's colour is drawn as is, with no lighting.
+const UNLIT_TECHSET: &str = "_unlit";
+
+/// Whether BO2 draws `m` unlit (its technique set, [`UNLIT_TECHSET`]).
+pub(crate) fn is_unlit(m: &xmodel::Material) -> bool {
+    m.techset.contains(UNLIT_TECHSET)
 }
 
 /// The zone that loads the optics' reticle art in full (the CaC reticle options' materials;
@@ -146,6 +158,9 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
                     }
                 }
                 files.insert(path, images::tga_bytes(&rgba));
+            }
+            if is_unlit(m) {
+                looks.unlit.insert(name.clone());
             }
             if blend == w3d::Blend::Opaque {
                 looks.maps.insert(name.clone(), maps_file(&name));
@@ -364,6 +379,12 @@ pub(crate) fn surface_maps(w: u32, h: u32, normal: Option<&Rgba>, spec: Option<&
     Rgba { width: w, height: h, pixels }
 }
 
+/// Whether a surface draws self-lit, in both the W3D and the native path: an additive glow, or a
+/// surface whose BO2 material is unlit ([`Looks::unlit`], by its colour map `texture`).
+pub(crate) fn self_lit(blend: w3d::Blend, texture: Option<&str>, looks: &Looks) -> bool {
+    matches!(blend, w3d::Blend::Additive { .. }) || texture.is_some_and(|t| looks.unlit.contains(t))
+}
+
 /// Put BO2's ambient occlusion (its occlusion map's red) in an opaque colour map's alpha, which BO2
 /// uses for other data; fully open without one.
 pub(crate) fn put_occlusion(color: &mut Rgba, ao: Option<&Rgba>) {
@@ -376,13 +397,13 @@ pub(crate) fn put_occlusion(color: &mut Rgba, ao: Option<&Rgba>) {
 }
 
 /// Leave out the dropped surfaces, give each the blend mode of its material and the opaque ones
-/// their BO2 maps. Glows are self-lit.
+/// their BO2 maps. Glows and BO2's unlit surfaces are self-lit ([`self_lit`]).
 pub(crate) fn finish(meshes: &mut Vec<w3d::SkinMesh>, looks: &Looks) {
     // (`native_only` surfaces are in `dropped` too: the W3D path has no shader for them.)
     meshes.retain(|m| m.texture.as_ref().is_none_or(|t| !looks.dropped.contains(t)));
     for m in meshes.iter_mut() {
         m.blend = m.texture.as_ref().and_then(|t| looks.blend.get(t)).copied().unwrap_or_default();
-        if matches!(m.blend, w3d::Blend::Additive { .. }) {
+        if self_lit(m.blend, m.texture.as_deref(), looks) {
             m.emissive = true;
         }
         m.bo2_maps = m.texture.as_ref().and_then(|t| looks.maps.get(t)).cloned();

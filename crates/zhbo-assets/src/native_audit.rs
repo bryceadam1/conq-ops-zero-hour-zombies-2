@@ -9,6 +9,9 @@
 //! ends here. Third person: [`zhbo_core::nativebody::load`] in weapon mode for each world manifest
 //! (`ZW<vm>.zbw`), which must compose at least one surface, and each faction's body once.
 //!
+//! The first-person tools (`zhbo_native::TABLET_VM`, `HAMMER_VM`) are audited the same way, with
+//! every clip they play.
+//!
 //! A weapon whose art the converter skipped (its `viewmodel` is −1) has nothing to check. Read-only
 //! over a file lookup, so the same audit runs on a converted archive (`zhbo-assets audit-native`)
 //! and on the converter's output in memory (the real-install test).
@@ -173,6 +176,43 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
             Err(e) => fail(format!("ZW{:02}: {e}", d.viewmodel)),
         }
     }
+    // The first-person tools (the field computer's tablet, the builder's hammer) draw through
+    // their own manifests in the same pass as the guns: each faction's composes, draws, has its
+    // textures, and every clip it plays is in the archive. Missing, the bridge would fall back to
+    // the W3D model, lit and depth-tested differently from every gun.
+    for (tool, vm, clips) in [
+        ("tablet", zhbo_native::TABLET_VM, &[zhbo_core::viewmodel::TABLET_PULLOUT, zhbo_core::viewmodel::TABLET_IDLE, zhbo_core::viewmodel::TABLET_PUTAWAY][..]),
+        ("hammer", zhbo_native::HAMMER_VM, &[zhbo_core::viewmodel::HAMMER_PULLOUT, zhbo_core::viewmodel::HAMMER_IDLE, zhbo_core::viewmodel::HAMMER_SWING, zhbo_core::viewmodel::HAMMER_PUTAWAY][..]),
+    ] {
+        for f in factions() {
+            report.first_person += 1;
+            let name = zhbo_native::viewmodel_path(vm, f as char);
+            let mut fail = |what: String| report.problems.push(Problem { weapon: tool.to_string(), what });
+            match drive(&mut files, read, |files| nativevm::load(files, vm, f, None, None, 0)) {
+                Ok(l) => {
+                    if l.mesh.surfaces.is_empty() {
+                        fail(format!("{name}: no surface"));
+                    }
+                    for p in texture_problems(&l.mesh, &name, read, &mut textures) {
+                        fail(p);
+                    }
+                    // BO2 draws the tablet's screen unlit (`mc_sw4_3d_unlit_4layer`): an opaque,
+                    // self-lit surface, never shaded dark by the scene's lights.
+                    if vm == zhbo_native::TABLET_VM && !l.mesh.surfaces.iter().any(|s| s.emissive && s.blend == zhbo_native::model::Blend::Opaque) {
+                        fail(format!("{name}: the screen is not self-lit"));
+                    }
+                    for &clip in clips {
+                        match l.manifest.clip(clip as u16) {
+                            Some(anim) if read(anim).is_some() => {}
+                            Some(anim) => fail(format!("{name}: clip {clip:#x}: {anim} is not in the archive")),
+                            None => fail(format!("{name}: no clip {clip:#x}")),
+                        }
+                    }
+                }
+                Err(e) => fail(format!("{name}: {e}")),
+            }
+        }
+    }
     // Each faction's body, once, with the first converted weapon in hand.
     if let Some(d) = weapons.iter().find(|d| d.viewmodel >= 0) {
         for f in factions() {
@@ -210,7 +250,8 @@ mod tests {
     use std::path::Path;
 
     /// Every converted weapon — the base set and every combination create-a-class offers — draws in
-    /// first person at hip and at full ADS for every faction, and in third person.
+    /// first person at hip and at full ADS for every faction, and in third person; and the tools
+    /// (the tablet, the hammer) draw natively with every clip and the tablet's screen self-lit.
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn every_converted_weapon_draws() {

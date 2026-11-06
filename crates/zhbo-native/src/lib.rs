@@ -63,9 +63,23 @@ pub fn anim_path(anim: &str) -> String {
     format!("{DIR}{}.zba", file_stem(anim))
 }
 
-/// The archive path of viewmodel `vm`'s manifest for faction letter `faction` (`U`, `C`, `G`).
+/// The native viewmodel index of the scorestreak tablet (the field computer): not a converted
+/// weapon, so below every weapon index (those count up from 0). Its manifest is the faction's
+/// arms holding BO2's `t6_wpn_tablet_view`, with BO2's `viewmodel_tablet_*` clips.
+pub const TABLET_VM: i32 = -2;
+
+/// The native viewmodel index of the builder's hammer: the faction's arms holding BO2's hammer
+/// prop in the knife's grip, with the knife's `viewmodel_strider_*` clips.
+pub const HAMMER_VM: i32 = -3;
+
+/// The archive path of viewmodel `vm`'s manifest for faction letter `faction` (`U`, `C`, `G`): a
+/// converted weapon's (`ZV<vm>`), or the tablet's (`ZVTAB`) or the hammer's (`ZVHAM`).
 pub fn viewmodel_path(vm: i32, faction: char) -> String {
-    format!("{DIR}ZV{vm:02}{faction}.zbv")
+    match vm {
+        TABLET_VM => format!("{DIR}ZVTAB{faction}.zbv"),
+        HAMMER_VM => format!("{DIR}ZVHAM{faction}.zbv"),
+        _ => format!("{DIR}ZV{vm:02}{faction}.zbv"),
+    }
 }
 
 /// The archive path of faction `faction`'s weapon emblem texture (`U`, `C`, `G`): its Zero Hour
@@ -116,6 +130,8 @@ mod tests {
         assert_eq!(model_path("viewmodel_usa_seals_arms"), "Art\\Native\\viewmodel_usa_seals_arms.zbm");
         assert_eq!(anim_path(",viewmodel_an94_reload"), "Art\\Native\\viewmodel_an94_reload.zba");
         assert_eq!(viewmodel_path(3, 'U'), "Art\\Native\\ZV03U.zbv");
+        assert_eq!(viewmodel_path(TABLET_VM, 'G'), "Art\\Native\\ZVTABG.zbv");
+        assert_eq!(viewmodel_path(HAMMER_VM, 'C'), "Art\\Native\\ZVHAMC.zbv");
         assert_eq!(body_path('U'), "Art\\Native\\ZBU.zbc");
         assert_eq!(world_weapon_path(7), "Art\\Native\\ZW07.zbw");
         assert_eq!(model_path("a/b c"), "Art\\Native\\a_b_c.zbm");

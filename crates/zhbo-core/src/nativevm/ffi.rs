@@ -30,7 +30,8 @@ pub struct ZhboNativeIn {
     pub offset: [f32; 3],
     pub angles: [f32; 3],
     pub clip: i32,
-    /// Converted weapon index (`ZV<vm><faction>`), and the faction letter.
+    /// Converted weapon index (`ZV<vm><faction>`), or -1 with a tablet or hammer clip (those draw
+    /// through their own manifests, `viewmodel::native_vm`); and the faction letter.
     pub vm: i32,
     pub faction: i32,
     pub time: f32,
@@ -114,12 +115,15 @@ impl State {
         if !enabled {
             return NOT_NATIVE;
         }
-        let vmkey = (inp.vm, inp.faction as u8);
-        let camo = local_camo(inp.vm);
+        // The tablet's and the hammer's clips draw through their own manifests (the bridge passes
+        // no weapon for them); every other clip through the converted weapon's.
+        let vm = crate::viewmodel::native_vm(inp.vm, inp.clip);
+        let vmkey = (vm, inp.faction as u8);
+        let camo = local_camo(vm);
         let camo_key = camo.as_ref().map_or(0, |c| super::camo::key_of(&c.asset, &c.option));
-        let reticle = super::local_reticle(inp.vm);
-        let key = (inp.vm, inp.faction as u8, camo_key, reticle);
-        if inp.vm < 0 || self.failed.contains(&vmkey) {
+        let reticle = super::local_reticle(vm);
+        let key = (vm, inp.faction as u8, camo_key, reticle);
+        if (vm < 0 && vm != zhbo_native::TABLET_VM && vm != zhbo_native::HAMMER_VM) || self.failed.contains(&vmkey) {
             return NOT_NATIVE;
         }
         // The faction is the arms' letter (`U`, `C`, `G`), passed by the bridge from the General's
@@ -128,14 +132,14 @@ impl State {
         // say so instead of asking the archive for a manifest no converter writes.
         if !(inp.faction as u8).is_ascii_uppercase() || inp.faction > 0x7f {
             self.failed.insert(vmkey);
-            self.log_once(format!("ZV{:02}: faction {:#x} is not a faction letter (the bridge passes the General's side)", inp.vm, inp.faction));
+            self.log_once(format!("{}: faction {:#x} is not a faction letter (the bridge passes the General's side)", zhbo_native::viewmodel_path(vm, '?'), inp.faction));
             return NOT_NATIVE;
         }
         if self.loaded.as_ref().is_none_or(|l| l.key != key) {
             #[cfg(feature = "renderer")]
             self.gpu.release();
             self.loaded = None;
-            match load(&mut self.files, inp.vm, inp.faction as u8, self.overlay_material_override.as_deref(), camo.as_ref().map(|c| (c.asset.as_str(), c.option.as_str())), reticle) {
+            match load(&mut self.files, vm, inp.faction as u8, self.overlay_material_override.as_deref(), camo.as_ref().map(|c| (c.asset.as_str(), c.option.as_str())), reticle) {
                 Err(e) => {
                     self.failed.insert(vmkey);
                     self.log_once(e);
@@ -143,7 +147,7 @@ impl State {
                 }
                 Ok(None) => return LOADING,
                 Ok(Some(l)) => {
-                    self.log_once(format!("ZV{:02}{} composed: {} bones, {} vertices, {} surfaces", l.key.0, l.key.1 as char, l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
+                    self.log_once(format!("{} composed: {} bones, {} vertices, {} surfaces", zhbo_native::viewmodel_path(l.key.0, l.key.1 as char), l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
                     // A new viewmodel starts the layer fresh: no direction history from the last gun.
                     self.ads_prev = inp.ads;
                     self.ads_down = false;                    if camo_key != 0 && l.camo.is_none() {
@@ -217,7 +221,7 @@ impl State {
         // BO2 poses and plays the viewmodel but does not add it to the scene while its scope
         // overlay's reticle zoom is up (`FUN_005374c0`, drawGun = 0): arms, gun and scope all go.
         // Only when the overlay art exists — otherwise neither sight would show.
-        let under_overlay = loaded.overlay_art_present && super::gun_under_overlay(inp.vm);
+        let under_overlay = loaded.overlay_art_present && super::gun_under_overlay(vm);
         if under_overlay {
             self.log_once("the viewmodel is not drawn under the scope overlay (reticle zoom up)".into());
         }
@@ -235,7 +239,7 @@ impl State {
 
 pub(crate) fn request(inp: &ZhboNativeIn) -> Request {
     Request {
-        vm: inp.vm,
+        vm: crate::viewmodel::native_vm(inp.vm, inp.clip),
         faction: inp.faction as u8,
         clip: inp.clip,
         time: inp.time,

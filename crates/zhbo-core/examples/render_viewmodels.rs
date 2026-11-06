@@ -14,6 +14,12 @@
 //! converted to world units at 6 inches each; `72` = 72" shows the whole off-hand rig, whose held
 //! clip authors the item at the waist, below the default first-person cone; `12` = 12" catches only
 //! its bottom sliver).
+//! `--tools` renders the first-person tools instead of the weapons: the field computer's tablet
+//! and the builder's hammer, each through its own native manifest (`zhbo_native::TABLET_VM`,
+//! `HAMMER_VM`) across every clip it plays (`<outdir>/tools/<tool>_<clip>_<ms>.png`, one 640x360
+//! frame each, the gun pose neutral), the same way the game draws them.
+//! `ZHBO_SWEEP_EYE=x,y,z` puts the eye and the camera out on the map instead of at the world origin
+//! (the game's eye is thousands of units out; the viewmodel is skinned relative to it).
 //! `ZHBO_SWEEP_MARKS=1` puts two target-finder marks ahead (one on the axis, one up and to the
 //! left) with an enemy spotted, so a target finder's aimed half shows its display's spotted frame
 //! and diamonds (the sim's `optics::Optics` stand-in).
@@ -132,6 +138,15 @@ fn run() -> Result<(), String> {
     let archive_path = resolve_archive(args.archive.as_deref())?;
     let archive = BigArchive::open(&archive_path).map_err(|e| format!("{}: {e}", archive_path.display()))?;
     install_catalog(&archive)?;
+    if args.tools {
+        zhbo_core::config::init(zhbo_core::config::Config { native_viewmodel: true, ..Default::default() });
+        open_renderer()?;
+        let result = render_tools(&Art::Archive(&archive), &args.out);
+        close_renderer();
+        let n = result?;
+        println!("render_viewmodels: {n} tool frames into {}", args.out.join("tools").display());
+        return Ok(());
+    }
     let jobs = plan(&args);
     if jobs.is_empty() {
         return Err("no weapons matched".into());
@@ -221,22 +236,26 @@ struct Args {
     camo: Vec<String>,
     /// Reticle option ids to draw the optic's lens with (`reticle_3`), one image each.
     reticle: Vec<String>,
+    /// Render the tablet and the hammer across their clips instead of the weapons.
+    tools: bool,
 }
 
 impl Args {
     fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
-        const USAGE: &str = "usage: render_viewmodels <outdir> [--archive <big>] [--weapon <id>]... [--no-attachments] [--sweep] [--camo <id>]... [--reticle <id>]...";
+        const USAGE: &str = "usage: render_viewmodels <outdir> [--archive <big>] [--weapon <id>]... [--no-attachments] [--sweep] [--camo <id>]... [--reticle <id>]... [--tools]";
         let mut out = None;
         let (mut archive, mut weapons, mut attachments) = (None, Vec::new(), true);
         let mut sweep = false;
         let mut camo = Vec::new();
         let mut reticle = Vec::new();
+        let mut tools = false;
         while let Some(arg) = argv.next() {
             match arg.as_str() {
                 "--archive" => archive = Some(PathBuf::from(argv.next().ok_or("--archive needs a path")?)),
                 "--weapon" => weapons.push(argv.next().ok_or("--weapon needs a weapon id")?),
                 "--no-attachments" => attachments = false,
                 "--sweep" => sweep = true,
+                "--tools" => tools = true,
                 "--camo" => camo.push(argv.next().ok_or("--camo needs a camo id")?),
                 "--reticle" => reticle.push(argv.next().ok_or("--reticle needs a reticle id")?),
                 "-h" | "--help" => return Err(USAGE.into()),
@@ -249,7 +268,7 @@ impl Args {
                 }
             }
         }
-        Ok(Args { out: out.ok_or(USAGE)?, archive, weapons, attachments, sweep, camo, reticle })
+        Ok(Args { out: out.ok_or(USAGE)?, archive, weapons, attachments, sweep, camo, reticle, tools })
     }
 }
 
@@ -412,6 +431,10 @@ fn open_renderer() -> Result<(), String> {
     let aspect = W as f32 / H as f32;
     let t = 1.0 / (zhbo_core::client::horizontal_fov(Tuning::default().cg_fov, aspect) / 2.0).tan();
     let mut view = [0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+    let eye = sweep_eye();
+    view[12] += eye[1];
+    view[13] -= eye[2];
+    view[14] -= eye[0];
     if let Ok(v) = std::env::var("ZHBO_SWEEP_BACK") {
         let back: f32 = v.parse::<f32>().unwrap_or(0.0) / 6.0;
         view[14] += back;
@@ -432,6 +455,13 @@ fn open_renderer() -> Result<(), String> {
     });
     println!("render_viewmodels: {adapter}");
     Ok(())
+}
+
+/// `ZHBO_SWEEP_EYE=x,y,z`: put the eye (and the camera with it) there instead of at the world
+/// origin, as a General stands thousands of units out on a map.
+fn sweep_eye() -> [f32; 3] {
+    let v: Vec<f32> = std::env::var("ZHBO_SWEEP_EYE").ok().map(|s| s.split(',').filter_map(|c| c.trim().parse().ok()).collect()).unwrap_or_default();
+    if v.len() == 3 { [v[0], v[1], v[2]] } else { [0.0; 3] }
 }
 
 fn close_renderer() {
@@ -477,7 +507,7 @@ fn pose(def: &WeaponDef, ads: f32) -> Pose {
 fn render_pose(art: &Art, vm: i32, p: Pose, clip: i32, time: f32) -> Result<(Rgb, Vec<String>), String> {
     ffi::zhbo_native_reset();
     let inp = ZhboNativeIn {
-        eye: [0.0; 3],
+        eye: sweep_eye(),
         dir: [1.0, 0.0, 0.0],
         offset: p.offset,
         angles: p.angles,
@@ -740,6 +770,44 @@ fn render_sweep_job(job: &Job, art: &Art, vm: i32, from: &str, out: &Path) -> Re
         note.push_str(&format!("; {}", logs.join("; ")));
     }
     Ok(note)
+}
+
+/// A tool clip to sweep: its id, its label in the file names, its length in seconds.
+type ToolClip = (i32, &'static str, f32);
+
+/// The tools' frames: the tablet and the hammer through their own native manifests, across each
+/// clip at 0.1 s steps (the idle once round), neutral gun pose. Returns the frames written.
+fn render_tools(art: &Art, out: &Path) -> Result<usize, String> {
+    use zhbo_core::viewmodel as v;
+    let dir = out.join("tools");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let still = Pose { ads: 0.0, offset: [0.0; 3], angles: [0.0; 3] };
+    let tools: [(&str, i32, &[ToolClip]); 2] = [
+        ("tablet", zhbo_native::TABLET_VM, &[(v::TABLET_PULLOUT, "pullout", v::TABLET_PULLOUT_TIME), (v::TABLET_IDLE, "idle", 1.0), (v::TABLET_PUTAWAY, "putaway", v::TABLET_PUTAWAY_TIME)]),
+        ("hammer", zhbo_native::HAMMER_VM, &[(v::HAMMER_PULLOUT, "pullout", v::HAMMER_PULLOUT_TIME), (v::HAMMER_IDLE, "idle", 1.0), (v::HAMMER_SWING, "swing", v::HAMMER_SWING_TIME)]),
+    ];
+    let mut n = 0;
+    for (name, vm, clips) in tools {
+        if !art.has(&zhbo_native::viewmodel_path(vm, FACTION as char)) {
+            return Err(format!("{name}: {} is not in the archive (reconvert the BO2 art)", zhbo_native::viewmodel_path(vm, FACTION as char)));
+        }
+        // `ZHBO_TOOLS_STEP=<seconds>`: a finer step than the default 0.1 s.
+        let step: f32 = std::env::var("ZHBO_TOOLS_STEP").ok().and_then(|v| v.parse().ok()).filter(|s: &f32| *s > 0.0).unwrap_or(0.1);
+        for &(clip, label, length) in clips {
+            let steps = (length / step).ceil() as usize;
+            for i in 0..=steps {
+                let time = (i as f32 * step).min(length);
+                // The bridge passes no weapon with a tool clip; the core picks the tool's manifest.
+                let (rgb, logs) = render_pose(art, zhbo_core::viewmodel::NONE, still, clip, time)?;
+                if let Some(bad) = logs.iter().find(|l| l.contains("not in the archive") || l.contains("refused")) {
+                    return Err(format!("{name} {label}: {bad}"));
+                }
+                rgb.write_png(&dir.join(format!("{name}_{label}_{:04}.png", (time * 1000.0).round() as u32)))?;
+                n += 1;
+            }
+        }
+    }
+    Ok(n)
 }
 
 /// The converted viewmodel index the archive holds for `job`, when the table itself names it: the
