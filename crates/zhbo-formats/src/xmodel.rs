@@ -150,6 +150,21 @@ impl Material {
     pub fn cull(&self) -> Cull {
         self.main_state_bits().map_or(Cull::Back, |b| cull_of(b[0]))
     }
+
+    /// The material's polygon offset level, from the same technique ([`polygon_offset_of`]).
+    pub fn polygon_offset(&self) -> u8 {
+        self.main_state_bits().map_or(0, |b| polygon_offset_of(b[1]))
+    }
+}
+
+/// `GfxStateBits::loadBits[1]` bits 4-5, BO2's `GFXS1_POLYGON_OFFSET_*`: 0 none, 1 and 2 the decal
+/// levels (the tritium dots on iron sights, a lens's world coating: drawn that many steps towards
+/// the eye, `t6mp` `FUN_0046b8d0`), 3 the shadow map's own (the shadow-caster technique only).
+/// The word's layout (depth write bit 0, depth test off bit 1, depth test 2-3, polygon offset 4-5,
+/// then the stencil fields) is OAT's T6 `GfxStateBitsLoadBitsStructured`, the byte offsets of
+/// `t6zone::layouts::GfxStateBitsLoadBitsStructured`.
+pub fn polygon_offset_of(bits: u32) -> u8 {
+    ((bits >> 4) & 3) as u8
 }
 
 /// The hash BO2 stores in `MaterialTextureDef::nameHash` for a sampler name (and in
@@ -590,6 +605,11 @@ mod tests {
         assert_eq!(cull_of(0x0000_8065), Cull::Back);
         assert_eq!(cull_of(0x0000_C065), Cull::Front);
         assert_eq!(cull_of(0x0000_0065), Cull::None);
+        // The second word's polygon offset (bits 4-5): a decal level, the shadow map's, none.
+        assert_eq!(polygon_offset_of(0x0000_0010), 1);
+        assert_eq!(polygon_offset_of(0x0000_0025), 2);
+        assert_eq!(polygon_offset_of(0x0000_0030), 3);
+        assert_eq!(polygon_offset_of(0x0000_000d), 0);
         assert_eq!(blend_of(0x0000_0065), Blend::Alpha);
         assert_eq!(blend_of(0x0000_0862), Blend::Premultiplied);
         assert_eq!(blend_of(0x0000_082A), Blend::Additive { alpha: false });

@@ -95,6 +95,7 @@ pub(crate) fn material_record(mat: Option<&xmodel::Material>, texture: Option<&s
         reticle: texture.and_then(|t| looks.reticle.get(t)).cloned(),
         emblem: texture.is_some_and(|t| looks.emblem.contains(t)),
         sonar: texture.and_then(|t| looks.sonar.get(t)).cloned(),
+        polygon_offset: mat.map_or(0, |m| m.polygon_offset()),
     }
 }
 
@@ -459,6 +460,33 @@ mod tests {
 
     /// The native pose agrees with the W3D rig (verified in game) bone by bone: the same weapon,
     /// arms and clip posed both ways, model space, at several frames.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install (ZHBO_BO2_DIR)"]
+    fn the_sights_tritium_carries_bo2s_polygon_offset() {
+        // The MP7's iron sights: BO2 draws their tritium dots and glows with
+        // GFXS1_POLYGON_OFFSET_1 (loadBits[1] bits 4-5) so they win over the sight they lie on; the
+        // gun's own surfaces have none. Without it the dots flickered on and off as the gun swayed.
+        let bo2 = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::paks::load_zone(&bo2, "common_mp").unwrap();
+        let patch = crate::paks::load_zone(&bo2, "patch_mp").unwrap();
+        let (weapons, _) = crate::paks::MpPool::load(&bo2).unwrap().weapons().unwrap();
+        let w = weapons.iter().find(|w| w.name == "mp7_mp").unwrap();
+        let gun = crate::viewmodels::find_model(&[&patch, &common], w.view_model.as_deref().unwrap()).unwrap();
+        let looks = Looks::default();
+        let (mut decals, mut solid) = (0, 0);
+        for m in gun.materials.iter().flatten() {
+            let record = material_record(Some(m), None, &looks);
+            if m.name.contains("tritium") {
+                assert_eq!(record.polygon_offset, 1, "{}", m.name);
+                decals += 1;
+            } else if record.blend == Blend::Opaque {
+                assert_eq!(record.polygon_offset, 0, "{}", m.name);
+                solid += 1;
+            }
+        }
+        assert!(decals >= 2 && solid >= 1, "{decals} tritium, {solid} opaque materials");
+    }
+
     #[test]
     #[ignore = "reads this machine's Black Ops II install (ZHBO_BO2_DIR)"]
     fn native_pose_matches_the_w3d_rig() {

@@ -13431,3 +13431,103 @@ build` from a fresh work dir; archive built at 88 (`build-archive`). Legs: `--rt
 life left before a second round started. The state hash was equal on every frame of every run. Which
 side wins depends on when inputs land (render cadence), not on a divergence, so this is flaky
 coverage, not a sync fault.
+
+## Flicker: the sights' decals, the ground as the camera dives, the sun's shadows (2026-11-06, branch `v1/render-flicker`)
+
+The user saw flickering on the weapons' decals, on shadows, and on the terrain while zooming into
+first person. All three were real, all three long-standing (none came from rounds 4-6), and each had
+its own cause. Evidence, before and after, in `~/.opencode/plan/render-flicker/` (`strip-*.png`).
+
+**The weapons' decals: BO2's polygon offset was never read.** BO2 draws the tritium dots and glows
+on iron sights (`mtl_t6_attach_tritium_*`: the MP7, Vector, PDW, Chicom, B23R, Five-seven, Judge,
+HK416, SA58, Type 95, X95L, XM8, AN-94, SRM, crossbow, DSR sights; the 870's trinium sight), a lens's
+world coating, the shield's glass and the tablet's buttons with `GFXS1_POLYGON_OFFSET_1`
+(`GfxStateBits::loadBits[1]` bits 4-5). Its rasterizer state for those (`t6mp` `FUN_0046b8d0`,
+`CreateRasterizerState` at the device's vtable +0x58) sets `DepthBias = 256 * level` and
+`SlopeScaledDepthBias = level` (the constant -1.0 at `0x00c61c60`, times the level, negated), both
+positive — because **BO2's depth is reversed**: its depth-stencil builder (`FUN_0046b780`) maps the
+material's `LESS`/`LESSEQUAL` through the table at `0x00c61cb8` = {ALWAYS, GREATER, EQUAL,
+GREATER_EQUAL}. The native pass had no bias, so each dot fought the sight it sits on, and the gun's
+sway decided the winner frame by frame: in the flicker leg's still scene the MP7's rear-sight dots
+went from 97 glowing pixels to 5 and back (`strip-before-tritium.png`). Now the converter carries
+the level (`xmodel::Material::polygon_offset`, `polygon_offset_of`) into the native material record
+(a trailing byte), style camos and reticle rows swap it with the rest of the material, and the
+pass keys its pipelines by it. A sweep of every zone (`polyoff`, a throwaway probe) found no weapon
+material at level 2 and level 3 only in shadow-caster techniques.
+
+To carry BO2's numbers unchanged **the viewmodel's own depth is now reversed** like BO2's: cleared
+to 0, `GREATER` for solid surfaces, `GREATER_EQUAL` for blended, bias +256/+1 per level. Its
+projection's depth terms come straight from the planes in double precision (`-n/(f-n)`,
+`nf/(f-n)`): subtracting the standard terms would cancel and keep the standard depth's precision.
+World draws (third-person bodies, dropped weapons) keep the scene's standard depth and get the bias
+negated.
+
+**Found on the way: since round 6 the viewmodel tested the scene's depth.** Round 6 split the
+native pass into a world pass (on the scene's depth) and a viewmodel pass (its own), choosing by
+`view_proj == None` — but the viewmodel's matrix is `None` too, so it went into the world pass, with
+the viewmodel's 0.1-unit near projection against a scene drawn at another near. The gun could clip
+into walls, and the headless viewmodel sweep (`render_viewmodels`, whose view never clears depth)
+drew nothing at all. The layer is explicit now (`NativeFrame.layer`), and world draws take the
+scene's projection unchanged (they had the viewmodel's pulled-in near, so their depth was not the
+scene's either).
+
+**The ground as the camera dove: the near plane.** First person set the world camera's near to 0.1
+units (for the W3D viewmodel, MODLOG 2026-10-22, which flagged terrain z-fighting as the trade-off)
+from the first frame of the dive. Standard depth resolves `z² · 2^-24 / near`; Zero Hour floats its
+roads `MAP_HEIGHT_SCALE / 8` = 0.08 units over the terrain (`W3DRoadBuffer`'s `FLOAT_AMOUNT`) and
+draws ground decals and the sun shadow's receivers without bias, tuned for `NearZ = 10`. With the
+camera hundreds of units up and a 0.1 near, the dirt road broke into fragments frame to frame
+(`strip-before-dive-107.png`). The world's near no longer serves the gun (the native viewmodel has
+its own), so first person takes BO2's `r_znear`, 4 inches (G4; the tuning pack's new `r_znear`), and
+through the transitions the near is the overhead `NearZ` scaled by the camera's distance from the
+eyes (`ClientOut.near_scale`, `fps_near`; the hook's `max(fps_near, NearZ * near_scale)`): the same
+near-to-ground ratio as overhead until it reaches the eyes'. The W3D fallback's gun is solid there
+(the MP7 sweep found 1.0 solid). Reversing the scene's depth too was weighed and left: the engine's
+soft particles read `gl_FragCoord.z`, its R32F scene depth is `clip.z / clip.w` for the SSAO and the
+MMS screen, and `u_zBias` pulls in clip space; reversing in the vertex shader alone (`z' = w - z`)
+cancels in f32 and gains nothing.
+
+**The shadows: the sun's shadow map refit every frame.** `Bgfx.ini` ships `BgfxShadowMaps = Yes`, and
+the engine's `SetupSunShadowView` fits the ortho box to the camera's ground footprint: the centre is
+the view ray's crossing of z = 0, the size the corner rays' reach, quantized to 64 units. A camera at
+eye height, or diving to it, swings that footprint across the map (a corner ray above the horizon,
+the centre jumping between the eye and a crossing far ahead), so the map re-rasterized at a new
+texel size and the Command Center's shadow changed shape and faded through the dive
+(`strip-dive-shadow.png`, top row). Host patch 0032 hands the backend the first-person camera
+(`GGC_SetBgfxShadowFocus` from the W3DView hook, read through `GlobalData.cpp` like the backend's
+other `GGC_` settings) and fits a fixed 768-unit half-width box centred half its width ahead of the
+eye; with the size constant the existing texel snap keeps every shadow texel on one world grid.
+The shadow now stays put through the whole dive (bottom row).
+
+**Tests.** zhbo-gfx: the viewmodel projection (reversed, its near, precision across the gun), the
+polygon-offset bias per level and depth, and the headless `a_polygon_offset_decal_wins_over_the_
+surface_it_lies_on` (a decal a thousandth of an inch behind wins with its offset, is hidden without
+it, on both depths). zhbo-core: the near through both transitions (`transitions_are_smooth_both_
+ways`), the offset reaching the renderer's surface. zhbo-native: the record round trip. Real
+install: `the_sights_tritium_carries_bo2s_polygon_offset`. In game: **`scripts/autotest-mac.sh
+--flicker`**, a still scene (`ZHBO_AUTOPILOT=flicker`, no enemies, an MP7) captured every logic frame
+at a 30 fps render: the ground must not flip between consecutive frames, still or nudged a fifth of
+a pixel a frame, and the sight's tritium must glow in every frame (least >= 60% of most). Before:
+the tritium check fails in every phase (least 5 of 97); after: 86-97. The ground check passes on
+both builds: at eye height with the old 0.1 near the ground did not fight in this scene; the fight
+was in the dive, which the near test covers and the dive strips show.
+
+**Gotchas.** The old flicker check region (everything below the HUD) flagged the distant trees'
+sway and the base's flag: motion, not flicker; hence the ground rect. A material-record append
+makes every older archive unreadable (a byte short) while `hud::VERSION` says it is current: a
+branch that appends to it must build its own archive (`build-archive`) before a game run.
+
+**Bumps for the integrator.** `ZhboClientOut` 4880 → 4888 (`fps_near`, `near_scale`); the native
+model, camo and reticle-set `VERSION`s and `hud::VERSION` for the material record's
+`polygon_offset`; host patch 0032 (CONTRACT "Pending for the next bump").
+
+**Verified.** `cargo test --workspace` green (zhbo-core 894 + 896 with `renderer`; zhbo-gfx 23
+native, 7 headless, 25 unit); clippy clean (`--workspace --all-targets`, zhbo-core `renderer`).
+Real install: zhbo-assets `--ignored --skip conformance` 79/79 (the new tritium test among them),
+`the_install_roster_plays_in_lockstep` green. Conformance CLI: all eight CSVs byte-identical to
+overhead-general's (weapons 0, cac 0 + 4 BO2-only). `cargo xtask build` with patch 0032, archive
+rebuilt (`build-archive`). Legs: `--flicker` 8/8 (before the fix: the four tritium checks fail),
+default 16/16, `--rts` 20/20, `--rts-dry` 5/5, `--detail` 10/10, `--scope`, `--w3d-ads` 2/2 (the
+W3D gun at BO2's near), `--splash` 5/5, `--smoke` 7/7, `--showcase` (the overhead body on the
+scene's depth). The sim is untouched (presentation and renderer only), so no `--mp` run (per the
+round's testing-scope update).

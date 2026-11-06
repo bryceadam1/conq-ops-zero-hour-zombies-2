@@ -141,6 +141,7 @@ pub(crate) fn native_surface(s: &SurfaceSpec, handle: impl Fn(&Option<String>) -
         cull: native_cull(s.cull),
         reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), &handle)),
         sonar: s.sonar.as_ref().map(|so| native_sonar(so, &handle)),
+        polygon_offset: s.polygon_offset,
     }
 }
 
@@ -317,6 +318,8 @@ pub struct SurfaceSpec {
     pub sonar: Option<zhbo_native::model::Sonar>,
     /// The target finder's display, on its ui3d reticle (`zhbo_native::display`).
     pub display: Option<zhbo_native::display::RangeFinderDisplay>,
+    /// BO2's polygon offset level (`Material::polygon_offset`): a decal's pull towards the eye.
+    pub polygon_offset: u8,
 }
 
 fn is_ui3d(s: &SurfaceSpec) -> bool {
@@ -452,6 +455,7 @@ pub fn build_mesh_visible<'a>(
                 emblem: m.is_some_and(|m| m.emblem),
                 sonar: m.and_then(|m| m.sonar.clone()),
                 display: None,
+                polygon_offset: m.map_or(0, |m| m.polygon_offset),
             });
         }
     }
@@ -571,6 +575,7 @@ pub(crate) fn apply_reticle(mesh: &mut Mesh, set: &zhbo_native::reticles::Reticl
         s.emissive = m.emissive;
         s.sort_key = m.sort_key;
         s.cull = m.cull;
+        s.polygon_offset = m.polygon_offset;
     }
 }
 

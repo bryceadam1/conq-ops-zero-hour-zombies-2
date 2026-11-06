@@ -206,7 +206,7 @@ const _: () = {
     assert!(size_of::<ClientIn>() == 136);
     // `spectating` took the struct's tail padding: the size is unchanged, the offset is asserted.
     assert!(std::mem::offset_of!(ClientIn, spectating) == 132);
-    assert!(size_of::<ClientOut>() == 4880);
+    assert!(size_of::<ClientOut>() == 4888);
     assert!(size_of::<ClientHit>() == 44);
     assert!(size_of::<crate::sim::RtsWeapons>() == 192);
     assert!(size_of::<crate::sim::RtsIcons>() == 240);
@@ -494,12 +494,12 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         crate::config::Autopilot::Manual => {
             state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
         }
-        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops } => {
+        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops, flicker } => {
             #[cfg(feature = "autopilot")]
             {
-                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, splash, drops, ..Default::default() });
+                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, splash, drops, flicker, ..Default::default() });
             }
-            let _ = (equipment, build, classpick, scope, smoke, splash, drops);
+            let _ = (equipment, build, classpick, scope, smoke, splash, drops, flicker);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
         crate::config::Autopilot::Multiplayer => {

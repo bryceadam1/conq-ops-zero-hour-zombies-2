@@ -1,0 +1,133 @@
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+index 7281e5d..26113aa 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+@@ -35,6 +35,7 @@
+ // SYSTEM INCLUDES ////////////////////////////////////////////////////////////////////////////////
+ #include <stdio.h>
+ #include "ZhboBridge.h" // ZHBO
++extern "C" void GGC_SetBgfxShadowFocus(int active, const float * eye, const float * dir); // ZHBO: host patch 0032
+ #include <stdlib.h>
+ #include <windows.h>
+ 
+@@ -1703,10 +1704,15 @@ void W3DView::update()
+ 		m_recalcCamera = false;
+ 		s_zhboCameraWasOverridden = true;
+ 		ZhboViewmodel_Update(TRUE, zhboEye, zhboDir); // ZHBO: arms and weapon in front of the eye
++		// The sun shadow fits a fixed box ahead of this eye (BgfxBackend's SetupSunShadowView).
++		const float focusEye[3] = { zhboEye.x, zhboEye.y, zhboEye.z };
++		const float focusDir[3] = { zhboDir.x, zhboDir.y, zhboDir.z };
++		GGC_SetBgfxShadowFocus(1, focusEye, focusDir);
+ 	}
+ 	else if (s_zhboCameraWasOverridden)
+ 	{
+ 		s_zhboCameraWasOverridden = false;
++		GGC_SetBgfxShadowFocus(0, nullptr, nullptr);
+ 		ZhboViewmodel_Update(FALSE, zhboEye, zhboDir); // ZHBO: hide the viewmodel
+ 		setWidth(getWidth()); // restores the RTS field of view
+ 		// The override moved the pivot up to eye height; put it back on the ground. The pitch and
+diff --git a/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp b/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
+index 2cc81d4..1a71191 100644
+--- a/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
++++ b/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
+@@ -219,6 +219,7 @@ extern "C" void GGC_GetBgfxPostFx2Params(float * params);
+ extern "C" void GGC_GetBgfxSSAOParams(float * params);
+ extern "C" void GGC_GetBgfxMaterialFxParams(float * params);
+ extern "C" int  GGC_GetBgfxShadowMapEnabled();
++extern "C" int  GGC_GetBgfxShadowFocus(float * eye, float * dir); // ZHBO: host patch 0032
+ extern "C" void GGC_GetBgfxShadowMapParams(float * params);
+ extern "C" int  GGC_GetBgfxPointFilter();
+ extern "C" const char * GGC_GetBgfxRenderer();
+@@ -2895,6 +2896,31 @@ static void SetupSunShadowView()
+     // the ortho to the ground footprint automatically covers every caster whose shadow lands in
+     // view - no cascade, no tight/coarse caster-receiver mismatch, no per-zoom fall-through.
+ 
++    // ZHBO: while Conquer Ops' first person owns the camera (its dive in and out included), the
++    // ground footprint below swings with every turn of a view at eye height: a corner ray above the
++    // horizon falls back to the centre, the centre jumps between the eye and the z = 0 crossing far
++    // ahead, and H steps through its 64-unit quanta, so the whole map re-rasterizes at a new texel
++    // size and every shadow edge pops. Fit a fixed box instead, its centre ahead of the eye along the
++    // view's heading: with H constant the texel snap below keeps each shadow texel on the same world
++    // grid, so turning and moving only uncover and cover ground at the box's edge.
++    const float kFirstPersonShadowH = 768.0f;
++    float focusEye[3] = { 0.0f, 0.0f, 0.0f };
++    float focusDir[3] = { 0.0f, 0.0f, 0.0f };
++#ifdef RTS_ZEROHOUR
++    const bool firstPersonFocus = GGC_GetBgfxShadowFocus(focusEye, focusDir) != 0;
++#else
++    const bool firstPersonFocus = false;
++#endif
++    if (firstPersonFocus)
++    {
++        const float hx = focusDir[0], hy = focusDir[1];
++        const float hlen = sqrtf(hx * hx + hy * hy);
++        const float ahead = 0.5f * kFirstPersonShadowH;
++        center[0] = focusEye[0] + (hlen > 1e-4f ? hx / hlen * ahead : 0.0f);
++        center[1] = focusEye[1] + (hlen > 1e-4f ? hy / hlen * ahead : 0.0f);
++        center[2] = 0.0f;
++    }
++
+     // Light right/up basis from a provisional look toward the view centre. Translating the eye does
+     // not change this rotation, so it is a stable axis frame for fitting and texel-snapping.
+     const bx::Vec3 up = (fabsf(sz) > 0.95f) ? bx::Vec3(0.0f, 1.0f, 0.0f) : bx::Vec3(0.0f, 0.0f, 1.0f);
+@@ -2914,7 +2940,7 @@ static void SetupSunShadowView()
+     float cR0 = center[0] * lrx + center[1] * lry + center[2] * lrz;
+     float cU0 = center[0] * lux + center[1] * luy + center[2] * luz;
+     float maxExtent = 0.0f;
+-    for (int sR = -1; sR <= 1; sR += 2)
++    for (int sR = -1; sR <= 1 && !firstPersonFocus; sR += 2)
+     {
+         for (int sU = -1; sU <= 1; sU += 2)
+         {
+@@ -2966,6 +2992,12 @@ static void SetupSunShadowView()
+     // instead of crawling/jittering as the continuously-changing H reshuffled the texel grid.
+     const float kHQuantum = 64.0f;
+     H = ceilf(H / kHQuantum) * kHQuantum;
++    if (firstPersonFocus)
++    {
++        // ZHBO: the first-person box (above); the beam's extent still grows the caster cull below.
++        H = kFirstPersonShadowH;
++        maxExtent = fmaxf(maxExtent, H);
++    }
+ 
+     // Texel-snap the centre along the light right/up axes so panning does not crawl the shadow edge.
+     const float unitsPerTexel = (2.0f * H) / shadowSize;
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp b/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp
+index a015717..17d27df 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp
+@@ -336,6 +336,34 @@ extern "C" int GGC_GetBgfxShadowMapEnabled()
+ 	return 1;
+ }
+ 
++// ZHBO: the sun shadow's focus while Conquer Ops' first person owns the camera (host patch 0032).
++// W3DView's first-person hook sets it each frame from the camera it gives the view; the bgfx backend
++// then fits the sun's shadow map to a fixed box ahead of that eye instead of to the camera's ground
++// footprint, which a view at eye height (or diving to it) swings across the map frame to frame.
++static int s_zhboShadowFocus = 0;
++static float s_zhboShadowFocusEye[3] = { 0.0f, 0.0f, 0.0f };
++static float s_zhboShadowFocusDir[3] = { 0.0f, 0.0f, 0.0f };
++
++extern "C" void GGC_SetBgfxShadowFocus(int active, const float * eye, const float * dir)
++{
++	s_zhboShadowFocus = active;
++	for (int i = 0; i < 3 && active; ++i)
++	{
++		s_zhboShadowFocusEye[i] = eye[i];
++		s_zhboShadowFocusDir[i] = dir[i];
++	}
++}
++
++extern "C" int GGC_GetBgfxShadowFocus(float * eye, float * dir)
++{
++	for (int i = 0; i < 3 && s_zhboShadowFocus; ++i)
++	{
++		eye[i] = s_zhboShadowFocusEye[i];
++		dir[i] = s_zhboShadowFocusDir[i];
++	}
++	return s_zhboShadowFocus;
++}
++
+ // TheSuperHackers @feature bobtista 23/06/2026 Perspective point-light shadow map toggle.
+ // Default FALSE; enable via INI BgfxDynamicLightShadows=Yes or the Ctrl+Alt dev hotkey.
+ extern "C" int GGC_GetBgfxDynamicLightShadowsEnabled()

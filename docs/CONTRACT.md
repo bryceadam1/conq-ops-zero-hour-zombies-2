@@ -17,7 +17,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | A stun (concussion, flashbang, Shock Charge, EMP) on a General | zhbo-core: a shellshock on the first-person General (`crate::shellshock`: slower run and look; presented as the renderer's blur/grab/white layer, the camera's view kick and the ringing loop — see "The shellshock's presentation"); Zero Hour: `disable(PARALYZED)` on everything else (its units, a General under RTS control) | The first-person General never receives `disable(PARALYZED)`: Zero Hour's paralysis froze the player outright. `sim::guard` intercepts it and the sim plays BO2's shock instead. |
 | Shots: when, where, what is hit, how much damage | zhbo-core | Damage is applied with `Object::attemptDamage` by the Zero Hour `DamageType` the tuning pack maps each hit's BO2 means of death to (see "Units", Damage), so ZH armor, retaliation and kill credit work natively. |
 | Muzzle flash, tracer, fire sound | Zero Hour | `WeaponTemplate::fireWeaponTemplate(..., inflictDamage = FALSE)` with the `ZHBO_*_FX` weapons. |
-| Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
+| Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane, returned by the bridge (`Zhbo_GetCameraOverride`, `nearPlane` in/out: in the RTS view's `NearZ`, out `max(ZhboClientOut.fps_near, NearZ × near_scale)` — BO2's `r_znear` 4 inches in first person, the overhead near scaled by the camera's distance from the eyes through the transitions); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. The same hook hands the sun shadow its first-person focus (`GGC_SetBgfxShadowFocus`, host patch 0032). |
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
 | A dropped weapon (BO2's `dropweaponfordeath` item): which drops, where it lies, its rounds, attachments and camo, the walk-over's ammo, the use key's swap, its expiry | zhbo-core (`Sim::drops`, `sim/drops.rs`, `weapons::pickup`; the tuning pack's `[Drops]`) | Its Zero Hour object (`ZHBO_Drop_<base>`, `WeaponDef::drop_object`: the base weapon's world model at the General's scale, inert and unclickable) is spawned, moved and destroyed by the sim through `LogicHost::spawn`/`set_pose`/`destroy`; it is drawn only, nothing reads it back. Zero Hour's own infantry drop nothing (their weapons are Zero Hour's, not BO2's). |
@@ -1648,6 +1648,17 @@ Archive `hud::VERSION` 88 at the same point: the beam tracers' client drawables
 (`ZHBO_BO2_Tracers.ini`), their baked textures (`zhbo_tracer_<tracer>.tga`) and the nuggets'
 `TracerName`. An engine without patch 0030 refuses the `Texture` field; an older archive draws the
 untextured line. The native blob formats are unchanged.
+
+**Pending for the next bump** (render-flicker): `ZhboClientOut.fps_near` and `near_scale` (`float`
+each, the first-person near plane in world units and the camera's distance from the eyes as a share
+of the overhead camera's) are appended after `input_seen_frame`: `ZhboClientOut` 4880 → 4888 bytes,
+asserted on both sides; `Zhbo_GetCameraOverride`'s `nearPlane` becomes in/out (patch 0001 passes
+`NearZ`). Host patch 0032 adds `GGC_SetBgfxShadowFocus`/`GGC_GetBgfxShadowFocus` (GlobalData.cpp),
+set by the W3DView camera hook and read by `SetupSunShadowView`. The native model and camo blobs'
+material record gains a trailing `polygon_offset` byte (BO2's `GFXS1_POLYGON_OFFSET_*`, 0-3): the
+model, camo and reticle-set `VERSION` bumps and `hud::VERSION` (the archive must be rebuilt: an older
+archive's records are a byte short and refused) belong to the integrator. The tuning pack gains
+`r_znear` (4, inches; `tuning.ini`'s `[View]`).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

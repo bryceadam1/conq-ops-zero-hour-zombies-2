@@ -60,6 +60,11 @@
 #                                      file holds the old detector's Low, one who chose Low and one who
 #                                      chose Custom; the first two must get High, the others keep theirs.
 #                                      Options.ini is put back afterwards
+#   scripts/autotest-mac.sh --flicker  flicker in a still scene: no enemies, the General holds his view
+#                                      still and then nudges it a fifth of a pixel a frame, facing open
+#                                      ground and then his Command Center; every logic frame is captured
+#                                      at a 30 fps render and consecutive captures must agree in the
+#                                      world (zhbo-assets flicker; FLICKER_LIMIT, FLICKER_RECT)
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -94,6 +99,7 @@ mode=autopilot
 [[ "${1:-}" == "--splash" ]] && mode=splash
 [[ "${1:-}" == "--drops" ]] && mode=drops
 [[ "${1:-}" == "--detail" ]] && mode=detail
+[[ "${1:-}" == "--flicker" ]] && mode=flicker
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -791,6 +797,78 @@ EOF
     echo "scope overlay: the viewmodel is not drawn under the overlay   PASS"
     echo "screenshots and log: $out"
     exit 0
+fi
+
+if [[ "$mode" == "flicker" ]]; then
+    # Flicker in a still scene: no enemies; the General (an MP7, whose sights carry BO2's
+    # polygon-offset tritium decals) stands and the autopilot holds the view still, then nudges it
+    # a fifth of a pixel every logic frame, facing the open ground (terrain, roads) and then the
+    # Command Center (its shadow and ground decals). Every logic frame is captured; the render is
+    # capped at the logic rate so each capture is one rendered frame. Consecutive captures must
+    # agree in the world (the region left of the gun, below the HUD): z-fighting flips whole
+    # patches, a correct picture moves by a fraction of a pixel (`zhbo-assets flicker`).
+    profile="$userdata/ConquerOps.profile"
+    options="$userdata/Options.ini"
+    rm -f "$profile"
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+Flicker
+primary=mp7_mp;secondary=fiveseven_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
+    keep="$out/Options.ini.player"
+    rm -f "$keep"
+    [[ -f "$options" ]] && cp -p "$options" "$keep"
+    put_back() { if [[ -f "$keep" ]]; then cp -p "$keep" "$options"; else rm -f "$options"; fi; }
+    trap 'finish || true; put_back' EXIT
+    { [[ -f "$keep" ]] && grep -v '^MaxRenderFPS' "$keep"; echo "MaxRenderFPS = 30"; } >"$options"
+    export ZHBO_AUTOPILOT=flicker GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-60}
+    export GGC_BGFX_SCREENSHOT_AFTER=${FLICKER_AFTER:-60} GGC_BGFX_SCREENSHOT_INTERVAL=1
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "autopilot flicker: phase 5" 120 || { echo "the flicker run never finished; see $log" >&2; exit 1; }
+    finish
+    put_back
+    trap - EXIT
+    l="$out/ConquerOps.log"
+    grep -E "autopilot flicker|render rate" "$l"
+    ok=0
+    phase_frame() { sed -nE "s/.*autopilot flicker: phase $1 .* from logic frame ([0-9]+).*/\1/p" "$l" | head -1; }
+    # The world: the ground left of the gun and below the skyline (the distant trees sway and the
+    # base's flag waves: motion, not flicker). The sight: the gun's quarter, where the MP7's tritium
+    # dots must glow in every frame (a dot without BO2's polygon offset loses to the sight under it).
+    rect="${FLICKER_RECT:-0 300 680 620}"
+    sight="${FLICKER_SIGHT:-640 300 1280 720}"
+    limit=${FLICKER_LIMIT:-40}
+    for p in 0 1 3 4; do
+        from=$(phase_frame $p); to=$(phase_frame $((p + 1)))
+        name=$(sed -nE "s/.*autopilot flicker: phase $p \(([^)]*)\).*/\1/p" "$l" | head -1)
+        if [[ -z "$from" || -z "$to" ]]; then
+            printf '%-40s FAIL (no phase lines)\n' "phase $p"; ok=1; continue
+        fi
+        # Three frames for the view to settle on the phase's look.
+        # shellcheck disable=SC2086
+        summary=$(cd "$repo" && cargo run -q --release -p zhbo-assets -- flicker "$out" $((from + 3)) $((to - 1)) $rect | tee "$out/flicker-phase$p.txt" | tail -1)
+        worst=$(echo "$summary" | sed -nE 's/.*worst ([0-9]+) flipped.*/\1/p')
+        if [[ -n "$worst" && "$worst" -le "$limit" ]]; then
+            printf '%-40s PASS (%s)\n' "$name: no flicker" "$summary"
+        else
+            printf '%-40s FAIL (%s)\n' "$name: no flicker" "$summary"; ok=1
+        fi
+        # shellcheck disable=SC2086
+        glow=$(cd "$repo" && cargo run -q --release -p zhbo-assets -- flicker "$out" $((from + 3)) $((to - 1)) $sight --glow | tee "$out/flicker-sight$p.txt" | tail -1)
+        least=$(echo "$glow" | sed -nE 's/.*least ([0-9]+) glowing.*/\1/p')
+        most=$(echo "$glow" | sed -nE 's/.*most ([0-9]+) at.*/\1/p')
+        if [[ -n "$least" && -n "$most" && "$most" -ge 20 && $((least * 10)) -ge $((most * 6)) ]]; then
+            printf '%-40s PASS (%s)\n' "  ...the sight's tritium steady" "$glow"
+        else
+            printf '%-40s FAIL (%s)\n' "  ...the sight's tritium steady" "$glow"; ok=1
+        fi
+    done
+    echo "screenshots and log: $out"
+    exit $ok
 fi
 
 if [[ "$mode" == "w3d-ads" ]]; then

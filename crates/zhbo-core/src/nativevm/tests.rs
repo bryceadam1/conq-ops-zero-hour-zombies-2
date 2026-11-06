@@ -1119,6 +1119,7 @@ fn the_native_surface_carries_every_texture() {
         specular: Some("s.tga".into()),
         camo: Some("camo.tga".into()),
         camo_uv: [0.25, 0.5, 2.0, 1.5],
+        polygon_offset: 1,
         ..Default::default()
     };
     let names = ["c.tga", "m.tga", "s.tga", "camo.tga"];
@@ -1126,6 +1127,7 @@ fn the_native_surface_carries_every_texture() {
     let n = native_surface(&s, handle);
     assert_eq!((n.color, n.maps, n.specular, n.camo), (1, 2, 3, 4));
     assert_eq!(n.camo_uv, [0.25, 0.5, 2.0, 1.5]);
+    assert_eq!(n.polygon_offset, 1, "BO2's polygon offset reaches the pipeline (the tritium dots' flicker)");
     assert_eq!(surface_files(&s).map(String::as_str).collect::<Vec<_>>(), names);
 }
 
@@ -1229,13 +1231,13 @@ fn diag_real_maps() {
         let v = |x: f32, y: f32, u: f32, w: f32| NativeVertex { position: [x, y, 0.0], normal: [0.0, 0.0, -1.0], uv: [u, w], bones: [0; 4], weights: [1.0, 0.0, 0.0, 0.0] };
         let verts = [v(0.0, 0.0, 0.0, 0.0), v(0.0, 64.0, 0.0, 1.0), v(64.0, 64.0, 1.0, 1.0), v(64.0, 0.0, 1.0, 0.0)];
         for (maps, label) in [(INVALID, "no maps"), (m, "maps")] {
-            let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[NativeSurface { first_index: 0, index_count: 6, blend: NativeBlend::Opaque, emissive: false, color: c, maps, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None }]);
+            let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[NativeSurface { first_index: 0, index_count: 6, blend: NativeBlend::Opaque, emissive: false, color: c, maps, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None, polygon_offset: 0 }]);
             let mut ortho = [0.0f32; 16];
             ortho[0] = 2.0 / 64.0; ortho[5] = -2.0 / 64.0; ortho[12] = -1.0; ortho[13] = 1.0; ortho[14] = 0.5; ortho[15] = 1.0;
             let mut lights = [NativeLight::default(); 3];
             lights[0] = NativeLight { direction: [0.81, -0.38, 0.45], color: [1.0, 1.0, 1.0] };
             lights[1] = NativeLight { direction: [-0.79, -0.62, 0.0], color: [0.24, 0.24, 0.31] };
-            let f = NativeFrame { view_proj: Some(ortho), eye: [32.0, 32.0, -100.0], ambient: [0.22, 0.2, 0.17], lights, light_count: 2, debug: 0.0, ads: 0.0, optics_off: 0.0, reticle_alt: 0.0, optics: Default::default() };
+            let f = NativeFrame { view_proj: Some(ortho), layer: zhbo_gfx::runtime::NativeLayer::Viewmodel, eye: [32.0, 32.0, -100.0], ambient: [0.22, 0.2, 0.17], lights, light_count: 2, debug: 0.0, ads: 0.0, optics_off: 0.0, reticle_alt: 0.0, optics: Default::default() };
             r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[zhbo_native::math::MAT4_IDENTITY], frame: f });
             r.request_screenshot(INVALID, "x");
             r.frame();
@@ -1361,6 +1363,7 @@ fn the_reticle_choice_swaps_the_lens_material_only() {
         emblem: false,
         sonar: None,
         display: None,
+        polygon_offset: 0,
     };
     let mut mesh = Mesh { surfaces: vec![surface("mc/reflex", true), surface("mc/gun", false), surface("mc/holo", true)], ..Default::default() };
     super::apply_reticle(&mut mesh, &set, 1);
@@ -1576,6 +1579,7 @@ fn the_aimed_meshs_own_textures_are_uploaded_too() {
         emblem: false,
         sonar: None,
         display: None,
+        polygon_offset: 0,
     };
     let hip = Mesh { surfaces: vec![surface("gun", false), surface("optic_view", false)], ..Default::default() };
     let aimed = Mesh { surfaces: vec![surface("gun", false), surface("optic_ads", false), surface("rfo_reticle2", true)], ..Default::default() };

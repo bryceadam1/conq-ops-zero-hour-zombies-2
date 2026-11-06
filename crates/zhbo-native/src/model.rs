@@ -333,6 +333,10 @@ pub struct Material {
     /// The MMS screen's technique and constants, for its display surface (appended after
     /// `emblem`; the model/camo `VERSION` bumps are integrator-owned).
     pub sonar: Option<Sonar>,
+    /// BO2's polygon offset level (`zhbo_formats::xmodel::polygon_offset_of`): 0 none, 1 or 2 a
+    /// decal drawn that many steps towards the eye. Appended after `sonar` (the model/camo
+    /// `VERSION` bumps are integrator-owned).
+    pub polygon_offset: u8,
 }
 
 impl Material {
@@ -363,6 +367,7 @@ impl Material {
                 s.write(w);
             }
         }
+        w.u8(self.polygon_offset);
     }
     /// Read one material record written by [`Self::write`].
     pub fn read(r: &mut Reader) -> Result<Material, FormatError> {
@@ -390,6 +395,10 @@ impl Material {
                 0 => None,
                 1 => Some(Sonar::read(r)?),
                 v => return Err(FormatError::Corrupt(format!("sonar tag {v}"))),
+            },
+            polygon_offset: match r.u8()? {
+                v @ 0..=3 => v,
+                v => return Err(FormatError::Corrupt(format!("polygon offset {v}"))),
             },
         })
     }
@@ -627,6 +636,19 @@ pub(crate) mod tests {
         for n in 0..bytes.len() {
             assert!(Model::from_bytes(&bytes[..n]).is_err(), "prefix {n}");
         }
+    }
+
+    #[test]
+    fn the_polygon_offset_round_trips() {
+        for level in 0..=3u8 {
+            let mut m = strip();
+            m.materials[0].polygon_offset = level;
+            assert_eq!(Model::from_bytes(&m.to_bytes()).unwrap(), m, "level {level}");
+        }
+        // BO2's field is two bits: anything past the shadow map's level is a corrupt record.
+        let mut m = strip();
+        m.materials[0].polygon_offset = 4;
+        assert!(Model::from_bytes(&m.to_bytes()).is_err());
     }
 
     #[test]

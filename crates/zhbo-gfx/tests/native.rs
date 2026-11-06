@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
+use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLayer, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
 use zhbo_gfx::state;
 
 const W: u32 = 64;
@@ -78,6 +78,7 @@ fn quad(x0: f32, y0: f32, x1: f32, y1: f32, bone: u16) -> [NativeVertex; 4] {
 fn frame(lights: u32) -> NativeFrame {
     NativeFrame {
         view_proj: Some(ortho()),
+        layer: NativeLayer::Viewmodel,
         eye: [32.0, 32.0, -100.0],
         ambient: [0.1, 0.1, 0.1],
         lights: [NativeLight { direction: [0.0, 0.0, -1.0], color: [1.0, 1.0, 1.0] }; 3],
@@ -96,7 +97,7 @@ fn texture(r: &mut Renderer, rgba: [u8; 4]) -> u16 {
 }
 
 fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
-    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None }
+    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None, polygon_offset: 0 }
 }
 
 /// A camo layer replaces the base colour at its own coverage. A multiply would leave the base
@@ -121,6 +122,7 @@ fn camo_layer_replaces_the_base_colour() {
         cull: NativeCull::None,
         reticle: None,
         sonar: None,
+        polygon_offset: 0,
     };
     let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &[camo_surface]);
     assert_ne!(mesh, INVALID);
@@ -385,6 +387,7 @@ fn the_world_hides_a_world_draw_but_not_the_viewmodel() {
     r.set_view_clear(1, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x000000ff, 0.25, 0);
     let mut world = frame(0);
     world.view_proj = None;
+    world.layer = NativeLayer::World;
     assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh: body, palette: &[IDENTITY], frame: world }));
     assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh: gun, palette: &[IDENTITY], frame: frame(0) }));
     r.request_screenshot(INVALID, "depth.png");
@@ -602,6 +605,56 @@ fn draw_frame(r: &mut Renderer, shot: &Shot, mesh: u16, palette: [f32; 16], f: N
     r.request_screenshot(INVALID, "reticle.png");
     r.frame();
     red_centroid(shot)
+}
+
+/// A plane 10 units ahead covering the view, tilted (its depth changes across the screen, so the
+/// slope term of a bias matters too), lifted `lift` units towards the eye.
+fn plane(lift: f32) -> [NativeVertex; 4] {
+    [(-8.0, -8.0), (-8.0, 8.0), (8.0, 8.0), (8.0, -8.0)].map(|(x, y): (f32, f32)| NativeVertex {
+        position: [x, y, 10.0 + 0.25 * x - lift],
+        normal: [0.0, 0.0, -1.0],
+        uv: [0.5, 0.5],
+        bones: [0; 4],
+        weights: [1.0, 0.0, 0.0, 0.0],
+    })
+}
+
+/// BO2's polygon offset (`GFXS1_POLYGON_OFFSET_*`, the tritium dots on iron sights): a decal a hair
+/// behind the surface it lies on still wins with its offset, on the viewmodel's reversed depth and
+/// on the world's standard one, and loses without it. That is the flicker the dots showed: no
+/// offset, so the dot and the sight it sits on fought over every pixel as the gun swayed.
+#[test]
+fn a_polygon_offset_decal_wins_over_the_surface_it_lies_on() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let red = texture(&mut r, [255, 0, 0, 255]);
+    let green = texture(&mut r, [0, 255, 0, 255]);
+    let idx = [0u16, 2, 1, 0, 3, 2];
+    let base = r.native_create_mesh(&plane(0.0), &idx, &[surface(red, true, 6)]);
+    // A thousandth of an inch behind the base (BO2 units are inches): well inside the offset's
+    // reach, well past the depth's resolution.
+    let behind = -0.001 / 6.0;
+    let decal = |r: &mut Renderer, level: u8| r.native_create_mesh(&plane(behind), &idx, &[NativeSurface { polygon_offset: level, ..surface(green, true, 6) }]);
+    let (plain, offset) = (decal(&mut r, 0), decal(&mut r, 1));
+    r.set_view_transform(1, Some(&IDENTITY), Some(&perspective()));
+    for layer in [NativeLayer::Viewmodel, NativeLayer::World] {
+        let f = NativeFrame { view_proj: if layer == NativeLayer::World { None } else { Some(perspective()) }, layer, eye: [0.0; 3], ..frame(0) };
+        for (decal, wins) in [(offset, true), (plain, false)] {
+            r.touch(1);
+            for mesh in [base, decal] {
+                assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+            }
+            r.request_screenshot(INVALID, "offset.png");
+            r.frame();
+            let (greens, reds) = (colour_count(&shot, 1), colour_count(&shot, 2));
+            assert!(greens + reds > (W * H) as usize / 2, "{layer:?}: the plane covers the view ({greens} + {reds})");
+            if wins {
+                assert_eq!(reds, 0, "{layer:?}: the offset decal shows everywhere ({greens} green, {reds} red)");
+            } else {
+                assert_eq!(greens, 0, "{layer:?}: without an offset the decal behind is hidden ({greens} green, {reds} red)");
+            }
+        }
+    }
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
 }
 
 /// The MMS's static reticle is the image at the lens's own UVs (it moves with the lens) and does

@@ -345,6 +345,12 @@ typedef struct ZhboClientOut
 	   frame then). MSG_ZHBO_FPS_INPUT carries it as its seventh argument, for zhbo_logic_fps_input
 	   (lag-compensated shots, the sender's prediction). ABI 30. */
 	uint32_t input_seen_frame;
+	/* While camera_override: the first-person near plane (world units, BO2's r_znear) and the
+	   camera's distance from the eyes as a share of the overhead camera's (1 overhead, 0 at the
+	   eyes). The W3DView hook's near is max(fps_near, NearZ * near_scale). Pending for the next
+	   bump. */
+	float fps_near;
+	float near_scale;
 } ZhboClientOut;
 
 /* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
@@ -750,7 +756,7 @@ static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.
 static_assert(sizeof(ZhboLogicCrc) == 152, "ZhboLogicCrc layout must match ffi.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
 static_assert(offsetof(ZhboClientIn, spectating) == 132, "ZhboClientIn.spectating must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4880, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4888, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 44, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");

@@ -328,6 +328,15 @@ pub struct ClientOut {
     /// (`sim::antilag`) and this client's prediction knows which inputs the record holds
     /// (`client::predict`). Appended at the end of the struct (ABI rule).
     pub input_seen_frame: u32,
+    /// While `camera_override`: the first-person view's near plane, world units (BO2's `r_znear`,
+    /// the tuning pack's 4 inches; G4), and the camera's distance from the eyes as a share of the
+    /// overhead camera's (1 overhead and through the transition's swing, falling to 0 as it moves
+    /// in; 0 in first person). The engine's hook uses the overhead view's own near (`W3DView`'s
+    /// `NearZ`) times `near_scale`, never below `fps_near`: the near keeps the overhead view's
+    /// ratio to the camera's distance from the ground it looks at, and the depth buffer its
+    /// precision, until it reaches the eyes'. Appended at the end of the struct (ABI rule).
+    pub fps_near: f32,
+    pub near_scale: f32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -367,6 +376,8 @@ impl Default for ClientOut {
             viewmodel_fired_left: 0,
             select_object: 0,
             input_seen_frame: 0,
+            fps_near: 0.0,
+            near_scale: 0.0,
         }
     }
 }
@@ -475,6 +486,21 @@ fn transition_pose(k: f32, overhead: Pose, eyes: Pose, behind: f32) -> Pose {
     (pos, dir.normalized_or_zero(), over_hfov + (eye_hfov - over_hfov) * smoothstep(k))
 }
 
+/// The near plane's scale for a transition camera at `pos` between the overhead camera at
+/// `overhead` and the eyes at `eyes` ([`ClientOut::near_scale`]): its distance from the eyes as a
+/// share of the overhead camera's, so the near plane comes in with the camera. Overhead the world's
+/// near (10 units) leaves the depth buffer the precision Zero Hour tuned its ground decals for
+/// (roads float an eighth of a height step, 0.08 units, over the ground); BO2's first-person near
+/// (4 inches) at the start of the dive, with the camera hundreds of units up, left the roads and
+/// shadows on the ground fighting the terrain.
+pub fn transition_near_scale(pos: Vec3, eyes: Vec3, overhead: Vec3) -> f32 {
+    let from = (overhead - eyes).length();
+    if from <= f32::EPSILON {
+        return 0.0;
+    }
+    ((pos - eyes).length() / from).clamp(0.0, 1.0)
+}
+
 pub struct Client {
     pub cfg: ClientConfig,
     #[cfg(feature = "autopilot")]
@@ -500,6 +526,9 @@ pub struct Client {
     seen_frame: u32,
     since_logic: f32,
     pub last_hfov: f32,
+    /// BO2's `r_znear` in world units (the tuning pack's, refreshed from the local player's;
+    /// [`ClientOut::fps_near`]).
+    pub fps_near: f32,
     /// The overhead camera as first person found it: its offset from its pivot, its direction and
     /// field of view. Leaving flies back to it, centred on the General (while first person owns the
     /// camera, the view reports the first-person camera, not the overhead one).
@@ -600,6 +629,7 @@ impl Client {
             seen_frame: 0,
             since_logic: 0.0,
             last_hfov: 1.0,
+            fps_near: crate::units::inches(crate::tuning::get().r_znear),
             overhead: None,
             view_eye: Vec3::ZERO,
             view_dir: Vec3::new(1.0, 0.0, 0.0),
@@ -915,7 +945,9 @@ impl Client {
             let (fy, fp) = p.fire_angles();
             (wrap_angle(fy - p.input.yaw), fp - p.input.pitch)
         });
+        let view = (self.yaw, self.pitch);
         let ap = self.autopilot.as_mut()?;
+        ap.view = view;
         if !fps {
             ap.t = 0.0;
             ap.base_frame = inp.logic_frame;
@@ -1142,6 +1174,10 @@ impl Client {
         let base_fov = horizontal_fov(self.cfg.cg_fov, aspect);
         let hfov = horizontal_fov(self.view_fov(dt, shown.as_ref()), aspect);
         self.last_hfov = hfov;
+        if let Some(p) = player.as_ref() {
+            self.fps_near = crate::units::inches(p.arsenal.tuning.r_znear);
+        }
+        out.fps_near = self.fps_near;
 
         let first_person = player.as_ref().is_some_and(|p| p.is_first_person());
         let allowed = inp.input_allowed != 0;
@@ -1182,6 +1218,7 @@ impl Client {
                 out.dir = dir;
                 out.camera_override = 1;
                 out.hfov = fov;
+                out.near_scale = transition_near_scale(pos, eyes.0, from_pos);
                 out.hide_rts_ui = 1;
                 if u > 0.9 {
                     out.hide_object = self.general;
@@ -1245,6 +1282,7 @@ impl Client {
                         }
                     };
                     out.camera_override = 1;
+                    out.near_scale = 0.0;
                     out.eye = eye;
                     let kick_yaw = kick.0 + self.hud.flinch_yaw.to_radians();
                     let kick_pitch = kick.1 + self.hud.flinch_pitch.to_radians();
@@ -1306,6 +1344,7 @@ impl Client {
                 out.dir = dir;
                 out.camera_override = 1;
                 out.hfov = fov;
+                out.near_scale = transition_near_scale(pos, from_pos, to_pos);
                 // The General stays hidden while the camera is still inside the head (as entering).
                 if u < 0.1 {
                     out.hide_object = self.general;

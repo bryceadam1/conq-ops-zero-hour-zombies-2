@@ -6,12 +6,13 @@
 //! queues a draw with the bone palette it posed ([`Renderer::native_submit`]). At `frame()` the
 //! queued draws run **just before view `before_view`** (the engine's scene composite), into view
 //! `target_view`'s frame buffer (the engine's scene) with the target view's rect, so the viewmodel
-//! sits in the scene before bloom and the tonemap see it. Two passes per target: the draws the
-//! world camera frames (`view_proj: None`: the third-person bodies, the dropped weapons) test and
-//! write the target's own depth, so the world in front of them hides them as it hides the W3D
-//! models they stand in for; then the viewmodel's on a depth buffer of its own, cleared, so it
-//! draws over the world (BO2 draws its viewmodel in a separate depth range) and its parts sort
-//! among themselves (a target without depth draws both on that one). Opaque surfaces draw
+//! sits in the scene before bloom and the tonemap see it. Two passes per target, by each draw's
+//! [`NativeLayer`]: the world camera's draws (the third-person bodies, the dropped weapons) test
+//! and write the target's own depth with the scene's projection, so the world in front of them
+//! hides them as it hides the W3D models they stand in for; then the viewmodel's on a depth buffer
+//! of its own, cleared and **reversed** as BO2's is (1 at the near plane), so it draws over the
+//! world (BO2 draws its viewmodel in a separate depth range), its parts sort among themselves and
+//! BO2's polygon offsets (the sights' tritium decals) carry over as BO2 sets them. Opaque surfaces draw
 //! first, then blended ones in BO2's sort-key order. Each surface culls the faces its material's
 //! `cullFace` says to (R4); the pass keeps BO2's index order, whose front faces are clockwise in
 //! the framebuffer (the engine's content winds the other way — the W3D conversion swaps for that,
@@ -249,6 +250,25 @@ pub struct NativeSurface {
     pub reticle: Option<NativeReticle>,
     /// The MMS screen technique (takes precedence over `reticle`).
     pub sonar: Option<NativeSonar>,
+    /// BO2's polygon offset level (`GfxStateBits::loadBits[1]` bits 4-5, `GFXS1_POLYGON_OFFSET_*`):
+    /// 0 none, 1 or 2 a decal's (the tritium dots on iron sights, a lens's coating) drawn that
+    /// many steps towards the eye so it wins over the surface it lies on ([`polygon_offset_bias`]).
+    pub polygon_offset: u8,
+}
+
+/// Which depth a draw is tested against.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum NativeLayer {
+    /// The world camera's: a third-person body, a dropped weapon. Tests and writes the target's
+    /// own depth (the scene's), with the target view's own projection, so the world in front of
+    /// it hides it as it hides the W3D models it stands in for.
+    #[default]
+    World,
+    /// The first-person viewmodel: a depth of its own, cleared, so it draws over the world (BO2
+    /// draws its viewmodel in a separate depth range) and its parts sort among themselves. Its
+    /// depth is reversed (1 at the near plane, 0 at the far, `GREATER` passes) as BO2's whole
+    /// renderer is, so BO2's polygon offsets carry over as they are.
+    Viewmodel,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -266,6 +286,9 @@ pub struct NativeFrame {
     /// view's own view and projection as the engine leaves them at `frame()` (BO2 draws its
     /// viewmodel with the world's FOV, `cg_fov`; there is no viewmodel FOV: G4).
     pub view_proj: Option<[f32; 16]>,
+    /// Which depth the draw tests ([`NativeLayer`]). A viewmodel's `view_proj` is a standard
+    /// (depth 0 at the near plane) matrix like any other; the pass reverses it.
+    pub layer: NativeLayer,
     pub eye: [f32; 3],
     pub ambient: [f32; 3],
     pub lights: [NativeLight; NATIVE_MAX_LIGHTS],
@@ -328,6 +351,7 @@ struct Surface {
     sort_key: u8,
     cull: NativeCull,
     stage: Stage,
+    polygon_offset: u8,
     bind_group: wgpu::BindGroup,
 }
 
@@ -347,6 +371,7 @@ struct Queued {
     palette_offset: u32,
     /// Fill the frame block's matrix from the target view at upload.
     view_proj_from_view: bool,
+    layer: NativeLayer,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -357,6 +382,9 @@ struct PipelineKey {
     color: wgpu::TextureFormat,
     depth: wgpu::TextureFormat,
     samples: u32,
+    /// The viewmodel's reversed depth ([`NativeLayer::Viewmodel`]): `GREATER` passes.
+    reversed: bool,
+    polygon_offset: u8,
 }
 
 pub(crate) struct NativeState {
@@ -529,27 +557,73 @@ fn finite(m: &[f32]) -> bool {
     m.iter().all(|v| v.is_finite())
 }
 
-/// The scene projection with its near plane pulled in for the native viewmodel. The viewmodel sits
-/// at the eye, so the scene's near (`W3DView.cpp`: `NearZ = MAP_XY_FACTOR`, 10 world units) cuts the
-/// rear of the gun and the optic base into jagged holes; BO2's viewmodel has its own near close to
-/// the eye. The FOV/aspect and the far are kept, so the viewmodel still uses the scene's projection.
+/// A clip transform with its depth reversed: `z' = w - z`, so depth 1 lies at the near plane and 0
+/// at the far (BO2's convention: its depth tests compare `GREATER`, `t6mp` `FUN_0046b780`'s table
+/// maps `LESS` to `D3D11_COMPARISON_GREATER`). Row 2 of the column-major matrix becomes row 3
+/// minus row 2, in double precision.
+fn reverse_depth(m: &[f32; 16]) -> [f32; 16] {
+    let mut out = *m;
+    for c in 0..4 {
+        out[c * 4 + 2] = (m[c * 4 + 3] as f64 - m[c * 4 + 2] as f64) as f32;
+    }
+    out
+}
+
+/// The viewmodel's projection: the scene's, with its near plane pulled in and its depth reversed.
+/// The viewmodel sits at the eye, so the scene's near cuts the rear of the gun and the optic base
+/// into jagged holes; BO2's viewmodel has its own near close to the eye. The FOV/aspect and the far
+/// are kept, so the viewmodel still uses the scene's projection. The depth terms are computed from
+/// the planes directly (`-n/(f-n)`, `nf/(f-n)`), not by subtracting the scene's: a reversed depth
+/// only gains precision if nothing cancels on the way. A projection that is not a perspective one
+/// (or is already closer than the viewmodel's near) keeps its planes and is only reversed.
 fn viewmodel_projection(proj: &[f32; 16]) -> [f32; 16] {
     /// The viewmodel's near, in world units (1 unit = 6 inches): the harness's `NEAR`, close enough
     /// that the arms at the eye do not clip into a hole.
-    const NEAR: f32 = 0.1;
-    let (m10, m14) = (proj[10], proj[14]);
+    const NEAR: f64 = 0.1;
+    let mut out = reverse_depth(proj);
+    let (m10, m14) = (proj[10] as f64, proj[14] as f64);
     if !(m10 > 1.0 && m14 < 0.0) {
-        return *proj;
+        return out;
     }
     let near = -m14 / m10;
     let far = near * m10 / (m10 - 1.0);
-    if !near.is_finite() || !far.is_finite() || near <= NEAR || far <= NEAR {
-        return *proj;
+    if !near.is_finite() || !far.is_finite() || far <= NEAR {
+        return out;
     }
-    let mut out = *proj;
-    out[10] = far / (far - NEAR);
-    out[14] = -NEAR * far / (far - NEAR);
+    let n = near.min(NEAR);
+    out[10] = (-n / (far - n)) as f32;
+    out[14] = (n * far / (far - n)) as f32;
     out
+}
+
+/// A native pipeline's depth state: solid surfaces write depth and must be closer than what is
+/// there; blended ones only test, and draw at equal depth too (a glow on the surface it lights).
+/// `reversed` is the viewmodel's depth, where closer is larger. The material's polygon offset
+/// pulls a decal towards the eye.
+fn native_depth_state(format: wgpu::TextureFormat, blended: bool, reversed: bool, polygon_offset: u8) -> wgpu::DepthStencilState {
+    use wgpu::CompareFunction as C;
+    let compare = match (blended, reversed) {
+        (false, false) => C::Less,
+        (true, false) => C::LessEqual,
+        (false, true) => C::Greater,
+        (true, true) => C::GreaterEqual,
+    };
+    wgpu::DepthStencilState { format, depth_write_enabled: Some(!blended), depth_compare: Some(compare), stencil: Default::default(), bias: polygon_offset_bias(polygon_offset, reversed) }
+}
+
+/// The depth bias of BO2's polygon offset level `level` on a depth whose closer values are
+/// `reversed`ly larger: BO2's rasterizer state for `GFXS1_POLYGON_OFFSET_1`/`_2` (`t6mp`
+/// `FUN_0046b8d0`) sets `DepthBias = 256 * level` and `SlopeScaledDepthBias = level` (its
+/// constant -1.0 at `0x00c61c60`, times the level, negated), both towards the eye on its reversed
+/// depth. On a standard depth the same pull is the negative. Level 3 is the shadow map's own
+/// (`sm_polygonOffsetBias`/`Scale`, only in the shadow-caster technique) and none here.
+pub(crate) fn polygon_offset_bias(level: u8, reversed: bool) -> wgpu::DepthBiasState {
+    let level = match level {
+        1 | 2 => level as i32,
+        _ => return wgpu::DepthBiasState::default(),
+    };
+    let sign = if reversed { 1 } else { -1 };
+    wgpu::DepthBiasState { constant: sign * 256 * level, slope_scale: (sign * level) as f32, clamp: 0.0 }
 }
 
 impl Renderer {
@@ -737,7 +811,7 @@ impl Renderer {
             } else {
                 Stage::Lit
             };
-            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, stage, bind_group });
+            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, stage, polygon_offset: s.polygon_offset, bind_group });
         }
         if built.is_empty() {
             // `DRAWN` hides the W3D body in third person (CONTRACT.md), so a mesh that can only draw
@@ -807,7 +881,9 @@ impl Renderer {
         let frame_offset = ring.len() as u32;
         let f = &d.frame;
         let mut block = Vec::with_capacity(FRAME_BYTES as usize);
-        block.extend(f.view_proj.unwrap_or(super::math::IDENTITY).iter().flat_map(|v| v.to_le_bytes()));
+        let m = f.view_proj.unwrap_or(super::math::IDENTITY);
+        let m = if f.layer == NativeLayer::Viewmodel { reverse_depth(&m) } else { m };
+        block.extend(m.iter().flat_map(|v| v.to_le_bytes()));
         for v in [[f.eye[0], f.eye[1], f.eye[2], 1.0], [f.ambient[0], f.ambient[1], f.ambient[2], 1.0]] {
             block.extend(v.iter().flat_map(|c| c.to_le_bytes()));
         }
@@ -838,7 +914,7 @@ impl Renderer {
             ring.extend(m.iter().flat_map(|c| c.to_le_bytes()));
         }
         ring.resize(palette_offset as usize + PALETTE_BYTES as usize, 0);
-        self.native.queue.push(Queued { target_view: d.target_view, before_view: d.before_view, mesh, frame_offset, palette_offset, view_proj_from_view: d.frame.view_proj.is_none() });
+        self.native.queue.push(Queued { target_view: d.target_view, before_view: d.before_view, mesh, frame_offset, palette_offset, view_proj_from_view: d.frame.view_proj.is_none(), layer: d.frame.layer });
         true
     }
 
@@ -879,7 +955,12 @@ impl Renderer {
         for q in &self.native.queue {
             if q.view_proj_from_view {
                 let v = &self.views[q.target_view as usize];
-                let vp = super::math::mul(&v.view, &viewmodel_projection(&v.proj));
+                // The world's draws take the scene's own projection, so their depth is the
+                // scene's; the viewmodel's its own near, reversed.
+                let vp = match q.layer {
+                    NativeLayer::World => super::math::mul(&v.view, &v.proj),
+                    NativeLayer::Viewmodel => super::math::mul(&v.view, &viewmodel_projection(&v.proj)),
+                };
                 let at = q.frame_offset as usize;
                 for (k, c) in vp.iter().enumerate() {
                     self.native.ring[at + 4 * k..at + 4 * k + 4].copy_from_slice(&c.to_le_bytes());
@@ -928,13 +1009,7 @@ impl Renderer {
             // index order for that, verified in game: zhbo-assets `character.rs`); this pass keeps
             // BO2's own order, so its front faces are clockwise in the framebuffer.
             primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, front_face: wgpu::FrontFace::Cw, cull_mode, ..Default::default() },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: key.depth,
-                depth_write_enabled: Some(!blended),
-                depth_compare: Some(if blended { wgpu::CompareFunction::LessEqual } else { wgpu::CompareFunction::Less }),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
+            depth_stencil: Some(native_depth_state(key.depth, blended, key.reversed, key.polygon_offset)),
             multisample: wgpu::MultisampleState { count: key.samples, ..Default::default() },
             fragment: Some(wgpu::FragmentState {
                 module: &self.native.module,
@@ -1100,20 +1175,22 @@ impl Renderer {
             }
             let own_depth = self.native_depth(target.width, target.height, target.samples);
             let Some((_, frame_group, _)) = self.native.gpu_ring.clone() else { break };
-            // Two passes: the draws the world camera frames (a third-person body, a dropped
-            // weapon) test and write the scene's own depth, so the world in front of them hides
-            // them as it hides the W3D models they stand in for; then the viewmodel's, over the
-            // world on a depth of its own, cleared (BO2's separate viewmodel depth range). A
-            // target without a depth attachment draws both on the pass's own.
-            for world in [true, false] {
-                let scene_depth = target.depth.clone().filter(|_| world);
+            // Two passes: the world camera's draws (a third-person body, a dropped weapon) test
+            // and write the scene's own depth, so the world in front of them hides them as it
+            // hides the W3D models they stand in for; then the viewmodel's, over the world on a
+            // reversed depth of its own, cleared (BO2's separate viewmodel depth range). World
+            // draws on a target without a depth attachment get a cleared standard depth of their
+            // own instead.
+            for layer in [NativeLayer::World, NativeLayer::Viewmodel] {
+                let scene_depth = target.depth.clone().filter(|_| layer == NativeLayer::World);
+                let reversed = layer == NativeLayer::Viewmodel;
                 let (depth, depth_format) = scene_depth.clone().unwrap_or_else(|| (own_depth.clone(), DEPTH_FORMAT));
                 // Pipelines first (building needs &mut self, the pass borrows the encoder).
                 plans.clear();
                 for blended in [false, true] {
-                    for (qi, q) in now.iter().enumerate().filter(|(_, q)| q.target_view == tv && q.view_proj_from_view == world) {
+                    for (qi, q) in now.iter().enumerate().filter(|(_, q)| q.target_view == tv && q.layer == layer) {
                         for (si, s) in q.mesh.surfaces.iter().enumerate().filter(|(_, s)| s.blend.blended() == blended) {
-                            let key = PipelineKey { blend: s.blend, cull: s.cull, stage: s.stage, color: color_format, depth: depth_format, samples: target.samples };
+                            let key = PipelineKey { blend: s.blend, cull: s.cull, stage: s.stage, color: color_format, depth: depth_format, samples: target.samples, reversed, polygon_offset: s.polygon_offset };
                             if let Some(p) = self.native_pipeline(key) {
                                 plans.push((p, qi, si));
                             }
@@ -1129,7 +1206,8 @@ impl Renderer {
                 let depth_ops = if scene_depth.is_some() {
                     wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }
                 } else {
-                    wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }
+                    // Cleared to the far plane: 0 on the reversed depth, 1 on a standard one.
+                    wgpu::Operations { load: wgpu::LoadOp::Clear(if reversed { 0.0 } else { 1.0 }), store: wgpu::StoreOp::Discard }
                 };
                 let stencil_ops = (scene_depth.is_some() && depth_format.has_stencil_aspect()).then_some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store });
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1204,10 +1282,45 @@ mod tests {
         let proj = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, f / (f - n), 1.0, 0.0, 0.0, -n * f / (f - n), 0.0];
         let out = viewmodel_projection(&proj);
         assert_eq!((out[0], out[5]), (1.0, 1.0), "the FOV and aspect are untouched");
-        assert!((out[10] - 100.0 / (100.0 - 0.1)).abs() < 1e-5);
-        assert!((out[14] + 0.1 * 100.0 / (100.0 - 0.1)).abs() < 1e-5);
-        // A projection already closer than the viewmodel near is left alone.
+        // Reversed, at the viewmodel's 0.1 near: depth = (out10 * z + out14) / z.
+        let depth = |m: &[f32; 16], z: f32| (m[10] * z + m[14]) / (m[11] * z);
+        assert!((depth(&out, 0.1) - 1.0).abs() < 1e-6, "1 at the viewmodel's near: {}", depth(&out, 0.1));
+        assert!(depth(&out, 100.0).abs() < 1e-6, "0 at the scene's far: {}", depth(&out, 100.0));
+        assert!(depth(&out, 2.0) > depth(&out, 3.0), "closer is larger");
+        // A projection already closer than the viewmodel near keeps its own near, reversed.
         let close = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 / (1.0 - 0.05), 1.0, 0.0, 0.0, -0.05 / (1.0 - 0.05), 0.0];
-        assert_eq!(viewmodel_projection(&close), close);
+        let out = viewmodel_projection(&close);
+        assert!((depth(&out, 0.05) - 1.0).abs() < 1e-5 && depth(&out, 1.0).abs() < 1e-5);
+        // An orthographic matrix is only reversed: z' = 1 - z.
+        let ortho = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.25, 1.0];
+        let out = viewmodel_projection(&ortho);
+        assert_eq!((out[10], out[14]), (-0.5, 0.75));
+    }
+
+    #[test]
+    fn the_viewmodel_depth_keeps_its_precision_across_the_scene() {
+        // The first-person scene: BO2's 4-inch near (0.667 units) and a 2000-unit far. Two
+        // surfaces a hundredth of an inch apart on the gun (2 to 4 units from the eye) stay apart
+        // in f32 depth, and keep their order, through the reversed projection.
+        let (n, f) = (4.0f32 / 6.0, 2000.0f32);
+        let proj = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, f / (f - n), 1.0, 0.0, 0.0, -n * f / (f - n), 0.0];
+        let out = viewmodel_projection(&proj);
+        let depth = |z: f32| (out[10] * z + out[14]) / z;
+        for z in [2.0f32, 3.0, 4.0] {
+            let gap = 0.01 / 6.0;
+            assert!(depth(z) > depth(z + gap), "{z}: {} vs {}", depth(z), depth(z + gap));
+        }
+    }
+
+    #[test]
+    fn polygon_offsets_pull_towards_the_eye_as_bo2_does() {
+        // BO2's reversed depth: +256/+1 per level (t6mp FUN_0046b8d0).
+        assert_eq!(polygon_offset_bias(1, true), wgpu::DepthBiasState { constant: 256, slope_scale: 1.0, clamp: 0.0 });
+        assert_eq!(polygon_offset_bias(2, true), wgpu::DepthBiasState { constant: 512, slope_scale: 2.0, clamp: 0.0 });
+        // A standard depth: the same pull, negated.
+        assert_eq!(polygon_offset_bias(1, false), wgpu::DepthBiasState { constant: -256, slope_scale: -1.0, clamp: 0.0 });
+        // None, and the shadow map's level, carry no bias.
+        assert_eq!(polygon_offset_bias(0, true), wgpu::DepthBiasState::default());
+        assert_eq!(polygon_offset_bias(3, true), wgpu::DepthBiasState::default());
     }
 }
