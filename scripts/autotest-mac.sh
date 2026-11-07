@@ -737,6 +737,14 @@ EOF
     check "impacts: flesh" "player [0-9]+ impacts:.*flesh [1-9]"
     check "impacts: terrain" "player [0-9]+ impacts:.*(concrete|dirt|grass|asphalt|rock|sand|snow|wood) [1-9]"
     check "impact fx played" "impact fx: [1-9][0-9]* played, 0 missing"
+    # The own footsteps fall on BO2's bob cycle, each from the first-person footstep table for the
+    # movement on the ground's surface (`stepsounds`); never the old grass-only events.
+    check "own footsteps" "sound ZHBO_BO2_Step_1st(q)?_(sprint|run|walk|crouch_run|crouch_walk|prone)_[a-z]+: playing"
+    if grep -qE "sound ZHBO_BO2_(Step|SprintStep|Land): " "$out/ConquerOps.log"; then
+        printf '%-22s FAIL\n' "  ...no old events"; ok=1
+    else
+        printf '%-22s PASS\n' "  ...no old events"
+    fi
     echo "screenshots and log: $out"
     exit $ok
 fi

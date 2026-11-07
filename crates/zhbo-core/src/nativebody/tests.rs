@@ -468,6 +468,13 @@ fn a_torso_clip_moves_the_upper_body_over_the_legs() {
     // At its very start and end it is the movement clip's (it fades in and out).
     l.pose(&req, Some(&legs), Some((&torso, 0.0, false)), &mut out);
     assert!(close(out.local[spine].0, QUAT_IDENTITY), "no torso at its first frame");
+    // A movement change cross-fades: half-way through its blend the hip is half the old clip's
+    // bend and half the new one's (none), whatever the torso does.
+    let stand = Anim { name: "pb_stand".into(), num_frames: 30, frame_rate: 30.0, looping: true, delta: false, asset_type: 0, bones: vec![track("j_hip_le", QUAT_IDENTITY)], notes: vec![] };
+    l.pose_full(&req, Some(&stand), Some((&legs, 0.5)), None, None, &mut out);
+    assert!(close(out.local[hip_bone].0, axis_angle([1.0, 0.0, 0.0], 0.25)), "half-blended: {:?}", out.local[hip_bone].0);
+    l.pose_full(&req, Some(&stand), Some((&legs, 1.0)), None, None, &mut out);
+    assert!(close(out.local[hip_bone].0, QUAT_IDENTITY), "blended in");
     l.pose(&req, Some(&legs), Some((&torso, 1.0, false)), &mut out);
     assert!(close(out.local[spine].0, QUAT_IDENTITY), "nor at its end");
     assert_eq!(torso_weight(TORSO_BLEND * 0.5, 1.0), 0.5);

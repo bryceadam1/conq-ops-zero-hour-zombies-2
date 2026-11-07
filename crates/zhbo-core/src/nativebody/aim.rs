@@ -15,8 +15,11 @@
 //! which is why the swing aims at twice it, and the gun in the hands points where the player looks.
 //!
 //! The rotations are about the body's own lateral axis (BO2's controller angles are pitch about Y
-//! in the model frame), at each bone, so the legs below the pelvis follow its share as BO2's do.
-//! Presentation only: the sim's hit boxes stay on their posed states.
+//! in the model frame), at each bone. The pelvis's share turns at `torso_stabilizer`, the MP
+//! skeleton's bone between the pelvis and the spine: turned at the pelvis itself it swings the hips
+//! too, and the headless sweep showed a General looking up kicking his legs out in front of him,
+//! which BO2's players never do (a decision: the share and the pivot are BO2's, the legs stay on the
+//! clip). Presentation only: the sim's hit boxes stay on their posed states.
 
 /// The controller bones and each one's share of the torso pitch and of the head's remainder
 /// (`FUN_008a9ed0`'s pitch column: `back_low` none, `back_mid` 0.1, `back_up` 0.5, `neck` 0.3 of
@@ -100,9 +103,12 @@ pub fn apply(skel: &zhbo_native::pose::Skeleton, bones: &[Option<usize>; CONTROL
     }
 }
 
-/// The controller bones' indices in `skel`.
+/// The bone the pelvis's share turns: the spine's own root above the hips, where the skeleton has it.
+pub const PELVIS_PIVOT: &str = "torso_stabilizer";
+
+/// The controller bones' indices in `skel` (the pelvis's at [`PELVIS_PIVOT`] when there is one).
 pub fn bones(skel: &zhbo_native::pose::Skeleton) -> [Option<usize>; CONTROLLERS.len()] {
-    CONTROLLERS.map(|(name, _, _)| skel.bone(name))
+    CONTROLLERS.map(|(name, _, _)| if name == "pelvis" { skel.bone(PELVIS_PIVOT).or_else(|| skel.bone(name)) } else { skel.bone(name) })
 }
 
 #[cfg(test)]
@@ -123,6 +129,25 @@ mod tests {
         let mut shield = Aim::default();
         let s = shield.step(AimIn { view_pitch: -30.0, shield: true, ..Default::default() }, 16.0);
         assert!((s[0] + s[2] - -15.0).abs() < 1e-3);
+    }
+
+    /// A controller turns its bone about the body's lateral axis in the model frame: a spine bone
+    /// turned 30° down tips its child forward and down; the pelvis share pivots above the hips.
+    #[test]
+    fn a_controller_turns_its_bone_about_the_lateral_axis() {
+        use zhbo_native::pose::Bone;
+        let bone = |name: &str, parent: Option<usize>, at: [f32; 3]| Bone { name: name.into(), parent, bind_local: ([0.0, 0.0, 0.0, 1.0], at), anim_base: [0.0; 3], bind: ([0.0, 0.0, 0.0, 1.0], at), inv_bind: ([0.0, 0.0, 0.0, 1.0], [0.0; 3]), hidden: false, animated: true };
+        let skel = zhbo_native::pose::Skeleton { bones: vec![bone("pelvis", None, [0.0, 0.0, 36.0]), bone("j_hip_le", Some(0), [0.0, 4.0, 0.0]), bone("torso_stabilizer", Some(0), [0.0; 3]), bone("back_mid", Some(2), [0.0, 0.0, 10.0]), bone("j_head", Some(3), [0.0, 0.0, 20.0])], parts: vec![] };
+        let b = bones(&skel);
+        assert_eq!(b[0], Some(2), "the pelvis share pivots at torso_stabilizer");
+        assert_eq!(b[3], None, "no back_up: skipped, as BO2's");
+        let mut local = skel.bind_pose();
+        let mut model = Vec::new();
+        apply(&skel, &b, &[0.0, 0.0, 30.0, 0.0, 0.0], &mut local, &mut model);
+        skel.model_space(&local, &mut model);
+        let head = model[4].1;
+        assert!(head[0] > 9.9 && head[2] < 46.0 + 17.4, "the head tips forward and down: {head:?}");
+        assert_eq!(model[1].1, [0.0, 4.0, 36.0], "the hip stays");
     }
 
     /// After the first frame the torso swings and the controllers ease: a sudden look up is not

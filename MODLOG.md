@@ -13821,7 +13821,10 @@ F7), each re-read in t6mp before porting (dumps in `~/.opencode/plan/anim-sound/
   `view − P`; prone keeps half of a look up and none of a look down, a riot shield halves it;
   controllers ease at .3°/ms (`FUN_008aa870`). **The MP bodies have no `back_up` bone** (all three
   factions), so the gun-carrying spine turns `.5 × 2 × view` = the view pitch: the ×2 is what makes
-  the gun aim at the crosshair. The pelvis share turns the legs with it, as BO2's hierarchy does.
+  the gun aim at the crosshair. The pelvis's share turns at `torso_stabilizer` (the MP skeleton's
+  bone between the pelvis and the spine): turned at the pelvis itself the hips swing too, and the
+  headless sweep showed a General looking up kicking his legs out before him — a decision, the
+  shares and the pitch BO2's, the legs left on the clip (`aim_an94_mp.png`).
   The body's clip time is now the render clock (it stepped at 30 Hz).
 * **Tools**: `zhbo-assets rawfile <ff> <path>`, `zhbo-assets footsteps <ff>`;
   `render_world_weapons --motion <id>` draws every movement state and aim pitches -40/0/+40.
