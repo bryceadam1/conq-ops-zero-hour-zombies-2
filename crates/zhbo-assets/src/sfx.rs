@@ -844,14 +844,20 @@ mod tests {
         assert!(event("ZHBO_BO2_Land_plr_concrete").contains("ui player"), "the own landing is 2D");
         // Every step event of every table and surface converted (the map zone carries all five
         // footstep tables), each from its own table's alias.
+        let mut absent = Vec::new();
         for t in zhbo_core::stepsounds::StepTable::ALL {
             for st in zhbo_core::footsteps::Step::ALL {
                 for s in zhbo_core::stepsounds::SURFACES {
                     let e = zhbo_core::stepsounds::step_event(t, st, s);
-                    assert!(ini.contains(&format!("AudioEvent {e}\n")), "{e}");
+                    if !ini.contains(&format!("AudioEvent {e}\n")) {
+                        absent.push(e);
+                    }
                 }
             }
         }
+        // The one gap is BO2's own: `default_3rd_person_loud`'s snow row names aliases (hashes) no
+        // bank of the map zone holds, so BO2 hash-misses and plays nothing there, as the mod does.
+        assert!(absent.len() == 6 && absent.iter().all(|e| e.contains("_3rdl_") && e.ends_with("_snow")), "{} step events not converted: {absent:?}", absent.len());
     }
 
     /// Needs the player's BO2 install. The menu cues the converter leaves missing are in no bank

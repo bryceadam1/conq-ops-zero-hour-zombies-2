@@ -606,6 +606,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `EventKind::KilledBy { dmg, dir }`, `torso::death_context`) whole-body, faded in and held at its end, without the gun (BO2's corpse goes ragdoll part-way;
   Zero Hour has no ragdoll, so the clip's last pose lies until the body is removed). Overhead, the
   rounds Zero Hour spends (`Arsenal::rts_shot`) start the gun's shot torso, client-side.
+* **The idle blend stays in Rust.** BO2 plays idle over the clip before it with a 0.5 s blend
+  (`weapAnim` 0/1 through `FUN_0052b670`; every other change cuts). The client hands the clip idle
+  is coming in over, its time and idle's weight to the native pass with
+  `nativevm::ffi::set_blend` (`viewmodel::Frame::blend`); `ZhboNativeIn` is unchanged.
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
   trigger, each with its own magazine), so its left gun plays its own `_LEFT` slot while the hands
   fire, reload or idle apart. The client hands that clip and time to the native pass with
@@ -909,8 +913,21 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   root. In *body* mode (M3) the gun rides the body's own posed `tag_weapon_right`, and the whole
   rig is placed at the General object's world transform (`pos`/`yaw` from the sim's `NativePose`);
   the bridge's tag is ignored. The body's clip is picked from the movement state with the
-  run-time fallback chain (`state::fallbacks`); the full BO2 transition graph and blend times are
-  deliberately skipped.
+  run-time fallback chain (`state::fallbacks`). **Movement states** (`state`, `COUNT` 30): the
+  stances, and each moving gait (stand walk and run, crouch walk, prone crawl, stand and crouch
+  aimed walk) in every `direction` the script keys on (forward, backward, left, right:
+  `death::move_direction` of the sim's movement keys, `player_strafeAnimCosAngle`). Standing runs
+  at `player_animRunThreshhold` (140"/s) or faster, walks otherwise, walks whenever aimed
+  (`nativebody::state_of`; `PM_Footsteps` `FUN_008c4820`). A direction a body lacks falls back to
+  its forward gait. **Blends** (`nativebody::ffi::Present`): a movement change cross-fades the new
+  clip in over the old one (both on the request's clock) over the new clip's `move_blend` row
+  (the script's `blendtime`, else `blendouttime`, `FUN_008a8c40`; rows in the torso table) or the
+  tuning pack's `PlayerAnimBlendTime` (200 ms). **Aim pitch** (`nativebody::aim`): each first-person
+  General's view pitch is published by the client (`ffi::publish_aim`, Rust-side like the torso)
+  and BO2's bone controllers turn `pelvis`, `back_mid`, `back_up` (absent on the MP bodies) and
+  `neck` by it (`BG_PlayerAngles`/`BG_Player_DoControllers`); an overhead General looks level.
+  The clip `time` the core reports is the render clock (`Client::render_lag`), so movement clips
+  move every drawn frame.
 * **Animation sets: the body animates by the weapon in hand.** BO2's `mp/playeranim.script` picks a
   player's body clip by his weapon's `weapClass` and `playerAnimType` (the line of
   `mp/playeranimtypes.txt` the def stores) as much as by stance and gait: a pistol walks
@@ -920,7 +937,7 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   — the weapons the script animates alike in every movement state; set 0 is the rifleman's, which
   also takes every weapon the script gives no clip of its own (the crossbow, shotguns, snipers) —
   and stores each def's set in `WeaponDef::body_anims` (`BodyAnims` in the weapon table; a
-  combination and an alt mode keep their own def's). A clip id is `set × 16 + state`
+  combination and an alt mode keep their own def's). A clip id is `set × 32 + state`
   (`state::id`, at most `state::MAX_SETS` = 9 sets); the body manifest lists set 0's every state
   and another set's only where it differs, and `state::fallbacks` tries each nearer state in the
   set, then the rifleman's same state. `NativePose.state`/`ZhboNativePose.state` and the hit boxes'
@@ -979,8 +996,8 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
     the snipers' smoke) and one whose image is not in the packs keep the line in the tint.
 * **An overhead General's body clip.** `PlayerSim::body_state` under RTS control: he stands
   (whatever stance, aim or sprint his body kept from his last first person; Zero Hour has none of
-  them overhead), walking or running at the engine's speed (`ZhboGeneralMotion`; the walk/run
-  split is `nativebody::state_of`'s share of `g_speed`) while `MOVING`, idle otherwise. The sim's
+  them overhead), walking or running forward at the engine's speed (`ZhboGeneralMotion`; the
+  walk/run split is `player_animRunThreshhold`) while `MOVING`, idle otherwise. The sim's
   own hit pose for him (`hit_states`, no engine motion) is the standing idle. The first time the
   body pass draws each movement state it logs `native body: General G body clip <name> (movement
   state S)`.
@@ -1490,6 +1507,17 @@ display names (the install's own language, `t6zone::language`: the folder `local
 stand-ins (BO2's strings, checked against the install by an ignored test).
 
 ## Versioning
+
+**Pending for the next bump (anim-sound, round 8).** No ABI change. The archive must be rebuilt
+(`hud::VERSION`): the body's clip ids moved to `set × 32 + state` with 20 new directional and
+aimed-walk states (`zhbo_native::thirdperson::state`, the body manifest's ids; a manifest from an
+older archive names the old ids), the torso table gained `move_blend` rows, the weapon table the
+`SprintCycleScale` key (`fSprintCycleScale`, sim data in the content CRC), and the sound events
+changed: `ZHBO_BO2_Step`, `_SprintStep`, `_Land`, `_StepNpc`, `_SprintStepNpc` and `_LandNpc` are
+gone, replaced by `ZHBO_BO2_Step_<table>_<move>_<surface>` (BO2's five footstep tables × six
+movements × eleven surfaces, `stepsounds::step_event`) and `ZHBO_BO2_Jump_<plr|npc>_<surface>` /
+`ZHBO_BO2_Land_<plr|npc>_<surface>`. The tuning pack gained the view bob, bob cycle, footstep and
+body-gait keys (`[View]`, `[BodyAnimation]`).
 
 `ZHBO_ABI_VERSION` (`host/zhbo/zhbo_core.h`) must equal `zhbo_abi_version()`; struct sizes are asserted
 on both sides (`static_assert` in the header, `const _: ()` in `ffi.rs`). The API tables' field counts

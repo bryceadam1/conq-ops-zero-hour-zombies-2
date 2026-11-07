@@ -13752,3 +13752,78 @@ machine (load 17), saw Zero Hour end the match at frame 2,673 with no sim kill l
 General gone from 500 hp in one frame, then the joiner's on the joiner only) and the hashes
 parting on that last frame alone — the engine's teardown, not a sim divergence. The long runs were
 then dropped by the round's testing-scope change; the integrator's ladder reruns them.
+
+## Animation and sound by BO2's rules: bodies, viewmodel, view bob, bob cycle, footsteps (2026-11-06, branch `v1/anim-sound`)
+
+Round 8's presentation findings (`bo2-audit/presentation.md` H2, H3, M2, M3, M4, M6, M9; mechanical-scan
+F7), each re-read in t6mp before porting (dumps in `~/.opencode/plan/anim-sound/ghidra/`).
+
+* **The bob cycle is `PM_Footsteps`' (`FUN_008c4820`), not 9 units per swing.** Each move on the
+  ground with a movement key held advances `ps->bobCycle` by `msec × (xyspeed / top) × factor`:
+  `top` is `FUN_008c4690`'s (the run speed by the keys' direction — both keys `((strafe−1)·0.75+2)·0.5`,
+  backwards also `(back+1)·0.5`, a side key alone `(strafe−1)·0.75+1`, back alone `back` — then a
+  walk's 0.4 or the sprint scale, the weapon's move scale, the stance's; `movement::bob_top_speed`),
+  the factor the engine table at `0x00bd265c` (`[stance][walking]`, stand .335/.28, prone .25/.24,
+  crouch .34/.29, three more rows running backwards: tuning `BobFactor*`), sprinting upright
+  `player_sprintCameraBob` × the weapon's `fSprintCycleScale` (`FUN_008c1d00`; new weapon field
+  `SprintCycleScale`, conformance column `sprint_cycle_scale`). Under an inch a second the cycle
+  resets (`FUN_008c1a20`); keyless or airborne it holds. Walking = standing at
+  `player_runbkThreshhold` (60"/s) or slower; the hold-breath walk (`pm_flags & 0x40`,
+  `FUN_008c5310`: the sprint key while aimed, without Stalker) also slows BO2's move by 0.4, which
+  the mod's movement does not model, so the bob does not count it either (found elsewhere). The
+  cycle is kept fractional (BO2 truncates its byte each move; at the display rate that drops up to
+  a third of the cycle). It is sim state (`viewmodel::Motion`, the gun angles aimed shots follow):
+  `footsteps::advance`. A full run now steps 2.6 times a second (72" apart), not every 54".
+* **Footsteps** fall where BO2's do: crossing a multiple of 64 into the loud quarters
+  (`FUN_008c16c0`/`FUN_008c1760`, at `player_footstepsThreshhold` 10"/s), two per cycle, the
+  movement's column by `FUN_008c0a10` (prone; crouch run at `player_runThreshhold` else crouch
+  walk; sprint; run; walk). **The sounds come from BO2's footstep tables** (`FootstepTableDef`,
+  asset 57, read by `zhbo_formats::footstep`: `sndAliasTable[32 surfaces][7 moves]` of alias hashes,
+  hash `FUN_0083c1d0` seed 0x1505 ×0x1003f; resolved against the bank's names; `zhbo-assets
+  footsteps mp_raid.ff` prints them). `FUN_004cb480` picks the table: `default_1st_person` for your
+  own, `default_3rd_person` for others, the `_quiet` ones (`fly_qstep_*`) with Dead Silence,
+  `default_3rd_person_loud` (`fly_lstep_*`) for an enemy's when you have Awareness, and the plain
+  table when both perks meet. **Dead Silence was silence in the mod; BO2 plays the quiet table.**
+  The surface is the sim's (`LogicHost::surface_at`; flesh steps as default). Jumps and landings are
+  `_footsteps.csc`'s: `fly_step_run_<plr|npc>_<surface>` and `fly_land_<plr|npc>_<surface>` — the
+  own landing was `fly_dtp_land_plr_grass`, the dive-to-prone's. 330 step events + 44
+  jump/landing events (`stepsounds`).
+* **The view bob is positional** (G4's "added to the view angles" was wrong): `FUN_0051f760` adds
+  `FUN_008f0ac0` to the eye's height and `FUN_008f0c70` along the view's right; the `bg_viewBob*`
+  amplitudes × the ground speed (stand and crouch blended hip→aimed, crouch before sprint, prone and
+  sprint unblended), capped `bg_bobMax`, on the same cycle (`gunpos::view_bob`, client eye only;
+  the sim's shots keep the unbobbed eye). The camera's own landing dip (`t/150 × landChange`, back by
+  450 ms) is in the same function and left for a follow-up.
+* **Viewmodel.** The fire clip holds for the weapon's `fireTime`, no 0.3 s floor; idle then blends
+  in over 0.5 s over whatever clip it replaces (`_g_move.c` case 0/1 → `FUN_0052b670`,
+  `DAT_00c733cc`; Rust-side `nativevm::ffi::set_blend`), every other change still cuts. Melee picks
+  `9 + rand(n)` (n = 1 + the run of `anim_melee1..3` the weapon has; case 10) from a client stream
+  once per swing, the empty melee where it exists, and the lunge plays `anim_melee_charge[_empty]`
+  (cases 0xc/0xd) while the sim charges. The idle blend's perk scale (specialty 0x16 × a dvar) and
+  the dual-wield left gun's idle blend are not ported.
+* **The damage flinch** (`FUN_008f0e00`): each hit replaces the kick and restarts a 500 ms window
+  (`FlinchTime`); it eases in over 100 ms (`x·(2−|x|)`, `FUN_0075e360`) and out to the window's end;
+  its yaw turns the view's **roll** (not its yaw); aiming scales it by `1 − ads/2`, an overlay scope
+  by `× (1 + ads/2)` (`recoil::Flinch`). The old `+=` with `×(1−12·dt)` is gone.
+* **Third-person bodies.** Every moving gait in every direction: the converter asks the script with
+  `direction` forward/backward/left/right (it only asked forward; the feet slid on strafes), plus
+  aimed walking (the script's `walk` with `weapon_position ads`; crouched `pb_crouch_shoot_run_*`).
+  `SET_STRIDE` 16 → 32 for 30 states. Standing runs at `player_animRunThreshhold` 140"/s, not
+  0.6 × `g_speed`. The hit table keeps the ten forward/stance poses (`state::POSED`); a direction's
+  boxes are its forward gait's, so the trace is unchanged. **Blends**: a movement change
+  cross-fades over the clip's script `blendtime`/`blendouttime` (`FUN_008a7c10` keeps them on the
+  animation, `FUN_008a8c40` takes blendtime else blendouttime), otherwise 200 ms (the value the
+  same function uses with no animation; the -1 default's handling in the XAnim goal-weight call was
+  not resolved — `PlayerAnimBlendTime`). **Aim pitch**: `BG_PlayerAngles` (`FUN_008a9a70`) swings
+  the torso pitch toward 2 × the view pitch (`BG_SwingAngles`: clamp 45, speed .15, scale
+  `|d|·.05` ≥ .5; 1 × when the server-anim dvar at `0x02b372a4` is set); `BG_Player_DoControllers`
+  (`FUN_008a9ed0`) spreads it `pelvis` .4, `back_mid` .1, `back_up` .5, and the neck .3 of
+  `view − P`; prone keeps half of a look up and none of a look down, a riot shield halves it;
+  controllers ease at .3°/ms (`FUN_008aa870`). **The MP bodies have no `back_up` bone** (all three
+  factions), so the gun-carrying spine turns `.5 × 2 × view` = the view pitch: the ×2 is what makes
+  the gun aim at the crosshair. The pelvis share turns the legs with it, as BO2's hierarchy does.
+  The body's clip time is now the render clock (it stepped at 30 Hz).
+* **Tools**: `zhbo-assets rawfile <ff> <path>`, `zhbo-assets footsteps <ff>`;
+  `render_world_weapons --motion <id>` draws every movement state and aim pitches -40/0/+40.
+* **Gotcha**: the MP `playeranim.script` is not in the reference dump (only SP/ZM); read it from
+  the install with `rawfile common_mp.ff mp/playeranim.script`.

@@ -37,6 +37,28 @@ const CANDIDATES: &[(u16, &[&str])] = &[
     (state::CROUCH_ADS, &["pb_crouch_ads", "pb_ducked_ads"]),
     (state::PRONE_IDLE, &["pb_prone_alert", "pb_prone_idle"]),
     (state::PRONE_CRAWL, &["pb_prone_forward_loop", "pb_prone_crawl_forward_loop", "pb_prone_fwd_loop"]),
+    // The directions and the aimed walks: the script's own rifle names (`mp/playeranim.script`'s
+    // default entries), for an install without the script.
+    (state::STAND_WALK_BACK, &["pb_stand_shoot_walk_back"]),
+    (state::STAND_WALK_LEFT, &["pb_stand_shoot_walk_left"]),
+    (state::STAND_WALK_RIGHT, &["pb_stand_shoot_walk_right"]),
+    (state::STAND_RUN_BACK, &["pb_combatrun_back_loop"]),
+    (state::STAND_RUN_LEFT, &["pb_combatrun_left_loop"]),
+    (state::STAND_RUN_RIGHT, &["pb_combatrun_right_loop"]),
+    (state::CROUCH_WALK_BACK, &["pb_crouch_run_back"]),
+    (state::CROUCH_WALK_LEFT, &["pb_crouch_run_left"]),
+    (state::CROUCH_WALK_RIGHT, &["pb_crouch_run_right"]),
+    (state::PRONE_CRAWL_BACK, &["pb_prone_crawl_back"]),
+    (state::PRONE_CRAWL_LEFT, &["pb_prone_crawl_left"]),
+    (state::PRONE_CRAWL_RIGHT, &["pb_prone_crawl_right"]),
+    (state::STAND_ADS_WALK, &["pb_stand_shoot_walk_forward"]),
+    (state::STAND_ADS_WALK_BACK, &["pb_stand_shoot_walk_back"]),
+    (state::STAND_ADS_WALK_LEFT, &["pb_stand_shoot_walk_left"]),
+    (state::STAND_ADS_WALK_RIGHT, &["pb_stand_shoot_walk_right"]),
+    (state::CROUCH_ADS_WALK, &["pb_crouch_shoot_run_forward"]),
+    (state::CROUCH_ADS_WALK_BACK, &["pb_crouch_shoot_run_back"]),
+    (state::CROUCH_ADS_WALK_LEFT, &["pb_crouch_shoot_run_left"]),
+    (state::CROUCH_ADS_WALK_RIGHT, &["pb_crouch_shoot_run_right"]),
 ];
 
 /// A weapon as BO2's player animation script reads it: its `weapClass` and `playerAnimType` names.
