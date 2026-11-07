@@ -172,6 +172,17 @@ system.
     scripts in the same change.
 - **Shared globals make parallel tests flaky.** Use per-test-thread state, as the native body tests do.
 
+## Multi-agent rounds
+
+Work split across parallel agents follows `.claude/skills/agent-round/SKILL.md`, including its hard limits
+for keeping rounds short:
+- at most 4 item agents;
+- about 90 minutes per item;
+- time-boxed research;
+- at most 3 builds and 3 autotest legs per item agent;
+- no reopening finished agents;
+- one full ladder by the integrator.
+
 ## Planning documents (do not accumulate them)
 
 - A big cross-crate effort (a refactor, a port) may get a temporary plan or handoff doc in

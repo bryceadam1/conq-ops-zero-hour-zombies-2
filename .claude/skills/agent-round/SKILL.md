@@ -19,6 +19,41 @@ the briefs, launches agents, reviews reports and screenshots, and pushes `main`.
 - **Conformance baseline:** the previous integration's `~/.conquerops/plan/integration<N>/conf/`. Any newly
   differing cell is a regression.
 
+## Keeping rounds short (hard limits)
+
+Rounds of 3–9 hours came from too many agents, oversized items, repeated full test passes, and reopening
+finished agents. These limits are part of every brief:
+
+- **At most 4 item agents per round.** More agents queue on the single game lock and hit the usage limit
+  sooner, so they don't finish sooner. Split a longer list across rounds.
+- **One item, one system, one change set.**
+  - An item should finish in about 90 minutes.
+  - Anything bigger is split before launch, with the larger port in its own round.
+  - If an item outgrows its budget anyway, the agent lands the verified core, lists the rest under "Not
+    covered", and stops.
+- **Time-box research.**
+  - About 20 minutes of Ghidra or GSC reading per rule.
+  - If a rule can't be resolved by then, port what's verified, record the open question with the function
+    address, and move on.
+  - No open-ended "sweep everything" briefs. A sweep is a separate read-only audit agent with no builds or
+    game runs.
+- **At most 3 game builds per item agent.** Batch every fix before rebuilding, and use headless tests to
+  iterate.
+- **Item agents run at most 3 autotest legs:** the ones that exercise the change, plus the short `--mp` leg
+  only if the sim or engine logic changed. Never a full pass, and never `ZHBO_MPTEST_ROUNDS`.
+- **Never reopen a finished agent for new work.** Follow-ups, found-elsewhere items and the orchestrator's
+  own ideas go on the next round's list. A finished agent is resumed only to answer a question about its
+  own report or to fix a defect in its own branch.
+- **The integrator runs the full ladder once.**
+  - After a fix, rerun only the legs the fix touches.
+  - Run `ZHBO_MPTEST_ROUNDS=3` once, and a second time only if the sim changed or the first run failed.
+  - Push the merged head as soon as the merges and unit tests pass, so the next round can start in
+    parallel.
+- **Reports are short:** what changed, the evidence, the results table, bumps owed, open items. No narration
+  of the process.
+- **The orchestrator tracks time.** If an agent passes twice its budget, the orchestrator asks for its
+  status and tells it to land what's verified.
+
 ## Rules every agent follows
 
 - **Port BO2's rule from its code or data.** Cite the Ghidra function or GSC line, keep the fix data-driven
