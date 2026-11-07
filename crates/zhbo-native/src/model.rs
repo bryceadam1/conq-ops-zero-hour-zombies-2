@@ -300,6 +300,42 @@ impl Sonar {
     }
 }
 
+/// The scales BO2's lit techniques read from the material's own constants (DXBC of the `lit_sun`
+/// pixel shaders; MODLOG "BO2's lit shading, from its DXBC"). Every lit technique (`lit_*`,
+/// `sw4_3d_char_cloth`, `sw4_3d_char_skin`) shares one BRDF; these are what differs between them.
+/// 1 everywhere is BO2's neutral (a technique that reads none of them).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lighting {
+    /// The sun's highlight: `Specular_Amount` (skin), `colorDetailScale.z` (a `lit_*` technique
+    /// with an occlusion map), `occlusionAmount.x` (one without).
+    pub specular: f32,
+    /// The environment reflection: `Reflection_Amount` (skin), `occlusionAmount.y` (a `lit_*`
+    /// technique without an occlusion map).
+    pub reflection: f32,
+    /// The ambient (BO2's light grid): `occlusionAmount.x` (a `lit_*` technique without an
+    /// occlusion map; with one, the map's red, carried in the colour map's alpha, does it).
+    pub ambient: f32,
+    /// `Diffuse_Normal_Height_Facing` (skin): how much of the normal map's bump the diffuse
+    /// light sees (the highlight sees all of it).
+    pub diffuse_normal: f32,
+}
+
+impl Default for Lighting {
+    fn default() -> Lighting {
+        Lighting { specular: 1.0, reflection: 1.0, ambient: 1.0, diffuse_normal: 1.0 }
+    }
+}
+
+impl Lighting {
+    fn write(&self, w: &mut Writer) {
+        w.f32s(&[self.specular, self.reflection, self.ambient, self.diffuse_normal]);
+    }
+    fn read(r: &mut Reader) -> Result<Lighting, FormatError> {
+        let [specular, reflection, ambient, diffuse_normal]: [f32; 4] = r.f32n()?;
+        Ok(Lighting { specular, reflection, ambient, diffuse_normal })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
     /// BO2's material name (for logs).
@@ -320,7 +356,8 @@ pub struct Material {
     /// The surface's camo layer default (semantic 22): which camo image a pattern camo uses.
     pub camo: CamoLayer,
     /// BO2's specular colour (`*_spec.tga`: the spec map's RGB at its own size, raw like `maps`;
-    /// `zhbo_assets::textures::specular_color`), or `None` for the packed maps' scalar level. A
+    /// `zhbo_assets::textures::specular_color`), or `None`: no spec map (BO2's lit technique then has no
+    /// highlight or reflection; the packed maps' level is the W3D path's). A
     /// metal's hue lives here: gold's colour map is a flat dark, its spec map gold. Appended to
     /// the record (model `VERSION` 3 -> 4 and camo `VERSION` 1 -> 2 are integrator-owned).
     pub specular: Option<String>,
@@ -337,6 +374,9 @@ pub struct Material {
     /// decal drawn that many steps towards the eye. Appended after `sonar` (model `VERSION` 5,
     /// camo 3, reticle sets 2: round 7's integration).
     pub polygon_offset: u8,
+    /// BO2's lit technique's material scales ([`Lighting`]). Appended after `polygon_offset`
+    /// (the model/camo `VERSION` bumps are integrator-owned).
+    pub lighting: Lighting,
 }
 
 impl Material {
@@ -368,6 +408,7 @@ impl Material {
             }
         }
         w.u8(self.polygon_offset);
+        self.lighting.write(w);
     }
     /// Read one material record written by [`Self::write`].
     pub fn read(r: &mut Reader) -> Result<Material, FormatError> {
@@ -400,6 +441,7 @@ impl Material {
                 v @ 0..=3 => v,
                 v => return Err(FormatError::Corrupt(format!("polygon offset {v}"))),
             },
+            lighting: Lighting::read(r)?,
         })
     }
 }
@@ -649,6 +691,17 @@ pub(crate) mod tests {
         let mut m = strip();
         m.materials[0].polygon_offset = 4;
         assert!(Model::from_bytes(&m.to_bytes()).is_err());
+    }
+
+    /// The lit technique's scales round-trip, and a material that sets none is BO2's neutral.
+    #[test]
+    fn the_lighting_scales_round_trip() {
+        assert_eq!(Lighting::default(), Lighting { specular: 1.0, reflection: 1.0, ambient: 1.0, diffuse_normal: 1.0 });
+        let mut m = strip();
+        m.materials[0].lighting = Lighting { specular: 1.5, reflection: 0.25, ambient: 0.5, diffuse_normal: 0.8 };
+        assert_eq!(Model::from_bytes(&m.to_bytes()).unwrap(), m);
+        m.materials[0].lighting.specular = f32::NAN;
+        assert!(Model::from_bytes(&m.to_bytes()).is_err(), "a non-finite scale is a corrupt record");
     }
 
     #[test]

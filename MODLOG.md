@@ -13752,3 +13752,73 @@ machine (load 17), saw Zero Hour end the match at frame 2,673 with no sim kill l
 General gone from 500 hp in one frame, then the joiner's on the joiner only) and the hashes
 parting on that last frame alone — the engine's teardown, not a sim divergence. The long runs were
 then dropped by the round's testing-scope change; the integrator's ladder reruns them.
+
+## BO2's lit shading, from its DXBC (2026-11-06, branch `v1/lit-shading`)
+
+Round 8, audit `presentation.md` H5 (confirmed): the native pass lit the guns, arms and bodies with
+`bo2Shade`'s tuned Blinn-Phong (`exp2(1 + 11·gloss)`, a hand-made sky/ground environment,
+`LIGHT_SATURATION` 0.35, a `facing·4 + 1` term). BO2's own lit techniques were never read. Now
+`native.wgsl` `fs` is BO2's BRDF and `zhbo-gfx` `runtime/lit.rs` is the same model in Rust with
+BO2's formulas under unit tests (RENDERER.md "Lit shading" has the whole model).
+
+* **Where it was read.** The material's technique set holds its techniques; the lit ones are types
+  4-25 (`pimp_technique_lprobe_*`: BO2 lights models by its light probes/grid), type 5 the
+  `lit_sun` one a model takes outdoors. Dumped with a throwaway probe (the lens-reticle one,
+  extended; `~/.opencode/plan/lit-shading/tools/probe_lit.rs`, listings in `dxbc/`, `dxbc2/`) and
+  the SM4 disassembler: the guns' `mc_lit_sm_r0c0n0s0o0` → `pimp_shader_lprobe_bc900d1` (VS
+  `_347155f7`), `mc_lit_sm_r0c0n0s0` → `_a96c9c79`, the bodies' and viewarms'
+  `mc_sw4_3d_char_cloth` → `pimp_shader_sw4_3d_char_cloth_49ec0efa`, `mc_sw4_3d_char_skin` →
+  `_char_skin_7f1d600`. All 20 `lit_sm_*` variants in the MP pool with a spec map share the same
+  constants (`l(13)`, `l(-10)`, `l(-9.28)`, `4.01575`), so it is one BRDF.
+* **The model.** Gamma 2 (colours squared in, `sqrt` out); the normal map `n = normalize(N + T·x +
+  B·y)`, `x, y = 4.01575·t − 2.01575` (no z rebuilt), `B = sign·cross(N, T)`; highlight
+  `pow(N·H, 2^(13g))·(p/8 + 1/4)·N·L/((L·H)²k − k + 1.01)`, `k = sat(g + 0.545)`, Fresnel
+  `f0 + (1 − f0)·2^(−10 L·H)`, `f0 = spec²`; reflection = the probe at `reflect(−V, n)`, mip
+  `4 − 4g`, times `sat(f0(0.75 + 0.25g − a) + a)`, `a = 1.04167g·min(2^(−9.28 N·V), 0.475g) +
+  0.0182292g − 0.015625`; diffuse `albedo²·(N·L·sun + grid·occ)`. No `(1 − f0)` on the diffuse.
+* **The material's constants** (new `zhbo_native::model::Lighting`, appended to the material
+  record): skin `Specular_Amount`/`Reflection_Amount`/`Diffuse_Normal_Height_Facing`; `lit_*` with
+  an occlusion map `colorDetailScale.z` on the highlight (all four `o0` variants: `mul …
+  cb1[63].zzzz`), without one `occlusionAmount` (`.x` highlight and grid, `.y` reflection, the
+  `cb1[42]` reads). Over the faction and weapon zones these vary (Specular_Amount 0.02-10,
+  occlusionAmount.x 0.5-1, colorDetailScale.z 0.5-1), so they are carried, not assumed.
+* **Gotcha: the occlusion map is three maps.** Red occludes the highlight and the grid (not the
+  sun's diffuse), green the reflection, blue is a grime value mixed into the camo; the colour map's
+  alpha is BO2's camo mask, not occlusion. The mod keeps red in the colour map's alpha (shared with
+  the W3D path), so the reflection takes red too, and the camo blend stays the converted layer's.
+* **Gotcha: no spec map, no specular.** The `c0`/`c0n0` techniques have neither term; the old pass
+  lit them by the packed maps' level (0) with a gloss-0 Fresnel. A surface without `specular` is
+  now diffuse only.
+* **Bug found: every bump was inside out.** The old cotangent frame (`cross(dp2, N)·du1 +
+  cross(N, dp1)·du2`) is dP/du only when N agrees with dpdx × dpdy; on screen a front face's N
+  opposes it, so T and B both flipped and every normal map lit from the wrong side. T is now dP/du
+  solved from the derivatives directly; the formula test's bumped case pinned it (the pass first
+  matched the reference only with both axes negated).
+* **Engine constraints (what Zero Hour gives instead).** No light grid, probe, model shadow or
+  exposure. Sun = Zero Hour's light 0; the grid = Zero Hour's irradiance without it (ambient +
+  `N·L`-weighted lights 1 and 2, the lights its W3D models take); the probe = that irradiance
+  along `R`, sun included (BO2's VS renormalises the probe to the local light, `o9 =
+  gridLightingSH(N) / reflectionLightingSH(N)`); sun visibility, exposure, vertex colour 1;
+  `scriptVector0.x` 0, `heroLighting` identity, no fog. Zero Hour's light colours are display
+  values and are squared as BO2 squares its colours. The bodies keep the bridge's
+  InfantryLightScale and tint (round 6), applied before the square.
+* **Not ported:** the `x0` variants (two props), the hero skin's pore map, the transparent
+  viewmodel technique (watch glass), the style camos' `sw4_3d_weapon_camo` technique, BO2's
+  in-shader camo blend, and the W3D fallback's `bo2Shade` (host patch 0009, unchanged).
+
+Tests: `lit.rs` unit tests (gloss → power 1..8192, the visibility and both Fresnels at their
+limits, the normal unpack, the gamma-2 round trip); `tests/native.rs`
+`the_pass_shades_by_bo2s_lit_formulas` (five surfaces — matte, metal off and near the mirror, a
+bumped skin with its scales, an occluded gun — within 4/255 of `lit::shade`),
+`non_finite_lighting_scales_are_skipped_not_fatal`, the gold test rewritten (no spec map = dark
+diffuse); `zhbo-native` `the_lighting_scales_round_trip`; `zhbo-assets`
+`each_lit_technique_takes_the_scales_its_shader_reads` (the install's own values). Headless
+before/after (an archive per side, `ZHBO_CONVERT_ALL_COMBOS=0`): `~/.opencode/plan/lit-shading/
+compare/` (`vm_<gun>.png` hip|ADS before over after, `ww.png`, `body.png`, `body_zoom.png`).
+The guns read as metal (edges and flats catch the sky and the sun), the dark finishes stay dark,
+the bodies' buckles and straps take highlights; no BO2-side render exists to compare against (a VM
+capture would have to be routed).
+
+**Versions (integrator-owned, NOT bumped):** `model::VERSION` 5 → 6, `camo::VERSION` 3 → 4,
+`reticles::VERSION` 2 → 3 and the archive's `hud::VERSION` (CONTRACT "Pending for the next bump").
+No C ABI change.

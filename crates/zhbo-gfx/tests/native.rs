@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLayer, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
+use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLayer, NativeLight, NativeLighting, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
 use zhbo_gfx::state;
 
 const W: u32 = 64;
@@ -97,7 +97,7 @@ fn texture(r: &mut Renderer, rgba: [u8; 4]) -> u16 {
 }
 
 fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
-    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None, polygon_offset: 0 }
+    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None, polygon_offset: 0, lighting: NativeLighting::default() }
 }
 
 /// A camo layer replaces the base colour at its own coverage. A multiply would leave the base
@@ -123,6 +123,7 @@ fn camo_layer_replaces_the_base_colour() {
         reticle: None,
         sonar: None,
         polygon_offset: 0,
+        lighting: NativeLighting::default(),
     };
     let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &[camo_surface]);
     assert_ne!(mesh, INVALID);
@@ -214,8 +215,8 @@ fn a_dark_finish_keeps_its_hue_under_zero_hour_light() {
 
 /// BO2's gold camo is a metal: a flat dark colour map (21,20,13) whose whole hue is its spec map
 /// (mean 158,135,83). With the specular colour bound the highlight and reflection take that hue;
-/// with only the packed maps' scalar level (136, the same map's luminance) it is dark polished
-/// metal. A grey spec colour equal to the level draws exactly as the level does.
+/// without a spec map BO2's technique has no highlight or reflection at all (the `c0n0`
+/// techniques), so the surface is its dark diffuse; a grey spec map reflects neutrally.
 #[test]
 fn a_coloured_spec_map_tints_the_metal() {
     let Some((mut r, log, shot)) = renderer() else { return };
@@ -245,11 +246,122 @@ fn a_coloured_spec_map_tints_the_metal() {
         shots.push(pixel(&shot, 32, 32));
         r.native_destroy_mesh(mesh);
     }
-    let ([lb, lg, lr], [gb, gg, gr], grey_px) = (shots[0], shots[1], shots[2]);
-    eprintln!("level only: RGB {lr} {lg} {lb}; gold spec: RGB {gr} {gg} {gb}; grey spec: {grey_px:?}");
+    let ([lb, lg, lr], [gb, gg, gr], [eb, eg, er]) = (shots[0], shots[1], shots[2]);
+    eprintln!("no spec map: RGB {lr} {lg} {lb}; gold spec: RGB {gr} {gg} {gb}; grey spec: RGB {er} {eg} {eb}");
     assert!(gr > gb + 15 && gg > gb + 10, "the gold spec colour tints the metal gold: RGB {gr} {gg} {gb}");
-    assert!(gr.abs_diff(gb) > 2 * lr.abs_diff(lb), "the scalar level leaves it near neutral: RGB {lr} {lg} {lb}");
-    assert!(close(grey_px, shots[0]), "a grey spec colour is the level: {grey_px:?} vs {:?}", shots[0]);
+    assert!(lr.max(lg).max(lb) < 40, "no spec map: only the dark diffuse: RGB {lr} {lg} {lb}");
+    assert!(er > lr + 10 && er.abs_diff(eb) < gr.abs_diff(gb), "a grey spec map reflects, neutrally: RGB {er} {eg} {eb}");
+}
+
+/// One opaque 64x64 quad facing the eye with UVs across it (so the tangent frame is +X, +Y),
+/// every texel of each map the same: the pixel at the centre against [`lit::shade`].
+fn shade_case(r: &mut Renderer, log: &Log, shot: &Shot, case: &ShadeCase) -> ([f32; 3], [f32; 3]) {
+    use zhbo_gfx::runtime::lit;
+    let tex = |r: &mut Renderer, t: [u8; 4]| r.native_create_texture(4, 4, &std::iter::repeat_n(t, 16).flatten().collect::<Vec<u8>>(), false);
+    let mut s = surface(tex(r, case.albedo), false, 6);
+    if let Some(m) = case.maps {
+        s.maps = tex(r, m);
+    }
+    if let Some(sp) = case.spec {
+        s.specular = tex(r, [sp[0], sp[1], sp[2], 255]);
+    }
+    s.lighting = case.lighting;
+    let mut verts = quad(0.0, 0.0, 64.0, 64.0, 0);
+    for v in &mut verts {
+        v.uv = [v.position[0] / 64.0, v.position[1] / 64.0];
+    }
+    let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &[s]);
+    assert_ne!(mesh, INVALID);
+    let mut f = frame(case.lights.len() as u32);
+    f.ambient = case.ambient;
+    for (k, l) in case.lights.iter().enumerate() {
+        f.lights[k] = NativeLight { direction: l.dir, color: l.color };
+    }
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+    r.request_screenshot(INVALID, "shade.png");
+    r.frame();
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+    r.native_destroy_mesh(mesh);
+    let [b, g, rr] = pixel(shot, 32, 32);
+    let got = [rr, g, b].map(|c| c as f32 / 255.0);
+    // The reference at the pixel's centre.
+    let unit = |a: [f32; 3]| {
+        let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+        a.map(|c| c / l)
+    };
+    let geo = [0.0, 0.0, -1.0];
+    let bump = case.maps.map_or([0.0; 2], |m| [lit::normal_map(m[0] as f32 / 255.0), lit::normal_map(m[1] as f32 / 255.0)]);
+    let with = |k: f32| unit([geo[0] + bump[0] * k, geo[1] + bump[1] * k, geo[2]]);
+    let eye = f.eye;
+    let v = unit([eye[0] - 32.5, eye[1] - 32.5, eye[2]]);
+    let unit8 = |c: u8| c as f32 / 255.0;
+    let p = lit::Pixel {
+        n: with(1.0),
+        n_diffuse: with(case.lighting.diffuse_normal),
+        v,
+        albedo: [unit8(case.albedo[0]), unit8(case.albedo[1]), unit8(case.albedo[2])],
+        spec: case.spec.map(|s| s.map(unit8)),
+        gloss: case.maps.map_or(0.0, |m| unit8(m[2])),
+        ao: if case.maps.is_some() { unit8(case.albedo[3]) } else { 1.0 },
+        scales: [case.lighting.specular, case.lighting.reflection, case.lighting.ambient, case.lighting.diffuse_normal],
+        ambient: case.ambient,
+        lights: &case.lights,
+    };
+    (got, lit::shade(&p).map(|c| c.min(1.0)))
+}
+
+struct ShadeCase {
+    albedo: [u8; 4],
+    maps: Option<[u8; 4]>,
+    spec: Option<[u8; 3]>,
+    lighting: NativeLighting,
+    ambient: [f32; 3],
+    lights: Vec<zhbo_gfx::runtime::lit::Light>,
+}
+
+/// The pass shades as BO2's formulas say (`runtime::lit`, from the `lit_sun` DXBC): a matte
+/// surface, a spec-mapped one off and near the sun's mirror direction, a bumped skin with BO2's
+/// skin scales, an occluded gun with its ambient scale, under a sun and two accent lights.
+#[test]
+fn the_pass_shades_by_bo2s_lit_formulas() {
+    use zhbo_gfx::runtime::lit::Light;
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let day = vec![
+        Light { dir: [-0.5, 0.3, -0.8], color: [1.0, 0.97, 0.9] },
+        Light { dir: [0.6, -0.2, -0.3], color: [0.3, 0.32, 0.4] },
+        Light { dir: [0.0, 0.9, -0.1], color: [0.2, 0.15, 0.1] },
+    ];
+    let neutral = NativeLighting::default();
+    let cases = [
+        ("matte", ShadeCase { albedo: [200, 150, 100, 255], maps: None, spec: None, lighting: neutral, ambient: [0.3, 0.3, 0.32], lights: day.clone() }),
+        ("metal off the mirror", ShadeCase { albedo: [60, 55, 50, 255], maps: Some([128, 128, 150, 0]), spec: Some([150, 140, 120]), lighting: neutral, ambient: [0.3, 0.3, 0.32], lights: day.clone() }),
+        ("near the mirror", ShadeCase { albedo: [60, 55, 50, 255], maps: Some([128, 128, 40, 0]), spec: Some([40, 40, 40]), lighting: neutral, ambient: [0.2, 0.2, 0.2], lights: vec![Light { dir: [0.1, 0.05, -1.0], color: [0.7, 0.7, 0.7] }] }),
+        ("bumped skin", ShadeCase { albedo: [180, 130, 110, 255], maps: Some([170, 100, 90, 0]), spec: Some([70, 70, 70]), lighting: NativeLighting { specular: 1.5, reflection: 0.5, ambient: 1.0, diffuse_normal: 0.8 }, ambient: [0.25, 0.25, 0.28], lights: day.clone() }),
+        ("occluded gun", ShadeCase { albedo: [90, 90, 80, 128], maps: Some([140, 120, 180, 0]), spec: Some([100, 100, 100]), lighting: NativeLighting { specular: 0.7, reflection: 0.25, ambient: 0.5, diffuse_normal: 1.0 }, ambient: [0.4, 0.4, 0.4], lights: day.clone() }),
+    ];
+    for (name, case) in &cases {
+        let (got, want) = shade_case(&mut r, &log, &shot, case);
+        eprintln!("{name}: pass {got:?}, BO2's formula {want:?}");
+        for c in 0..3 {
+            assert!((got[c] - want[c]).abs() <= 4.0 / 255.0, "{name}: channel {c}: the pass {got:?} vs BO2's formula {want:?}");
+        }
+    }
+}
+
+/// A surface whose lighting scales are not finite is skipped at upload (logged), never drawn with
+/// garbage or fatal; the mesh's other surfaces still draw.
+#[test]
+fn non_finite_lighting_scales_are_skipped_not_fatal() {
+    let Some((mut r, log, _shot)) = renderer() else { return };
+    let tex = texture(&mut r, [200, 200, 200, 255]);
+    let mut bad = surface(tex, false, 6);
+    bad.lighting.specular = f32::NAN;
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 16.0, 16.0, 0), &[0, 2, 1, 0, 3, 2], &[bad, surface(tex, false, 6)]);
+    assert_ne!(mesh, INVALID, "the good surface keeps the mesh");
+    assert!(log.lock().unwrap().iter().any(|l| l.contains("non-finite lighting scales")));
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: frame(1) }));
+    r.frame();
+    assert_eq!(r.stats().errors, 0);
 }
 
 /// Under a bright map ambient (Zero Hour maps go well past the GameData defaults) a dark finish

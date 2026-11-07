@@ -125,14 +125,7 @@ sort-key order, and each surface culls the faces its material's `cullFace` says 
 (`GFXS0_CULL_*`, bits 14-15 of `GfxStateBits::loadBits[0]` — ordinary lit surfaces cull their
 back faces, cutouts and glows draw double-sided; the pass keeps BO2's index order, so front is
 clockwise: the engine's content winds the other way, which is why the W3D conversion swaps
-indices). Shading is `bo2Shade` (host patch 0009) ported to WGSL **in display (gamma)
-space**, as bo2Shade itself runs and as the rest of Zero Hour's scene is lit: colour maps upload
-raw, the lights are Zero Hour's display-encoded values used as-is, and the shaded result is
-written straight to the gamma-space scene target — unless that target is itself sRGB, in which
-case the result is decoded to linear first (the hardware re-encodes on write). A linear-light
-port washed dark finishes out to grey: bo2Shade's environment term, tuned in gamma space, ends up
-several times stronger than a dark albedo's diffuse when both are decoded to linear (MODLOG,
-Track R round 2). Bad meshes and draws are refused, logged once and counted in
+indices). Shading is BO2's own lit technique (**Lit shading** below). Bad meshes and draws are refused, logged once and counted in
 `stats().native_skipped`; they never reach wgpu validation. A surface with no indices is not bad:
 it is a no-op draw (a surface the compose step's hide tags emptied), so it is skipped and logged and
 the mesh's other surfaces draw; only a malformed count or a range past the index buffer refuses the
@@ -149,16 +142,62 @@ layer's alpha is its coverage on the converted art, and `gain` is per set (2.0 f
 replacements, not a layer: `nativevm::camo::apply` swaps the surface's
 colour/maps/specular/blend/emissive/sort/cull to the converted style material.
 
-**The specular colour.** BO2's spec maps are colour maps (`*_spc-rgb`): a metal's hue lives in its
-specular, not its colour map (the gold camo's colour map is a flat 21/20/13, its spec map mean
-158/135/83; brass cartridges, tritium vials and lens coatings are tinted the same way).
-`NativeSurface.specular` (binding 5; the 1×1 white page when absent) carries the converted map
-(`*_spec.tga`, the spec map's RGB at its own size, raw), and the material uniform is 48 bytes
-(`params`, `camo`, `spec: vec4` whose `x` flags the map). The reflectance at normal incidence is
-then a colour, `f0 = spec.rgb²` — the same square the packed maps' scalar level (`maps.a²`) always
-used — so the highlight, the environment reflection and the diffuse energy split `(1 − f0)` take
-the hue. A grey spec map draws exactly as its level; a surface without the map (or without packed
-maps, whose gloss it needs) keeps the level.
+**Lit shading.** `fs` is BO2's lit BRDF read from the DXBC of its `lit_sun` pixel shaders in the
+install — the guns' `lit_sm_r0c0n0s0o0` (`pimp_shader_lprobe_bc900d1`) and `lit_sm_r0c0n0s0`
+(`_a96c9c79`), the bodies' and arms' `sw4_3d_char_cloth` (`_49ec0efa`) and `sw4_3d_char_skin`
+(`_7f1d600`); every lit model technique shares it. `src/runtime/lit.rs` is the same model in Rust
+with BO2's formulas pinned by unit tests, and `tests/native.rs`
+(`the_pass_shades_by_bo2s_lit_formulas`) renders flat surfaces under fixed lights and holds the
+pass to it within 4/255.
+
+* **Colour space: gamma 2.** BO2 squares every colour on the way in (the colour map, the spec map,
+  the lights) and writes the square root (`sqrt o0.xyz`), so the result is display-space like the
+  Zero Hour scene it joins. Colour maps and the spec map upload raw; Zero Hour's light colours are
+  display values and are squared the same way. (A target that is itself sRGB gets the result
+  decoded first, `decode_output`.)
+* **Normal map.** `x, y = 4.01575 · texel − 2.01575`, `n = normalize(N + T·x + B·y)` — no z is
+  reconstructed (the map holds the bump at half scale). `T` is dP/du from the position/UV
+  derivatives (BO2 reads the vertex tangent), `B = sign · cross(N, T)`. The pre-port frame took
+  the derivatives' cross products the other way round and so turned every bump inside out on a
+  front face (N opposes dpdx × dpdy on screen); the bumped case of the formula test catches it.
+* **Highlight.** `pow(N·H, p) · (p/8 + 1/4)` with `p = 2^(13 · gloss)` (gloss: the spec map's
+  alpha), times `N·L / ((L·H)² k − k + 1.01)`, `k = saturate(gloss + 0.545)`, times
+  `f0 + (1 − f0) · 2^(−10 L·H)` with `f0 = spec²` (the spec map is a colour, `*_spc-rgb`: a metal's
+  hue, gold's included, lives there — `NativeSurface.specular`, binding 5), times the sun.
+* **Reflection.** The probe at `R = reflect(−V, n)` times `saturate(f0 (0.75 + 0.25 g − a) + a)`,
+  `a = 1.04167 g · min(2^(−9.28 N·V), 0.475 g) + 0.0182292 g − 0.015625`.
+* **Diffuse.** `albedo² · (N_d·L · sun + grid · ao)`: the light grid occluded, the sun not.
+* **No spec map, no specular.** BO2's techniques without one (`c0`, `c0n0`) have neither the
+  highlight nor the reflection; a surface without `specular` draws diffuse only. The packed maps'
+  alpha (the spec level) is for the W3D path's `bo2Shade` alone.
+* **The material's constants** (`NativeSurface.lighting`, `zhbo_native::model::Lighting`, the
+  material uniform's last block): `Specular_Amount`, `Reflection_Amount` and
+  `Diffuse_Normal_Height_Facing` (skin: the diffuse sees the bump scaled by it); on a `lit_*`
+  technique with an occlusion map `colorDetailScale.z` (the highlight; the map's red, in an opaque
+  colour map's alpha, occludes the highlight, the reflection and the grid), without one
+  `occlusionAmount` (`.x` the highlight and the grid, `.y` the reflection). The converter picks
+  them by the technique set and the material's maps (`zhbo_assets::native::lighting`). A
+  non-finite scale skips the surface at upload (logged; the rest of the mesh draws).
+* **What Zero Hour supplies instead (engine constraints).** Zero Hour has no light grid, no
+  reflection probe, no model shadow and no exposure. BO2's one sun is Zero Hour's light 0. The
+  light grid (`modelLightingSampler`, a per-position irradiance) is Zero Hour's own irradiance
+  without that sun: the ambient plus lights 1 and 2 by their cosine — the accent lights Zero Hour
+  lights its own models with. The probe's radiance towards `R` is that irradiance sampled along
+  `R`, sun included: BO2 renormalises its probe to the local light (`reflectionLightingSH /
+  gridLightingSH`, the VS's `o9`), and here the local light is all there is; the gloss-chosen mip
+  has no counterpart (the stand-in is already smooth). The sun is unshadowed (`gridLightingCoordsAndVis.w`
+  = 1), the exposure `hdrControl0.x` = 1, the vertex colour (BO2's albedo tint and the
+  characters' vertex occlusion) 1, the occlusion map's green (the reflection's own occlusion) its
+  red, `scriptVector0.x` (cloth/skin spec damping) 0, `heroLighting` the identity, fog none. A
+  General's body takes Zero Hour's lights scaled by the map's InfantryLightScale (the bridge's
+  `fillNativeScene`) before they are squared.
+* **Debug views** (`ZHBO_BO2_DEBUG`): 1 flat normals, 2 normals, 3 the diffuse light, 4 the
+  highlight, 5 the reflection.
+* **Not ported:** the `x0` variants (gloss from the colour map's alpha: two props), the hero skin's
+  pore detail map, the transparent viewmodel technique (the watch glass draws as a plain blended
+  surface), the style camos' `sw4_3d_weapon_camo` technique (drawn with this BRDF and neutral
+  scales) and BO2's camo blend inside the lit shader (the colour map's alpha masks the camo there;
+  the pass keeps the converted layer's own coverage, above).
 
 **The lens reticle.** BO2 draws an optic's reticle on the lens with its own technique
 (`sw4_3d_reticle_dynamic`: the reflex, holo, ACOG and the dual optic's halves), and the pass ports

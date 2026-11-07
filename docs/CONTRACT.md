@@ -1689,6 +1689,15 @@ art (from `mp_raid`), BO2's unlit surfaces drawn self-lit (`Looks::unlit`), and 
 converted before it reads no turn add and unscaled stance decay, losing the SMGs' crouched 4×
 decay). `EventKind::Shot`'s `spread` is Rust-internal, no ABI.
 
+**Pending for the next bump (round 8, `v1/lit-shading`):** the native material record gains a
+trailing `lighting` block after `polygon_offset` (four `f32`: BO2's lit technique's specular,
+reflection and ambient scales and `Diffuse_Normal_Height_Facing`; `zhbo_native::model::Lighting`),
+so `model::VERSION` 5 → 6, `camo::VERSION` 3 → 4 and `reticles::VERSION` 2 → 3 must move with the
+archive's `hud::VERSION` (an archive built before reads 16 bytes short and is refused or misread
+until the versions move). No C ABI change: `NativeSurface.lighting` and the material uniform's
+last block are Rust/wgpu-internal; `ZhboNativeIn`/`ZhboNativeBodyIn` and the lights the bridge
+fills are unchanged.
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the
