@@ -467,6 +467,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .int("explosion_outer_damage", d.explosion_outer_damage as i64)
         .float("projectile_speed", inch(d.projectile_speed))
         .float("projectile_speed_up", inch(d.projectile_speed_up))
+        .float("projectile_speed_relative_up", inch(d.projectile_speed_relative_up))
+        .float("projectile_speed_forward", inch(d.projectile_speed_forward))
+        .bool("throw_back", d.throw_back)
         .bool("projectile_impact_explode", d.impact_explode)
         // The projectile object the def fires is converted from its base weapon's BO2
         // `projectileModel` (`generals::files`).

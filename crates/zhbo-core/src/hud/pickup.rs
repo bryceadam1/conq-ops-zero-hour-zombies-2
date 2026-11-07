@@ -72,13 +72,28 @@ pub fn coloured_runs(text: &str, key: &str) -> Vec<(String, (f32, f32, f32))> {
     out
 }
 
-/// The hint for the dropped weapon `p`'s use key would take now, if any.
+/// What the hint names for the use target: its text key, the weapon, and whether the weapon's name
+/// follows the text (`FUN_004db920`). A live grenade in the use list: `PLATFORM_THROWBACKGRENADE`
+/// alone for a frag-class grenade (offhand class 1), else `PLATFORM_PICKUPNEWWEAPON` and its name;
+/// a dropped weapon: `PLATFORM_PICKUPNEWWEAPON` with fewer than two primaries, else
+/// `PLATFORM_SWAPWEAPONS`, and its name.
+pub fn hint_of(sim: &Sim, p: &PlayerSim) -> Option<(&'static str, &'static WeaponDef, bool)> {
+    if p.use_grenade != 0 {
+        let def = sim.projectiles.iter().find(|(_, g)| g.object == p.use_grenade)?.1.def;
+        return Some(if def.traits.offhand == crate::weapons::OffhandClass::Frag { ("PLATFORM_THROWBACKGRENADE", def, false) } else { ("PLATFORM_PICKUPNEWWEAPON", def, true) });
+    }
+    let def = sim.drops[sim.use_target(p)?].weapon.def;
+    Some((if p.arsenal.primaries() < 2 { "PLATFORM_PICKUPNEWWEAPON" } else { "PLATFORM_SWAPWEAPONS" }, def, true))
+}
+
+/// The hint for what `p`'s use key would take now (a live grenade to throw back, or a dropped
+/// weapon), if anything.
 pub(super) fn draw(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, key: &str) {
-    let Some(i) = sim.use_target(p) else { return };
-    let def = sim.drops[i].weapon.def;
-    let text_key = if p.arsenal.primaries() < 2 { "PLATFORM_PICKUPNEWWEAPON" } else { "PLATFORM_SWAPWEAPONS" };
+    let Some((text_key, def, named)) = hint_of(sim, p) else { return };
     let mut runs = coloured_runs(crate::sim::hint_text(text_key), key);
-    runs.push((format!(" {}", pickup_name(def)), (1.0, 1.0, 1.0)));
+    if named {
+        runs.push((format!(" {}", pickup_name(def)), (1.0, 1.0, 1.0)));
+    }
     // LUI's 720-line space is 1.5 x the menus' 480.
     let (top, size, height) = (HINT_Y_480 * 1.5, HINT_SIZE_480 * 1.5, HINT_TEXT_480 * 1.5);
     let pen = top + height * 0.5;
@@ -97,8 +112,14 @@ pub(super) fn draw(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, key
     let base = crate::weapons::weapon_or_none(def.id.split('+').next().unwrap_or(&def.id)).unwrap_or(def);
     let (ws, hs) = icon_scale(base.hud_icon_ratio);
     let (iw, ih) = (size * ws, size * hs);
-    let icon_top = top + height * 2.0 - size * 0.5 * hs;
-    let r = Place::new((false, false, -iw * 0.5, iw * 0.5), (false, false, icon_top, icon_top + ih)).resolve(l.screen());
+    // Under the name; with no name (the throwback's), after the text on its line
+    // (`FUN_004dbbe0`'s unnamed branch: at the text's end, centred on the line).
+    let r = if named {
+        let icon_top = top + height * 2.0 - size * 0.5 * hs;
+        Place::new((false, false, -iw * 0.5, iw * 0.5), (false, false, icon_top, icon_top + ih)).resolve(l.screen())
+    } else {
+        Rect { x, y: row.y + row.h * 0.5 - ih * 0.5, w: iw, h: ih }
+    };
     let px = l.px(r);
     prims.push(Prim::Image { name: base.hud_icon_image(), x: px.x, y: px.y, w: px.w, h: px.h, argb: argb((1.0, 1.0, 1.0), 1.0), fallback: Vec::new() });
 }
@@ -152,5 +173,29 @@ mod tests {
         assert!((w - 40.0 * ws * unit).abs() < 0.5 && (h - 40.0 * hs * unit).abs() < 0.5, "{w} x {h}");
         assert!((x + w * 0.5 - 640.0).abs() < 0.5 && y > 360.0, "centred below the middle: {x}, {y}");
         assert!(!prims.is_empty());
+    }
+
+    /// A live grenade in his use list outranks a dropped weapon: a frag-class one asks to throw
+    /// it back (`PLATFORM_THROWBACKGRENADE`, no name); another offhand class is picked up by name.
+    #[test]
+    fn the_throwback_hint_follows_the_offhand_class() {
+        use crate::weapons::{weapon, OffhandClass, WeaponDef};
+        let host = crate::sim::tests::FakeHost::default();
+        let mut sim = Sim::new();
+        let mut p = PlayerSim::spawn_for_tests();
+        let base = weapon("frag_grenade_mp");
+        let frag: &'static WeaponDef = Box::leak(Box::new(WeaponDef { projectile_object: "Frag".into(), traits: crate::weapons::Traits { offhand: OffhandClass::Frag, ..base.traits }, ..base.clone() }));
+        let g = crate::projectiles::Projectile::launch(frag, 7, Vec3::ZERO, Vec3::ZERO, 2.0, &host, 0.0);
+        p.use_grenade = g.object;
+        sim.projectiles.push((1, g));
+        assert_eq!(hint_of(&sim, &p).map(|(k, d, named)| (k, d.id.as_str(), named)), Some(("PLATFORM_THROWBACKGRENADE", "frag_grenade_mp", false)));
+        let flash: &'static WeaponDef = Box::leak(Box::new(WeaponDef { traits: crate::weapons::Traits { offhand: OffhandClass::Flash, ..frag.traits }, ..frag.clone() }));
+        sim.projectiles[0].1.def = flash;
+        assert_eq!(hint_of(&sim, &p).map(|(k, _, named)| (k, named)), Some(("PLATFORM_PICKUPNEWWEAPON", true)));
+        let l = Lui::new(1280.0, 720.0);
+        let mut prims = Vec::new();
+        sim.projectiles[0].1.def = frag;
+        draw(&l, &mut prims, &sim, &p, "F");
+        assert!(prims.iter().any(|q| matches!(q, Prim::Image { .. })), "the grenade's icon");
     }
 }

@@ -35,8 +35,14 @@ pub const FLASH_WEAPON: &str = "flash_grenade_mp";
 /// flashbang shock.
 pub(super) fn emp_hits(host: &dyn LogicHost, players: &[Option<PlayerSim>], def: &'static WeaponDef, owner: u32, at: Vec3) -> Vec<ShockHit> {
     let mut out = Vec::new();
+    // The script's EMP reaches a player through the radius damage (`empexplosiondamageupdate`),
+    // so only one the blast sees ([`crate::cover`], `FUN_005f0f00`).
+    let cover = crate::cover::Blockers::near(host, at, def.explosion_radius.max(1.0) * 2.0, owner, &[]);
     for p in players.iter().flatten().filter(|p| p.is_first_person()) {
         if (p.body.pos - at).length() > def.explosion_radius || p.arsenal.class_specialties().has(Specialty::ImmuneEmp) {
+            continue;
+        }
+        if cover.player_fraction(host, &p.arsenal.tuning, at, p.general, p.body.pos, p.body.eye_height) <= 0.0 {
             continue;
         }
         let ally = p.general != owner && host.object(p.general, owner).is_some_and(|o| o.has(objflags::ALLY));

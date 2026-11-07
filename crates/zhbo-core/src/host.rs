@@ -140,6 +140,12 @@ pub trait LogicHost {
         None
     }
     fn heal(&self, id: u32, amount: f32);
+    /// The eye height over his feet the sim moves General `id` at, when the host is the sim's
+    /// view of the world (a blast's guarded host, `sim::guard`): what BO2's damage visibility
+    /// measures a player by ([`crate::cover`]). None by default (the engine does not know it).
+    fn sim_eye(&self, _id: u32) -> Option<f32> {
+        None
+    }
     /// Create a Zero Hour object (a projectile's model) owned by `owner`'s player; 0 if it can't.
     fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32;
     fn destroy(&self, id: u32);

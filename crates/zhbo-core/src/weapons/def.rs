@@ -400,6 +400,15 @@ pub struct WeaponDef {
     pub explosion_outer_damage: f32,
     pub projectile_speed: f32,
     pub projectile_speed_up: f32,
+    /// A throw's speed along the view's up (BO2's `iProjectileSpeedRelativeUp`; t6mp
+    /// `FUN_0066cf00`), Zero Hour units/s.
+    pub projectile_speed_relative_up: f32,
+    /// A throw's speed along the view's horizontal forward (BO2's `iProjectileSpeedForward`;
+    /// `FUN_0066cf00`), Zero Hour units/s.
+    pub projectile_speed_forward: f32,
+    /// A live one may be picked up and thrown back (BO2's `bThrowBack`; the use list
+    /// `FUN_00676d50`, the pick-up `FUN_005d2140`).
+    pub throw_back: bool,
     pub projectile_gravity: bool,
     pub impact_explode: bool,
     /// BO2's `WeaponDef.impactType` (+40): the impact-table bucket an impact-table lookup uses
@@ -833,7 +842,7 @@ pub struct UiText {
 /// `MPUI_<slot>_CAPS`, and the lethal slot's under Tactician) and the HUD's weapon hints
 /// (`WEAPON_CANT_PLANT_EQUIPMENT`, `sim::hint_text`), and the spectator's switch bar and view
 /// prompt (`hud/deadspectate.lua`: `MPUI_SPECTATING`; `MPUI_FIRST_PERSON_VIEW`), and the dropped
-/// weapon's pickup hint (`PLATFORM_PICKUPNEWWEAPON`/`PLATFORM_SWAPWEAPONS`, `FUN_004db920`). The reticle grid's per-optic cell names
+/// weapon's pickup hint (`PLATFORM_PICKUPNEWWEAPON`/`PLATFORM_SWAPWEAPONS`, `FUN_004db920`) and the throwback's (`PLATFORM_THROWBACKGRENADE`). The reticle grid's per-optic cell names
 /// (`MPUI_RETICLE_<OPTIC>_<N>`, [`super::reticle_name_key`]) are written beside these, every one
 /// the install has.
 pub const UI_TEXT_KEYS: &[&str] = &[
@@ -850,7 +859,7 @@ pub const UI_TEXT_KEYS: &[&str] = &[
     "MPUI_DLC2_CAPS", "MENU_CUSTOMIZED_CAPS", "MENU_SCOREBOARD_CAPS", "MPUI_SCORE_CAPS",
     "MPUI_KILLS_CAPS", "MPUI_DEATHS_CAPS", "MPUI_ASSISTS_CAPS", "WEAPON_NO_AMMO",
     "MENU_SELECT_RETICLE", "MENU_X_OPTICS", "MP_CHANGE_CLASS_NEXT_SPAWN", "MPUI_SPECTATING",
-    "MPUI_FIRST_PERSON_VIEW", "PLATFORM_PICKUPNEWWEAPON", "PLATFORM_SWAPWEAPONS", "PLATFORM_RELOAD",
+    "MPUI_FIRST_PERSON_VIEW", "PLATFORM_PICKUPNEWWEAPON", "PLATFORM_SWAPWEAPONS", "PLATFORM_THROWBACKGRENADE", "PLATFORM_RELOAD",
     "PLATFORM_LOW_AMMO_NO_RELOAD", "PLATFORM_HOLD_BREATH",
 ];
 
@@ -1071,6 +1080,9 @@ impl Default for WeaponDef {
             explosion_outer_damage: 0.0,
             projectile_speed: 0.0,
             projectile_speed_up: 0.0,
+            projectile_speed_relative_up: 0.0,
+            projectile_speed_forward: 0.0,
+            throw_back: false,
             projectile_gravity: true,
             impact_explode: false,
             impact_type: 0,

@@ -152,7 +152,7 @@ impl Remote {
         let a = &p.arsenal;
         let def = match *kind {
             EventKind::ReloadStarted => a.current().def,
-            EventKind::Thrown { lethal } => if lethal { a.lethal.def } else { a.tactical.def },
+            EventKind::Thrown { lethal } => a.offhand_def(lethal),
             EventKind::Planted { kind } => match [a.lethal.def, a.tactical.def].into_iter().find(|d| d.equipment_kind == kind) {
                 Some(d) => d,
                 None => return,
@@ -214,7 +214,7 @@ impl Remote {
         let held = a.current().def;
         let ctx = context_of(p);
         let at = p.body.eye();
-        let offhand = |lethal: bool| if lethal { a.lethal.def } else { a.tactical.def };
+        let offhand = |lethal: bool| a.offhand_def(lethal);
         let npc = |cues: &mut Cues, def: &'static WeaponDef, m: NpcSound| {
             if heard {
                 if let Some(e) = sounds::some(def.npc_sound(m)) {

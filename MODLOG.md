@@ -13752,3 +13752,88 @@ machine (load 17), saw Zero Hour end the match at frame 2,673 with no sim kill l
 General gone from 500 hp in one frame, then the joiner's on the joiner only) and the hashes
 parting on that last frame alone — the engine's teardown, not a sim divergence. The long runs were
 then dropped by the round's testing-scope change; the integrator's ladder reruns them.
+
+## Round 8: combat rules — BO2's melee trace and lunge, explosion cover, throws, rockets, throwback (v1/combat-rules)
+
+The audit (`~/.opencode/plan/bo2-audit/sim-gameplay.md` F3, F4, F5, F8, F9; `mechanical-scan.md` F2,
+F5) found five combat rules the mod approximated. Each was re-read in t6mp before porting (decompiles
+and constants with `tools/const.py`); all five were real divergences.
+
+**The knife: BO2's melee trace.** `MELEE_FACING_COS` (a flat 53° cone over a 2D reach) is gone.
+The server's trace (`FUN_00670330` -> `FUN_00670040` -> `FUN_0066fc30` -> `FUN_0066f740`) is
+**nine** rays, not the client's five (`FUN_005adb80`, which only plays the client's impact): from
+10" behind the eye (`0x00c7340c`) to `player_meleeRange` along the view, their ends offset by the
+table at `0x00b606a8` — (0,0) (±½,0) (0,±½) (±1,±1) — times `player_meleeWidth` across and
+`player_meleeHeight` up (10 × 10). The first ray to strike a player strikes him; otherwise the
+nearest non-player hit of all the rays (a vehicle is struck, a deployed shield takes it, the world —
+ground or a structure — ends it). The mod treats soldiers as BO2's players and traces their bounds
+(`hitscan::solid`), as BO2's trace meets entity bounds, not hit boxes. Pitch now matters (looking up
+over a man misses), and 40° off the crosshair misses. The RTS strike keeps Zero Hour's edge-to-edge
+reach, now a ray along his facing against the victim's footprint (no cone).
+
+**The lunge: the client's auto melee.** BO2's charge target is not a server cone: the client picks it
+and writes it into the command (`FUN_0048e8f0`; `FUN_008c3300` takes `cmd+0x2e`/`+0x30` into
+`ps+0x530`/`+0x534`, `FUN_008dc770` charges when the distance is past `player_meleeRange`). The pick
+(`FUN_0048cd20` over the aim-assist list sorted by screen distance, `aim_target_closest_first` 0,
+`FUN_0048c710`): within range — `FUN_0048b390`: the held weapon's `meleeChargeRange` for a melee
+weapon (weapType 7) or a bayonet, else `aim_automelee_range` 100 — whose projected bounds
+(`FUN_0048c2e0`, clip space) overlap the region `aim_automelee_region_width/height` (320/640 ×
+240/480: ±½ of the screen), visible (`FUN_0048fe80`), nearest the crosshair; then the move test
+`FUN_0048d790`: past `aim_automelee_move_limit_range` (20") he must be moving at ≥ 0.1 of his run
+speed within acos(0.1) of the target. The distance sent is `dist − 30` (`0x00c733d4`), so the lunge
+stops 30" short. **Found:** with a gun up the mod never lunged (it read the class knife's
+`meleeChargeRange`, 0 for `knife_mp`); BO2 lunges at 100". During the charge the client turns the
+view onto the target (`aim_automelee_lerp`); the strike's trace runs at the charge target's middle
+(the converged view) — the view itself stays the player's (the sim does not turn a replicated view).
+
+**Explosion cover.** `FUN_005f2130` multiplies each entity's radius damage by `FUN_005f0f00(…,
+0x802013)` and skips it at 0. Two branches: a **client** — five points, the middle between feet and
+eye and ±15" (`0x00c73524`) across the way to the blast at ± half the eye height; 0 seen: 0, 1–3:
+⅓ each (`0x00c735c4`), 4–5: all; **any other entity** — the bounds' middle and its outline's four
+corners as the blast sees it; any seen: all. Ported as `crate::cover` for every blast: grenades,
+C4 and equipment, launchers, the Trophy's script `radiusdamage`, the EMP on players and vehicles,
+equipment and deployed shields caught in a blast, and the concussion/Shock Charge (their stun needs
+the damage callback, so a hidden player is not stunned). The **flashbang** is different: its notify
+is the engine's own single eye-to-blast trace (`FUN_005f1ea0` -> `FUN_005f1c60`, mask `0x807823`),
+ported as that one sight line. Blockers: the terrain and every non-soldier solid (structures,
+vehicles); soldiers never block (players are not in the mask); the struck object and the one a
+grenade is stuck to are ignored (the blast starts on or in it). A first-person General's eye is the
+sim's (stance), through `LogicHost::sim_eye` on the guarded host.
+
+**Grenade throw: `FUN_0066cf00`.** `vel = forward × iProjectileSpeed + viewUp × iProjectileSpeedRelativeUp
++ z × iProjectileSpeedUp (+ flatForward × iProjectileSpeedForward)`, then `vel += n (n · ps.velocity)`
+with `n` the throw's direction — only the thrower's velocity along the throw. From the muzzle, which
+for a player is the eye (`FUN_0066e320` -> `FUN_005e0560`; `FUN_00607cb0` -> `FUN_00607a00` starts
+the trajectory there). The invented 0.12 rad lift, the 1.4 clamp, the 1.5-unit offset and the half
+velocity are gone. `iProjectileSpeedRelativeUp`/`Forward` (and `bThrowBack`) are now converted and in
+the conformance schema.
+
+**Rockets: `FUN_0066d710`.** `FUN_0066e590` passes the shot's spread (the round-7 aim spread scale)
+to the rocket path, which draws `FUN_0066ce90` — the same angle-then-linear-radius disc as
+`Bullet_Fire` — on `tan(spread)`; so `WeaponAction::Launch` carries the spread and two RNG draws, and
+the stack's fan stays on top (its yaw offset is applied to the axes first, as `FUN_0066e320` does).
+The shooter is pushed `64` in/s (`0x00b12d88`) back along the view with its z clamped at ≤ 0 (aimed
+up pushes down, aimed down never up) for any fire type but full auto (`FUN_008ecd90` is the fire
+type: 6 is stacked), per projectile. Launched from the eye too.
+
+**Grenade throwback.** The use list (`FUN_00676d50`, eType 4): the missile's weapon has `bThrowBack`
+(`+0x651`; also gated by the pick-up `FUN_005d2140` and `FUN_008bba00`), not stuck to anything,
+speed ≤ `bg_maxGrenadeIndicatorSpeed` 100, within 54" (`0x00b61824`) of his feet in height,
+horizontally within `player_throwbackInnerRadius` 90 — the outer 160 once it is already his use target
+(BO2 compares the cursor-hint entity, here `PlayerSim::use_grenade`) — and within the outer radius
+of his eye, visible; it scores distance + 256 × facing − 512 (`0x00b11498`), so it outranks any
+dropped weapon. Picking up (`FUN_005d2140`) makes the offhand weapon the grenade and
+`grenadeTimeLeft` its time left (`ps+0x60 = ps+0x68`); `FUN_00607730` throws it as the picker's. The
+mod: `Arsenal::throw_back` starts a lethal offhand use with the picked def (`Arsenal::throwback`,
+which `offhand_def(true)` returns while it is in hand, so the viewmodel plays its pull-back and throw
+and the throw sounds are its own), no count spent, the fuse burning from the pick-up; nobody holds the
+throw button, so it leaves after the pull-back; held (the lethal button down) past its fuse it goes
+off in hand. Who: an enemy's or his own (the task's rule; BO2's team test there is a tangle of
+`FUN_005ddf90` and `ps+0x54f4` that reads the same in team games). The hint is `FUN_004db920`'s:
+`PLATFORM_THROWBACKGRENADE` alone for a frag-class grenade with the icon after the text, else
+`PLATFORM_PICKUPNEWWEAPON` and its name. **Not ported:** `ps+0x5b8 < 4` in the use list (its meaning
+unresolved) and the bayonet's ranges (no MP bayonet).
+
+**Gotcha: structures are "allies".** Zero Hour flags a player's own structures `ALLY` to his
+General; a trace that drops allies (as the bullets do) walks through his own walls. The melee trace
+keeps structures whoever owns them; `cover::Blockers` ignores allegiance.

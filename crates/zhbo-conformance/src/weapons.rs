@@ -197,6 +197,9 @@ pub fn schema() -> Schema {
         .col("explosion_outer_damage", "damage", Kind::Int, "iExplosionOuterDamage")
         .col("projectile_speed", "damage", inch, "iProjectileSpeed (inches/s)")
         .col("projectile_speed_up", "damage", inch, "iProjectileSpeedUp")
+        .col("projectile_speed_relative_up", "damage", inch, "iProjectileSpeedRelativeUp (FUN_0066cf00: along the view's up)")
+        .col("projectile_speed_forward", "damage", inch, "iProjectileSpeedForward (FUN_0066cf00: along the view's horizontal forward)")
+        .col("throw_back", "damage", Kind::Bool, "bThrowBack (FUN_00676d50 / FUN_005d2140: a live one may be thrown back)")
         .col("projectile_impact_explode", "damage", Kind::Bool, "bProjImpactExplode")
         .col("projectile_model", "damage", Kind::Text, "projectileModel").asset()
         .col("impact_type", "damage", Kind::Text, "ImpactType");

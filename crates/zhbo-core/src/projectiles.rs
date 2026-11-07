@@ -550,6 +550,11 @@ pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3
         objs.push(o);
     }
     objs.sort_by_key(|o| o.id);
+    // What may hide a target from it: the terrain and the solids about (BO2's radius damage scales
+    // each entity's damage by how much of it the blast sees, `FUN_005f0f00`; [`crate::cover`]).
+    // The object it struck or is stuck to is where it starts: never in the way.
+    let ignore: Vec<u32> = direct.map(|o| o.id).into_iter().chain(hit.stuck_to).collect();
+    let cover = crate::cover::Blockers::near(host, at, d.explosion_radius.max(1.0) * 2.0, owner, &ignore);
     let (mut hit_enemy, mut kill) = (false, false);
     for o in objs.iter().filter(|o| !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)) {
         let ally = o.has(objflags::ALLY) && o.id != owner;
@@ -571,6 +576,20 @@ pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3
             continue;
         }
         let own = o.id == owner;
+        // How much of it the blast sees: a direct strike and a stuck grenade's strike are not the
+        // radius damage. The flashbang's whiteout is the engine's own sight line from his eye
+        // instead (`FUN_005f1c60`, one trace, mask `0x807823`).
+        let seen = if direct_hit || stuck_hit {
+            1.0
+        } else if d.effect == Effect::Stun && d.id == crate::sim::FLASH_WEAPON {
+            let eye = if o.has(objflags::INFANTRY) { o.pos + Vec3::new(0.0, 0.0, crate::cover::soldier_eye(host, &tuning, o)) } else { o.pos + Vec3::new(0.0, 0.0, o.height * 0.5) };
+            if cover.clear(host, at, eye, o.id) { 1.0 } else { 0.0 }
+        } else {
+            cover.fraction(host, &tuning, at, o)
+        };
+        if seen <= 0.0 {
+            continue;
+        }
         match d.effect {
             // A def with no other effect still deals its radius damage when it has one: t6mp
             // `FUN_0060a480` runs the radius damage (`FUN_005f2130`) for any def whose
@@ -588,7 +607,7 @@ pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3
                     (how, d.explosion_inner_damage * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE)
                 } else {
                     let how = crate::damage::splash(d);
-                    (how, d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE)
+                    (how, d.explosion_damage_at(dist) * seen * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE)
                 };
                 if own {
                     amount *= self_blast_scale;
@@ -624,7 +643,7 @@ pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3
                     host.disable(o.id, disable_kind::PARALYZED, secs);
                     // The Shock Charge also hurts.
                     let how = crate::damage::splash(d);
-                    let amount = d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE;
+                    let amount = d.explosion_damage_at(dist) * seen * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE;
                     if amount > 0.0 && d.explosion_inner_damage > 10.0 {
                         kill |= host.damage(owner, o.id, amount, crate::damage::Blow::from_to(how, d, at, o.pos));
                     }

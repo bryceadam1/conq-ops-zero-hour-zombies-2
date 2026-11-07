@@ -2296,38 +2296,54 @@ fn identical_inputs_give_identical_results() {
     assert_eq!(make(), make());
 }
 
-/// The knife's lunge (BO2's melee charge, `FUN_008dc770`/`FUN_008c3770`): with an enemy in front
-/// past `player_meleeRange` but inside the knife's `meleeChargeRange`, the melee charges — the
-/// General closes to the reach on the charge's decelerating move and the strike lands with the
-/// charge delay on the enemy it charges at. A knife without a charge range swings at the air.
-fn lunge(charge_range: f32) -> (f32, f32) {
+/// The knife's lunge (BO2's melee charge, `FUN_008dc770`/`FUN_008c3770`) at the client's auto melee
+/// target (`FUN_0048e8f0`): with a gun up the target range is `aim_automelee_range`; past
+/// `aim_automelee_move_limit_range` he must be moving at him; a target whose distance less the
+/// charge offset is past `player_meleeRange` is charged — the General closes on the charge's
+/// decelerating move to the offset short of him and the strike lands with the charge delay.
+/// The General runs at an enemy `start` units ahead (`moving`) until he is `at` away, then melees.
+fn lunge(start: f32, at: f32, moving: bool) -> (f32, f32, bool) {
     let host = FakeHost::default();
     host.add(general(1, 0));
-    host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(2, 1, 18.0) });
+    host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(2, 1, start) });
     let mut sim = Sim::new();
     spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let p = sim.players[0].as_mut().unwrap();
     let mut knife = p.arsenal.class_melee.clone();
-    (knife.melee_charge_range, knife.melee_charge_time, knife.melee_charge_delay, knife.melee_delay) = (charge_range, 1.16, 0.1, 0.05);
+    (knife.melee_charge_time, knife.melee_charge_delay, knife.melee_delay) = (1.16, 0.1, 0.05);
     p.arsenal.class_melee = Box::leak(Box::new(knife));
     host.damage_log.borrow_mut().clear();
-    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::MELEE, pressed: buttons::MELEE, ..Default::default() }, 1);
+    let forward = FpsInput { move_packed: crate::input::pack_move(1.0, 0.0), ..Default::default() };
+    for _ in 0..200 {
+        if start - sim.player(0).unwrap().body.pos.x <= at {
+            break;
+        }
+        run(&mut sim, &host, 0, 1, if moving { forward } else { FpsInput::default() }, 1);
+    }
+    let melee = FpsInput { held: buttons::MELEE, pressed: buttons::MELEE, ..if moving { forward } else { FpsInput::default() } };
+    run(&mut sim, &host, 0, 1, melee, 1);
+    let charged = sim.player(0).unwrap().charge.is_some();
     run(&mut sim, &host, 0, 1, FpsInput::default(), 20);
     let dealt = host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| d.2).sum::<f32>();
-    (sim.player(0).unwrap().body.pos.x, dealt)
+    (start - sim.player(0).unwrap().body.pos.x, dealt, charged)
 }
 
 #[test]
-fn the_knife_lunges_past_its_reach_and_strikes() {
-    let reach = crate::weapons::MELEE_RANGE + crate::hitscan::INFANTRY_HIT_RADIUS;
-    // The install's held knife: 116 in of charge, 1.16 s charge time, 0.1 s charge delay.
-    let (x, dealt) = lunge(crate::units::inches(116.0));
-    assert!(dealt > 0.0, "the lunge reached him");
-    assert!((x - (18.0 - reach)).abs() < 1.0, "stopped at the reach: x {x}, want {}", 18.0 - reach);
-    let (x, dealt) = lunge(0.0);
-    assert_eq!(dealt, 0.0, "no charge range: out of reach");
-    assert!(x.abs() < 0.5, "and no lunge: x {x}");
+fn the_knife_lunges_at_bo2s_auto_melee_target() {
+    let t = crate::tuning::get();
+    let inch = crate::units::inches(1.0);
+    // Running at him, 99" off at the press (a frame's run nearer when the melee reads it): charge
+    // distance past the 55" reach: a lunge to 30" short of him.
+    let (gap, dealt, charged) = lunge(40.0, 99.0 * inch, true);
+    assert!(charged && dealt > 0.0, "the lunge reached him");
+    assert!((gap - t.automelee_charge_offset * inch).abs() < 1.5, "stopped the offset short: {gap}, want {}", t.automelee_charge_offset * inch);
+    // Standing still at the same distance: the move limit refuses the target (and he is out of reach).
+    let (_, dealt, charged) = lunge(90.0 * inch, 90.0 * inch, false);
+    assert!(!charged && dealt == 0.0, "no lunge standing still");
+    // Past `aim_automelee_range` with a gun up: no target.
+    let (_, dealt, charged) = lunge(40.0, (t.aim_automelee_range + 25.0) * inch, true);
+    assert!(!charged && dealt == 0.0, "out of the auto melee's range");
     assert_eq!(crate::weapons::MELEE_RANGE, crate::units::inches(crate::tuning::Tuning::default().player_melee_range), "the reach is the tuning pack's player_meleeRange");
 }

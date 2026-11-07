@@ -204,6 +204,20 @@ tuning! {
     player_melee_range: "player_meleeRange" = 55.0, "The melee's reach, inches (dvar default); past it, inside the weapon's `meleeChargeRange`, the melee lunges.";
     player_melee_charge_max_speed: "player_meleeChargeMaxSpeed" = 800.0, "The lunge's top speed, inches/s (dvar default; `FUN_008c34f0` clamps the charge velocity to it).";
     player_melee_charge_friction: "player_meleeChargeFriction" = 1200.0, "The lunge's deceleration, inches/s^2 (dvar default): it starts at sqrt(2 x friction x distance) so it stops at the reach (`FUN_008c3770`).";
+    player_melee_width: "player_meleeWidth" = 10.0, "The melee trace's width, inches (dvar default): the rays' ends spread across the view's right axis by this times the pattern's x (`FUN_00670330` -> `FUN_0066f740`).";
+    player_melee_height: "player_meleeHeight" = 10.0, "The melee trace's height, inches (dvar default): the rays' ends spread along the view's up axis by this times the pattern's y (`FUN_0066f740`).";
+    melee_trace_pullback: "MeleeTracePullback" = 10.0, "How far behind a player's eye, inches, along the view, the melee rays start (`FUN_0066f740`: `muzzle - forward x 10`, the constant at `0x00c7340c`).";
+    aim_automelee_range: "aim_automelee_range" = 100.0, "The lunge's target range, inches, with a weapon that is not a melee weapon (dvar default, `FUN_0048b390`; a melee weapon's own `meleeChargeRange` instead).";
+    aim_automelee_region_width: "aim_automelee_region_width" = 320.0, "The lunge's screen region, its width in the 640-wide virtual screen (dvar default, `FUN_0048d960`): a target's projected bounds must overlap it.";
+    aim_automelee_region_height: "aim_automelee_region_height" = 240.0, "The lunge's screen region, its height in the 480-high virtual screen (dvar default, `FUN_0048d960`).";
+    aim_automelee_move_limit: "aim_automelee_move_limit" = 0.1, "The lunge's move test (`FUN_0048d790`): past `aim_automelee_move_limit_range` the player must be moving at this share of his run speed (dvar default).";
+    aim_automelee_move_limit_range: "aim_automelee_move_limit_range" = 20.0, "The range, inches, within which the lunge needs no forward movement (dvar default, `FUN_0048d790`).";
+    aim_automelee_move_limit_angle: "aim_automelee_move_limit_angle" = 0.1, "The cosine the move must make with the way to the target at least (dvar default, `FUN_0048d790`).";
+    automelee_charge_offset: "AutoMeleeChargeOffset" = 30.0, "The lunge's distance is the target's less this, inches, sent as the command's charge distance (`FUN_0048e8f0`, the constant at `0x00c733d4`); the lunge stops this far from him.";
+    // ---- Blasts and launchers (t6mp `FUN_005f2130` radius damage, `FUN_005f0f00` visibility, `FUN_0066d710` rocket fire) ----
+    damage_visibility_width: "DamageVisibilityWidth" = 15.0, "A player's damage visibility points stand this far, inches, to each side of his middle, across the way to the blast (`FUN_005f0f00`, the constant at `0x00c73524`).";
+    damage_visibility_share: "DamageVisibilityShare" = 0.333333, "What each of a player's visible points is worth, up to three (four or more: all of the damage; `FUN_005f0f00`, the constant at `0x00c735c4`).";
+    rocket_push_speed: "RocketPushSpeed" = 64.0, "A rocket's push on the one who fires it, inches/s, back along his view, never up (`FUN_0066d710`, the constant at `0x00b12d88`; not for a full-auto weapon).";
     // ---- Equipment, concussion and EMP (BO2's MP scripts, `gsc-dump/mp/decompiled/t6/maps/mp/`) ----
     scr_weaponobject_radius: "scr_weaponobject_radius" = 192.0, "Claymore: the trigger radius, inches (`gametypes/_weaponobjects.gsc:34` default; the trigger at `:1502`). The weapon's own explosion radius also caps it (`shouldaffectweaponobject`, `:1562-1569`).";
     scr_weaponobject_coneangle: "scr_weaponobject_coneangle" = 70.0, "Claymore: half-angle of its front cone, degrees (`gametypes/_weaponobjects.gsc:31`; `detectiondot = cos(angle)`, `:282`).";
@@ -289,6 +303,11 @@ tuning! {
     g_max_dropped_weapons: "g_maxDroppedWeapons" = 16.0, "Dropped weapons lying at once: one more frees the one farthest from every player, sparing `avoidDropCleanup` weapons (dvar default, registered in `FUN_005fcb40`, min 2 max 32; `FUN_005f9230`).";
     player_use_radius: "player_useRadius" = 128.0, "How far from the eye, inches, a dropped weapon can be used (swapped for): t6mp's use list `FUN_00676d50` (dvar default).";
     use_list_dot_scale: "UseListDotScale" = 256.0, "The use list's facing term: an item scores its distance plus this times `1 - (dot + 1) / 2` of the view and the way to it, the lowest first (`FUN_00676d50`, the constant at `0x00c73548`).";
+    player_throwback_inner_radius: "player_throwbackInnerRadius" = 90.0, "How near, inches (horizontally, from his feet), a live grenade must first come to be thrown back (dvar default; the use list `FUN_00676d50`).";
+    player_throwback_outer_radius: "player_throwbackOuterRadius" = 160.0, "Once it is his use target, how far, inches, it may roll and still be thrown back; also its reach from his eye (dvar default, `FUN_00676d50`).";
+    bg_max_grenade_indicator_speed: "bg_maxGrenadeIndicatorSpeed" = 100.0, "The fastest a grenade may move, inches/s, and still be thrown back (dvar default, `FUN_00676d50`).";
+    throwback_height: "ThrowbackHeight" = 54.0, "The most a grenade may lie above or below his feet, inches, to be thrown back (`FUN_00676d50`, the constant at `0x00b61824`).";
+    use_list_grenade_bonus: "UseListGrenadeBonus" = 512.0, "A live grenade's score bonus in the use list, so it outranks any weapon (`FUN_00676d50`: eType 4 subtracts the constant at `0x00b11498`).";
     dropped_weapon_lifetime: "deletepickupafterawhile" = 60.0, "Seconds a weapon dropped at death lies before it is deleted (`_weapons.gsc:544-551`, `wait 60`); one put down by a pickup's swap has no timer (the engine's `FUN_005fb0e0`).";
     dropped_item_owner_time: "DroppedItemOwnerTime" = 1.0, "Seconds before the one who put a weapon down may pick it up again: the item's think clears its owner 1000 ms after the drop (`FUN_005fab50`; `FUN_008bbb00` refuses the owner).";
     drop_item_forward_speed: "DropItemForwardSpeed" = 10.0, "A dropped weapon's toss along the dropper's facing, inches/s (`FUN_005fae60`, `0x00b4a278`).";

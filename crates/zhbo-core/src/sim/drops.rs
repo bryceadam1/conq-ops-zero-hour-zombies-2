@@ -120,6 +120,9 @@ impl LogicHost for Witness<'_> {
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)
     }
+    fn sim_eye(&self, id: u32) -> Option<f32> {
+        self.host.sim_eye(id)
+    }
     fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32 {
         self.host.spawn(template, owner, pos, yaw)
     }
@@ -331,6 +334,10 @@ impl Sim {
     /// `player_useRadius` of his eye, one he may take and does not hold, the lowest score of its
     /// distance plus how far it is off his view. The HUD's hint asks the same.
     pub fn use_target(&self, p: &PlayerSim) -> Option<usize> {
+        // A live grenade in his use list outranks every weapon (`UseListGrenadeBonus`).
+        if p.use_grenade != 0 {
+            return None;
+        }
         let t = crate::tuning::get();
         let eye = p.body.eye();
         let dir = dir_from_angles(p.yaw, p.pitch);
