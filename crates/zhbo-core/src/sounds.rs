@@ -63,6 +63,9 @@ pub fn dry_fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
 }
 pub const DRY_FIRE: &str = "ZHBO_BO2_DryFire";
 pub const HIT_MARKER: &str = "ZHBO_BO2_HitMarker";
+/// `mpl_hit_alert_low` and `mpl_hit_alert_taser_spike` (`_damagefeedback.gsc`, `crate::damage::HitAlert`).
+pub const HIT_MARKER_LOW: &str = "ZHBO_BO2_HitMarkerLow";
+pub const HIT_MARKER_TASER: &str = "ZHBO_BO2_HitMarkerTaser";
 pub const HEARTBEAT: &str = "ZHBO_BO2_Heartbeat";
 pub const HURT: &str = "ZHBO_BO2_Hurt";
 /// Footsteps, jumps and landings by surface: [`crate::stepsounds`].
@@ -298,9 +301,50 @@ ui_cues! {
     UinToggleDrc = "uin_toggle_drc",
 }
 
-/// Below this share of health the heartbeat plays, once per beat.
+/// BO2's heartbeat (`_healthoverlay.gsc:240-271` `playerheartbeatsound`, started at each spawn by
+/// `playerhealthregen`, `:97`, with the cap `maxhealth * 0.35`): `wait 2`, then every 0.2 s a check;
+/// under the cap `mpl_player_heartbeat` plays and the loop waits `hearbeatwait` more, which starts
+/// at 0.2 and grows by 0.1 while it is at most 0.6 (beats 0.4 s apart, slowing to 0.9 s); at or
+/// over the cap the wait goes back to 0.3. Waits in milliseconds, as the script's own steps.
 const HEARTBEAT_HEALTH: f32 = 0.35;
-const HEARTBEAT_PERIOD: f32 = 0.9;
+const HEARTBEAT_START: f32 = 2.0;
+const HEARTBEAT_POLL: f32 = 0.2;
+const HEARTBEAT_WAIT_FIRST_MS: u32 = 200;
+const HEARTBEAT_WAIT_RESET_MS: u32 = 300;
+const HEARTBEAT_WAIT_STEP_MS: u32 = 100;
+const HEARTBEAT_WAIT_GROWS_TO_MS: u32 = 600;
+
+/// The heartbeat thread's clock ([`HEARTBEAT_HEALTH`] and the rest).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Heartbeat {
+    started: bool,
+    next: f32,
+    wait_ms: u32,
+}
+
+impl Heartbeat {
+    /// Advance `dt`; `under` whether he is under the cap (and alive). True when a beat plays.
+    fn update(&mut self, dt: f32, under: bool) -> bool {
+        if !self.started {
+            *self = Heartbeat { started: true, next: HEARTBEAT_START + HEARTBEAT_POLL, wait_ms: HEARTBEAT_WAIT_FIRST_MS };
+        }
+        self.next -= dt;
+        let mut beat = false;
+        while self.next <= 0.0 {
+            if under {
+                beat = true;
+                self.next += self.wait_ms as f32 / 1000.0 + HEARTBEAT_POLL;
+                if self.wait_ms <= HEARTBEAT_WAIT_GROWS_TO_MS {
+                    self.wait_ms += HEARTBEAT_WAIT_STEP_MS;
+                }
+            } else {
+                self.wait_ms = HEARTBEAT_WAIT_RESET_MS;
+                self.next += HEARTBEAT_POLL;
+            }
+        }
+        beat
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Request {
@@ -317,7 +361,7 @@ pub struct Request {
 pub struct Cues {
     /// The own feet (`stepsounds::Feet`).
     feet: crate::stepsounds::Feet,
-    heartbeat_in: f32,
+    heartbeat: Heartbeat,
     fire_was_held: bool,
     breath: BreathSounds,
     weapon: WeaponCues,
@@ -565,14 +609,9 @@ impl Cues {
             self.play(e);
         }
 
-        if p.max_health > 0.0 && p.health / p.max_health < HEARTBEAT_HEALTH && p.health > 0.0 {
-            self.heartbeat_in -= dt;
-            if self.heartbeat_in <= 0.0 {
-                self.play(HEARTBEAT);
-                self.heartbeat_in = HEARTBEAT_PERIOD;
-            }
-        } else {
-            self.heartbeat_in = 0.0;
+        let under = p.max_health > 0.0 && p.health / p.max_health < HEARTBEAT_HEALTH && p.health > 0.0;
+        if self.heartbeat.update(dt, under) {
+            self.play(HEARTBEAT);
         }
 
         let w = p.arsenal.current();
@@ -800,6 +839,35 @@ mod tests {
     }
 
     #[test]
+    fn the_heartbeat_follows_the_scripts_cadence() {
+        // Beats 0.4, 0.5, ... 0.9 s apart, then 0.9 s; over the cap the wait resets to 0.3.
+        let mut h = Heartbeat::default();
+        let dt = 0.001;
+        let mut t = 0.0f32;
+        let mut beats = Vec::new();
+        while t < 9.0 {
+            t += dt;
+            if h.update(dt, true) {
+                beats.push(t);
+            }
+        }
+        let gaps: Vec<i32> = beats.windows(2).map(|w| ((w[1] - w[0]) * 10.0).round() as i32).collect();
+        assert!((beats[0] - 2.2).abs() < 0.01, "{beats:?}");
+        assert_eq!(&gaps[..7], &[4, 5, 6, 7, 8, 9, 9], "{gaps:?}");
+        // Healed for a check, then under again: the next gaps restart from 0.5.
+        h.update(1.0, false);
+        let mut t = 0.0f32;
+        let mut again = Vec::new();
+        while t < 2.0 {
+            t += dt;
+            if h.update(dt, true) {
+                again.push(t);
+            }
+        }
+        assert_eq!(((again[1] - again[0]) * 10.0).round() as i32, 5, "{again:?}");
+    }
+
+    #[test]
     fn landing_heartbeat_and_dry_fire() {
         let mut p = PlayerSim::spawn_for_tests();
         let mut c = Cues::default();
@@ -810,11 +878,12 @@ mod tests {
         c.update(0.016, &p, false, crate::impacts::Surface::Metal);
         assert!(events(&mut c).contains(&crate::stepsounds::land_event(true, crate::impacts::Surface::Metal)), "the own landing is fly_land_plr_<surface>");
 
+        // The heartbeat waits its 2 s from the spawn and its first 0.2 s check.
         p.health = p.max_health * 0.2;
-        c.update(0.016, &p, false, crate::impacts::Surface::Default);
+        c.update(2.0, &p, false, crate::impacts::Surface::Default);
+        assert!(!events(&mut c).contains(&HEARTBEAT));
+        c.update(0.2, &p, false, crate::impacts::Surface::Default);
         assert!(events(&mut c).contains(&HEARTBEAT));
-        c.update(0.5, &p, false, crate::impacts::Surface::Default);
-        assert!(!events(&mut c).contains(&HEARTBEAT), "one beat per period");
 
         let w = p.arsenal.active;
         p.arsenal.weapons[w].ammo = 0;

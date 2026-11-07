@@ -88,6 +88,10 @@ pub const SFX: &[Sfx] = &[
     Sfx { event: "ZHBO_BO2_DryFireRpg", from: From::Common, layers: &["wpn_rpg_dryfire_plr"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_DryFireBeretta", from: From::Common, layers: &["wpn_beretta93r_dryfire_plr"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_HitMarker", from: From::Common, layers: &["mpl_hit_alert"], kind: Kind::Player, limit: 2 },
+    // `_damagefeedback.gsc`'s other alerts: a hit by an inflictor with no `soundmod` (a grenade,
+    // a rocket, a launched bolt) and the Shock Charge's (`taser_spike`).
+    Sfx { event: "ZHBO_BO2_HitMarkerLow", from: From::Common, layers: &["mpl_hit_alert_low"], kind: Kind::Player, limit: 2 },
+    Sfx { event: "ZHBO_BO2_HitMarkerTaser", from: From::Common, layers: &["mpl_hit_alert_taser_spike"], kind: Kind::Player, limit: 2 },
     Sfx { event: "ZHBO_BO2_Heartbeat", from: From::Common, layers: &["mpl_player_heartbeat"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_Hurt", from: From::World, layers: &["prj_bullet_impact_large_player"], kind: Kind::Player, limit: 2 },
     // The footsteps, jumps and landings are per surface: `footstep_events` below.

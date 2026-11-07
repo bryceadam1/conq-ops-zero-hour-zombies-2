@@ -96,10 +96,10 @@ impl Sim {
                 }
                 // Points for what the C4 kills (the owner's own state is out of the table now).
                 for e in &ev {
-                    if let EquipEvent::Exploded { at, hit_enemy, kill, sound, impact_type, surface, .. } = *e {
+                    if let EquipEvent::Exploded { at, hit_enemy, kill, sound, impact_type, surface, def, .. } = *e {
                         self.emit(idx, EventKind::Exploded { at, sound, impact_type, surface });
                         if hit_enemy {
-                            self.emit(idx, EventKind::HitMarker { headshot: false, kill });
+                            self.emit(idx, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_entity(crate::damage::splash(def), false) });
                         }
                         if kill {
                         }
@@ -186,7 +186,7 @@ impl Sim {
         if fx {
             self.emit(idx, EventKind::Impact { at: point, dir, surface, head: headshot, fatal: kill, impact_type: def.impact_type, exit: false });
         }
-        self.emit(idx, EventKind::HitMarker { headshot, kill });
+        self.emit(idx, EventKind::HitMarker { headshot, kill, alert: crate::damage::HitAlert::by_player(how) });
         BulletHit { id, surface, head: headshot, kill }
     }
 }
@@ -496,7 +496,7 @@ impl Sim {
         // The blow travels the way he faces (BO2's melee passes his forward as `vDir`).
         let amount = crate::damage::to_zh(&p.arsenal.tuning, &v, damage * rule);
         let kill = host.damage(p.general, v.id, amount, crate::damage::Blow::new(MeansOfDeath::Melee, melee, fwd));
-        self.emit(idx, EventKind::HitMarker { headshot: false, kill });
+        self.emit(idx, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_player(MeansOfDeath::Melee) });
     }
 }
 

@@ -321,7 +321,7 @@
             K::Shot { origin: at, end: at, left: true, spread: 0.0 },
             K::Impact { at, dir, surface: Surface::Concrete, head: false, fatal: false, impact_type: 1, exit: false },
             K::Impact { at, dir, surface: Surface::Flesh, head: true, fatal: true, impact_type: 1, exit: true },
-            K::HitMarker { headshot: false, kill: true },
+            K::HitMarker { headshot: false, kill: true, alert: crate::damage::HitAlert::Player },
             K::Recoil { gun_kick: (1.0, 1.0) },
             K::Flinch { yaw_deg: 0.0, pitch_deg: 1.0 },
             K::Damaged { amount: 10.0, dir: Vec3::ZERO },

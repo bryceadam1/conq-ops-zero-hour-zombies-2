@@ -188,7 +188,7 @@ impl Remote {
                     self.chatter(seat, kind, p, cues);
                 }
             }
-            EventKind::KilledBy { dmg, dir } => {
+            EventKind::KilledBy { dmg, dir, .. } => {
                 if let Some(s) = self.seats.get_mut(seat) {
                     s.killed = Some((dmg, dir));
                 }
@@ -681,14 +681,14 @@ mod tests {
             a
         };
         // Shot in the head by a General in front of him (+X): the blow travels -X.
-        let r = fall(&players, Some(EventKind::KilledBy { dmg: DmgType::HeadShot, dir: Vec3::new(-1.0, 0.0, 0.0) }));
+        let r = fall(&players, Some(EventKind::KilledBy { dmg: DmgType::HeadShot, dir: Vec3::new(-1.0, 0.0, 0.0), by: None, how: crate::damage::MeansOfDeath::Unknown, weapon: None }));
         let corpse = r.corpses()[0];
         assert!(corpse.clip == 8000 || corpse.clip == 8001, "{corpse:?}");
         assert!(r.torsos().any(|a| a.general == 2 && a.action == torso::DEATH));
         // A shotgun from his left (+Y: the pellets travel -Y), the shield's bash from behind.
-        let shot = fall(&players, Some(EventKind::KilledBy { dmg: DmgType::NormalShotgun, dir: Vec3::new(0.0, -1.0, 0.0) }));
+        let shot = fall(&players, Some(EventKind::KilledBy { dmg: DmgType::NormalShotgun, dir: Vec3::new(0.0, -1.0, 0.0), by: None, how: crate::damage::MeansOfDeath::Unknown, weapon: None }));
         assert_eq!(shot.corpses()[0].clip, 8003);
-        let bash = fall(&players, Some(EventKind::KilledBy { dmg: DmgType::MeleeBash, dir: Vec3::new(1.0, 0.0, 0.0) }));
+        let bash = fall(&players, Some(EventKind::KilledBy { dmg: DmgType::MeleeBash, dir: Vec3::new(1.0, 0.0, 0.0), by: None, how: crate::damage::MeansOfDeath::Unknown, weapon: None }));
         assert_eq!(bash.corpses()[0].clip, 8004);
         // A death to anything else: the stance's default.
         assert_eq!(fall(&players, None).corpses()[0].clip, 8002);

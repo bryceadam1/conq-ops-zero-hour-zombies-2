@@ -8,7 +8,9 @@
 //!   fire-rate icon, alt fire) and above it the scorestreak column ([`rewards`]).
 //! * Bottom-left: the score panel ([`score`]).
 //! * Top-left: the minimap and the compass strip ([`map`]).
-//! * Centre: crosshair, hit marker, score popup ([`center`]); damage feedback ([`damage`]).
+//! * Centre: crosshair, hit marker, score popup ([`center`]); damage feedback ([`damage`]); the
+//!   grenade indicator and the allies' names ([`grenade`]).
+//! * Left, above the score panel: the kill feed ([`obituary`]).
 //! * Tab: the scoreboard ([`scoreboard`]); the full-map radar moved to M.
 //!
 //! Deliberate divergences: no scorestreaks (the column holds the field computer and the build
@@ -27,9 +29,12 @@ pub mod ammo;
 pub mod center;
 pub mod damage;
 pub mod digit;
+pub mod feedback;
 pub mod frame;
+pub mod grenade;
 pub mod hints;
 pub mod map;
+pub mod obituary;
 mod panels;
 pub mod pickup;
 pub mod rewards;
@@ -129,7 +134,8 @@ pub fn materials() -> impl Iterator<Item = &'static str> {
         .chain(rewards::MATERIALS.iter())
         .chain(damage::MATERIALS.iter())
         .chain(spectate::MATERIALS.iter())
-        .chain(["damage_feedback", "hud_horizontal_compass_minimap"].iter())
+        .chain(["damage_feedback", "damage_feedback_flak", "damage_feedback_tac", "hud_horizontal_compass_minimap", "hud_grenadeicon", "hud_grenadepointer"].iter())
+        .chain(["killicondied", "killiconheadshot", "hud_obit_knife", "hud_obit_death_suicide", "hud_obit_death_crush", "hud_obit_death_falling", "hud_obit_death_grenade_round"].iter())
         .copied()
 }
 
@@ -281,6 +287,12 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
         draw_indicators(prims, w, h, client.yaw.to_degrees(), st);
     }
 
+    // The kill feed: up whatever else is (BO2 hides it only behind a menu and in the killcam).
+    let names = |seat: u8| host.player_name(seat as i32).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("Player {}", seat + 1));
+    let ally = |seat: u8| seat as i32 == local_player || client.seats.get(seat as usize).is_some_and(|t| t.ally);
+    let suicide = crate::weapons::catalog().ui_text("CGAME_QUAKE_SUICIDE").unwrap_or("");
+    obituary::draw(&l, prims, &client.feedback.obits, st.clock, &obituary::Names { name: &names, ally: &ally, suicide });
+
     // Using the field computer, the tablet is up (zhbo_core::viewmodel): no crosshair.
     let tablet_up = matches!(p.mode, Mode::FieldComputer { .. });
     let map_open = client.hud.map_open;
@@ -296,6 +308,17 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     } else {
         if !tablet_up && !map_open {
             draw_marks(host, prims, w, h, s, client, sim, p);
+            draw_names(prims, w, h, client, sim, host, local_player);
+            // The grenade indicator: not under the scope overlay (`FUN_004aea40` tests
+            // `FUN_004b4760`).
+            if zoom.is_none() {
+                if let Ok(me) = usize::try_from(local_player) {
+                    let seats = client.seats;
+                    let ally = |seat: usize| seats.get(seat).is_some_and(|t| t.ally);
+                    let shown = grenade::collect(sim, me, p, &ally);
+                    grenade::draw(prims, w, h, client.view_eye, client.yaw, &shown, st.clock);
+                }
+            }
             // BO2's scope overlay: up while the reticle zoom is, when the viewmodel is not drawn.
             draw_scope_overlay(prims, w, h, p, st.ads_zoom_in);
             draw_crosshair(prims, w, h, s, client, p, zoom);
@@ -344,6 +367,20 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     }
     if client.class_pick_open {
         crate::classui::draw_screen(prims, w, h, &client.class_screen_view());
+    }
+}
+
+/// The allies' names over their heads ([`grenade::draw_name`]), each at its fade
+/// ([`feedback::NameFade`]).
+fn draw_names(prims: &mut Vec<Prim>, w: f32, h: f32, client: &Client, sim: &Sim, host: &dyn ClientHost, local_player: i32) {
+    let now = client.hud.lui.clock;
+    for (seat, fade) in client.feedback.names.iter().enumerate() {
+        let alpha = fade.alpha(now);
+        let Some(q) = sim.players.get(seat).and_then(|q| q.as_ref()).filter(|_| alpha > 0.0 && seat as i32 != local_player) else { continue };
+        let at = feedback::name_anchor(q);
+        let Some((x, y)) = project(client, w, h, at) else { continue };
+        let name = host.player_name(seat as i32).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("Player {}", seat + 1));
+        grenade::draw_name(prims, h, x, y, (at - client.view_eye).length(), &name, alpha);
     }
 }
 

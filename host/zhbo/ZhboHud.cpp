@@ -239,6 +239,28 @@ int32_t cbImage(const char *name_, float x, float y, float w, float h, uint32_t 
 	return 1;
 }
 
+// A MappedImage on an arbitrary quad (host patch 0033), looked up as cbImage does.
+int32_t cbImageQuad(const char *name_, const float *corners, uint32_t argb)
+{
+	if (!TheDisplay || !corners)
+		return 0;
+	const std::string name = name_;
+	std::map<std::string, const Image *>::iterator it = s_images.find(name);
+	const Image *image;
+	if (it == s_images.end())
+	{
+		image = TheMappedImageCollection ? TheMappedImageCollection->findImageByName(name.c_str()) : nullptr;
+		s_images[name] = image;
+	}
+	else
+	{
+		image = it->second;
+	}
+	if (!image)
+		return 0;
+	return TheDisplay->drawImageQuad(image, corners, argb) ? 1 : 0;
+}
+
 void cbClip(float x, float y, float w, float h)
 {
 	if (!TheDisplay)

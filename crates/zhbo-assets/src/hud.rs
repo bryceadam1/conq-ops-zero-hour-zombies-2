@@ -268,6 +268,23 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             None => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
         }
     }
+    // Each converted weapon's crosshair art (`reticleSide`/`reticleCenter`, `hud::center`), its
+    // obituary icon (`killIcon`, `hud::obituary`; a 2:1 or 4:1 icon kept twice as wide) and its
+    // grenade indicator icon (`indicatorIcon`, `hud::grenade`), under their material names, packed
+    // once each: the player weapons' and their alt modes' (a grenade launcher's own kill icon), as
+    // the alt-fire slot's art below.
+    for w in weapons.iter().filter(|w| roster.is_player_weapon(w) || w.inventory == zhbo_formats::weapon::inventory::ALTMODE) {
+        for m in [&w.reticle.side, &w.reticle.center].into_iter().flatten() {
+            wanted.push((zhbo_core::lui::materials::image(m), Source::Dynamic(m.clone()), 64));
+        }
+        if let Some(icon) = &w.kill_icon {
+            let max = if w.kill_icon_ratio == 0 { 64 } else { 128 };
+            wanted.push((zhbo_core::lui::materials::image(icon), w.kill_icon_key.map_or_else(|| Source::Dynamic(icon.clone()), Source::Hash), max));
+        }
+        if let Some(icon) = &w.indicator_icon {
+            wanted.push((zhbo_core::lui::materials::image(icon), w.indicator_icon_key.map_or_else(|| Source::Dynamic(icon.clone()), Source::Hash), 64));
+        }
+    }
     // The alt-fire slot's art (`zhbo_core::hud::ammo::alt_slot_icon`): each variant's `dpadIcon`
     // (`hud_gl_select`, `hud_select_fire_bullet_stack`), the player weapons' and their alt modes'.
     for (icon, hash) in dpad_icons(&weapons, &roster) {

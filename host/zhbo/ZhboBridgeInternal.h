@@ -189,6 +189,7 @@ void cbSound(const char *event, const ZhboVec3 *at);
 void cbSoundGain(const char *event, const ZhboVec3 *at, float gain);
 void cbSoundLoop(const char *event, float gain);
 int32_t cbPlayerName(int32_t player, char *out, int32_t cap);
+int32_t cbImageQuad(const char *name, const float *corners, uint32_t argb);
 void cbClip(float x, float y, float w, float h);
 int32_t cbRadar(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *youPx);
 int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);

@@ -271,12 +271,17 @@ pub fn schema() -> Schema {
         .col("reticle_sizes", "reticle", Kind::List, "iReticleCenterSize, iReticleSideSize, iReticleMinOfs")
         .col("reticle_fracs", "reticle", v3, "fHipReticleSidePos, fAdsCrosshairInFrac, fAdsCrosshairOutFrac")
         .col("keep_crosshair_when_ads", "reticle", Kind::Bool, "bKeepCrosshairWhenADS")
+        .col("crosshair_color_change", "reticle", Kind::Bool, "crosshairColorChange (FUN_004b52a0: the team colour over a target)")
         .col("overlay_material", "overlay", Kind::Text, "first unique differing from the base unique, else the variant's (FUN_008ed570)").asset()
         .col("overlay_material_low_res", "overlay", Kind::Text, "same rule (FUN_008ed5f0)").asset()
         .col("overlay_reticle", "overlay", Kind::Text, "weapOverlayReticle_t, same rule over the def's (FUN_008ed670)")
         .col("overlay_size", "overlay", Kind::Floats(F32_EPS), "the def's overlayWidth, overlayHeight (FUN_004b4c70 reads them off the WeaponDef)")
         .col("hud_icon", "overlay", Kind::Text, "hudIcon material").asset()
-        .col("dpad_icon", "overlay", Kind::Text, "the variant's dpadIcon material").asset();
+        .col("dpad_icon", "overlay", Kind::Text, "the variant's dpadIcon material").asset()
+        .col("kill_icon", "overlay", Kind::Text, "killIcon material (CG_Obituary FUN_004c0080)").asset()
+        .col("kill_icon_shape", "overlay", Kind::List, "killIconRatio, flipKillIcon")
+        .col("indicator", "overlay", Kind::List, "projExplosion, bShowIndicator, iIndicatorRadius (the grenade indicator, FUN_004ae7b0/FUN_004ae5b0)")
+        .col("indicator_icon", "overlay", Kind::Text, "indicatorIcon material").asset();
 
     // Alt mode, dual wield, flags, specialties.
     s.col("alt_weapon", "alt", Kind::Text, "the first single unique's alt weapon, else the variant's (FUN_008ec9e0)")

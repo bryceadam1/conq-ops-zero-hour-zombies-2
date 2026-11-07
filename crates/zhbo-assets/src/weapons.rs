@@ -1503,6 +1503,13 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // it (`gl_an94_mp`: `hud_gl_select`), the weapon it toggles from does not.
         dpad_icon: w.dpad_icon.clone().unwrap_or_default(),
         hud_icon: w.hud_icon.clone().unwrap_or_default(),
+        kill_icon: zhbo_core::weapons::KillIcon { material: w.kill_icon.clone().unwrap_or_default(), ratio: w.kill_icon_ratio as u8, flip: w.flip_kill_icon },
+        indicator: zhbo_core::weapons::GrenadeIndicator {
+            proj_explosion: w.proj_explosion as u8,
+            show: w.show_indicator,
+            radius: w.indicator_radius as f32,
+            icon: w.indicator_icon.clone().unwrap_or_default(),
+        },
         // Set by `generals::files` once the effects are converted (`world_shot_fx`).
         world_shell_fx_weapon: String::new(),
         world_last_shot_shell_fx_weapon: String::new(),

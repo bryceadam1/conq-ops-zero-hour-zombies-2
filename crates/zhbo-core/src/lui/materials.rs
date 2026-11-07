@@ -23,6 +23,13 @@ pub const MATERIALS: &[(&str, u32)] = &[
     ("hud_mp_vis_ks_dpad_box_back", 128), ("hud_mp_vis_ks_dpad_box_back_lit", 128), ("hud_mp_vis_ks_dpad_box", 128),
     ("hud_mp_vis_ks_dpad_bracket", 128),
     ("overlay_low_health", 512), ("hit_direction", 256), ("damage_feedback", 64), ("hud_horizontal_compass_minimap", 512),
+    // The kill feed's means-of-death icons (CG_Obituary, t6mp `FUN_004c0080`; `hud::obituary`), the
+    // grenade indicator's default icon and pointer (`FUN_004d4980`'s registrations; `hud::grenade`)
+    // and the hit marker's perk variants (`_damagefeedback.gsc`).
+    ("killicondied", 64), ("killiconheadshot", 64), ("hud_obit_knife", 64), ("hud_obit_death_suicide", 64),
+    ("hud_obit_death_crush", 64), ("hud_obit_death_falling", 64), ("hud_obit_death_grenade_round", 64),
+    ("hud_grenadeicon", 64), ("hud_grenadepointer", 64),
+    ("damage_feedback_flak", 64), ("damage_feedback_tac", 64),
     // The spectator's dead-spectate panel (`hud/deadspectate.lua`, `hud::spectate`).
     ("hud_shoutcasting_change_tab", 256), ("hud_shoutcasting_viewing_box_dead", 512),
     // Create a class (classui): `codmenu.lua`'s large popup frame, `cacchooseclass.lua`'s set pips,

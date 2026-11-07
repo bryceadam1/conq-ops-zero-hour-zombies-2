@@ -4,8 +4,8 @@
 //!   full screen at the pulse state machine's alpha ([`super::state::LowHealth`]).
 //! * The damage-direction indicators (G7, 0x004ade10): `hit_direction` on a 128 x 64 band 64..128
 //!   units out from the centre (480-line space), turned to `viewYaw − hitYaw`, opaque for the first
-//!   half of its 2 s and fading after. The core does not learn where damage came from yet, so no
-//!   slot is filled until the engine reports it (`HudLui::damage_from`).
+//!   half of its 2 s and fading after. Every hurt with a way fills a slot (`client::events`'
+//!   `Damaged`: the sim's blow, Zero Hour's own weapons' included, overhead too).
 
 use super::state::HudLui;
 use super::*;

@@ -1801,6 +1801,30 @@ General's health from the player's heroes (`zhbo_assets::toughness`), so the arc
 hold, Zero Hour's weapons see 2.5 heroes). The tuning pack (the content CRC's tuning part) gains
 `playerMaxHealth` (100) and `GeneralHeroToughness` (1) under `[Health]`.
 
+**Pending for the next bump (hud-feedback).** Archive `hud::VERSION` 89 → 90 needed (the ABI append is below). The
+weapon table gains four presentation keys: `KillIcon` and `KillIconShape` (BO2's `killIcon`,
+`killIconRatio`, `flipKillIcon`: the kill feed) and `Indicator` and `IndicatorIcon` (`projExplosion`,
+`bShowIndicator`, `iIndicatorRadius`, `indicatorIcon`: the grenade indicator), and the `UiText
+CGAME_QUAKE_SUICIDE` block. The archive gains sprites: each converted weapon's `reticleSide`/
+`reticleCenter`, `killIcon` and `indicatorIcon` under their material names, and the fixed
+`killicondied`, `killiconheadshot`, `hud_obit_*`, `hud_grenadeicon`, `hud_grenadepointer`,
+`damage_feedback_flak` and `damage_feedback_tac`; and the sound events `ZHBO_BO2_HitMarkerLow`
+(`mpl_hit_alert_low`) and `ZHBO_BO2_HitMarkerTaser` (`mpl_hit_alert_taser_spike`). An archive at 89
+reads none of the keys (no kill icons: the means' icons draw; no grenade indicator, whose kinds are
+unset; the crosshair already had its art keys) and plays no low or taser alert. The sim's events
+change shape only inside Rust (`HitMarker.alert`, `KilledBy.by/how/weapon`, the new `PerkFeedback`;
+presentation outputs, not hashed), so no content-CRC part moves.
+
+Also pending (hud-feedback), an ABI append: `ZhboClientApi.image_quad(name, corners, argb)` after
+`player_name` (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 16 → 17, the size asserts on both
+sides; `ZHBO_ABI_VERSION` left for the integrator). It draws a MappedImage on an arbitrary quad
+(8 floats: the image's top-left, top-right, bottom-right, bottom-left), returning 0 when the image
+is missing; host patch 0033 (`0033-image-quad.patch`) adds `Display::drawImageQuad` (a virtual
+answering `FALSE`) and `W3DDisplay`'s two-triangle implementation over the atlas cell (a cell
+packed turned keeps its turn). Until now `ClientHost::image_quad` had no engine side at all, so
+every turned HUD image fell back to strokes: the damage indicators, and now the crosshair's side
+pieces, the grenade pointer and a flipped kill icon.
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the

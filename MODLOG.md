@@ -14352,3 +14352,127 @@ F7), each re-read in t6mp before porting (dumps in `~/.opencode/plan/anim-sound/
   `render_world_weapons --motion <id>` draws every movement state and aim pitches -40/0/+40.
 * **Gotcha**: the MP `playeranim.script` is not in the reference dump (only SP/ZM); read it from
   the install with `rawfile common_mp.ff mp/playeranim.script`.
+
+## HUD feedback by BO2's rules: indicators, kill feed, crosshair, grenade indicator, names, marker, heartbeat (2026-11-06, branch `v1/hud-feedback`)
+
+The round-8 audit (`bo2-audit/presentation.md` H1, H4, M1, M7, M10 and the low HUD items) found
+BO2's damage feedback half ported. Each item, re-checked in t6mp (dumps in the plan dir's
+`ghidra/`) and the MP GSC:
+
+**Damage-direction indicators (H1, confirmed).** `HudLui::damage_from` (G7 `FUN_004e8ab0`: the
+oldest of 8 slots, 2 s, ±10°) was only ever called from its test. Every `Damaged` with a way now
+fills a slot with the yaw back towards the blow (`atan2(-dir)`), the jitter from the client's own
+xorshift stream (`hud::feedback`), for every hurt: the sim's blows, Zero Hour's own weapons' (the
+engine hook's blows carry a way) and an overhead General's (the slot shows if he enters first
+person within its 2 s). A blow with no way (BO2's yaw byte 255) fills none.
+
+**Kill feed (M1, confirmed).** Ported from the server's `obituary` builtin (`FUN_00628c80`, found
+through the builtin table at `0x00c8db80`: name, id, min/max args, function), CG_Obituary
+(`FUN_004c0080`), the line builder `FUN_005490a0` and the icon code `FUN_00547770`:
+- The icon: the weapon's `killIcon` unless the means is `MOD_HEAD_SHOT`, `MOD_SUICIDE`,
+  `MOD_FALLING`, `MOD_CRUSH`, a melee not by a riot shield (`weapType` 8) or an impact whose weapon's
+  `impactType` is not 15; then the means' own (`hud_obit_knife`, `killiconheadshot`,
+  `hud_obit_death_crush/_falling/_suicide/_grenade_round`, else `killicondied`). So BO2's headshot
+  marker *replaces* the weapon icon. A weapon without a kill icon draws `hud_obit_death_suicide`.
+  Size 1.4 font heights (`_DAT_00b1347c`), ×2 wide for 2:1 and 4:1, ×0.5 tall for 4:1, in 32nds.
+- The line: `^c<attacker>^7 <icon> ^c<victim>`, names `^8` on the local player's side, `^9`
+  otherwise (`FUN_004ef380`); no attacker (a suicide, the world) → the victim then
+  ` CGAME_QUAKE_SUICIDE` ("Mistakes were made." in English, converted as UiText).
+- The window: `con_gameMsgWindow0*` defaults from `FUN_00548a80` (5 s, 4 lines, scroll 0.25 s, fade
+  in 0.25 s, out 0.5 s), drawn by LUI `FUN_0069f0e0` bottom-up at the font's pixel height
+  (ExtraSmall, 20) in `hud.lua:827`'s box (safe-area left 13..277, bottom −249..−149).
+- The data: `KilledBy` now carries the killer's seat, the blow's means and weapon (score.rs), and
+  an engine kill its BO2 means (`Struck.how`, the `[ZeroHourDamage]` table's). The client builds
+  the lines from every seat's events in the sim's order, a `GeneralDied` with no `KilledBy` being
+  a world death, so every machine shows the same lines; the sim log's `KilledBy` line names the
+  obituary and the mp leg compares both machines' sequences.
+
+**Crosshair (H4, confirmed; G6 corrected).** The weapon table already carried `Reticle`/
+`ReticleArt`; the HUD drew strokes. Now `FUN_004b5ea0`: four `reticleSide` quads at
+`iReticleSideSize`, turned about their centres, at `max(px, iReticleMinOfs) − size·fHipReticleSidePos`
+(G6 read the subtraction as the aim offset: `FUN_004b5d70`'s `param_2` is the size pair), each with
+its `size/8` nudge (`DAT_00b12e34`), and `reticleCenter`. The ADS behaviour is
+`FUN_004b64a0`/`FUN_004b5ba0`: not drawn at full ADS unless `bKeepCrosshairWhenADS`; through
+`fAdsCrosshairInFrac`/`OutFrac` it *shrinks* to half and slides by `fAdsAimPitch` (G6's "fade"
+was the overlay's, `FUN_004b4760`, which the HUD already had). The `ads > 0.6` snap is gone (the
+W3D fallback's optic stand-in keeps its own test). With `crosshairColorChange`, `FUN_004b52a0`'s
+colour: the enemy team's within `cg_enemyNameFadeOut` 250 ms of leaving an enemy, ours within
+`cg_friendlyNameFadeOut` 1500 ms of leaving a friend; the client traces the view each frame
+(15000 inches, `FUN_004b64a0`'s trace) through the logic host, read-only. Install data: 11,538 rows
+draw `reticle_side_small` at 3–8 with in-fraction 1 (the shrink spans the whole ADS-in).
+
+**Grenade indicator (M7, confirmed).** `FUN_004ae7b0`/`FUN_004ae5b0`/`FUN_004aea40`: grenade,
+projectile or mine defs with `timedDetonation` and `projExplosion` grenade/heavy/fire; own or
+enemy; at rest, stuck or under `bg_maxGrenadeIndicatorSpeed`; within `iIndicatorRadius` or the
+larger of `cg_hudGrenadeIconMaxRangeFrag` 250 and the explosion radius; icon 25² at 50 from the
+centre, pointer 25×12 pivot (12, 27), a 1.7 Hz pulse; hidden under the scope overlay.
+Approximation: the height window takes the player box's top (70 over the feet) and 104 under the
+eye; BO2's upper limit is the smaller of two terms one of which reads a cg field not identified.
+
+**Friendly names (M10, confirmed).** `nameplate.lua` is the killcam/notification plate; the names
+over allies are the engine's (`FUN_004b3c90` visibility and fade, `FUN_004b2500` front/max
+distance, `FUN_004b3690` the trace, `FUN_004b1b60` the draw). Allied seats' Generals, visible
+(in front, within 10000 inches, a clear line from the eye), full while seen and fading over 1.5 s,
+`cg_overheadNamesSize` 0.5 scaled 1 → 0.7 between 64 and 512 inches, our team's colour over a
+shadow. The name's font height takes the menus' 48 lines per scale (as the hints).
+
+**Hit marker.** `_damagefeedback.gsc`: the `_flak`/`_tac` shaders when the victim's perk took it
+(`doperkfeedback`: Flak Jacket on explosive damage, the Tactical Mask's three specialties on a
+flash/concussion/Shock Charge), sent as a `PerkFeedback` event from the scoring after the hit's
+own marker. The alert by the means and inflictor (`HitAlert`): `mpl_hit_alert` for a player's own
+round or strike, `mpl_hit_alert_low` for a grenade/rocket/bolt, none for `MOD_GRENADE_SPLASH`,
+`MOD_CRUSH`, `MOD_HIT_BY_OBJECT` or a broken piece of equipment, and the Shock Charge's
+`taser_spike`. **The 0.05 s limit applies only to the alerts through `playhitsound`** (taser,
+heli, hpm, ...), never to the player's own `mpl_hit_alert`, so a fast gun's every hit still ticks.
+
+**Damage HUD shake: already matches.** `hudshaker.lua` is never instantiated in patch_mp (only the
+SP `shadeshud.lua` and `rts.lua` call `CoD.HUDShaker.new`): BO2's MP HUD does not shake.
+
+**Heartbeat.** `_healthoverlay.gsc:240-271`, started at each spawn (`:97`): `wait 2`, a check every
+0.2 s, a beat under 35 % then `hearbeatwait` (0.2, +0.1 while ≤ 0.6: beats 0.4 → 0.9 s apart),
+reset to 0.3 at or above the cap. The audit's "2 s after the hit" is the spawn's (the thread runs
+for the life); the mod restarts it with the cues (a new General or first person).
+
+**Gotcha: the server decides the headshot icon.** CG_Obituary's switch on the means only runs when
+the event carries no weapon (`0xf5 == 0`); the weapon is dropped server-side for the five means
+above. Reading the client alone suggests a headshot keeps the gun's icon.
+
+**Found on the way: `ClientHost::image_quad` had no engine side.** The trait's default answered
+`false` and the C ABI never carried it, so every turned HUD image drew its stand-in strokes (the
+damage indicators' red outlines were the first to show it, once fed). Now `ZhboClientApi.image_quad`
+(appended, `CLIENT_API_FIELDS` 17; the ABI version is the integrator's) and host patch 0033's
+`Display::drawImageQuad` (W3D: two triangles over the atlas cell). **Gotcha: the 2D pass culls.**
+The first build drew nothing at all: `Render2DClass` triangles must keep `drawImage`'s winding
+(top-left, bottom-left, top-right: a negative cross product with y down); the patch orders the two
+triangles by the corners' turn, so a mirrored quad (a flipped kill icon) draws too.
+
+**Gotcha: a death can come before its kill.** The sim scores a step's damage after the step
+(`Sim::scored`), so the victim's `GeneralDied` (his own step saw him dead) can precede the
+`KilledBy` in the same step's events; the feed first drew a world line and then the kill (the mp
+leg's log showed the order). The client now matches the two within the step's events.
+
+**Tests.** `hud::obituary::tests`, `hud::feedback::tests`, `hud::grenade::tests`,
+`hud::center::tests` (the pieces' placements, the min offset, the ADS shrink, the full-ADS hide),
+`hud::tests` (`a_hurt_points_the_indicator_back_at_its_source`,
+`the_kill_feed_is_the_same_on_every_machine` with the death first,
+`the_grenade_indicator_shows_own_and_enemy_grenades_at_rest_in_range`, the map test now counting
+the crosshair's art and its stand-in), `sounds::tests::the_heartbeat_follows_the_scripts_cadence`,
+`sim::score::tests` (`KilledBy`'s killer and means). The mp leg compares both machines' kill lines
+to the last frame both ran (`the kill feed's deaths agree`; one machine runs a few frames longer
+at the end, which a whole-log diff failed on once).
+
+**Verified.** `cargo test --workspace` (without `ZHBO_BO2_DIR`): all green but
+`nativebody::tests::the_shield_rides_the_left_hand_and_the_back` once (it reads the global torso
+publication the client tests also write; 3/3 alone). Clippy clean (workspace `--all-targets`;
+zhbo-core `autopilot,harness`). Real install (`--ignored --skip conformance`): 79/80, the one failure
+`generals::tests::converts_from_real_install` (`ZVHAMC.zbv: no aim marker`), which the integrator's
+round-7 run shows too. Conformance: weapons 0 cells with the five new columns, every old column's
+cells and all cac CSVs equal to the baseline (cac 0 + 4 BO2-only). Archive: 510 sprites, none
+missing. In game (a private engine work dir with patch 0033): default 18/18, `--input` 3/3, `--rts`
+20/20, `--splash` 5/5, `--mp` 27/27 (state hash on all 2,829 common frames; the kill feed's line
+alike on both). Captures: the damage-direction arcs and BO2's crosshair pieces
+(`at-default/shot.bmp.000450.png`), the crosshair red over the enemy General and gone at full ADS,
+the hit marker and the kill feed `MPHost [AN-94] MPJoin` (`at-mp/host-shot.bmp.0017-0019*.png`).
+Not captured in game: the grenade indicator (no scene leaves a live grenade at rest within 250
+inches of a first-person General) and the friendly names (no scene has an allied first-person
+player); both are covered headless. BO2's reference has no in-game HUD captures to compare with.

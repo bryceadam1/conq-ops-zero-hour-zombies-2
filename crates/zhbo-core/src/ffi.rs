@@ -195,7 +195,7 @@ pub const ABI_VERSION: u32 = 35;
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
 pub const LOGIC_API_FIELDS: u64 = 24;
-pub const CLIENT_API_FIELDS: u64 = 16;
+pub const CLIENT_API_FIELDS: u64 = 17;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {

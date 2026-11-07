@@ -666,6 +666,10 @@ UiText PLATFORM_HOLD_BREATH
   Text = Press ^3&&1^7 and hold to steady
 End
 
+UiText CGAME_QUAKE_SUICIDE
+  Text = Mistakes were made.
+End
+
 Perk LIGHTWEIGHT
   Name = Lightweight
   Description = Move faster.  Take no damage when falling.

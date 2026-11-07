@@ -403,6 +403,56 @@ pub fn bullet(def: &WeaponDef, soldier: bool, location: u8) -> MeansOfDeath {
     }
 }
 
+/// The hit alert BO2 plays the attacker for a hit (`_damagefeedback.gsc` `updatedamagefeedback`):
+/// none for `MOD_CRUSH`, `MOD_GRENADE_SPLASH` and `MOD_HIT_BY_OBJECT` or a call with no means at
+/// all (`_weaponobjects.gsc:652`, a broken piece of equipment); `mpl_hit_alert` when the inflictor
+/// is a player (`soundmod "player"`, `_battlechatter_mp.gsc:164`); the Shock Charge's
+/// `mpl_hit_alert_taser_spike` (`_proximity_grenade.gsc:172-177`), which goes through
+/// `playhitsound` and so plays at most once per 0.05 s; and `mpl_hit_alert_low` for an inflictor
+/// with no `soundmod` (a grenade, a rocket, a bolt). Presentation only: the client plays it
+/// ([`crate::client`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HitAlert {
+    #[default]
+    Player,
+    Low,
+    TaserSpike,
+    Silent,
+}
+
+impl HitAlert {
+    /// The means `updatedamagefeedback` plays nothing for.
+    fn silent(how: MeansOfDeath) -> bool {
+        matches!(how, MeansOfDeath::Crush | MeansOfDeath::GrenadeSplash | MeansOfDeath::HitByObject)
+    }
+
+    /// A hit dealt by the player himself (a round, a melee strike): his `soundmod`.
+    pub fn by_player(how: MeansOfDeath) -> HitAlert {
+        if Self::silent(how) { HitAlert::Silent } else { HitAlert::Player }
+    }
+
+    /// A hit dealt by an entity of his with no `soundmod` (a grenade, a rocket, a piece of
+    /// equipment), or the Shock Charge's (`taser`).
+    pub fn by_entity(how: MeansOfDeath, taser: bool) -> HitAlert {
+        if Self::silent(how) {
+            HitAlert::Silent
+        } else if taser {
+            HitAlert::TaserSpike
+        } else {
+            HitAlert::Low
+        }
+    }
+}
+
+/// The hit marker's perk variant (`_globallogic_player.gsc:1166` `doperkfeedback`): the victim's
+/// Tactical Mask took a flash or stun (`damage_feedback_tac`), or his Flak Jacket an explosion that
+/// is not an AI killstreak's (`damage_feedback_flak`). Presentation only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PerkFeedback {
+    FlakJacket,
+    TacticalMask,
+}
+
 /// The direct means of `def`'s missile handler: a grenade's (`weapType` grenade) `MOD_GRENADE`,
 /// anything launched `MOD_PROJECTILE` (t6mp's handler table, `+0x14`).
 pub fn direct(def: &WeaponDef) -> MeansOfDeath {

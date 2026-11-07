@@ -397,6 +397,14 @@ getters!(Def, WD {
     f32 ads_crosshair_out_frac = fAdsCrosshairOutFrac;
     bool keep_crosshair_when_ads = bKeepCrosshairWhenADS;
     named hud_icon = hudIcon;
+    bool crosshair_color_change = crosshairColorChange;
+    named kill_icon = killIcon;
+    u32 kill_icon_ratio = killIconRatio;
+    bool flip_kill_icon = flipKillIcon;
+    u32 proj_explosion_kind = projExplosion;
+    bool show_indicator = bShowIndicator;
+    i32 indicator_radius = iIndicatorRadius;
+    named indicator_icon = indicatorIcon;
     named weapon_camo = weaponCamo;
     named tracer = tracerType;
     named enemy_tracer = enemyTracerType;

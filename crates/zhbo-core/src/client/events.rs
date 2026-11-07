@@ -97,6 +97,25 @@ impl Client {
         }
     }
 
+    /// The kill feed (`hud::obituary`): every seat's deaths, in the sim's order, so every machine
+    /// shows the same lines.
+    pub(super) fn obituaries(&mut self, sim: &Sim) {
+        let now = self.hud.lui.clock;
+        // A step's kills are scored after the step, so a death and its kill come in either order.
+        let of = |want: fn(&EventKind) -> bool| -> Vec<i32> { sim.events.iter().filter(|e| want(&e.kind)).map(|e| e.player).collect() };
+        let killed = of(|k| matches!(k, EventKind::KilledBy { .. }));
+        let died = of(|k| matches!(k, EventKind::GeneralDied { .. }));
+        for e in &sim.events {
+            let Ok(victim) = u8::try_from(e.player) else { continue };
+            match e.kind {
+                EventKind::KilledBy { by, how, weapon, .. } => self.feedback.obits.killed_by(victim, by, how, weapon, died.contains(&e.player), now),
+                EventKind::GeneralDied { .. } if killed.contains(&e.player) => {}
+                EventKind::GeneralDied { .. } => self.feedback.obits.died(victim, now),
+                _ => {}
+            }
+        }
+    }
+
     /// Another player's event as this machine hears and sees it. What happens at a place in the
     /// world (a pellet's impact, a blast, a bounce, a dud, a Trophy System's kill, the deployed
     /// shield's plant, hits and destruction) BO2 plays for every client, so it plays here exactly
@@ -161,6 +180,7 @@ impl Client {
             | EventKind::FieldComputerOpened
             | EventKind::ReturnedToRts { .. }
             | EventKind::HitMarker { .. }
+            | EventKind::PerkFeedback { .. }
             | EventKind::Recoil { .. }
             | EventKind::Flinch { .. }
             | EventKind::Damaged { .. }
@@ -340,8 +360,21 @@ impl Client {
                         self.begin_leaving(inp, self.eye_curr - Vec3::new(0.0, 0.0, 10.0));
                     }
                 }
-                EventKind::HitMarker { headshot, kill } => {
-                    self.cues.play(sounds::HIT_MARKER);
+                EventKind::HitMarker { headshot, kill, alert } => {
+                    // `_damagefeedback.gsc`: the alert by the means and the inflictor; the Shock
+                    // Charge's through `playhitsound`'s 0.05 s gate. The marker's art goes back to
+                    // `damage_feedback` unless a perk event follows.
+                    match alert {
+                        crate::damage::HitAlert::Player => self.cues.play(sounds::HIT_MARKER),
+                        crate::damage::HitAlert::Low => self.cues.play(sounds::HIT_MARKER_LOW),
+                        crate::damage::HitAlert::TaserSpike => {
+                            if self.feedback.take_alert(self.hud.lui.clock) {
+                                self.cues.play(sounds::HIT_MARKER_TASER);
+                            }
+                        }
+                        crate::damage::HitAlert::Silent => {}
+                    }
+                    self.feedback.marker = None;
                     self.hud.hitmarker = HITMARKER_TIME;
                     self.hud.hitmarker_kill = kill;
                     self.hud.hitmarker_head = headshot;
@@ -367,14 +400,29 @@ impl Client {
                     // BO2 replaces the kick per hit (`CG_DamageFeedback`), never adds to it.
                     self.hud.flinch.hit(yaw_deg, pitch_deg, crate::tuning::get().flinch_time);
                 }
-                // The hurt cue and the screen's flash are the first-person view's (an overhead
-                // General's hurt is his body's flinch and voice alone).
-                EventKind::Damaged { .. } if !auth.is_some_and(PlayerSim::is_first_person) => {}
-                EventKind::Damaged { amount, .. } => {
-                    self.cues.play(sounds::HURT);
-                    // By the hit in BO2 health (his share of `playerMaxHealth`).
-                    let bo2 = auth.map_or(0.0, |p| crate::damage::general_bo2(&crate::tuning::get(), amount, p.max_health));
-                    self.hud.damage_flash = (self.hud.damage_flash + bo2 / DAMAGE_FLASH_FULL).min(1.0);
+                // The marker's perk variant (`doperkfeedback`): the art, shown afresh.
+                EventKind::PerkFeedback { perk } => {
+                    self.feedback.marker = Some(perk);
+                    self.hud.hitmarker = HITMARKER_TIME;
+                }
+                // Every hurt with a way fills a damage-direction slot (G7 `FUN_004e8ab0`: the
+                // blow's yaw back towards where it came from, ±10° of jitter), the overhead's too:
+                // first person shows it while its two seconds last. A blow with no way (BO2's
+                // yaw byte 255) fills none.
+                EventKind::Damaged { amount, dir } => {
+                    if dir.length_xy() > 1e-6 {
+                        let from = (-dir.y).atan2(-dir.x).to_degrees();
+                        let jitter = self.feedback.jitter();
+                        self.hud.lui.damage_from(from, jitter);
+                    }
+                    // The hurt cue and the screen's flash are the first-person view's (an overhead
+                    // General's hurt is his body's flinch and voice alone).
+                    if auth.is_some_and(PlayerSim::is_first_person) {
+                        self.cues.play(sounds::HURT);
+                        // By the hit in BO2 health (his share of `playerMaxHealth`).
+                        let bo2 = auth.map_or(0.0, |p| crate::damage::general_bo2(&crate::tuning::get(), amount, p.max_health));
+                        self.hud.damage_flash = (self.hud.damage_flash + bo2 / DAMAGE_FLASH_FULL).min(1.0);
+                    }
                 }
                 EventKind::Shot { left: false, .. } => self.vm_events.shot = true,
                 EventKind::Shot { left: true, .. } => self.vm_events.left_shot = true,
@@ -501,6 +549,7 @@ fn spectated_event(kind: &EventKind) -> bool {
             | EventKind::ReturnedToRts { .. }
             | EventKind::GeneralDied { .. }
             | EventKind::HitMarker { .. }
+            | EventKind::PerkFeedback { .. }
             | EventKind::ClassChosen { .. }
             | EventKind::ClassAtNextSpawn { .. }
             | EventKind::CantPlant { .. }

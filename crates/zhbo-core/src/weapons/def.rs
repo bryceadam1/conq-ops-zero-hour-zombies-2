@@ -686,6 +686,10 @@ pub struct WeaponDef {
     /// BO2's `hudIconRatio` (0 1:1, 1 2:1, 2 4:1): the pickup hint's icon is twice as wide for
     /// 2:1 and 4:1, half as tall for 4:1 (t6mp `FUN_004dbbe0`, hint type 7).
     pub hud_icon_ratio: u8,
+    /// The obituary's icon ([`KillIcon`], BO2's `killIcon`/`killIconRatio`/`flipKillIcon`).
+    pub kill_icon: KillIcon,
+    /// The grenade danger indicator's data ([`GrenadeIndicator`]).
+    pub indicator: GrenadeIndicator,
     /// The pickup's converted events: the player's own (`pickupSoundPlayer` on EV_ITEM_PICKUP,
     /// `ammoPickupSoundPlayer` on EV_AMMO_PICKUP) and what others hear (`pickupSound`,
     /// `ammoPickupSound`), t6mp `CG_EntityEvent` (`FUN_004c1590`).
@@ -693,6 +697,29 @@ pub struct WeaponDef {
     pub ammo_pickup_sound: String,
     pub npc_pickup_sound: String,
     pub npc_ammo_pickup_sound: String,
+}
+
+/// BO2's obituary icon of a weapon (t6mp CG_Obituary `FUN_004c0080`): the `killIcon` material
+/// (empty: BO2 draws `hud_obit_death_suicide`), `killIconRatio` (`weaponIconRatioType_t`: 0 1:1,
+/// 1 2:1, 2 4:1) and `flipKillIcon` (drawn mirrored, `^I` instead of `^H`). Presentation only.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KillIcon {
+    pub material: String,
+    pub ratio: u8,
+    pub flip: bool,
+}
+
+/// BO2's grenade danger indicator data of a weapon (t6mp `FUN_004ae7b0`, `FUN_004ae5b0`):
+/// `projExplosion` (`weapProjExposion_t`: 0 grenade, 6 heavy and 7 fire are the kinds the
+/// indicator collects), `bShowIndicator`, `iIndicatorRadius` (inches, 0: the larger of
+/// `cg_hudGrenadeIconMaxRangeFrag` and the explosion radius) and `indicatorIcon` (empty: the
+/// default `hud_grenadeicon`). Presentation only ([`crate::hud::grenade`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GrenadeIndicator {
+    pub proj_explosion: u8,
+    pub show: bool,
+    pub radius: f32,
+    pub icon: String,
 }
 
 /// BO2's per-def data the weapon-drop rules read (t6mp, `WeaponDef`): never dropped and not one
@@ -860,7 +887,7 @@ pub const UI_TEXT_KEYS: &[&str] = &[
     "MPUI_KILLS_CAPS", "MPUI_DEATHS_CAPS", "MPUI_ASSISTS_CAPS", "WEAPON_NO_AMMO",
     "MENU_SELECT_RETICLE", "MENU_X_OPTICS", "MP_CHANGE_CLASS_NEXT_SPAWN", "MPUI_SPECTATING",
     "MPUI_FIRST_PERSON_VIEW", "PLATFORM_PICKUPNEWWEAPON", "PLATFORM_SWAPWEAPONS", "PLATFORM_THROWBACKGRENADE", "PLATFORM_RELOAD",
-    "PLATFORM_LOW_AMMO_NO_RELOAD", "PLATFORM_HOLD_BREATH",
+    "PLATFORM_LOW_AMMO_NO_RELOAD", "PLATFORM_HOLD_BREATH", "CGAME_QUAKE_SUICIDE",
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1183,6 +1210,8 @@ impl Default for WeaponDef {
             ammo_counter: true,
             dpad_icon: String::new(),
             hud_icon: String::new(),
+            kill_icon: KillIcon::default(),
+            indicator: GrenadeIndicator::default(),
             world_shell_fx_weapon: String::new(),
             world_last_shot_shell_fx_weapon: String::new(),
             tracer_fx_weapon: String::new(),

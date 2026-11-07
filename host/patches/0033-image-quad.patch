@@ -1,0 +1,85 @@
+diff --git a/Core/GameEngine/Include/GameClient/Display.h b/Core/GameEngine/Include/GameClient/Display.h
+index 4c1ddb156..24a0008eb 100644
+--- a/Core/GameEngine/Include/GameClient/Display.h
++++ b/Core/GameEngine/Include/GameClient/Display.h
+@@ -170,6 +170,11 @@ public:
+ 	virtual void drawImage( const Image *image, Int startX, Int startY,
+ 													Int endX, Int endY, Color color = 0xFFFFFFFF, DrawImageMode mode=DRAW_IMAGE_ALPHA) = 0;
+ 
++	/// ZHBO (host patch 0033): draw an image on an arbitrary quad, `corners` the image's top-left,
++	/// top-right, bottom-right and bottom-left as x, y pairs (BO2 turns its damage indicators,
++	/// crosshair pieces and grenade pointer). FALSE when the display cannot.
++	virtual Bool drawImageQuad( const Image *image, const Real *corners, Color color ) { return FALSE; }
++
+ 	/// draw a video buffer fit within the screen coordinates
+ 	virtual void drawScaledVideoBuffer( VideoBuffer *buffer, VideoStreamInterface *stream ) = 0;
+ 	virtual void drawVideoBuffer( VideoBuffer *buffer, Int startX, Int startY,
+diff --git a/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DDisplay.h b/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DDisplay.h
+index 58ac09af3..f4a845cad 100644
+--- a/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DDisplay.h
++++ b/Core/GameEngineDevice/Include/W3DDevice/GameClient/W3DDisplay.h
+@@ -128,6 +128,9 @@ public:
+ 	virtual void drawImage( const Image *image, Int startX, Int startY,
+ 													Int endX, Int endY, Color color = 0xFFFFFFFF, DrawImageMode mode=DRAW_IMAGE_ALPHA) override;
+ 
++	/// ZHBO (host patch 0033): an image on an arbitrary quad.
++	virtual Bool drawImageQuad( const Image *image, const Real *corners, Color color ) override;
++
+ 	/// draw a video buffer fit within the screen coordinates
+ 	virtual void drawScaledVideoBuffer( VideoBuffer *buffer, VideoStreamInterface *stream ) override;
+ 	virtual void drawVideoBuffer( VideoBuffer *buffer, Int startX, Int startY,
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
+index c7d5cc415..960c976d8 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
+@@ -3170,6 +3170,50 @@ void W3DDisplay::drawRemainingRectClock(Int startX, Int startY, Int width, Int h
+ /** Draws an images at the screen coordinates and keeps it within the end
+ 	* screen coords specified */
+ //=============================================================================
++// ZHBO (host patch 0033): the image's atlas cell on the quad `corners` (top-left, top-right,
++// bottom-right, bottom-left of the image, x, y pairs), as two triangles; an atlas cell packed
++// turned 90 degrees clockwise has its texture corners turned to match (as drawImage does).
++Bool W3DDisplay::drawImageQuad( const Image *image, const Real *corners, Color color )
++{
++	if( image == nullptr || corners == nullptr )
++		return FALSE;
++	TextureClass *tex = nullptr;
++	if (BitIsSet(image->getStatus(), IMAGE_STATUS_RAW_TEXTURE))
++		tex = (TextureClass *)(image->getRawTextureData());
++	else
++		tex = WW3DAssetManager::Get_Instance()->Get_Texture(image->getFilename().str(), MIP_LEVELS_1);
++	setup2DRenderState(tex, DRAW_IMAGE_ALPHA, FALSE);
++	RectClass uv = makeAtlasSafeUVRect(image);
++	Vector2 p[4] = { Vector2(corners[0], corners[1]), Vector2(corners[2], corners[3]), Vector2(corners[4], corners[5]), Vector2(corners[6], corners[7]) };
++	Vector2 t[4] = { Vector2(uv.Left, uv.Top), Vector2(uv.Right, uv.Top), Vector2(uv.Right, uv.Bottom), Vector2(uv.Left, uv.Bottom) };
++	if( BitIsSet( image->getStatus(), IMAGE_STATUS_ROTATED_90_CLOCKWISE ) )
++	{
++		t[0] = Vector2(uv.Right, uv.Top);
++		t[1] = Vector2(uv.Right, uv.Bottom);
++		t[2] = Vector2(uv.Left, uv.Bottom);
++		t[3] = Vector2(uv.Left, uv.Top);
++	}
++	// The triangles keep drawImage's winding (top-left, bottom-left, top-right: a negative cross
++	// product with y down), whichever way the corners turn: the 2D pass culls the other one, and a
++	// mirrored image's corners run the other way round.
++	const Real cross = (p[1].X - p[0].X) * (p[2].Y - p[0].Y) - (p[1].Y - p[0].Y) * (p[2].X - p[0].X);
++	if (cross > 0.0f)
++	{
++		m_2DRender->Add_Tri( p[0], p[3], p[2], t[0], t[3], t[2], color );
++		m_2DRender->Add_Tri( p[0], p[2], p[1], t[0], t[2], t[1], color );
++	}
++	else
++	{
++		m_2DRender->Add_Tri( p[0], p[1], p[2], t[0], t[1], t[2], color );
++		m_2DRender->Add_Tri( p[0], p[2], p[3], t[0], t[2], t[3], color );
++	}
++	if (!m_isBatching)
++		m_2DRender->Render();
++	if (tex != nullptr && !BitIsSet(image->getStatus(), IMAGE_STATUS_RAW_TEXTURE))
++		tex->Release_Ref();
++	return TRUE;
++}
++
+ void W3DDisplay::drawImage( const Image *image, Int startX, Int startY,
+ 														Int endX, Int endY, Color color, DrawImageMode mode)
+ {

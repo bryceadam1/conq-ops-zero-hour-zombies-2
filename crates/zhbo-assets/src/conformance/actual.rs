@@ -552,6 +552,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .list("reticle_sizes", &[r.center_size, r.side_size, r.min_ofs].map(|x| format!("{}", x as i64)))
         .floats("reticle_fracs", &fls(&[r.side_pos, r.ads_in_frac, r.ads_out_frac]))
         .bool("keep_crosshair_when_ads", r.keep_when_ads)
+        .bool("crosshair_color_change", r.color_change)
         .opt_text("overlay_material", opt(&d.overlay_material))
         .opt_text("overlay_material_low_res", opt(&d.overlay_material_low_res))
         .text("overlay_reticle", enum_name(cols::OVERLAY_RETICLE, d.overlay_reticle))
@@ -559,7 +560,13 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .opt_text("hud_icon", hud_icon)
         // The def's action-slot material, when its sprite shipped (`hud::ammo::alt_slot_icon`
         // draws it in the alt-fire slot).
-        .opt_text("dpad_icon", (!d.dpad_icon.is_empty() && sh.has_sprite(&zhbo_core::lui::materials::image(&d.dpad_icon))).then(|| d.dpad_icon.clone()));
+        .opt_text("dpad_icon", (!d.dpad_icon.is_empty() && sh.has_sprite(&zhbo_core::lui::materials::image(&d.dpad_icon))).then(|| d.dpad_icon.clone()))
+        // The obituary's and the grenade indicator's icons, when their sprites shipped (what the
+        // kill feed and the indicator draw, `hud::obituary`, `hud::grenade`).
+        .opt_text("kill_icon", (!d.kill_icon.material.is_empty() && sh.has_sprite(&zhbo_core::lui::materials::image(&d.kill_icon.material))).then(|| d.kill_icon.material.clone()))
+        .list("kill_icon_shape", &[d.kill_icon.ratio.to_string(), (d.kill_icon.flip as u8).to_string()])
+        .list("indicator", &[d.indicator.proj_explosion.to_string(), (d.indicator.show as u8).to_string(), format!("{}", d.indicator.radius as i64)])
+        .opt_text("indicator_icon", (!d.indicator.icon.is_empty() && sh.has_sprite(&zhbo_core::lui::materials::image(&d.indicator.icon))).then(|| d.indicator.icon.clone()));
 
     // The viewmodel the game draws for this def.
     let vm = j.vm_def.viewmodel;
