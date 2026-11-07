@@ -13845,5 +13845,5 @@ lockstep gate, `every_explosive_hurts_zero_hour_objects_by_bo2s_radius_damage` a
 columns (`projectile_speed_relative_up` 120 on every MP grenade, `projectile_speed_forward` 150 on the
 Combat Axe and 4000 on the planted Claymore, `throw_back` on the frag alone), cac 0 + 4 BO2-only. In
 game (`cargo xtask build`, a fresh dist and a freshly converted archive): default 18/18, `--input`
-3/3, `--splash` 5/5, `--equipment` 12/12, `--smoke` passed, `--mp` 23/23 (state hash equal on all
+3/3, `--splash` 5/5, `--equipment` 12/12, `--smoke` 7/7, `--mp` 26/26 (state hash equal on all
 2,971 common frames, no CRC mismatch).
