@@ -682,7 +682,7 @@ impl Autopilot {
         // would kill his next General standing there (at BO2's health, in a few rounds).
         let at_him = self.mp_aim.is_some();
         // The shooter's turn to yield ([`Autopilot::mp_round_starts`]): no aimed fire this round.
-        let yields = self.mp_shooter && self.mp_round_starts % 2 == 0;
+        let yields = self.mp_shooter && self.mp_round_starts.is_multiple_of(2);
         if (2.5..3.2).contains(&c) && at_him {
             keys.set_down(b.fire, true);
         }
