@@ -173,11 +173,24 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
         .collect()
 }
 
-/// The image a material's shader samples as its colour: the `colorMap` sampler, by name — the
-/// semantic order can put a helper first (the PLA head's rim mask, a `,name` stub that resolves
-/// to nothing) — or, for a material with no sampler of that name, its first colour-semantic image.
+/// The samplers BO2's shaders read a surface's colour from, in order: the common `colorMap` and
+/// the `Diffuse_Map` some techsets name instead (hash 0xf039ec2d).
+const COLOUR_SAMPLERS: [&str; 2] = ["colorMap", "Diffuse_Map"];
+/// Colour-semantic samplers that are not the colour: the skin's rim mask
+/// (`c_gen_arm_rim_mask_*`, a `,name` stub on the PLA head).
+const NOT_COLOUR_SAMPLERS: [&str; 1] = ["Rim_Mask"];
+
+/// The image a material's shader samples as its colour: a colour sampler by name
+/// ([`COLOUR_SAMPLERS`]) — the semantic order can put a helper first (the PLA head's rim mask) —
+/// or, for a material with none of those, its first colour-semantic image that is not a known
+/// helper ([`NOT_COLOUR_SAMPLERS`]).
 pub(crate) fn colour_image(m: &xmodel::Material) -> Option<&xmodel::Image> {
-    m.sampler("colorMap").or_else(|| m.color_map())
+    if let Some(img) = COLOUR_SAMPLERS.iter().find_map(|s| m.sampler(s)) {
+        return Some(img);
+    }
+    let helpers: Vec<u32> = NOT_COLOUR_SAMPLERS.iter().map(|s| xmodel::sampler_hash(s)).collect();
+    let is_color = |t: &&xmodel::Texture| t.semantic == xmodel::TS_COLOR_MAP || (0xC..=0x1B).contains(&t.semantic);
+    m.textures.iter().filter(is_color).filter(|t| !helpers.contains(&t.name_hash)).find_map(|t| t.image.as_ref())
 }
 
 /// A surface only the native pass draws, with its own image's colour and coverage (`*_a.tga`),
@@ -521,6 +534,11 @@ mod tests {
         assert_eq!(colour_image(&head).map(|i| i.name.as_str()), Some("c_chn_mp_pla_head_c"));
         let unnamed = xmodel::Material { textures: vec![tex("Other", "first"), tex("Another", "second")], ..Default::default() };
         assert_eq!(colour_image(&unnamed).map(|i| i.name.as_str()), Some("first"));
+        // No `colorMap`: the `Diffuse_Map` sampler, never the rim mask that comes first.
+        let skin = xmodel::Material { textures: vec![tex("Rim_Mask", "c_gen_arm_rim_mask_c"), tex("Diffuse_Map", "c_skin_c")], ..Default::default() };
+        assert_eq!(colour_image(&skin).map(|i| i.name.as_str()), Some("c_skin_c"));
+        let masked = xmodel::Material { textures: vec![tex("Rim_Mask", "c_gen_arm_rim_mask_c"), tex("Other", "real")], ..Default::default() };
+        assert_eq!(colour_image(&masked).map(|i| i.name.as_str()), Some("real"));
     }
 
     /// Every model a BO2 multiplayer weapon names — the viewmodel, the third-person world model,
