@@ -221,7 +221,7 @@ fn trophy_kill(host: &dyn LogicHost, p: &Placed, at: Vec3, tn: &EquipTuning) {
             continue;
         }
         let bo2 = (max - (max - min) * (d / radius.max(1e-3))) * seen;
-        host.damage(p.general, o.id, bo2 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::Blow::from_to(crate::damage::MeansOfDeath::Explosive, p.def, at, o.pos));
+        host.damage(p.general, o.id, crate::damage::to_zh(&t, o, bo2), crate::damage::Blow::from_to(crate::damage::MeansOfDeath::Explosive, p.def, at, o.pos));
     }
 }
 

@@ -792,6 +792,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // First-person muzzle flash with BO2's flash sprite.
     out.extend(crate::fx::files(&patch, &|hash| paks.image(hash))?);
+    // His health: Zero Hour's heroes', from the player's own install (`toughness`).
+    match zhbo_requirements::check_requirements().zero_hour.and_then(|zh| crate::toughness::from_install(&zh.path, &ini)) {
+        Ok(t) => {
+            let objects: Vec<&str> = FACTIONS.iter().map(|f| f.object).collect();
+            ini = crate::toughness::apply(&ini, &objects, t.health)?;
+            summary.push(t.summary());
+        }
+        Err(e) => summary.push(format!("General health left at the INI's: {e}")),
+    }
     out.insert(INI_PATH.to_string(), ini.into_bytes());
     let textures = out.keys().filter(|k| k.ends_with(".tga")).count();
     Ok((out.into_iter().collect(), format!("{}; {textures} textures, {} animations", summary.join(", "), ANIMS.len())))

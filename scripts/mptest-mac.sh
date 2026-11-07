@@ -10,7 +10,7 @@
 # meeting point between the two bases, take control, pick a class (the host the custom class this
 # script seeds, with attachments and a camo; the joiner the first preset), step forward and aside,
 # swap to the sidearm and fire it, swap back, throw the lethal, fire the primary at the other
-# General (the host a long aimed burst, the joiner a short one), and open the field computer. The
+# General (the host a long aimed burst, the joiner a single round), and open the field computer. The
 # joiner's General dies; a new one comes from his Command Center and is taken again: every General
 # is picked for (the deliberate break from BO2's respawn, sim/spawn.rs), so his class screen is up,
 # opened on the last class, and the script's Enter re-picks it.

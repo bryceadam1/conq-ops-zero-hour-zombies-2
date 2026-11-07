@@ -42,8 +42,24 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   they stand — is `units::drawn_inches` (`DRAWN_ZH_PER_INCH` = `ZH_PER_INCH × GENERAL_SCALE`), so
   what blocks is where it is drawn (the eye is the drawn body's too); gameplay distances (speeds,
   ranges, radii) stay `inches`.
-* Damage: BO2 damage (100 HP scale) × `BO2_TO_ZH_DAMAGE` (1.5; a Ranger has 180 HP), for every
-  target. Every hit carries **BO2's means of death** (`zhbo_core::damage::MeansOfDeath`, t6mp's
+* Damage: BO2 damage is authored against BO2's 100-health player (`playerMaxHealth`, a tuning-pack
+  key). **A General is BO2's player**: a BO2 hit takes its share of `playerMaxHealth` of his own
+  Zero Hour health (`damage::to_zh`: `idamage × MaxHealth / playerMaxHealth`, a `LETHAL_MARGIN` of
+  1e-4 over so hits adding up to 100 always kill in floats), so every BO2 weapon kills him in BO2's
+  own shots whatever his Zero Hour health or veterancy. The hit is BO2's **integer** first, as its
+  engine truncates before the damage callback (`damage::idamage`: the range curve `FUN_008edb80`,
+  the round's multiplier `FUN_005cfc60`, the location's `FUN_005f05c0` floored at 1, the radius
+  damage `FUN_005f2130`; under 1 does nothing; `damage::bullet_damage` stage by stage), and a perk
+  of the callback (Flak Jacket) scales it and rounds again (`int`, at least 1,
+  `_globallogic_player.gsc:779`/`:1026`; `damage::callback_scaled`). Back the other way
+  (`damage::to_bo2`, `general_bo2`) his hurts, flinches, shellshocks, assists and regeneration count
+  in BO2 health. The bridge flags a General object `ZHBO_OBJ_GENERAL` (bit 13, pending for the next
+  ABI bump). His Zero Hour health is Zero Hour's heroes' (Burton, Black Lotus, Kell: their mean
+  `MaxHealth` from the player's `INIZH.big`, all in his `HumanArmor`, times the tuning pack's
+  `GeneralHeroToughness`, written by the converter, `zhbo_assets::toughness`), so Zero Hour's own
+  weapons kill him in a hero's hits. **Anything else** (Zero Hour's infantry, vehicles, aircraft,
+  structures) takes BO2 damage × `BO2_TO_ZH_DAMAGE` (1.5, the mod's exchange rate between the games:
+  a Ranger's 180 falls to three AN-94 rounds, as a BO2 player does). Every hit carries **BO2's means of death** (`zhbo_core::damage::MeansOfDeath`, t6mp's
   `meansOfDeath_t` in its order, `FUN_00678440`), chosen where BO2's engine chooses it: a round
   `MOD_RIFLE_BULLET` (`MOD_PISTOL_BULLET` from a pistol, `MOD_HEAD_SHOT` on a soldier's head or
   helmet, `isheadshot`); a blow `MOD_MELEE`; a missile's strike (`FUN_00608c10`) `MOD_IMPACT` when
@@ -69,7 +85,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
   structures take 0 %), the rest by their namesakes (`CRUSH`, `FALLING`, `FLAME`, `WATER`, `POISON`,
   `UNRESISTABLE` for the script's kills). The table is sim data: it is in the content fingerprint's
   tuning part. BO2's two kinds of victim map onto Zero Hour's objects:
-  a **soldier** (a General, Zero Hour infantry) is BO2's player and takes BO2's numbers as they are
+  a **soldier** (a General, Zero Hour infantry) is BO2's player and takes BO2's rules as they are
   (his perks by the means of death: Flak Jacket only `isexplosivedamage`'s — the splash means and
   `MOD_GRENADE`, never a rocket's direct hit nor an impact —; the blast shellshock
   `_shellshock.gsc:19`'s causes); **anything else** (a vehicle, an aircraft, a structure) is BO2's
@@ -1747,6 +1763,15 @@ pack (the content CRC's tuning part) loses `EquipmentArmTime` and gains `bettyac
 `equipmenthackertoolradius`, `vehiclehackertoolradius`, `TargetCircleHalfWidth`,
 `scavenger_clip_multiplier` and `DetonateDoubleTap`. The sim state gains `Sim::packs` (world part)
 and `PlayerSim::taser` (seat part), both hashed. No ABI struct, function or table moves.
+
+**Pending for the next bump** (general-health): `ZhboObjFlags` gains `ZHBO_OBJ_GENERAL = 1u << 13`
+(`objflags::GENERAL`), set by the bridge's object fill for a `ZHBO_General_*` object (`isGeneral`);
+no struct moves, only a flag's meaning (a core that predates it sees no General and converts his
+BO2 hits at the exchange rate). The converted archive's `ZZZ_ZHBO_General.ini` now carries the
+General's health from the player's heroes (`zhbo_assets::toughness`), so the archive needs a
+`hud::VERSION` bump to be reconverted (a stale one keeps `MaxHealth 500`: BO2's shots-to-kill still
+hold, Zero Hour's weapons see 2.5 heroes). The tuning pack (the content CRC's tuning part) gains
+`playerMaxHealth` (100) and `GeneralHeroToughness` (1) under `[Health]`.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

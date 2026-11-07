@@ -105,7 +105,10 @@ fn a_blast_in_front_of_a_held_shield_is_cut_by_its_protection() {
     let (front, back) = (blast_at(FACING_SHOOTER), blast_at(0.0));
     let t = crate::tuning::Tuning::default();
     assert!(back > 0.0);
-    assert!((front - back * (1.0 - t.shield_blast_protection_30)).abs() < 1e-3, "front {front} back {back}");
+    // On a General each is BO2's integer hit (`damage::idamage`) as his share of his health: the
+    // cut lands within one BO2 health point of the exact share.
+    let point = 300.0 / t.player_max_health;
+    assert!((front - back * (1.0 - t.shield_blast_protection_30)).abs() <= point, "front {front} back {back}");
 }
 
 

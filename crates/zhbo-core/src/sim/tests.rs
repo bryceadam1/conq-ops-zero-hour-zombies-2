@@ -1902,8 +1902,9 @@ fn damage_flinches_the_view_and_toughness_cuts_it() {
         if toughness {
             p.arsenal.loadout.perks.push(crate::weapons::Perk::TOUGHNESS);
         }
-        // 60 Zero Hour points are 40 on BO2's scale.
-        host.objects.borrow_mut()[0].health -= 40.0 * crate::units::BO2_TO_ZH_DAMAGE;
+        // 40 of BO2's 100: the same share of his health.
+        let max = host.objects.borrow()[0].max_health;
+        host.objects.borrow_mut()[0].health -= 40.0 * max / crate::tuning::get().player_max_health;
         run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
         events(&sim).into_iter().find_map(|k| if let EventKind::Flinch { pitch_deg, .. } = k { Some(pitch_deg) } else { None }).expect("a flinch")
     };

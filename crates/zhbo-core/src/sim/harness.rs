@@ -131,13 +131,17 @@ impl Peer {
         for (i, x) in [60.0, 90.0, 120.0, 150.0].into_iter().enumerate() {
             host.add(soldier(500 + i as u32, 2, x));
         }
+        // A General downed in the firefight would never reach the offhands, the alt mode or the
+        // swap: he lives at his real health, every hit landing (and hashed), but never dies of it.
+        host.undying.set(true);
         Peer { host, sim: Sim::new(), client: Client::default(), local, seed, renders: 0 }
     }
 
     /// A machine with an empty world (no squad): the two-instance script's test, whose Generals
     /// face each other across open ground as the bridge's walk leaves them.
     pub fn bare(local: i32, seed: u64) -> Self {
-        Peer { host: FakeHost::default(), sim: Sim::new(), client: Client::default(), local, seed, renders: 0 }
+        let host = FakeHost::default();
+        Peer { host, sim: Sim::new(), client: Client::default(), local, seed, renders: 0 }
     }
 
     pub fn cadence(&mut self) -> u64 {
@@ -332,9 +336,6 @@ pub struct Report {
     pub seen: BTreeSet<String>,
 }
 
-/// A harness General's health (Zero Hour units): the whole round's fire from two others.
-const GENERAL_HEALTH: f32 = 1.0e6;
-
 /// The seats' Generals: two facing each other across the squad, a third and fourth facing in
 /// from the flanks.
 const SEATS: [(f32, f32, f32); 4] = [
@@ -381,10 +382,6 @@ pub fn play(m: &Match) -> Report {
             if t == 0 {
                 for (p, &id) in ids.iter().enumerate() {
                     let mut g = general(id, p as i32);
-                    // Tough enough to live out the round's script under the others' fire: a
-                    // General downed in the firefight would never reach the offhands, the alt mode
-                    // or the swap (the damage still lands, and is hashed, every frame).
-                    (g.health, g.max_health) = (GENERAL_HEALTH, GENERAL_HEALTH);
                     let (x, y, yaw) = SEATS[p];
                     g.pos = Vec3::new(x, y, 0.0);
                     g.yaw = yaw;

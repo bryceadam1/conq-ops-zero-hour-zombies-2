@@ -611,10 +611,14 @@ void autopilotSpawn()
 		return;
 	s_autopilot.general = general->getID();
 	// Test only: enough health that the scripted run (weapons, grenades, field computer) finishes
-	// before the rebels win.
+	// before the rebels win. His own health is a Zero Hour hero's (200: three rebels kill him in
+	// about 14 s, as they would Burton), so the scene sets the 1500 the scripts were timed for.
 	if (!s_autopilot.showcase)
 		if (BodyModuleInterface *body = general->getBodyModule())
-			body->setMaxHealth(body->getMaxHealth() * 3.0f, FULLY_HEAL);
+		{
+			logf("autopilot: the General's own health %.0f (a hero's), raised for the scene", body->getMaxHealth());
+			body->setMaxHealth(1500.0f, FULLY_HEAL);
+		}
 	if (s_autopilot.showcase)
 	{
 		logf("autopilot: showcase General %u at (%.0f, %.0f)", (unsigned)s_autopilot.general, pos.x, pos.y);

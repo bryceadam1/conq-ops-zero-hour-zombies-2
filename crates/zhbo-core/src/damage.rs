@@ -463,9 +463,173 @@ pub fn scale_on(t: &Tuning, weapon: &str, m: MeansOfDeath, victim: &crate::host:
     }
 }
 
+/// BO2's damage as its player's damage callback receives it: an integer. The engine truncates
+/// every hit's damage before it reaches a player — the range curve (t6mp `FUN_008edb80` returns
+/// `(int)`), the bullet's multiplier (`FUN_005cfc60`: `(int)(damage * mult)`), the hit location's
+/// (`FUN_005f05c0` via `FUN_00a24ad0`), the radius damage (`FUN_005f2130`: `(int)` at each
+/// entity) — and a hit under 1 does nothing (`FUN_005f05c0` returns for `iDamage < 1`). Whole
+/// numbers pass unchanged.
+pub fn idamage(bo2: f32) -> f32 {
+    let d = bo2.trunc();
+    if d >= 1.0 { d } else { 0.0 }
+}
+
+/// The damage callback's own rounding after its perks scaled a hit (Flak Jacket's
+/// `cac_modified_damage`): `int(idamage)` and at least 1 (`_globallogic_player.gsc:779`,
+/// `:1026-1027`).
+pub fn callback_idamage(bo2: f32) -> f32 {
+    bo2.trunc().max(1.0)
+}
+
+/// The Zero Hour damage a BO2 hit of `bo2` (BO2 health, after BO2's own rules for the victim)
+/// deals `victim`:
+///
+/// * a **General** is BO2's player: he loses the hit's share of BO2's `playerMaxHealth` of his
+///   own Zero Hour health, the hit first rounded as BO2's callback receives it ([`idamage`]).
+///   Every BO2 weapon kills him in BO2's own shots whatever his Zero Hour health is (the converter
+///   sets it as tough as Zero Hour's heroes, the tuning pack's `GeneralHeroToughness`), his
+///   veterancy included;
+/// * anything else (Zero Hour's infantry, vehicles, aircraft and structures) takes it times
+///   [`crate::units::BO2_TO_ZH_DAMAGE`], the mod's exchange rate between BO2's weapons and Zero
+///   Hour's own units.
+pub fn to_zh(t: &Tuning, victim: &crate::host::ObjInfo, bo2: f32) -> f32 {
+    if is_player(victim) {
+        idamage(bo2) * victim.max_health / t.player_max_health.max(1e-3) * (1.0 + LETHAL_MARGIN)
+    } else {
+        bo2 * crate::units::BO2_TO_ZH_DAMAGE
+    }
+}
+
+/// A bullet's Zero Hour damage on `victim` (none known: anything but a General): the range
+/// curve's damage `range` (BO2 health) times the round's multiplier `mult` (a penetrated round's),
+/// the location's `at`, FMJ's `pierce` and BO2's vehicle rule `rule`. On a General each stage is
+/// BO2's integer (`FUN_008edb80`, `FUN_005cfc60` `(int)(damage * mult)`, `FUN_005f05c0`'s location
+/// multiplier, floored at 1), then [`to_zh`].
+pub fn bullet_damage(t: &Tuning, victim: Option<&crate::host::ObjInfo>, range: f32, mult: f32, at: f32, pierce: f32, rule: f32) -> f32 {
+    match victim {
+        Some(v) if is_player(v) => {
+            let hit = idamage(idamage(range) * mult);
+            let located = if hit >= 1.0 { (hit * at * pierce * rule).trunc().max(1.0) } else { 0.0 };
+            to_zh(t, v, located)
+        }
+        _ => range * mult * at * pierce * rule * crate::units::BO2_TO_ZH_DAMAGE,
+    }
+}
+
+/// How much over its exact share [`to_zh`] makes a General's hit: BO2's hits are whole numbers
+/// of health, so hits that add up to `playerMaxHealth` must take all of his Zero Hour health even
+/// where the share is not a whole number in floats (`n x (max / n)` can fall a hair short and
+/// leave him alive at 0.00001). Hits a whole point short of a kill stay short by 1 % of his
+/// health, which this never reaches.
+pub const LETHAL_MARGIN: f32 = 1e-4;
+
+/// [`to_zh`] backwards: the BO2 health `zh` Zero Hour damage on `victim` stands for (a General's
+/// share of his health in BO2's `playerMaxHealth`, else ÷ [`crate::units::BO2_TO_ZH_DAMAGE`]). A
+/// General's hit comes back with its [`LETHAL_MARGIN`], a hair over the whole number, so BO2's
+/// truncation of it keeps the number.
+pub fn to_bo2(t: &Tuning, victim: &crate::host::ObjInfo, zh: f32) -> f32 {
+    if is_player(victim) {
+        general_bo2(t, zh, victim.max_health)
+    } else {
+        zh / crate::units::BO2_TO_ZH_DAMAGE
+    }
+}
+
+/// Zero Hour health `zh` of a General whose full health is `max_health`, in BO2 health (his
+/// share of `playerMaxHealth`): what his hurts, flinches, assists and regeneration count.
+pub fn general_bo2(t: &Tuning, zh: f32, max_health: f32) -> f32 {
+    if max_health > 0.0 {
+        zh * t.player_max_health / max_health
+    } else {
+        0.0
+    }
+}
+
+/// A General's Zero Hour damage `zh` scaled by a perk of BO2's damage callback (`scale`, Flak
+/// Jacket's): BO2 scales the integer hit and rounds it again ([`callback_idamage`]). Anything else
+/// scales as is.
+pub fn callback_scaled(t: &Tuning, victim: &crate::host::ObjInfo, zh: f32, scale: f32) -> f32 {
+    if is_player(victim) && scale != 1.0 && zh > 0.0 {
+        to_zh(t, victim, callback_idamage(to_bo2(t, victim, zh) * scale))
+    } else {
+        zh * scale
+    }
+}
+
+/// Whether `victim` is BO2's player: a General with health (the bridge flags him by his object).
+fn is_player(victim: &crate::host::ObjInfo) -> bool {
+    victim.has(crate::host::objflags::GENERAL) && victim.max_health > 0.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn a_general(max_health: f32) -> crate::host::ObjInfo {
+        crate::host::ObjInfo { flags: crate::host::objflags::INFANTRY | crate::host::objflags::GENERAL, health: max_health, max_health, ..Default::default() }
+    }
+
+    /// Hits of `zh` each until he is dead (health at or under 0, as Zero Hour's body dies).
+    fn hits_to_kill(max_health: f32, zh: f32) -> u32 {
+        let mut health = max_health;
+        let mut n = 0;
+        while health > 0.0 && n < 10_000 {
+            health -= zh;
+            n += 1;
+        }
+        n
+    }
+
+    /// BO2's integer hit (`FUN_008edb80`, `FUN_005cfc60`, `FUN_005f2130`: truncated; under 1
+    /// nothing) and the callback's (`int`, at least 1).
+    #[test]
+    fn bo2_hits_are_whole_numbers() {
+        assert_eq!([idamage(40.9), idamage(40.0), idamage(1.0), idamage(0.99), idamage(-3.0)], [40.0, 40.0, 1.0, 0.0, 0.0]);
+        assert_eq!([callback_idamage(13.86), callback_idamage(0.4)], [13.0, 1.0]);
+    }
+
+    /// Every BO2 hit from 1 to 300 kills a General in BO2's shots against `playerMaxHealth`
+    /// (`ceil(100 / damage)`), whatever his Zero Hour health — a hero's, a veteran's, the old 500,
+    /// shares that are no whole number in floats — and hits a point short of a kill leave him
+    /// standing. Anything that is not a General takes the exchange rate.
+    #[test]
+    fn a_general_dies_in_bo2s_shots_at_any_health() {
+        let t = Tuning::default();
+        for max in [100.0, 150.0, 200.0, 230.0, 240.0, 333.3, 500.0, 1234.5] {
+            let g = a_general(max);
+            for d in 1..=300 {
+                let want = (t.player_max_health / d as f32).ceil().max(1.0) as u32;
+                assert_eq!(hits_to_kill(max, to_zh(&t, &g, d as f32)), want, "{d} damage on {max} health");
+            }
+            // 99 then 1 kills; 99 alone does not.
+            assert!(max - to_zh(&t, &g, 99.0) > 0.0 && max - to_zh(&t, &g, 99.0) - to_zh(&t, &g, 1.0) <= 0.0, "{max}");
+            // A fraction is BO2's integer.
+            assert_eq!(to_zh(&t, &g, 40.9), to_zh(&t, &g, 40.0));
+            assert_eq!(to_zh(&t, &g, 0.5), 0.0, "under 1 does nothing");
+            assert!((to_bo2(&t, &g, to_zh(&t, &g, 40.0)) - 40.0).abs() < 0.01);
+            assert!((general_bo2(&t, max * 0.4, max) - 40.0).abs() < 1e-3, "his health in BO2's");
+        }
+        let ranger = crate::host::ObjInfo { flags: crate::host::objflags::INFANTRY, health: 180.0, max_health: 180.0, ..Default::default() };
+        assert_eq!(to_zh(&t, &ranger, 40.5), 40.5 * crate::units::BO2_TO_ZH_DAMAGE, "Zero Hour's own infantry: the exchange rate");
+        assert_eq!(to_bo2(&t, &ranger, 60.0), 40.0);
+        assert_eq!(to_zh(&t, &crate::host::ObjInfo { flags: crate::host::objflags::GENERAL, ..Default::default() }, 40.0), 60.0, "no health: no share to take");
+    }
+
+    /// A bullet on a General is BO2's integer at each of its engine's stages: the range curve's
+    /// damage, times the round's multiplier, times the location's (at least 1).
+    #[test]
+    fn a_bullet_on_a_general_truncates_where_bo2s_engine_does() {
+        let t = Tuning::default();
+        let g = a_general(200.0);
+        // 37.6 -> 37 at range; x1.1 = 40.7 -> 40 (unrounded it would be 41.36).
+        assert_eq!(bullet_damage(&t, Some(&g), 37.6, 1.0, 1.1, 1.0, 1.0), to_zh(&t, &g, 40.0));
+        // A penetrated round's multiplier first: 40 x 0.5 = 20, then the head's 1.5 = 30.
+        assert_eq!(bullet_damage(&t, Some(&g), 40.0, 0.5, 1.5, 1.0, 1.0), to_zh(&t, &g, 30.0));
+        // A location multiplier under 1 floors at 1 (`FUN_005f05c0`).
+        assert_eq!(bullet_damage(&t, Some(&g), 2.0, 1.0, 0.1, 1.0, 1.0), to_zh(&t, &g, 1.0));
+        // Anything else: the product, at the exchange rate.
+        assert_eq!(bullet_damage(&t, None, 37.6, 1.0, 1.1, 1.0, 1.0), 37.6 * 1.1 * crate::units::BO2_TO_ZH_DAMAGE);
+    }
 
     #[test]
     fn the_means_of_death_are_bo2s_in_its_order() {

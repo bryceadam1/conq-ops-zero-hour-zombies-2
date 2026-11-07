@@ -190,6 +190,7 @@ impl Sim {
     /// list; a seat's killing blow credits the assists and ends the list.
     pub(super) fn score_hits(&mut self, host: &dyn LogicHost, hits: &[Hit]) {
         self.score.note_generals(&self.players);
+        let t = crate::tuning::get();
         for h in hits {
             // A player's General: a seat's record holds him (first person or overhead), or held
             // him this step (his seat may have been stepped after the blow that killed him).
@@ -204,7 +205,13 @@ impl Sim {
             // damage, and `processassist` reads it.
             let tactical = h.blow.weapon.and_then(|w| Tactical::of(w, true));
             if let Some(seat) = shooter.filter(|&s| s != victim_seat) {
-                self.score.track(host, seat, h.shooter, h.victim, h.amount / crate::units::BO2_TO_ZH_DAMAGE, tactical);
+                // In BO2 health: his share of `playerMaxHealth` (`trackattackerdamage`'s
+                // `idamage`).
+                let bo2 = match host.object(h.victim, h.shooter) {
+                    Some(o) => crate::damage::to_bo2(&t, &o, h.amount),
+                    None => crate::damage::general_bo2(&t, h.amount, self.players[victim_seat].as_ref().map_or(0.0, |p| p.max_health)),
+                };
+                self.score.track(host, seat, h.shooter, h.victim, bo2, tactical);
             }
             if h.kill {
                 if let Some(killer) = shooter.filter(|&s| s != victim_seat) {
@@ -361,7 +368,8 @@ mod tests {
     }
 
     fn hit(sim: &mut Sim, host: &FakeHost, shooter: u32, victim: u32, bo2_damage: f32) {
-        let amount = bo2_damage * crate::units::BO2_TO_ZH_DAMAGE;
+        // A General takes a BO2 hit as its share of his health (`damage::to_zh`).
+        let amount = host.object(victim, shooter).map_or(bo2_damage * crate::units::BO2_TO_ZH_DAMAGE, |o| crate::damage::to_zh(&crate::tuning::get(), &o, bo2_damage));
         let blow = crate::damage::Blow { how: crate::damage::MeansOfDeath::RifleBullet, weapon: None, dir: Vec3::new(1.0, 0.0, 0.0) };
         let kill = host.damage(shooter, victim, amount, blow);
         sim.score_hits(host, &[Hit { shooter, victim, amount, kill, blow }]);
@@ -379,7 +387,7 @@ mod tests {
     #[test]
     fn the_killers_teammates_who_hurt_the_victim_score_an_assist() {
         let (mut sim, host) = match_of_four();
-        let hp = host.get(102).health / crate::units::BO2_TO_ZH_DAMAGE;
+        let hp = crate::damage::to_bo2(&crate::tuning::get(), &host.get(102), host.get(102).health);
         hit(&mut sim, &host, 101, 102, 60.0);
         hit(&mut sim, &host, 100, 102, 10.0);
         assert!(assists(&sim).is_empty(), "nobody scores while he lives");
@@ -432,6 +440,36 @@ mod tests {
         assert_eq!(assists(&sim), [(1, 1)], "70 decayed by 60: assist_25, credited to his seat");
     }
 
+    /// Whole again, he forgets who hurt him (`_healthoverlay.gsc:172-175`: `newhealth >= 1.0` ->
+    /// `resetattackerlist`): seat 1's 60 is regenerated away, very hurt a step at a time to full,
+    /// and the kill seat 0 lands after it credits nobody. A kill before he is whole still credits
+    /// the decayed damage.
+    #[test]
+    fn regenerating_to_full_forgets_his_attackers() {
+        let t = crate::tuning::get();
+        let regen = |frames: u32| {
+            let (mut sim, host) = match_of_four();
+            hit(&mut sim, &host, 101, 102, 60.0);
+            assert!(sim.score.attacked.iter().any(|a| a.victim == 102), "seat 1 hurt him");
+            for _ in 0..frames {
+                let f = sim.frame + 1;
+                sim.step(&host, f);
+            }
+            let whole = host.get(102).health >= host.get(102).max_health - 1e-3;
+            sim.events.clear();
+            hit(&mut sim, &host, 100, 102, 1000.0);
+            (whole, assists(&sim))
+        };
+        // The delay (at least `veryhurttime` once very hurt), then 10 % a step from 40 %: six steps.
+        let full = ((t.regen_delay.max(t.very_hurt_time) + 7.0 * t.regen_step) / crate::units::LOGIC_DT).ceil() as u32 + 2;
+        assert_eq!(regen(full), (true, vec![]), "whole again: no assist");
+        // Two steps in (60 % of him): the 60 decayed by the 20 regained still scores assist_50.
+        let partway = ((t.regen_delay.max(t.very_hurt_time) + 1.5 * t.regen_step) / crate::units::LOGIC_DT).ceil() as u32;
+        let (whole, got) = regen(partway);
+        assert!(!whole);
+        assert_eq!(got, [(1, 2)], "not yet whole: the decayed damage still counts");
+    }
+
     /// A tactical as the attacker's last hit scores its own event (`processassist`'s switch): the
     /// concussion's own radius damage, then the kill by his teammate; a later plain hit makes it a
     /// plain one. A tactical without damage (the EMP's) is tracked by its shock.
@@ -473,8 +511,9 @@ mod tests {
     fn the_steps_damage_calls_are_scored() {
         let (mut sim, host) = match_of_four();
         sim.scored(&host, |_, h| {
-            h.damage(101, 102, 40.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::Blow::bare(crate::damage::MeansOfDeath::RifleBullet));
-            h.damage(100, 102, 1000.0 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::Blow::bare(crate::damage::MeansOfDeath::GrenadeSplash));
+            let zh = |bo2: f32| crate::damage::to_zh(&crate::tuning::get(), &h.object(102, 0).unwrap(), bo2);
+            h.damage(101, 102, zh(40.0), crate::damage::Blow::bare(crate::damage::MeansOfDeath::RifleBullet));
+            h.damage(100, 102, zh(1000.0), crate::damage::Blow::bare(crate::damage::MeansOfDeath::GrenadeSplash));
         });
         assert_eq!(assists(&sim), [(1, 2)]);
     }

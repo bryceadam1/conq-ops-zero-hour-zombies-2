@@ -19,9 +19,15 @@ pub const fn inches(v: f32) -> f32 {
     v * ZH_PER_INCH
 }
 
-/// BO2 damage is authored against 100 HP players; a Zero Hour Ranger has 180 HP (`HumanArmor`).
-/// Scaling by 1.5 keeps BO2's shots-to-kill (an MTAR body-shot kill takes 3 rounds up close) while
-/// ZH armor (SMALL_ARMS against tank armor, etc.) still decides what rifles can hurt.
+/// The exchange rate between BO2's weapons and Zero Hour's own objects: a BO2 hit on a Zero Hour
+/// unit, vehicle, aircraft or structure deals its BO2 damage times this, and Zero Hour's armour
+/// then decides what it can hurt (`SMALL_ARMS` against tank armour, …; `crate::damage`). It is the
+/// mod's balance between the two games, not a BO2 number: a Ranger (180 health, `HumanArmor`)
+/// falls to three AN-94 rounds (40 × 1.5 = 60 each), as many as a BO2 player does.
+///
+/// It does **not** apply to a General: he is BO2's player and takes a BO2 hit as its share of the
+/// tuning pack's `playerMaxHealth` of his own health (`crate::damage::to_zh`), so BO2's
+/// shots-to-kill hold whatever his Zero Hour health is.
 pub const BO2_TO_ZH_DAMAGE: f32 = 1.5;
 
 /// The General is drawn this much bigger than BO2's scale (`Scale` in `ZZZ_ZHBO_General.ini`) so

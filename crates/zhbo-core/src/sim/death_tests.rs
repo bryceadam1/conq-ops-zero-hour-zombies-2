@@ -186,6 +186,10 @@ fn a_blow_scored_after_his_step_gives_the_next_steps_hurt_its_side() {
 #[test]
 fn a_sensor_grenades_detonation_is_explosive_from_where_it_lay() {
     let (host, mut sim) = duel(Loadout::test_kit(), 60.0, 0.0);
+    // Whole, so its 15 hurts him without killing him.
+    for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2) {
+        o.health = o.max_health;
+    }
     let frag = crate::weapons::catalog().get("frag_grenade_mp").expect("frag");
     let sensor: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
         id: "sensor_grenade_mp".into(),
@@ -256,4 +260,43 @@ fn an_overhead_general_hurt_by_zero_hour_units_flinches_by_the_blows_side() {
         _ => None,
     });
     assert_eq!(killed, Some((DmgType::Explosive, 2)));
+}
+
+/// A whole General (BO2's player, at a Zero Hour health that is not BO2's 100) dies in BO2's
+/// shots, end to end through the sim: the class knife in one blow, and the class gun's aimed
+/// string in the fewest rounds whose BO2 hits add up to `playerMaxHealth` — each round a whole
+/// BO2 hit taken as its share of his health.
+#[test]
+fn a_whole_general_dies_in_bo2s_shots() {
+    let whole = |host: &FakeHost, health: f32| {
+        for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2) {
+            (o.health, o.max_health) = (health, health);
+        }
+    };
+    let t = crate::tuning::get();
+    for health in [200.0, 230.0, 500.0] {
+        // The knife (`knife_held_mp`'s melee damage is past 100): one blow.
+        let (host, mut sim) = duel(Loadout::test_kit(), 8.0, FACING);
+        whole(&host, health);
+        step(&mut sim, &host, FpsInput { pressed: buttons::MELEE, ..Default::default() }, FACING, 1);
+        step(&mut sim, &host, FpsInput::default(), FACING, 20);
+        let blows: Vec<f32> = host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| d.2).collect();
+        assert_eq!(blows.len(), 1, "{health}: {blows:?}");
+        assert!(killed(&sim, FACING).is_some(), "{health}: one knife blow kills");
+
+        // The gun: every round a whole BO2 hit, the last the one that reaches 100.
+        let (host, mut sim) = duel(Loadout::test_kit(), 60.0, FACING);
+        whole(&host, health);
+        let eye = sim.players[0].as_ref().unwrap().body.eye().z;
+        let pitch = -((eye - crate::units::inches(42.0)) / 60.0).atan();
+        step(&mut sim, &host, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, FACING, 20);
+        step(&mut sim, &host, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, FACING, 60);
+        assert!(killed(&sim, FACING).is_some(), "{health}: the string killed him");
+        let him = ObjInfo { max_health: health, ..general(2, 1) };
+        let bo2: Vec<f32> = host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| crate::damage::to_bo2(&t, &him, d.2)).collect();
+        assert!(bo2.iter().all(|b| (b - b.round()).abs() < 0.05 && *b >= 1.0), "{health}: whole BO2 hits {bo2:?}");
+        let total: f32 = bo2.iter().map(|b| b.round()).sum();
+        let before_last = total - bo2.last().unwrap().round();
+        assert!(total >= t.player_max_health && before_last < t.player_max_health, "{health}: killed by the round that reached 100: {bo2:?}");
+    }
 }

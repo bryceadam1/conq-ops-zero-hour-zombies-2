@@ -29,6 +29,9 @@ pub mod objflags {
     pub const SHROUDED: u32 = 1 << 11;
     /// Firing a weapon right now.
     pub const FIRING: u32 = 1 << 12;
+    /// A General (`ZHBO_General_*`): BO2's player, who takes a BO2 hit as its share of
+    /// `playerMaxHealth` of his own health ([`crate::damage::to_zh`]).
+    pub const GENERAL: u32 = 1 << 13;
 }
 
 /// The ABI's damage kinds that the shield hook reports back (`zhbo_logic_shield_damage`): the first

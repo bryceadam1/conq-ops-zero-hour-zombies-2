@@ -1352,7 +1352,7 @@ impl Sim {
             self.emit(idx, EventKind::Damaged { amount, dir });
             p.arsenal.aim_spread.damaged(amount, info.max_health, &p.arsenal.tuning);
             let toughness = p.arsenal.class_specialties().has(Specialty::BulletFlinch);
-            let flinch = crate::weapons::recoil::flinch_degrees(amount / crate::units::BO2_TO_ZH_DAMAGE, toughness, &p.arsenal.tuning);
+            let flinch = crate::weapons::recoil::flinch_degrees(crate::damage::general_bo2(&t, amount, info.max_health), toughness, &p.arsenal.tuning);
             let (yaw_deg, pitch_deg) = crate::weapons::recoil::flinch_kick(flinch, dir, p.yaw, p.pitch);
             self.emit(idx, EventKind::Flinch { yaw_deg, pitch_deg });
         } else {
@@ -1361,8 +1361,15 @@ impl Sim {
                 let per_second = if p.very_hurt { info.max_health * t.regen_rate / t.regen_step.max(1e-3) } else { f32::INFINITY };
                 let amount = (per_second * LOGIC_DT).min(info.max_health - info.health);
                 host.heal(p.general, amount);
-                // BO2 decays every attacker's damage by the health regained (`score`).
-                self.score.decay(p.general, amount / BO2_TO_ZH_DAMAGE);
+                if info.health + amount >= info.max_health - 1e-3 {
+                    // Whole again: BO2 forgets who hurt him (`newhealth >= 1.0` ->
+                    // `resetattackerlist`, `_healthoverlay.gsc:172-175`), so a later kill credits
+                    // none of them an assist.
+                    self.score.forget(p.general);
+                } else {
+                    // BO2 decays every attacker's damage by the health regained (`score`).
+                    self.score.decay(p.general, crate::damage::general_bo2(&t, amount, info.max_health));
+                }
                 p.health = info.health + amount;
                 return;
             }
