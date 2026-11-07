@@ -192,12 +192,23 @@ impl Sim {
             return;
         }
         let by_general = self.players.get(by).and_then(|p| p.as_ref()).map_or(0, |p| p.general);
+        let cover = crate::cover::Blockers::near(host, at, def.explosion_radius.max(1.0) * 2.0, by_general, &[]);
+        let t = crate::tuning::get();
         for i in 0..self.deployed.len() {
             // To the planted shield's box, as the blast measures every object to its solid
             // (`projectiles::blast_distance`; BO2's radius damage, to each entity's bounds).
             let dist = self.deployed[i].bearer.distance(at);
             if self.deployed[i].standing() && dist <= def.explosion_radius {
-                self.damage_deployed(host, i, Some(by), by_general, def.explosion_damage_at(dist), ShieldDamage::Explosive);
+                // Only if the blast sees it (an entity: any of its points, `FUN_005f0f00`); a shield
+                // with no object is a point at its place.
+                let object = self.deployed[i].object;
+                let seen = match host.object(object, by_general).filter(|_| object != 0) {
+                    Some(o) => cover.fraction(host, &t, at, &o),
+                    None => f32::from(u8::from(cover.sees_point(host, at, self.deployed[i].bearer.pos + crate::math::Vec3::new(0.0, 0.0, 0.05), object))),
+                };
+                if seen > 0.0 {
+                    self.damage_deployed(host, i, Some(by), by_general, def.explosion_damage_at(dist) * seen, ShieldDamage::Explosive);
+                }
             }
         }
     }

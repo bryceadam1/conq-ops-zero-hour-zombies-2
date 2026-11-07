@@ -19,6 +19,8 @@ pub mod guard;
 mod fire;
 mod hack;
 mod shock;
+mod throwback;
+pub use shock::FLASH_WEAPON;
 pub mod optics;
 mod plant;
 mod rts;
@@ -351,6 +353,9 @@ pub struct PlayerSim {
     pub tracer_count: u8,
     /// A melee lunge at an enemy in progress (`fire::MeleeCharge`).
     pub charge: Option<fire::MeleeCharge>,
+    /// The live grenade in his use list (its Zero Hour object; 0: none): BO2's cursor-hint
+    /// entity, which a throwback keeps while it stays within the outer radius (`throwback`).
+    pub use_grenade: u32,
     /// The shellshock running on him in first person ([`crate::shellshock`]).
     pub shock: crate::shellshock::Shellshock,
     /// BO2's `hasdonecombat` for this life: he has fired, thrown, launched or been hurt since he
@@ -364,7 +369,7 @@ pub struct PlayerSim {
 crate::statehash::state_hash!(struct PlayerSim {
     general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
     view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, very_hurt, hack,
-    rts, hammer, site, building, optics, tracer_count, charge, shock, combat, spawned,
+    rts, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, combat, spawned,
 });
 
 impl PlayerSim {
@@ -518,6 +523,7 @@ impl PlayerSim {
             optics: Default::default(),
             tracer_count: 0,
             charge: None,
+            use_grenade: 0,
             shock: Default::default(),
             combat: false,
             spawned: true,
@@ -770,7 +776,7 @@ impl Sim {
         self.equipment.shields.clone_from(&self.shields);
         // The Generals' perks against others' blasts (`sim::guard`), for this frame's blasts.
         self.equipment.guards.clear();
-        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal, p.is_first_person())));
+        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal, p.is_first_person(), p.body.eye_height)));
         for idx in 0..self.players.len() {
             // A pick that ended his wait behind the class screen spawns him now.
             self.spawn_in(host, idx);
@@ -1098,6 +1104,13 @@ impl Sim {
                 // The use key with a dropped weapon in its use list swaps for it (BO2's +activate),
                 // instead of opening the field computer. A weapon change is held back by an
                 // offhand, a melee or an alt toggle (`FUN_008e0e60`): the press waits for them.
+                // A live grenade in his use list (it outranks any weapon, `UseListGrenadeBonus`):
+                // the use key picks it up to throw it back.
+                p.use_grenade = self.throwback_target(host, p).map_or(0, |i| self.projectiles[i].1.object);
+                if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 && p.use_grenade != 0 {
+                    input.pressed &= !buttons::FIELD_COMPUTER;
+                    self.use_grenade(host, idx, p);
+                }
                 if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 && self.use_target(p).is_some() {
                     input.pressed &= !buttons::FIELD_COMPUTER;
                     if p.arsenal.holds_switch_back() {
@@ -1313,7 +1326,7 @@ impl Sim {
     /// Each General's lethal and tactical as converted world weapons (`WeaponDef::viewmodel`, -1
     /// for none): the third-person body holds the one primed or thrown (`nativebody::OFFHAND_TAG`).
     pub fn offhand_weapons(&self) -> Vec<(u32, [i32; 2])> {
-        self.players.iter().flatten().map(|p| (p.general, [p.arsenal.lethal.def.viewmodel, p.arsenal.tactical.def.viewmodel])).collect() // content: presentation (offhand_weapons: the third-person draw)
+        self.players.iter().flatten().map(|p| (p.general, [p.arsenal.offhand_def(true).viewmodel, p.arsenal.offhand_def(false).viewmodel])).collect() // content: presentation (offhand_weapons: the third-person draw)
     }
 
     /// Every General's body state now (`nativebody::state_of`, from the sim's own stance, gait,

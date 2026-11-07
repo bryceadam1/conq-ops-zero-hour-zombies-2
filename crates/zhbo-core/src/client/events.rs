@@ -116,7 +116,7 @@ impl Client {
             // An offhand leaving another player's hand: its third-person `fireSound` at them
             // (`sounds::remote_offhand`), as BO2 plays it for everyone but the thrower.
             EventKind::Thrown { lethal } => {
-                let def = if lethal { p.arsenal.lethal.def } else { p.arsenal.tactical.def };
+                let def = p.arsenal.offhand_def(lethal);
                 if let Some(cue) = sounds::remote_offhand(def) {
                     self.cues.play_at(cue, p.body.eye());
                 }
@@ -284,7 +284,7 @@ impl Client {
     /// prediction's for its own events).
     fn present(&mut self, inp: &ClientIn, own: bool, auth: Option<&PlayerSim>, holder: Option<&PlayerSim>, body_pos: Option<Vec3>, mine: Vec<EventKind>) {
         // The weapon in hand after the step: its sounds for this frame's shots, swing and throws.
-        let held = holder.map(|p| (p.arsenal.current().def, p.arsenal.current().ammo, p.arsenal.current().string, p.arsenal.lethal.def, p.arsenal.tactical.def));
+        let held = holder.map(|p| (p.arsenal.current().def, p.arsenal.current().ammo, p.arsenal.current().string, p.arsenal.offhand_def(true), p.arsenal.offhand_def(false)));
         let fire = held.map_or(sounds::FIRE, |(def, ..)| sounds::fire_for(def));
         let left_fire = holder.map_or(sounds::FIRE, |p| sounds::left_fire_for(p.arsenal.current().def));
         let swing = holder.map_or(sounds::MELEE_SWING, |p| sounds::melee_swing_for(p.arsenal.melee_weapon()));

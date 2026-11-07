@@ -1306,6 +1306,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         explosion_outer_damage: w.explosion_outer_damage as f32,
         projectile_speed: inches(w.projectile_speed as f32),
         projectile_speed_up: inches(w.projectile_speed_up as f32),
+        projectile_speed_relative_up: inches(w.projectile_speed_relative_up as f32),
+        projectile_speed_forward: inches(w.projectile_speed_forward as f32),
+        throw_back: w.throw_back,
         projectile_gravity: w.class != bo2::class::ROCKETLAUNCHER,
         impact_explode: w.projectile_impact_explode,
         // BO2's impact bucket: which `FxImpactTable` entry this weapon's hits use (R8d).

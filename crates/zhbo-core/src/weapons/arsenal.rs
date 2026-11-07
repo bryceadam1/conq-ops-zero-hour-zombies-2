@@ -38,7 +38,7 @@ pub enum WeaponAction {
     Fire { spread_deg: f32, jitter: (f32, f32), view_kick: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16, last: bool, left: bool },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
     /// a stacked pull by the rounds loaded before each, minus one (the tri-bolt's 2, 1, 0).
-    Launch { def: &'static WeaponDef, pellet: u16 },
+    Launch { def: &'static WeaponDef, pellet: u16, spread_deg: f32, jitter: (f32, f32) },
     /// Throw an offhand item; `fuse_left` is what remains after cooking.
     /// `lethal`: thrown from the lethal slot (whatever the item's class: C4 is equipment, and
     /// Tactician puts a tactical there).
@@ -199,6 +199,10 @@ pub struct Arsenal {
     /// Real seconds the held grenade has cooked (the fuse burns in real time; the offhand
     /// states' own clock runs at the perk's rate).
     cooked: f32,
+    /// A live grenade picked up to throw back (BO2's pick-up `FUN_005d2140` makes it the offhand
+    /// weapon, its fuse the grenade's time left): the lethal offhand use in progress is this
+    /// grenade, not the slot's item, until it leaves the hand ([`Arsenal::throw_back`]).
+    pub throwback: Option<&'static WeaponDef>,
     /// The tuning pack's perk multipliers, taken when the kit was made (the pack is loaded once at
     /// init, identically on every client).
     pub tuning: Tuning,
@@ -209,7 +213,7 @@ pub struct Arsenal {
 crate::statehash::state_hash!(struct Arsenal {
     loadout, weapons, active, lethal, tactical, melee, class_melee, raise_left, raise_total, raise_kind, drop_left,
     drop_total, previous, alt_pending, ads, sights, since_sprint, melee_left, melee_recover_left, melee_delay_left, offhand,
-    plant_ok, aim_spread, spread_in, shot_scale, swaps_pending, held_last, since_reload_press, cooked,
+    plant_ok, aim_spread, spread_in, shot_scale, swaps_pending, held_last, since_reload_press, cooked, throwback,
 } skip { tuning });
 
 /// One of BO2's weapon-state families, each of which a specialty speeds up (Ghidra G3,
@@ -277,6 +281,7 @@ impl Arsenal {
             held_last: 0,
             since_reload_press: 10.0,
             cooked: 0.0,
+            throwback: None,
             tuning: crate::tuning::get(),
         }
     }
@@ -366,6 +371,7 @@ impl Arsenal {
             held_last: 0,
             since_reload_press: 10.0,
             cooked: 0.0,
+            throwback: None,
             tuning: crate::tuning::get(),
         }
     }
@@ -461,8 +467,12 @@ impl Arsenal {
         family.map_or(1.0, |f| 1.0 / self.multiplier(f))
     }
 
-    /// The item in the lethal or the tactical slot.
+    /// The item in the lethal or the tactical slot (the lethal use is a picked-up grenade's while
+    /// one is in hand, [`Arsenal::throwback`]).
     pub fn offhand_def(&self, lethal: bool) -> &'static WeaponDef {
+        if let (true, Some(def)) = (lethal, self.throwback) {
+            return def;
+        }
         if lethal {
             self.lethal.def
         } else {
@@ -503,6 +513,23 @@ impl Arsenal {
         self.current_mut().interrupt();
         self.ads = 0.0;
         self.sights = false;
+    }
+
+    /// Pick up a live grenade of `def` with `fuse_left` seconds on it to throw back (BO2's
+    /// pick-up, t6mp `FUN_005d2140`: the offhand weapon becomes the grenade, `grenadeTimeLeft` its
+    /// time left; `FUN_00607730` then throws it as the picker's). It starts as a lethal press would
+    /// (`FUN_008e2bb0`, no count needed: it is not the slot's), its pull-back then its release —
+    /// the throw button is not held, so it leaves at once — and its fuse keeps burning from the
+    /// pick-up: held too long it goes off in hand. Refused (false) with another offhand in hand,
+    /// while the weapon is put away, or with a grenade already picked up.
+    pub fn throw_back(&mut self, def: &'static WeaponDef, fuse_left: f32, out: &mut Vec<WeaponAction>) -> bool {
+        if self.throwback.is_some() || self.drop_left > 0.0 || matches!(self.offhand, Some(u) if !matches!(u, OffhandUse::Raising { .. })) {
+            return false;
+        }
+        self.throwback = Some(def);
+        self.start_offhand_use(true, out);
+        self.cooked = (def.fuse_time - fuse_left).max(0.0);
+        true
     }
 
     /// Whether the weapon-switch key has another weapon to cycle to. BO2's client cycles its
@@ -1144,6 +1171,9 @@ impl Arsenal {
                 break;
             }
             if def.launches() {
+                // The rocket's spread is the shot's, its disc drawn as a bullet's (`FUN_0066e590`
+                // -> `FUN_0066d710` -> `FUN_0066ce90`: the angle, then the radius).
+                let spread_deg = super::aim_spread::AimSpread::shot_spread(shot_scale, cone, def, ads);
                 if def.fire == FireMode::Stacked {
                     // A pull empties the stack: once one bolt is out, BO2 keeps firing while the
                     // stack is part-spent (`FUN_008e1320` treats `FUN_008dc0c0` as the trigger)
@@ -1151,10 +1181,12 @@ impl Arsenal {
                     // rounds loaded before it, which picks its place in the fan (`FUN_0066e320`);
                     // `pellet` is that count - 1.
                     for loaded in (1..=w.ammo).rev() {
-                        out.push(WeaponAction::Launch { def, pellet: loaded - 1 });
+                        let jitter = (rng.next_f32(), rng.next_f32());
+                        out.push(WeaponAction::Launch { def, pellet: loaded - 1, spread_deg, jitter });
                     }
                 } else {
-                    out.push(WeaponAction::Launch { def, pellet: 0 });
+                    let jitter = (rng.next_f32(), rng.next_f32());
+                    out.push(WeaponAction::Launch { def, pellet: 0, spread_deg, jitter });
                 }
             } else {
                 let spread = super::aim_spread::AimSpread::shot_spread(shot_scale, cone, def, ads);
@@ -1225,6 +1257,10 @@ impl Arsenal {
     /// Lethal (G) and tactical (Q) use: BO2's offhand states (see [`OffhandUse`]). Returns whether
     /// it owns this frame.
     fn step_offhand(&mut self, held: u32, pressed: u32, released: u32, out: &mut Vec<WeaponAction>) -> bool {
+        // A picked-up grenade is the offhand only until it has left the hand.
+        if matches!(self.offhand, None | Some(OffhandUse::Raising { .. })) {
+            self.throwback = None;
+        }
         // A new offhand may start from rest or while the gun comes back up after one (0x1d).
         if matches!(self.offhand, None | Some(OffhandUse::Raising { .. })) && self.start_offhand(pressed, out) {
             return true;
@@ -1235,6 +1271,10 @@ impl Arsenal {
         let tick = self.tick(self.offhand_timing(lethal));
         match use_ {
             OffhandUse::Starting { left, .. } => {
+                // A picked-up grenade's fuse burns from the pick-up.
+                if lethal && self.throwback.is_some() {
+                    self.cooked += LOGIC_DT;
+                }
                 let left = left - tick;
                 if left <= 1e-6 {
                     self.begin_offhand(lethal, out);
@@ -1247,10 +1287,11 @@ impl Arsenal {
                 let pulled_back = held_for >= def.timing.hold_fire_time - 1e-6;
                 // The fuse is set when the pull-back ends (`FUN_008e28a0`) and burns in plain time
                 // (`FUN_008e2e40`).
-                if pulled_back {
+                let thrown_back = lethal && self.throwback.is_some();
+                if pulled_back || thrown_back {
                     self.cooked += LOGIC_DT;
                 }
-                if def.cook && def.fuse_time - self.cooked <= 0.0 {
+                if (def.cook || thrown_back) && def.fuse_time - self.cooked <= 0.0 {
                     // Cooked too long.
                     self.use_offhand(lethal);
                     self.offhand = Some(OffhandUse::Throwing { lethal, t: def.timing.fire_delay, fired: true });
@@ -1331,12 +1372,13 @@ impl Arsenal {
         }
         if !fired && t >= def.timing.fire_delay - 1e-6 {
             self.use_offhand(lethal);
-            let fuse_left = if def.cook { def.fuse_time - self.cooked } else { def.fuse_time };
+            let thrown_back = lethal && self.throwback.is_some();
+            let fuse_left = if def.cook || thrown_back { def.fuse_time - self.cooked } else { def.fuse_time };
             out.push(match def.place {
                 Place::Plant => WeaponAction::Plant { def },
                 _ => WeaponAction::Throw { def, fuse_left, lethal },
             });
-        } else if !fired && def.cook {
+        } else if !fired && (def.cook || (lethal && self.throwback.is_some())) {
             // Still in the hand: the fuse burns on.
             self.cooked += LOGIC_DT;
         }
@@ -1371,6 +1413,13 @@ impl Arsenal {
             out.push(WeaponAction::CantPlant { lethal });
             return false;
         }
+        self.start_offhand_use(lethal, out);
+        true
+    }
+
+    /// The offhand use the press (or a throwback's pick-up) starts: the interrupted state's time
+    /// waited out first ([`OffhandUse::Starting`]), or at once.
+    fn start_offhand_use(&mut self, lethal: bool, out: &mut Vec<WeaponAction>) {
         // `FUN_008e2bb0` goes straight to `FUN_008e2710` only from 0x1d; any other state is
         // replaced by 0x16 with its `weaponTime` kept.
         let left = if matches!(self.offhand, Some(OffhandUse::Raising { .. })) { 0.0 } else { self.state_time_left() };
@@ -1396,7 +1445,6 @@ impl Arsenal {
         } else {
             self.begin_offhand(lethal, out);
         }
-        true
     }
 
     /// BO2's plant check for the slot's item: always passes unless the item is `plantable`.
@@ -1434,7 +1482,7 @@ impl Arsenal {
     /// detonator (0x19).
     fn begin_offhand(&mut self, lethal: bool, out: &mut Vec<WeaponAction>) {
         let slot = if lethal { &self.lethal } else { &self.tactical };
-        if slot.count == 0 && slot.def.has_detonator {
+        if slot.count == 0 && slot.def.has_detonator && !(lethal && self.throwback.is_some()) {
             self.offhand = Some(OffhandUse::Detonating { lethal, t: 0.0, fired: false });
         } else {
             self.offhand = Some(OffhandUse::Holding { lethal, held_for: 0.0 });
@@ -1467,6 +1515,10 @@ impl Arsenal {
     }
 
     pub fn use_offhand(&mut self, lethal: bool) {
+        // A picked-up grenade is not the slot's: the slot keeps its count.
+        if lethal && self.throwback.is_some() {
+            return;
+        }
         let slot = if lethal { &mut self.lethal } else { &mut self.tactical };
         slot.count = slot.count.saturating_sub(1);
     }

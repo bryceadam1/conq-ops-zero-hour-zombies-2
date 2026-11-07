@@ -48,6 +48,9 @@ impl<'a> Sandbox<'a> {
 
 impl LogicHost for Sandbox<'_> {
     fn log(&self, _msg: &str) {}
+    fn sim_eye(&self, id: u32) -> Option<f32> {
+        self.host.sim_eye(id)
+    }
     fn ground_height(&self, x: f32, y: f32) -> f32 {
         self.host.ground_height(x, y)
     }
@@ -158,7 +161,7 @@ impl Sim {
         self.shields = self.shield_bearers();
         self.equipment.shields.clone_from(&self.shields);
         self.equipment.guards.clear();
-        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal, p.is_first_person())));
+        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal, p.is_first_person(), p.body.eye_height)));
         let Some(mut p) = self.players[idx].take() else { return false };
         let sandbox = Sandbox::new(host, &p);
         self.combat_seen = 0;

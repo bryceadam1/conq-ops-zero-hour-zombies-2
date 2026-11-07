@@ -1421,7 +1421,7 @@ landing's fall damage `bg_fallDamageMin/MaxHeight` and `FallDamageFullScale`, it
 `AdsWalkScale`, the stand-crouch eye time `StanceCrouchTime`; `movement`, `movement::land`,
 `movement::stance`, each key citing its constant), the `perk_*` multipliers, damage
 flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, the aim spread scale's dvars and engine constants (`bg_aimSpreadMoveSpeedThreshold`, `jump_spreadAdd`, `adsZeroSpread`, `bg_ads`, `AimSpread*`; `weapons::aim_spread`), `bulletrange` (how far a non-spread round is traced), the optic displays'
-`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the dropped weapons (`[Drops]`: `g_maxDroppedWeapons`, `player_useRadius`, the use list's facing scale, `_weapons.gsc`'s 60 s `deletepickupafterawhile`, the item's owner second and `Drop_Item`'s toss, its touch box and the player box's height; `sim::drops`), the smoke screen's time and sight blocker (`[Smoke]`: `_smokegrenade.gsc`'s `spawntimedfx` time and `blocksight` radii, t6mp's always-seen distance; `smoke::Params`), the melee reach and the knife's lunge (`player_meleeRange`, `player_meleeCharge*`, `[Melee]`; the lunge distance and times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
+`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the dropped weapons (`[Drops]`: `g_maxDroppedWeapons`, `player_useRadius`, the use list's facing scale, `_weapons.gsc`'s 60 s `deletepickupafterawhile`, the item's owner second and `Drop_Item`'s toss, its touch box and the player box's height; `sim::drops`), the smoke screen's time and sight blocker (`[Smoke]`: `_smokegrenade.gsc`'s `spawntimedfx` time and `blocksight` radii, t6mp's always-seen distance; `smoke::Params`), the melee reach, BO2's melee trace and the knife's lunge (`player_meleeRange`, `player_meleeWidth`/`Height`, `MeleeTracePullback`, `player_meleeCharge*`, the client's auto melee `aim_automelee_*` and `AutoMeleeChargeOffset`, `[Melee]`; the lunge's range with a melee weapon up and its times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`; `sim::fire`), the radius damage's visibility and the rocket's push (`[Blasts]`; `cover`), the grenade throwback (`player_throwback*`, `bg_maxGrenadeIndicatorSpeed`, `ThrowbackHeight`, `UseListGrenadeBonus` in `[Drops]`; `sim::throwback`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like
@@ -1715,6 +1715,20 @@ fire from `Body::eye`. The client caps its own yaw while prone (`movement::cap_p
 caps the yaw it is sent (`movement::prone_view_yaw`), so the input stream needs no new field. A
 landing's fall damage is the General's own `LogicHost::damage` blow (`MOD_FALLING`, the
 `[MeansOfDeath]` table's `FALLING`), reported by the scoring host like any other.
+
+**Pending for the next bump (combat-rules).** Archive: the weapon table's new `Throw` key (BO2's
+`iProjectileSpeedRelativeUp`, `iProjectileSpeedForward` and `bThrowBack`; the throw `FUN_0066cf00`,
+the throwback's use list `FUN_00676d50`); `hud::VERSION` must move so launchers reconvert (an older
+table reads no relative-up or forward speed and no throwback: every grenade then throws along the
+plain view at `iProjectileSpeed` + `iProjectileSpeedUp`, and nothing can be thrown back). The UI text
+gains `PLATFORM_THROWBACKGRENADE`. The tuning pack (the content CRC's tuning part) gains the melee
+trace's and auto melee's keys (`player_meleeWidth`/`Height`, `MeleeTracePullback`,
+`aim_automelee_*`, `AutoMeleeChargeOffset`), `[Blasts]` (`DamageVisibilityWidth`,
+`DamageVisibilityShare`, `RocketPushSpeed`) and the throwback's (`player_throwbackInner/OuterRadius`,
+`bg_maxGrenadeIndicatorSpeed`, `ThrowbackHeight`, `UseListGrenadeBonus`). No ABI change:
+`WeaponAction::Launch`'s spread and jitter, `PlayerSim::use_grenade` and `Arsenal::throwback` are
+Rust-internal sim state (hashed); `LogicHost::sim_eye` is a Rust-only default method (the C host does
+not answer it).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

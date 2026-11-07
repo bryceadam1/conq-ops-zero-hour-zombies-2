@@ -295,6 +295,9 @@ impl LogicHost for Tally<'_> {
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)
     }
+    fn sim_eye(&self, id: u32) -> Option<f32> {
+        self.host.sim_eye(id)
+    }
     fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32 {
         self.host.spawn(template, owner, pos, yaw)
     }

@@ -162,12 +162,19 @@ fn trophy_kill(host: &dyn LogicHost, p: &Placed, at: Vec3, tn: &EquipTuning) {
     let mut objs = Vec::new();
     host.query(at, radius, p.viewer(), &mut objs);
     objs.sort_by_key(|o| o.id);
+    // The script's `radiusdamage` is the engine's radius damage: scaled by what it sees.
+    let cover = crate::cover::Blockers::near(host, at, radius * 2.0, p.viewer(), &[]);
+    let t = crate::tuning::get();
     for o in objs.iter().filter(|o| o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && !o.has(objflags::PROJECTILE)) {
         let d = crate::projectiles::blast_distance(o, at);
         if d > radius {
             continue;
         }
-        let bo2 = max - (max - min) * (d / radius.max(1e-3));
+        let seen = cover.fraction(host, &t, at, o);
+        if seen <= 0.0 {
+            continue;
+        }
+        let bo2 = (max - (max - min) * (d / radius.max(1e-3))) * seen;
         host.damage(p.general, o.id, bo2 * crate::units::BO2_TO_ZH_DAMAGE, crate::damage::Blow::from_to(crate::damage::MeansOfDeath::Explosive, p.def, at, o.pos));
     }
 }
@@ -508,7 +515,10 @@ impl Equipment {
             return;
         }
         // Each break may set off more (and take them out of the list): look again from the top.
-        while let Some(k) = self.placed.iter().position(|p| (p.pos - at).length() <= radius && p.hostile_to(host, general)) {
+        // A piece the blast does not see is spared (the radius damage's visibility, `FUN_005f0f00`;
+        // the piece is a point at its place).
+        let cover = crate::cover::Blockers::near(host, at, radius.max(1.0) * 2.0, general, &[]);
+        while let Some(k) = self.placed.iter().position(|p| (p.pos - at).length() <= radius && p.hostile_to(host, general) && cover.sees_point(host, at, p.pos + Vec3::new(0.0, 0.0, 0.05), p.object)) {
             self.destroy(host, k, Some((by, general)), effect, events);
         }
     }

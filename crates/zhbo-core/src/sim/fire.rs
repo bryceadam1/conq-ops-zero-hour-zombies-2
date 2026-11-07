@@ -19,32 +19,43 @@ impl Sim {
             WeaponAction::Fire { spread_deg, jitter, view_kick, gun_kick, pellet, last, left } => {
                 self.fire_round(host, idx, p, FireArgs { spread_deg, jitter, view_kick, gun_kick, pellet, last, left });
             }
-            WeaponAction::Launch { def, pellet } => {
+            WeaponAction::Launch { def, pellet, spread_deg, jitter } => {
                 let eye = p.body.eye();
                 // A stack's bolts fan across `stackFireSpread` degrees of yaw: the bolt fired with
                 // k rounds loaded of an n-round stack at spread × ((k - 1) / (n - 1) - 0.5)
                 // (`FUN_0066e320`; `pellet` is k - 1).
                 let n = def.rounds_per_shot();
                 let spread = if def.fire == FireMode::Stacked && n > 1 { def.traits.stack_fire.0.to_radians() * (pellet as f32 / (n - 1) as f32 - 0.5) } else { 0.0 };
-                let dir = dir_from_angles(p.fire_yaw + spread, p.fire_pitch);
+                // The rocket flies in the shot's spread cone as a bullet does (`FUN_0066e590` passes
+                // the spread to `FUN_0066d710`, whose disc `FUN_0066ce90` is `Bullet_Fire`'s), from
+                // the muzzle, the eye (`FUN_0066e320` -> `FUN_005e0560`).
+                let (yaw, pitch) = (p.fire_yaw + spread, p.fire_pitch);
+                let dir = crate::weapons::aim_spread::cone_dir(yaw, pitch, spread_deg, jitter.0, jitter.1);
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
                 }
-                let mut proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
+                let mut proj = Projectile::launch(def, p.general, eye, dir, def.fuse_time, host, p.yaw);
                 // Flak Jacket covers a launcher's own blast (and a bolt's grenade) as a thrown one.
                 (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
                 self.projectiles.push((idx, proj));
+                // BO2 pushes the one who fires it back along his view, never up (`FUN_0066d710`:
+                // `RocketPushSpeed` against the forward, its z clamped at 0), for any fire type but
+                // full auto.
+                if def.fire != FireMode::Auto {
+                    let f = dir_from_angles(yaw, pitch);
+                    p.body.vel += Vec3::new(-f.x, -f.y, (-f.z).min(0.0)) * inches(p.arsenal.tuning.rocket_push_speed);
+                }
                 // One launch cue per pull: the stack's last bolt, everything else's only one.
                 if pellet == 0 {
                     self.emit(idx, EventKind::Launched);
                 }
             }
             WeaponAction::Throw { def, fuse_left, lethal } => {
+                // BO2's throw (`FUN_0066cf00`) from the muzzle, the eye.
                 let eye = p.body.eye();
-                // BO2 throws a little above the crosshair.
-                let dir = dir_from_angles(p.yaw, (p.pitch + 0.12).min(1.4));
-                let mut proj = Projectile::launch(def, p.general, eye + dir * 1.5, dir, fuse_left, host, p.yaw);
-                proj.vel += p.body.vel * 0.5;
+                let vel = grenade_throw(def, p.yaw, p.pitch, p.body.vel);
+                let mut proj = Projectile::launch(def, p.general, eye, vel.normalized_or_zero(), fuse_left, host, p.yaw);
+                proj.vel = vel;
                 (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
                 self.projectiles.push((idx, proj));
                 // The slot it left (the client plays that slot's item's throw).
@@ -183,42 +194,41 @@ impl Sim {
     }
 }
 
-/// How far a knife reaches. In first person the General is BO2's player body, so the knife reaches
-/// [`MELEE_RANGE`] past its hit radius. Under RTS control Zero Hour walked him up to the victim with
-/// its own footprints (attack range is measured edge to edge, `Weapon::getAttackDistance`), so the
-/// reach counts both footprints the same way.
+/// How a melee finds its victim. In first person the General is BO2's player: BO2's melee trace
+/// ([`Sim::melee_trace`]). Under RTS control Zero Hour walked him up to the victim with its own
+/// footprints (attack range is measured edge to edge, `Weapon::getAttackDistance`), so the blow
+/// reaches the knife's range past his own footprint to the victim's, the way he faces.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MeleeReach {
     Body,
     Footprint(f32),
 }
 
-/// How much wider than the reach the melee's object query is (the reach test then decides);
+/// How much wider than the reach the melee's object query is (each ray's trace then decides);
 /// Zero Hour units.
 const MELEE_QUERY_SLACK: f32 = 12.0;
-/// The knife's facing cone (cosine, about 53 degrees): the mod's stand-in for BO2's melee trace
-/// box (`player_meleeWidth`/`player_meleeHeight` 10 in) plus its lunge's aim assist.
-const MELEE_FACING_COS: f32 = 0.6;
 
-impl MeleeReach {
-    /// Whether a blow from `from` (the General's feet) reaches `o`: a soldier within the reach of
-    /// his BO2-sized body, anything else within the reach of its Zero Hour footprint (a box's
-    /// side, not a circle of its length: BO2's melee trace meets the entity's bounds).
-    fn reaches(self, from: Vec3, o: &ObjInfo) -> bool {
-        let d = (o.pos - from).length_xy();
-        match self {
-            MeleeReach::Body if o.has(objflags::INFANTRY) => d <= MELEE_RANGE + reach_radius(o),
-            MeleeReach::Body => crate::hitscan::distance_to(&crate::hitscan::solid(o), Vec3::new(from.x, from.y, o.pos.z)) <= MELEE_RANGE,
-            MeleeReach::Footprint(own) => d <= MELEE_RANGE + own + o.major_radius,
-        }
-    }
+/// BO2's melee trace pattern (t6mp `FUN_0066f740`, the table at `0x00b606a8`): each ray's end
+/// offset across the view (times `player_meleeWidth`) and up it (times `player_meleeHeight`), traced
+/// in this order. With no width and no height BO2 traces the first alone.
+const MELEE_PATTERN: [(f32, f32); 9] = [(0.0, 0.0), (0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)];
+
+/// What BO2's melee trace struck: a soldier (BO2's player) or another object (a vehicle), a
+/// deployed shield (its index and how far along the ray), or nothing it can hurt (the ground, a
+/// structure, nothing in reach).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MeleeHit {
+    Victim(ObjInfo),
+    Shield { index: usize, at: Vec3, dir: Vec3 },
+    Nothing,
 }
 
-/// BO2's melee charge (the knife's lunge): the target and the seconds left of it. A melee at an
-/// enemy in front, past the reach (`player_meleeRange`) but inside the melee weapon's
-/// `meleeChargeRange`, charges at him (`FUN_008dc770`: charge flag 0x20000 and a charge distance
-/// beyond the reach pick the charge times); the move runs `sqrt(2 x gap / friction)` seconds
-/// (`FUN_008c3770`: speed `sqrt(gap x 2 x friction)`, time speed / friction).
+/// BO2's melee charge (the knife's lunge): the target and the seconds left of it. The client's
+/// auto melee picks the target and its distance ([`Sim::lunge_target`]); a distance past the reach
+/// (`player_meleeRange`) makes the melee a charge (`FUN_008c3300`, `FUN_008dc770`: charge flag
+/// 0x20000 and a charge distance beyond the reach pick the charge times); the move runs
+/// `sqrt(2 x distance / friction)` seconds (`FUN_008c3770`: speed `sqrt(distance x 2 x friction)`,
+/// time speed / friction).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeleeCharge {
     pub target: u32,
@@ -227,36 +237,101 @@ pub struct MeleeCharge {
 
 crate::statehash::state_hash!(struct MeleeCharge { target, left });
 
+/// The middle of an object's bounds: where a melee aimed at it points.
+fn middle(o: &ObjInfo) -> Vec3 {
+    let (lo, hi) = crate::cover::bounds(&crate::hitscan::solid(o));
+    (lo + hi) * 0.5
+}
+
 impl Sim {
-    /// The enemy a melee can reach within `range` (past the victim's hit radius), nearest first:
-    /// in front of the General, alive, not an ally, not a structure or a deployed shield.
-    fn melee_target(&self, host: &dyn LogicHost, p: &PlayerSim, range: f32) -> Option<ObjInfo> {
-        let (fwd, _) = basis_xy(p.yaw);
+    /// The client's auto melee target (t6mp `FUN_0048e8f0`, `FUN_0048cd20`, `FUN_0048d790`) and his
+    /// charge distance (`dist - AutoMeleeChargeOffset`, inches capped at 255, as the command's byte
+    /// carries it), in Zero Hour units. A candidate is an enemy within the range (`FUN_0048b390`: a
+    /// held melee weapon's `meleeChargeRange`, else `aim_automelee_range`), whose bounds as he sees
+    /// them overlap the auto melee region (`aim_automelee_region_width`/`height` of the 640×480
+    /// virtual screen, centred) and whom he can see (`FUN_0048fe80`); of those, the one whose
+    /// outline's middle is nearest the crosshair (the aim targets' order, `aim_target_closest_first`
+    /// 0, `FUN_0048c710`). Past `aim_automelee_move_limit_range` he must be moving at
+    /// `aim_automelee_move_limit` of his run speed, within `acos(aim_automelee_move_limit_angle)` of
+    /// the way to him (`FUN_0048d790`); else, or with no distance left past the offset, none.
+    pub(super) fn lunge_target(&self, host: &dyn LogicHost, p: &PlayerSim) -> Option<(ObjInfo, f32)> {
+        let t = &p.arsenal.tuning;
+        let held = p.arsenal.current().def;
+        let range = if held.traits.weap_type == crate::weapons::WeapType::Melee && held.melee_charge_range > 0.0 { held.melee_charge_range } else { inches(t.aim_automelee_range) };
+        let eye = p.body.eye();
+        let fwd = dir_from_angles(p.yaw, p.pitch);
+        let (_, right) = basis_xy(p.yaw);
+        let up = right.cross(fwd);
+        // BO2's view: `cg_fov` across a 4:3 screen (`FUN_0048c8f0`: tan(fov / 2) x 0.75 up).
+        let tan_x = crate::math::det::tan((t.cg_fov * 0.5).to_radians());
+        let tan_y = tan_x * 0.75;
+        let (hx, hy) = (t.aim_automelee_region_width / 640.0, t.aim_automelee_region_height / 480.0);
         let mut near = Vec::new();
-        host.query(p.body.eye(), range + MELEE_QUERY_SLACK, p.general, &mut near);
-        near.into_iter()
-            .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
-            .filter(|o| !self.deployed.iter().any(|d| d.object != 0 && d.object == o.id))
-            .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
-            .filter(|o| {
-                let to = o.pos - p.body.pos;
-                let d = to.length_xy();
-                d <= range + reach_radius(o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > MELEE_FACING_COS)
-            })
-            .min_by(|a, b| (a.pos - p.body.pos).length_xy().total_cmp(&(b.pos - p.body.pos).length_xy()).then(a.id.cmp(&b.id)))
+        host.query(eye, range + MELEE_QUERY_SLACK, p.general, &mut near);
+        let cover = crate::cover::Blockers::near(host, eye, range + MELEE_QUERY_SLACK, p.general, &[]);
+        let mut best: Option<(f32, u32, ObjInfo, f32)> = None;
+        for o in near.iter().filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE)) {
+            if self.deployed.iter().any(|d| d.object != 0 && d.object == o.id) {
+                continue;
+            }
+            let dist = (o.pos - p.body.pos).length();
+            if dist > range {
+                continue;
+            }
+            // Its bounds' corners on the screen (`FUN_0048c2e0`): clip space of those in front.
+            let (lo, hi) = crate::cover::bounds(&crate::hitscan::solid(o));
+            let (mut min, mut max) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+            for k in 0..8 {
+                let c = Vec3::new(if k & 1 == 0 { lo.x } else { hi.x }, if k & 2 == 0 { lo.y } else { hi.y }, if k & 4 == 0 { lo.z } else { hi.z });
+                let v = c - eye;
+                let depth = v.dot(fwd);
+                if depth <= 0.0 {
+                    continue;
+                }
+                let (x, y) = (v.dot(right) / depth / tan_x, v.dot(up) / depth / tan_y);
+                min = (min.0.min(x), min.1.min(y));
+                max = (max.0.max(x), max.1.max(y));
+            }
+            if !(min.0 < max.0 && min.1 < max.1 && min.0 <= 1.0 && min.1 <= 1.0 && max.0 >= -1.0 && max.1 >= -1.0) {
+                continue;
+            }
+            let (min, max) = ((min.0.clamp(-1.0, 1.0), min.1.clamp(-1.0, 1.0)), (max.0.clamp(-1.0, 1.0), max.1.clamp(-1.0, 1.0)));
+            if hx < min.0 || max.0 < -hx || hy < min.1 || max.1 < -hy {
+                continue;
+            }
+            if !cover.clear(host, eye, middle(o), o.id) {
+                continue;
+            }
+            let (cx, cy) = ((min.0 + max.0) * 0.5, (min.1 + max.1) * 0.5);
+            let screen = cx * cx + cy * cy;
+            if best.is_none_or(|(s, id, _, _)| screen < s || (screen == s && o.id < id)) {
+                best = Some((screen, o.id, *o, dist));
+            }
+        }
+        let (_, _, target, dist) = best?;
+        // The move test (`FUN_0048d790`).
+        let to = Vec3::new(target.pos.x - p.body.pos.x, target.pos.y - p.body.pos.y, 0.0);
+        if dist > inches(t.aim_automelee_move_limit_range) {
+            let vel = Vec3::new(p.body.vel.x, p.body.vel.y, 0.0);
+            let speed = vel.length_xy();
+            if speed < t.aim_automelee_move_limit * self.tuning.run_speed(p.arsenal.move_faster()) {
+                return None;
+            }
+            if speed > 1e-3 && to.length_xy() > 1e-3 && vel.dot(to) / (speed * to.length_xy()) < t.aim_automelee_move_limit_angle {
+                return None;
+            }
+        }
+        let charge = (dist - inches(t.automelee_charge_offset)).min(inches(255.0));
+        (charge > 0.0).then_some((target, charge))
     }
 
-    /// On the melee press: a target past the reach but inside the melee weapon's charge range
-    /// makes this a charge melee (its charge time and delay) and starts the lunge.
+    /// On the melee press: the auto melee's target, when his charge distance is past the reach
+    /// (`player_meleeRange`), makes this a charge melee (its charge time and delay) and starts the
+    /// lunge (`FUN_008c3300` takes the command's target, `FUN_008dc770` charges).
     pub(super) fn start_melee_charge(&mut self, host: &dyn LogicHost, p: &mut PlayerSim) {
         p.charge = None;
-        let knife = p.arsenal.melee_weapon();
-        if knife.melee_charge_range <= MELEE_RANGE {
-            return;
-        }
-        let Some(target) = self.melee_target(host, p, knife.melee_charge_range) else { return };
-        let gap = (target.pos - p.body.pos).length_xy() - reach_radius(&target) - MELEE_RANGE;
-        if gap <= 0.0 {
+        let Some((target, gap)) = self.lunge_target(host, p) else { return };
+        if gap <= MELEE_RANGE {
             return; // in reach: the plain melee
         }
         let friction = crate::units::inches(p.arsenal.tuning.player_melee_charge_friction).max(1.0);
@@ -265,7 +340,8 @@ impl Sim {
     }
 
     /// This frame's lunge for the movement (`None`: none, or it ended — its time ran out, or the
-    /// target died or went out of sight).
+    /// target died or went out of sight). It stops [`Tuning::automelee_charge_offset`] short of him
+    /// (the distance the command carried is the target's less that).
     pub(super) fn melee_charge(&self, host: &dyn LogicHost, p: &mut PlayerSim) -> Option<crate::movement::Charge> {
         let c = p.charge.as_mut()?;
         c.left -= LOGIC_DT;
@@ -277,82 +353,155 @@ impl Sim {
         let t = &p.arsenal.tuning;
         Some(crate::movement::Charge {
             target: o.pos,
-            stop: MELEE_RANGE + reach_radius(&o),
+            stop: inches(t.automelee_charge_offset),
             max_speed: crate::units::inches(t.player_melee_charge_max_speed),
             friction: crate::units::inches(t.player_melee_charge_friction),
         })
     }
-}
 
-impl Sim {
-    /// BO2's knife: the nearest enemy in front of the General and in reach takes the hit.
-    /// The swing's event (`EventKind::Melee`, the swipe sound) is the caller's: first person emits
-    /// it on the press ([`WeaponAction::MeleeSwing`]), the RTS strike with the blow.
-    pub(super) fn melee_strike(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, damage: f32, reach: MeleeReach) {
+    /// BO2's melee trace (t6mp `FUN_00670330` -> `FUN_00670040` -> `FUN_0066fc30` ->
+    /// `FUN_0066f740`): nine rays from `MeleeTracePullback` behind the eye to `player_meleeRange`
+    /// along `fwd`, their ends spread by [`MELEE_PATTERN`] times `player_meleeWidth` across and
+    /// `player_meleeHeight` up. The first ray to strike a soldier (BO2's player) strikes him;
+    /// otherwise the nearest thing any ray struck: another object (a vehicle) is struck, a deployed
+    /// shield takes the blow, the ground or a structure (BO2's world) ends it. Each ray stops at
+    /// the first solid on it: enemies (allies pass, as bullets do), structures, deployed shields and
+    /// the ground.
+    pub(super) fn melee_trace(&self, host: &dyn LogicHost, p: &PlayerSim, fwd: Vec3) -> MeleeHit {
+        let t = &p.arsenal.tuning;
         let eye = p.body.eye();
-        let (fwd, _) = basis_xy(p.yaw);
-        let extra = match reach {
-            MeleeReach::Body => MELEE_QUERY_SLACK,
-            MeleeReach::Footprint(own) => own + MELEE_QUERY_SLACK,
-        };
-        // A charge melee strikes the enemy it charges at (BO2 locks the charge target, ps +0x530),
-        // wherever the lunge has got to when the charge delay runs out.
-        let charged = p.charge.and_then(|c| host.object(c.target, p.general)).filter(|o| !o.has(objflags::DEAD));
+        let yaw = crate::math::det::atan2(fwd.y, fwd.x);
+        let (_, right) = basis_xy(yaw);
+        let up = right.cross(fwd);
+        let (range, w, h) = (inches(t.player_melee_range), inches(t.player_melee_width), inches(t.player_melee_height));
+        let start = eye - fwd * inches(t.melee_trace_pullback);
         let mut near = Vec::new();
-        host.query(eye, MELEE_RANGE + extra, p.general, &mut near);
-        let victim = charged.or_else(|| near
-            .iter()
-            .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
+        host.query(eye, range + w + h + MELEE_QUERY_SLACK, p.general, &mut near);
+        near.sort_by_key(|o| o.id);
+        let solids: Vec<(ObjInfo, Target)> = near
+            .into_iter()
+            // A structure stands in the way whoever owns it.
+            .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && (!o.has(objflags::ALLY) || o.has(objflags::STRUCTURE)))
             .filter(|o| !self.deployed.iter().any(|d| d.object != 0 && d.object == o.id))
-            .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
-            .filter(|o| {
-                let to = o.pos - p.body.pos;
-                let d = to.length_xy();
-                reach.reaches(p.body.pos, o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > MELEE_FACING_COS)
-            })
-            .min_by(|a, b| {
-                let da = (a.pos - p.body.pos).length_xy();
-                let db = (b.pos - p.body.pos).length_xy();
-                da.total_cmp(&db).then(a.id.cmp(&b.id))
-            })
-            .cloned());
-        // A deployed shield in front, before the victim, takes the strike (melee-scaled damage).
-        let victim_at = victim.map_or(MELEE_RANGE + extra, |v| (v.pos - p.body.pos).length_xy());
-        if let Some((i, t)) = self.deployed_on_ray(eye, fwd, (MELEE_RANGE + extra).min(victim_at)) {
-            self.damage_deployed(host, i, Some(idx), p.general, damage, deploy::ShieldDamage::Melee);
-            self.emit(idx, EventKind::ShieldHit { at: eye + fwd * t, dir: fwd, knife: true, impact_type: 0 });
-            return;
-        }
-        if let Some(v) = victim {
-            // The strike at a shield bearer's body crosses the shield first: no damage
-            // (location `riotshield`, `_globallogic_player.gsc:840`).
-            let chest = Vec3::new(v.pos.x, v.pos.y, v.pos.z + v.height * 0.6);
-            let to = chest - eye;
-            let mine = |b: &crate::shield::Bearer| b.general == v.id;
-            if let Some((_, t)) = crate::shield::blocking(&self.shields, &mine, eye, to.normalized_or_zero(), to.length(), to.length(), Some(v.id)) {
-                let at = eye + to.normalized_or_zero() * t;
-                self.emit(idx, EventKind::ShieldHit { at, dir: to.normalized_or_zero(), knife: true, impact_type: 0 });
-                return;
+            .map(|o| (o, crate::hitscan::solid(&o)))
+            .collect();
+        let ground = |x: f32, y: f32| host.ground_height(x, y);
+        let rays = if w > 0.0 || h > 0.0 { MELEE_PATTERN.len() } else { 1 };
+        // The nearest non-soldier strike so far: how far along its ray, and what.
+        let mut best: Option<(f32, MeleeHit)> = None;
+        for &(a, b) in &MELEE_PATTERN[..rays] {
+            let end = eye + fwd * range + right * (w * a) + up * (h * b);
+            let seg = end - start;
+            let len = seg.length();
+            if len < 1e-4 {
+                continue;
             }
-            host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
-            self.emit(idx, EventKind::MeleeHit);
-            let melee = p.arsenal.melee_weapon();
-            let rule = crate::damage::scale_on(&p.arsenal.tuning, &melee.id, MeansOfDeath::Melee, &v);
-            // The blow travels the way he faces (BO2's melee passes his forward as `vDir`).
-            let kill = host.damage(p.general, v.id, damage * rule * BO2_TO_ZH_DAMAGE, crate::damage::Blow::new(MeansOfDeath::Melee, melee, fwd));
-            self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-            if kill {
-                self.scavenger_kill(idx, &mut p.arsenal, v.has(objflags::INFANTRY), MeansOfDeath::Melee);
+            let dir = seg * (1.0 / len);
+            let mut first: Option<(f32, MeleeHit)> = crate::hitscan::trace_terrain(start, dir, len, &ground).map(|t| (t, MeleeHit::Nothing));
+            for (o, solid) in &solids {
+                if let Some(d) = crate::hitscan::ray_vs_target(start, dir, len, solid) {
+                    if first.is_none_or(|(f, _)| d < f) {
+                        let hit = if o.has(objflags::STRUCTURE) { MeleeHit::Nothing } else { MeleeHit::Victim(*o) };
+                        first = Some((d, hit));
+                    }
+                }
+            }
+            if let Some((i, d)) = self.deployed_on_ray(start, dir, len) {
+                if first.is_none_or(|(f, _)| d < f) {
+                    first = Some((d, MeleeHit::Shield { index: i, at: start + dir * d, dir }));
+                }
+            }
+            let Some((d, hit)) = first else { continue };
+            if let MeleeHit::Victim(o) = hit {
+                if o.has(objflags::INFANTRY) {
+                    return hit;
+                }
+            }
+            if best.is_none_or(|(b, _)| d <= b) {
+                best = Some((d, hit));
             }
         }
+        best.map_or(MeleeHit::Nothing, |(_, h)| h)
+    }
+
+    /// The RTS strike's victim: the nearest enemy whose Zero Hour footprint the blow reaches
+    /// along his facing, the knife's range past his own footprint (`own`), as Zero Hour measures
+    /// attack range edge to edge.
+    fn footprint_victim(&self, host: &dyn LogicHost, p: &PlayerSim, own: f32) -> MeleeHit {
+        let (fwd, _) = basis_xy(p.yaw);
+        let reach = own + MELEE_RANGE;
+        let mut near = Vec::new();
+        host.query(p.body.pos, reach + MELEE_QUERY_SLACK, p.general, &mut near);
+        near.sort_by_key(|o| o.id);
+        let mut best: Option<(f32, ObjInfo)> = None;
+        for o in near.iter().filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE)) {
+            if self.deployed.iter().any(|d| d.object != 0 && d.object == o.id) {
+                continue;
+            }
+            let footprint = if o.has(objflags::INFANTRY) {
+                Target { id: o.id, pos: o.pos, shape: Shape::Cylinder { radius: o.major_radius, height: o.height.max(1.0) }, head_fraction: 0.0 }
+            } else {
+                crate::hitscan::solid(o)
+            };
+            let from = Vec3::new(p.body.pos.x, p.body.pos.y, o.pos.z + o.height.max(1.0) * 0.5);
+            if let Some(d) = crate::hitscan::ray_vs_target(from, fwd, reach, &footprint) {
+                if best.is_none_or(|(b, _)| d < b) {
+                    best = Some((d, *o));
+                }
+            }
+        }
+        best.map_or(MeleeHit::Nothing, |(_, o)| MeleeHit::Victim(o))
     }
 }
 
-fn reach_radius(o: &ObjInfo) -> f32 {
-    if o.has(objflags::INFANTRY) {
-        INFANTRY_HIT_RADIUS
-    } else {
-        o.major_radius
+impl Sim {
+    /// BO2's knife: what its trace strikes takes the hit ([`Sim::melee_trace`]; under RTS control
+    /// [`MeleeReach::Footprint`]). A charge melee's view has converged on the enemy it charges at
+    /// (the client's auto melee turns the view onto the locked target, `FUN_0048e8f0`), so its
+    /// trace runs at him. The swing's event (`EventKind::Melee`, the swipe sound) is the caller's:
+    /// first person emits it on the press ([`WeaponAction::MeleeSwing`]), the RTS strike with the
+    /// blow.
+    pub(super) fn melee_strike(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, damage: f32, reach: MeleeReach) {
+        let eye = p.body.eye();
+        let charged = p.charge.and_then(|c| host.object(c.target, p.general)).filter(|o| !o.has(objflags::DEAD));
+        let fwd = match charged {
+            Some(o) => (middle(&o) - eye).normalized_or_zero(),
+            None => dir_from_angles(p.yaw, p.pitch),
+        };
+        let hit = match reach {
+            MeleeReach::Body => self.melee_trace(host, p, fwd),
+            MeleeReach::Footprint(own) => self.footprint_victim(host, p, own),
+        };
+        let v = match hit {
+            MeleeHit::Nothing => return,
+            // A deployed shield takes the strike (melee-scaled damage).
+            MeleeHit::Shield { index, at, dir } => {
+                self.damage_deployed(host, index, Some(idx), p.general, damage, deploy::ShieldDamage::Melee);
+                self.emit(idx, EventKind::ShieldHit { at, dir, knife: true, impact_type: 0 });
+                return;
+            }
+            MeleeHit::Victim(v) => v,
+        };
+        // The strike at a shield bearer's body crosses the shield first: no damage
+        // (location `riotshield`, `_globallogic_player.gsc:840`).
+        let chest = Vec3::new(v.pos.x, v.pos.y, v.pos.z + v.height * 0.6);
+        let to = chest - eye;
+        let mine = |b: &crate::shield::Bearer| b.general == v.id;
+        if let Some((_, t)) = crate::shield::blocking(&self.shields, &mine, eye, to.normalized_or_zero(), to.length(), to.length(), Some(v.id)) {
+            let at = eye + to.normalized_or_zero() * t;
+            self.emit(idx, EventKind::ShieldHit { at, dir: to.normalized_or_zero(), knife: true, impact_type: 0 });
+            return;
+        }
+        host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
+        self.emit(idx, EventKind::MeleeHit);
+        let melee = p.arsenal.melee_weapon();
+        let rule = crate::damage::scale_on(&p.arsenal.tuning, &melee.id, MeansOfDeath::Melee, &v);
+        // The blow travels the way he faces (BO2's melee passes his forward as `vDir`).
+        let kill = host.damage(p.general, v.id, damage * rule * BO2_TO_ZH_DAMAGE, crate::damage::Blow::new(MeansOfDeath::Melee, melee, fwd));
+        self.emit(idx, EventKind::HitMarker { headshot: false, kill });
+        if kill {
+            self.scavenger_kill(idx, &mut p.arsenal, v.has(objflags::INFANTRY), MeansOfDeath::Melee);
+        }
     }
 }
 
@@ -403,6 +552,23 @@ pub fn target_from(o: &ObjInfo, bodies: &HitBodies, rifle: bool) -> Target {
         return Target { id: o.id, pos: o.pos, shape: Shape::Body { body, yaw: o.yaw, scale, rifle }, head_fraction: 0.0 };
     }
     crate::hitscan::solid(o)
+}
+
+/// BO2's grenade throw velocity (t6mp `FUN_0066cf00`) for a view `yaw`/`pitch` and the thrower's
+/// velocity `mover`: `forward × iProjectileSpeed + up × iProjectileSpeedRelativeUp + z ×
+/// iProjectileSpeedUp`, plus the view's horizontal forward × `iProjectileSpeedForward` when it has
+/// one; then the thrower's velocity along that throw is added (`vel += n × (mover · n)`, `n` the
+/// throw's direction), nothing across it.
+pub fn grenade_throw(def: &crate::weapons::WeaponDef, yaw: f32, pitch: f32, mover: Vec3) -> Vec3 {
+    let fwd = dir_from_angles(yaw, pitch);
+    let (_, right) = basis_xy(yaw);
+    let up = right.cross(fwd);
+    let mut vel = fwd * def.projectile_speed + up * def.projectile_speed_relative_up + Vec3::new(0.0, 0.0, def.projectile_speed_up);
+    if def.projectile_speed_forward != 0.0 {
+        vel += Vec3::new(fwd.x, fwd.y, 0.0).normalized_or_zero() * def.projectile_speed_forward;
+    }
+    let n = vel.normalized_or_zero();
+    vel + n * mover.dot(n)
 }
 
 /// Launch velocity for a grenade of throw speed `speed` from `from` to land at `to`: the low arc
@@ -741,5 +907,149 @@ mod tests {
         assert_eq!((a.lethal.count, a.tactical.count), (2, 2));
         assert_eq!(throw_lethal(&mut sim, &host).len(), 1);
         assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 1);
+    }
+
+    /// Player 0's General 1 at the origin, in first person with the test kit, facing +x.
+    fn kitted(host: &FakeHost) -> Sim {
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(host, 0, 1);
+        let p = sim.players[0].as_mut().unwrap();
+        p.arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
+        sim
+    }
+
+    fn act(sim: &mut Sim, host: &FakeHost, action: WeaponAction) {
+        let mut p = sim.players[0].take().unwrap();
+        sim.apply_weapon_action(host, 0, &mut p, action);
+        sim.players[0] = Some(p);
+    }
+
+    /// BO2's throw (`FUN_0066cf00`): the plain view at `iProjectileSpeed`, the view's up at
+    /// `iProjectileSpeedRelativeUp`, world up at `iProjectileSpeedUp`, the flat forward at
+    /// `iProjectileSpeedForward`; then only the thrower's velocity along the throw. No lift above
+    /// the crosshair, no half of his velocity across it.
+    #[test]
+    fn a_throw_is_bo2s() {
+        let def = crate::weapons::WeaponDef { projectile_speed: 600.0, projectile_speed_up: 30.0, projectile_speed_relative_up: 50.0, projectile_speed_forward: 40.0, ..Default::default() };
+        let v = grenade_throw(&def, 0.0, 0.0, Vec3::ZERO);
+        assert!((v - Vec3::new(640.0, 0.0, 80.0)).length() < 1e-3, "{v:?}");
+        let (yaw, pitch) = (0.7f32, 0.4f32);
+        let f = dir_from_angles(yaw, pitch);
+        let up = basis_xy(yaw).1.cross(f);
+        let flat = Vec3::new(f.x, f.y, 0.0).normalized_or_zero();
+        let want = f * 600.0 + up * 50.0 + Vec3::new(0.0, 0.0, 30.0) + flat * 40.0;
+        assert!((grenade_throw(&def, yaw, pitch, Vec3::ZERO) - want).length() < 1e-3);
+        // Moving across the throw adds nothing; along it, all of it.
+        let n = want.normalized_or_zero();
+        let across = Vec3::new(-n.y, n.x, 0.0).normalized_or_zero() * 100.0;
+        assert!((grenade_throw(&def, yaw, pitch, across) - want).length() < 1e-2);
+        assert!((grenade_throw(&def, yaw, pitch, n * 100.0) - (want + n * 100.0)).length() < 1e-2);
+    }
+
+    /// Every thrown offhand of the roster leaves from the eye at BO2's velocity.
+    #[test]
+    fn every_throw_of_the_roster_leaves_the_eye_at_bo2s_velocity() {
+        for def in crate::weapons::catalog().all().iter().copied().filter(|d| matches!(d.traits.weap_type, crate::weapons::WeapType::Grenade | crate::weapons::WeapType::Mine)) {
+            let host = FakeHost::default();
+            let mut sim = kitted(&host);
+            let p = sim.players[0].as_mut().unwrap();
+            (p.yaw, p.pitch, p.body.vel) = (0.3, -0.2, Vec3::new(20.0, 5.0, 0.0));
+            let (eye, want) = (p.body.eye(), grenade_throw(def, 0.3, -0.2, p.body.vel));
+            act(&mut sim, &host, WeaponAction::Throw { def, fuse_left: def.fuse_time, lethal: true });
+            let (_, g) = sim.projectiles.last().unwrap();
+            assert!((g.pos - eye).length() < 1e-4 && (g.vel - want).length() < 1e-3, "{}: {:?} {:?}", def.id, g.pos, g.vel);
+        }
+    }
+
+    /// A rocket flies in the shot's spread cone (`FUN_0066d710`, `Bullet_Fire`'s disc) and pushes
+    /// the shooter back along his view, never up, `RocketPushSpeed` (none for full auto); every
+    /// launcher of the roster.
+    #[test]
+    fn a_rocket_spreads_and_pushes_its_shooter_back() {
+        let t = crate::tuning::get();
+        let launchers: Vec<_> = crate::weapons::catalog().all().iter().copied().filter(|d| d.launches()).collect();
+        assert!(!launchers.is_empty());
+        for def in launchers {
+            let host = FakeHost::default();
+            let mut sim = kitted(&host);
+            let p = sim.players[0].as_mut().unwrap();
+            (p.fire_yaw, p.fire_pitch, p.body.vel) = (0.0, 0.3, Vec3::ZERO);
+            act(&mut sim, &host, WeaponAction::Launch { def, pellet: 0, spread_deg: 4.0, jitter: (0.25, 1.0) });
+            let (_, g) = sim.projectiles.last().unwrap();
+            let dir = g.vel.normalized_or_zero();
+            let view = dir_from_angles(0.0, 0.3);
+            if def.fire == FireMode::Stacked && def.rounds_per_shot() > 1 {
+                continue; // its bolt fans by the stack too
+            }
+            let off = dir.dot(view).clamp(-1.0, 1.0).acos().to_degrees();
+            if def.projectile_speed_up == 0.0 {
+                assert!((off - 4.0).abs() < 0.05, "{}: {off} degrees off the view", def.id);
+            }
+            let vel = sim.player(0).unwrap().body.vel;
+            if def.fire == FireMode::Auto {
+                assert_eq!(vel, Vec3::ZERO, "{}: full auto has no push", def.id);
+            } else {
+                // Aimed up, the push's z is down (`-forward.z`, clamped at 0 from above).
+                let push = Vec3::new(-view.x, -view.y, (-view.z).min(0.0)) * inches(t.rocket_push_speed);
+                assert!((vel - push).length() < 1e-4, "{}: {vel:?} vs {push:?}", def.id);
+                assert!(vel.z <= 0.0, "never up");
+            }
+        }
+    }
+
+    /// BO2's melee trace: straight ahead in reach he is struck; 40 degrees off the view he is not
+    /// (the old 53-degree cone struck him); looking up over him misses; a wall between stops it.
+    #[test]
+    fn the_knife_traces_bo2s_rays() {
+        let inch = inches(1.0);
+        let strike = |at: Vec3, yaw: f32, pitch: f32, wall: bool| {
+            let host = FakeHost::default();
+            let mut sim = kitted(&host);
+            host.add(ObjInfo { pos: at, ..general(2, 1) });
+            if wall {
+                host.add(ObjInfo { id: 9, flags: objflags::STRUCTURE, pos: Vec3::new(at.x * 0.5, at.y * 0.5, 0.0), geom_type: crate::host::geom::BOX, major_radius: 0.3, minor_radius: 20.0, height: 30.0, yaw, ..Default::default() });
+            }
+            let p = sim.players[0].as_mut().unwrap();
+            (p.yaw, p.pitch) = (yaw, pitch);
+            let p = sim.player(0).unwrap().clone();
+            matches!(sim.melee_trace(&host, &p, dir_from_angles(yaw, pitch)), MeleeHit::Victim(o) if o.id == 2)
+        };
+        let ahead = Vec3::new(45.0 * inch, 0.0, 0.0);
+        assert!(strike(ahead, 0.0, 0.0, false), "in reach, ahead");
+        let a = 40f32.to_radians();
+        assert!(!strike(Vec3::new(a.cos(), a.sin(), 0.0) * (45.0 * inch), 0.0, 0.0, false), "40 degrees off the view");
+        assert!(!strike(ahead, 0.0, 1.2, false), "looking up over him");
+        assert!(!strike(ahead, 0.0, 0.0, true), "a wall between");
+        assert!(!strike(Vec3::new(75.0 * inch, 0.0, 0.0), 0.0, 0.0, false), "past the reach");
+    }
+
+    /// Explosion cover (`FUN_005f2130` x `FUN_005f0f00`): a structure between the blast and a
+    /// General spares him every explosive of the roster's blast, and a concussion's stun; in the
+    /// open he takes it.
+    #[test]
+    fn a_wall_covers_a_general_from_every_blast() {
+        for def in crate::weapons::catalog().all().iter().copied().filter(|d| matches!(d.effect, crate::weapons::Effect::Explode | crate::weapons::Effect::Stun) && d.explosion_radius > 2.0) {
+            let taken = |wall: bool| {
+                let host = FakeHost::default();
+                host.add(general(1, 0));
+                let at = (def.explosion_radius * 0.5).min(30.0);
+                host.add(ObjInfo { pos: Vec3::new(at, 0.0, 0.0), ..general(2, 1) });
+                if wall {
+                    host.add(ObjInfo { id: 9, flags: objflags::STRUCTURE, pos: Vec3::new(at * 0.5, 0.0, 0.0), geom_type: crate::host::geom::BOX, major_radius: 0.3, minor_radius: 40.0, height: 40.0, ..Default::default() });
+                }
+                let mut sim = Sim::new();
+                sim.take_control(&host, 0, 1);
+                let mut g = Projectile::launch(def, 1, Vec3::new(0.0, 0.0, 0.5), Vec3::new(0.0, 0.0, -1.0), 0.0, &host, 0.0);
+                (g.fuse, g.resting, g.lands) = (0.0, true, false);
+                sim.projectiles.push((0, g));
+                crate::sim::tests::run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+                let hurt = host.damage_log.borrow().iter().any(|d| d.1 == 2);
+                let stunned = host.disabled.borrow().iter().any(|d| d.0 == 2);
+                hurt || stunned
+            };
+            assert!(taken(false), "{} reaches him in the open", def.id);
+            assert!(!taken(true), "{} is stopped by the wall", def.id);
+        }
     }
 }

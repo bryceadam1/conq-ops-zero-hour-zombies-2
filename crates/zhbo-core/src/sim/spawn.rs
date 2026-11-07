@@ -166,6 +166,7 @@ impl Sim {
             optics: Default::default(),
             tracer_count: 0,
             charge: None,
+            use_grenade: 0,
             shock: Default::default(),
             combat: false,
             spawned: false,

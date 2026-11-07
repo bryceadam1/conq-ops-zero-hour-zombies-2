@@ -762,6 +762,15 @@ pub struct Weapon {
     pub explosion_outer_damage: i32,
     pub projectile_speed: i32,
     pub projectile_speed_up: i32,
+    /// `iProjectileSpeedRelativeUp`: a grenade's throw speed along the view's up (t6mp
+    /// `FUN_0066cf00`).
+    pub projectile_speed_relative_up: i32,
+    /// `iProjectileSpeedForward`: a grenade's throw speed along the view's horizontal forward
+    /// (`FUN_0066cf00`).
+    pub projectile_speed_forward: i32,
+    /// `bThrowBack`: a live one may be picked up and thrown back (the use list `FUN_00676d50`,
+    /// the pick-up `FUN_005d2140`).
+    pub throw_back: bool,
     pub projectile_impact_explode: bool,
     /// `bProjSentientImpactExplode`: goes off on striking a player or AI, even when
     /// `projectile_impact_explode` is clear.
@@ -1317,6 +1326,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.explosion_outer_damage = int(z, d + WD::iExplosionOuterDamage);
     w.projectile_speed = int(z, d + WD::iProjectileSpeed);
     w.projectile_speed_up = int(z, d + WD::iProjectileSpeedUp);
+    w.projectile_speed_relative_up = int(z, d + WD::iProjectileSpeedRelativeUp);
+    w.projectile_speed_forward = int(z, d + WD::iProjectileSpeedForward);
+    w.throw_back = z.u8(d + WD::bThrowBack) != 0;
     w.projectile_impact_explode = z.u8(d + WD::bProjImpactExplode) != 0;
     w.projectile_sentient_impact_explode = z.u8(d + WD::bProjSentientImpactExplode) != 0;
     w.stickiness = z.u32(d + WD::stickiness);

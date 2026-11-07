@@ -739,6 +739,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.sticky = v.flag(4);
             Ok(())
         }),
+    field!("Throw", "A throw's speed along the view's up and along its horizontal forward (BO2's `iProjectileSpeedRelativeUp`, `iProjectileSpeedForward`; t6mp `FUN_0066cf00`), and whether a live one may be thrown back (`bThrowBack`).", FieldKind::Nums(3),
+        |d: &WeaponDef| format!("{} {} {}", d.projectile_speed_relative_up, d.projectile_speed_forward, d.throw_back as u8),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(3)?;
+            d.projectile_speed_relative_up = v.num(0);
+            d.projectile_speed_forward = v.num(1);
+            d.throw_back = v.flag(2);
+            Ok(())
+        }),
     field!("SpawnedGrenade", "The grenade weapon the projectile becomes where it strikes, stuck to what it hit (BO2's `projExplosion` bolt: `szSpawnedGrenadeWeaponName`); empty for none.", FieldKind::Str,
         |d: &WeaponDef| d.spawns.clone(),
         |d: &mut WeaponDef, v: Values| { d.spawns = v.text.into(); Ok(()) }),
@@ -1357,7 +1366,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 173);
+        assert_eq!(WEAPON_FIELDS.len(), 174);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

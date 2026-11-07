@@ -276,6 +276,9 @@ getters!(Def, WD {
     i32 explosion_outer_damage = iExplosionOuterDamage;
     i32 projectile_speed = iProjectileSpeed;
     i32 projectile_speed_up = iProjectileSpeedUp;
+    i32 projectile_speed_relative_up = iProjectileSpeedRelativeUp;
+    i32 projectile_speed_forward = iProjectileSpeedForward;
+    bool throw_back = bThrowBack;
     bool projectile_impact_explode = bProjImpactExplode;
     named projectile_model = projectileModel;
     f32 overlay_width = overlayWidth;

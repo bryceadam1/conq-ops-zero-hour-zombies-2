@@ -44,6 +44,9 @@ pub struct Guard {
     pub flash_protected: bool,
     /// `proximityprotection` (Tactical Mask): no Shock Charge zap.
     pub proximity_protected: bool,
+    /// His eye over his feet now (the stance's, as the sim moves him): what a blast's visibility
+    /// measures him by ([`crate::cover`]).
+    pub eye: f32,
 }
 
 /// What a blast did to a first-person General that the sim turns into a shellshock
@@ -72,7 +75,7 @@ pub enum ShockHitKind {
 
 impl Guard {
     /// General `general`'s guard from his class's specialties and the tuning pack.
-    pub fn of(general: u32, a: &Arsenal, first_person: bool) -> Guard {
+    pub fn of(general: u32, a: &Arsenal, first_person: bool, eye: f32) -> Guard {
         let class = a.class_specialties();
         let t = &a.tuning;
         Guard {
@@ -82,6 +85,7 @@ impl Guard {
             first_person,
             flash_protected: class.has(Specialty::FlashProtection),
             proximity_protected: class.has(Specialty::ProximityProtection),
+            eye,
         }
     }
 }
@@ -165,6 +169,9 @@ impl LogicHost for Guarded<'_> {
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)
     }
+    fn sim_eye(&self, id: u32) -> Option<f32> {
+        self.guard(id).map(|g| g.eye).or_else(|| self.host.sim_eye(id))
+    }
     fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32 {
         self.host.spawn(template, owner, pos, yaw)
     }
@@ -236,7 +243,7 @@ mod tests {
             host.add(general(id, id as i32 - 1));
         }
         let flak = crate::tuning::get().perk_flak_jacket * 0.01;
-        let guards = [Guard { general: 2, blast: flak, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false }, Guard { general: 3, blast: 1.0, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false }];
+        let guards = [Guard { general: 2, blast: flak, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false, eye: 10.0 }, Guard { general: 3, blast: 1.0, stun: 1.0, first_person: false, flash_protected: false, proximity_protected: false, eye: 10.0 }];
         let frag = def(Effect::Explode);
         let g = |def: &'static WeaponDef, stuck_to: Option<u32>| Guarded { host: &host, guards: &guards, def, stuck_to, thrown: true, owner: 1, at: None, hits: &hits };
         use crate::damage::MeansOfDeath::*;
@@ -261,7 +268,7 @@ mod tests {
     fn the_tactical_mask_cuts_anothers_concussion() {
         let hits = std::cell::RefCell::new(Vec::new());
         let host = FakeHost::default();
-        let guards = [Guard { general: 2, blast: 1.0, stun: 0.1, first_person: false, flash_protected: false, proximity_protected: false }];
+        let guards = [Guard { general: 2, blast: 1.0, stun: 0.1, first_person: false, flash_protected: false, proximity_protected: false, eye: 10.0 }];
         let conc = def(Effect::Stun);
         Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits }.disable(2, disable_kind::PARALYZED, 4.0);
         Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: false, owner: 1, at: None, hits: &hits }.disable(2, disable_kind::PARALYZED, 4.0);
@@ -279,8 +286,8 @@ mod tests {
             let hits = std::cell::RefCell::new(Vec::new());
             let host = FakeHost::default();
             let guards = [
-                Guard { general: 2, blast: 1.0, stun: 1.0, first_person, flash_protected: false, proximity_protected: true },
-                Guard { general: 3, blast: 1.0, stun: 1.0, first_person, flash_protected: false, proximity_protected: false },
+                Guard { general: 2, blast: 1.0, stun: 1.0, first_person, flash_protected: false, proximity_protected: true, eye: 10.0 },
+                Guard { general: 3, blast: 1.0, stun: 1.0, first_person, flash_protected: false, proximity_protected: false, eye: 10.0 },
             ];
             let placed = Guarded { host: &host, guards: &guards, def: shock, stuck_to: None, thrown: false, owner: 1, at: None, hits: &hits };
             placed.disable(2, disable_kind::PARALYZED, 1.5);
@@ -302,7 +309,7 @@ mod tests {
             let host = FakeHost::default();
             // `dist` from the blast to his origin, his feet (`_weapons.gsc:1366`, `self.origin`).
             host.add(crate::host::ObjInfo { pos: crate::math::Vec3::new(dist, 0.0, 0.0), ..general(1, 0) });
-            let guards = [Guard { general: 1, blast: 1.0, stun: if mask { t.stun_protection_scale } else { 1.0 }, first_person: false, flash_protected: false, proximity_protected: false }];
+            let guards = [Guard { general: 1, blast: 1.0, stun: if mask { t.stun_protection_scale } else { 1.0 }, first_person: false, flash_protected: false, proximity_protected: false, eye: 10.0 }];
             let g = Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits };
             crate::projectiles::blast(&g, conc, 1, crate::math::Vec3::ZERO, crate::projectiles::Hit::NONE, 1.0, 1.0, &[]);
             let secs: Vec<f32> = host.disabled.borrow().iter().filter(|d| d.0 == 1).map(|d| d.2).collect();

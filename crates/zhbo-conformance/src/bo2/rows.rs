@@ -279,6 +279,9 @@ impl<'a> Expected<'a> {
             .int("explosion_outer_damage", d.explosion_outer_damage() as i64)
             .float("projectile_speed", d.projectile_speed() as f64)
             .float("projectile_speed_up", d.projectile_speed_up() as f64)
+            .float("projectile_speed_relative_up", d.projectile_speed_relative_up() as f64)
+            .float("projectile_speed_forward", d.projectile_speed_forward() as f64)
+            .bool("throw_back", d.throw_back())
             .bool("projectile_impact_explode", d.projectile_impact_explode())
             .opt_text("projectile_model", d.projectile_model())
             .text("impact_type", enum_name(cols::IMPACT_TYPE, d.impact_type()));
