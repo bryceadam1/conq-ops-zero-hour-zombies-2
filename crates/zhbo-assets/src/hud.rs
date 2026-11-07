@@ -269,9 +269,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // Each converted weapon's crosshair art (`reticleSide`/`reticleCenter`, `hud::center`), its
     // obituary icon (`killIcon`, `hud::obituary`; a 2:1 or 4:1 icon kept twice as wide) and its
     // grenade indicator icon (`indicatorIcon`, `hud::grenade`), under their material names, packed
-    // once each.
-    for id in crate::weapons::converted_base(&weapons, &roster) {
-        let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
+    // once each: the player weapons' and their alt modes' (a grenade launcher's own kill icon), as
+    // the alt-fire slot's art below.
+    for w in weapons.iter().filter(|w| roster.is_player_weapon(w) || w.inventory == zhbo_formats::weapon::inventory::ALTMODE) {
         for m in [&w.reticle.side, &w.reticle.center].into_iter().flatten() {
             wanted.push((zhbo_core::lui::materials::image(m), Source::Dynamic(m.clone()), 64));
         }

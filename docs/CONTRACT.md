@@ -1689,6 +1689,20 @@ art (from `mp_raid`), BO2's unlit surfaces drawn self-lit (`Looks::unlit`), and 
 converted before it reads no turn add and unscaled stance decay, losing the SMGs' crouched 4×
 decay). `EventKind::Shot`'s `spread` is Rust-internal, no ABI.
 
+**Pending for the next bump (hud-feedback).** Archive `hud::VERSION` 89 → 90 needed, no ABI move. The
+weapon table gains four presentation keys: `KillIcon` and `KillIconShape` (BO2's `killIcon`,
+`killIconRatio`, `flipKillIcon`: the kill feed) and `Indicator` and `IndicatorIcon` (`projExplosion`,
+`bShowIndicator`, `iIndicatorRadius`, `indicatorIcon`: the grenade indicator), and the `UiText
+CGAME_QUAKE_SUICIDE` block. The archive gains sprites: each converted weapon's `reticleSide`/
+`reticleCenter`, `killIcon` and `indicatorIcon` under their material names, and the fixed
+`killicondied`, `killiconheadshot`, `hud_obit_*`, `hud_grenadeicon`, `hud_grenadepointer`,
+`damage_feedback_flak` and `damage_feedback_tac`; and the sound events `ZHBO_BO2_HitMarkerLow`
+(`mpl_hit_alert_low`) and `ZHBO_BO2_HitMarkerTaser` (`mpl_hit_alert_taser_spike`). An archive at 89
+reads none of the keys (no kill icons: the means' icons draw; no grenade indicator, whose kinds are
+unset; the crosshair already had its art keys) and plays no low or taser alert. The sim's events
+change shape only inside Rust (`HitMarker.alert`, `KilledBy.by/how/weapon`, the new `PerkFeedback`;
+presentation outputs, not hashed), so no ABI or content-CRC part moves.
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the
