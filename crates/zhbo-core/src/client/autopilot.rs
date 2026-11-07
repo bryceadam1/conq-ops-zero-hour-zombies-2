@@ -193,10 +193,12 @@ pub struct Autopilot {
     /// other General comes in, the round starts over for him once, so its closing burst is not
     /// fired into a General just taking the field.
     pub(crate) mp_fight_alone: bool,
-    /// How many times this session's long-run round has started (each start over counts). The
-    /// shooter holds his aimed bursts on every second start, so the target's kill him: at BO2's
-    /// health whoever fires first settles a round, and without it the shooter's General outlived
-    /// every round, his deaths left to chance (a tactical's strike, a late burst).
+    /// How many times a long-run round has started over the whole run (each start over counts).
+    /// The shooter holds his aimed bursts on the odd starts, the first round after the first fight
+    /// among them, so the target's kill him: at BO2's health whoever fires first settles a round.
+    /// Without it the shooter's General outlived every round and the target's one life between the
+    /// first fight and his last played a single round, both left to chance (a tactical's strike, a
+    /// late burst, which machine's clock started first).
     pub(crate) mp_round_starts: u32,
     /// The equipment run's view of his arsenal, set by the client from the sim each frame: no
     /// offhand, raise or put-away running, and the lethals left.
@@ -682,7 +684,7 @@ impl Autopilot {
         // would kill his next General standing there (at BO2's health, in a few rounds).
         let at_him = self.mp_aim.is_some();
         // The shooter's turn to yield ([`Autopilot::mp_round_starts`]): no aimed fire this round.
-        let yields = self.mp_shooter && self.mp_round_starts.is_multiple_of(2);
+        let yields = self.mp_shooter && !self.mp_round_starts.is_multiple_of(2);
         if (2.5..3.2).contains(&c) && at_him {
             keys.set_down(b.fire, true);
         }

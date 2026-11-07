@@ -602,7 +602,11 @@ fn mp_autopilot_match(rounds: u32, frames: u32) -> (Vec<Event>, Vec<String>, boo
     };
     let mut takes = [0usize; 2];
     let mut overhead_since = [None::<u32>; 2];
+    // A take still on its way (the command's run-ahead, the class screen) leaves the General
+    // overhead for a while: no second take is counted for him meanwhile.
+    let mut settling_until = [0u32; 2];
     let mut shocked = false;
+    const SETTLE: u32 = 150;
     for frame in 1..=frames {
         // The bridge: take control a little apart (each machine's walk ends on its own), and a
         // dead General's replacement from the Command Center a few seconds later.
@@ -628,12 +632,14 @@ fn mp_autopilot_match(rounds: u32, frames: u32) -> (Vec<Event>, Vec<String>, boo
                 net.send(frame + 90, i as i32, Cmd::TakeControl(id));
                 takes[i] += 1;
                 overhead_since[i] = None;
-            } else if frame > 120 && takes[i] < limit(i) && a.sim.player(i as i32).is_some_and(|p| p.general == g && !p.is_first_person()) {
+                settling_until[i] = frame + 90 + SETTLE;
+            } else if frame > 120 && frame >= settling_until[i] && takes[i] < limit(i) && a.sim.player(i as i32).is_some_and(|p| p.general == g && !p.is_first_person()) {
                 let since = *overhead_since[i].get_or_insert(frame);
                 if frame == since + 30 {
                     net.send(frame, i as i32, Cmd::TakeControl(g));
                     takes[i] += 1;
                     overhead_since[i] = None;
+                    settling_until[i] = frame + SETTLE;
                 }
             } else {
                 overhead_since[i] = None;
