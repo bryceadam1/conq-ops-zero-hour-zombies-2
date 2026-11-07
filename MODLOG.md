@@ -13822,3 +13822,11 @@ capture would have to be routed).
 **Versions (integrator-owned, NOT bumped):** `model::VERSION` 5 → 6, `camo::VERSION` 3 → 4,
 `reticles::VERSION` 2 → 3 and the archive's `hud::VERSION` (CONTRACT "Pending for the next bump").
 No C ABI change.
+
+**Verified.** `cargo test` for zhbo-native, zhbo-gfx, zhbo-assets, zhbo-core (`renderer`) green;
+clippy clean on those (`--all-targets`). In game (`cargo xtask build`, a fresh dist and archive):
+default 18/18 (a first run, the first launch after a machine crash, ended its match at frame 247
+and failed 13; the rerun passed all), `--rts` 20/20, `--detail` 10/10, `--w3d-ads` 2/2, `--scope`
+1/1, `--showcase` ran to its end; in-game frames in `~/.opencode/plan/lit-shading/compare/ingame_*`.
+The real-install `converts_from_real_install` fails on `Art\Native\ZVHAMC.zbv: no aim marker` (the
+builder's hammer manifest's skeleton; no material code on that path).
