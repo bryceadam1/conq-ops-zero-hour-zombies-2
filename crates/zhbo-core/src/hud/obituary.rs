@@ -109,10 +109,12 @@ pub struct Feed {
 }
 
 impl Feed {
-    /// Seat `victim`'s General was killed by seat `by` (his own: a suicide) with `how`/`weapon`.
-    pub fn killed_by(&mut self, victim: u8, by: Option<u8>, how: MeansOfDeath, weapon: Option<&WeaponDef>, now: f32) {
+    /// Seat `victim`'s General was killed by seat `by` (his own: a suicide) with `how`/`weapon`;
+    /// `died` when his `GeneralDied` is among the same step's events (the sim scores a step's kills
+    /// after the step, so it may come first), else it is still to come and gives no line.
+    pub fn killed_by(&mut self, victim: u8, by: Option<u8>, how: MeansOfDeath, weapon: Option<&WeaponDef>, died: bool, now: f32) {
         if let Some(r) = self.reported.get_mut(victim as usize) {
-            *r = true;
+            *r = !died;
         }
         let attacker = by.filter(|&b| b != victim);
         self.push(Line { attacker, victim, icon: icon(how, weapon), start: now });
@@ -235,12 +237,14 @@ mod tests {
     #[test]
     fn one_line_per_death_four_at_most_each_for_five_seconds() {
         let mut f = Feed::default();
-        f.killed_by(1, Some(0), MeansOfDeath::RifleBullet, None, 0.0);
+        f.killed_by(1, Some(0), MeansOfDeath::RifleBullet, None, false, 0.0);
         f.died(1, 0.1);
         assert_eq!(f.lines.len(), 1, "the KilledBy's line, none for its GeneralDied");
         f.died(2, 0.2);
         assert_eq!(f.lines.back().map(|l| (l.attacker, l.icon.material.as_str())), Some((None, "killicondied")), "a world death");
-        f.killed_by(3, Some(3), MeansOfDeath::Suicide, None, 0.3);
+        f.killed_by(3, Some(3), MeansOfDeath::Suicide, None, true, 0.3);
+        f.died(3, 0.35);
+        assert_eq!(f.lines.len(), 4, "a kill whose death came first in the step: its next death is its own");
         assert_eq!(f.lines.back().unwrap().attacker, None, "a suicide has no attacker part");
         for k in 0..3 {
             f.died(4, 0.4 + k as f32);
@@ -264,7 +268,7 @@ mod tests {
         let _f = crate::lui::font::lock();
         crate::lui::font::load("");
         let mut f = Feed::default();
-        f.killed_by(1, Some(0), MeansOfDeath::RifleBullet, Some(def("hud_an94", 1)), 0.0);
+        f.killed_by(1, Some(0), MeansOfDeath::RifleBullet, Some(def("hud_an94", 1)), false, 0.0);
         let l = Lui::new(1280.0, 720.0);
         let name = |s: u8| format!("P{s}");
         let ally = |s: u8| s == 0;

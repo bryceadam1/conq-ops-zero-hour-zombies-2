@@ -17,7 +17,7 @@
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
 #define ZHBO_LOGIC_API_FIELDS 24u
-#define ZHBO_CLIENT_API_FIELDS 16u
+#define ZHBO_CLIENT_API_FIELDS 17u
 
 #ifdef __cplusplus
 extern "C" {
@@ -233,6 +233,11 @@ typedef struct ZhboClientApi
 	   for none: the spectator's switch bar names the followed player (deadspectate.lua).
 	   Appended in ABI 30. */
 	int32_t (*player_name)(int32_t player, char *out, int32_t cap);
+	/* a MappedImage on an arbitrary quad: corners holds 8 floats, the image's top-left, top-right,
+	   bottom-right and bottom-left as x, y pixels; returns 0 when the image is missing or the
+	   display cannot (host patch 0033's Display::drawImageQuad): BO2's turned damage indicators,
+	   crosshair pieces and grenade pointer. Appended (pending the next ABI bump). */
+	int32_t (*image_quad)(const char *name, const float *corners, uint32_t argb);
 } ZhboClientApi;
 
 /* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit

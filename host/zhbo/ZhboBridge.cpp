@@ -446,6 +446,7 @@ void Zhbo_Init()
 		.sound_gain = cbSoundGain,
 		.sound_loop = cbSoundLoop,
 		.player_name = cbPlayerName,
+		.image_quad = cbImageQuad,
 	};
 	zhbo_init(&logicApi, &clientApi);
 

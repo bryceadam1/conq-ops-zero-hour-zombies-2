@@ -97,10 +97,15 @@ impl Client {
     /// shows the same lines.
     pub(super) fn obituaries(&mut self, sim: &Sim) {
         let now = self.hud.lui.clock;
+        // A step's kills are scored after the step, so a death and its kill come in either order.
+        let of = |want: fn(&EventKind) -> bool| -> Vec<i32> { sim.events.iter().filter(|e| want(&e.kind)).map(|e| e.player).collect() };
+        let killed = of(|k| matches!(k, EventKind::KilledBy { .. }));
+        let died = of(|k| matches!(k, EventKind::GeneralDied { .. }));
         for e in &sim.events {
             let Ok(victim) = u8::try_from(e.player) else { continue };
             match e.kind {
-                EventKind::KilledBy { by, how, weapon, .. } => self.feedback.obits.killed_by(victim, by, how, weapon, now),
+                EventKind::KilledBy { by, how, weapon, .. } => self.feedback.obits.killed_by(victim, by, how, weapon, died.contains(&e.player), now),
+                EventKind::GeneralDied { .. } if killed.contains(&e.player) => {}
                 EventKind::GeneralDied { .. } => self.feedback.obits.died(victim, now),
                 _ => {}
             }

@@ -292,6 +292,9 @@ pub struct ClientApi {
     /// A player's display name as UTF-8 into `out` (at most `cap` bytes, NUL-terminated); returns
     /// its length, 0 when there is none (the spectator's switch bar). Appended after `sound_loop`.
     pub player_name: Option<extern "C" fn(player: i32, out: *mut c_char, cap: i32) -> i32>,
+    /// A MappedImage on a quad (`corners`: 8 floats, the image's top-left, top-right,
+    /// bottom-right and bottom-left), 0 when missing or unsupported (host patch 0033).
+    pub image_quad: Option<extern "C" fn(name: *const c_char, corners: *const f32, argb: u32) -> i32>,
 }
 
 fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
@@ -533,6 +536,11 @@ impl ClientHost for CClientHost {
         if let Some(f) = self.0.ghost {
             f(template, &pos, angle, legal as i32);
         }
+    }
+
+    fn image_quad(&self, name: &str, corners: [(f32, f32); 4], argb: u32) -> bool {
+        let flat = corners.map(|(x, y)| [x, y]).concat();
+        self.0.image_quad.is_some_and(|f| f(cstring(name).as_ptr(), flat.as_ptr(), argb) != 0)
     }
 
     fn player_name(&self, player: i32) -> Option<String> {

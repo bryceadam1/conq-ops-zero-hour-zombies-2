@@ -42,6 +42,10 @@ impl ClientHost for Recorder {
         self.images.borrow_mut().push(name.to_string());
         self.has_art
     }
+    fn image_quad(&self, name: &str, _corners: [(f32, f32); 4], _argb: u32) -> bool {
+        self.images.borrow_mut().push(name.to_string());
+        self.has_art
+    }
     fn query(&self, _c: Vec3, _r: f32, _v: u32, out: &mut Vec<ObjInfo>) {
         out.extend_from_slice(&self.objects);
     }
@@ -129,12 +133,19 @@ fn map_key_shows_the_radar_or_says_there_is_none() {
     assert!(texts.iter().any(|t| t == "NO RADAR"), "the fake host has no radar");
     // The same frame's map_open: no crosshair while the map is up (the ammo panel and the
     // minimap stay, like BO2's scoreboard).
+    let side = crate::lui::materials::image("reticle_side_small");
+    let pieces = |rec: &Recorder| rec.images.borrow().iter().filter(|i| **i == side).count();
     assert_eq!(near_centre(&rec.lines.borrow()), 0, "no crosshair under the map");
+    assert_eq!(pieces(&rec), 0, "no crosshair art under the map");
     drop(texts);
     client.hud.map_open = false;
     let rec = Recorder { has_art: true, ..Default::default() };
     let _ = draw_hud(&rec, &client, &sim);
-    assert!(near_centre(&rec.lines.borrow()) >= 4, "the crosshair is back with the map closed");
+    assert_eq!(pieces(&rec), 4, "the crosshair is back with the map closed");
+    // Without the art, its stand-in strokes.
+    let rec = Recorder::default();
+    let _ = draw_hud(&rec, &client, &sim);
+    assert!(near_centre(&rec.lines.borrow()) >= 4, "the stand-in strokes");
 }
 
 #[test]
@@ -656,9 +667,11 @@ fn a_hurt_points_the_indicator_back_at_its_source() {
 #[test]
 fn the_kill_feed_is_the_same_on_every_machine() {
     let rifle = crate::weapons::catalog().all().first().copied();
+    // Seat 1's death comes before its kill in the step (the sim scores after the step), as the
+    // multiplayer leg logged it: still one line.
     let events = [
-        crate::sim::Event { player: 1, kind: crate::sim::EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::new(1.0, 0.0, 0.0), by: Some(0), how: crate::damage::MeansOfDeath::RifleBullet, weapon: rifle } },
         crate::sim::Event { player: 1, kind: crate::sim::EventKind::GeneralDied { general: 2 } },
+        crate::sim::Event { player: 1, kind: crate::sim::EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::new(1.0, 0.0, 0.0), by: Some(0), how: crate::damage::MeansOfDeath::RifleBullet, weapon: rifle } },
         crate::sim::Event { player: 0, kind: crate::sim::EventKind::GeneralDied { general: 1 } },
     ];
     let feed = |local: i32| {
