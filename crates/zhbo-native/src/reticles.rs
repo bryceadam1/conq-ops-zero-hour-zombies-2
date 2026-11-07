@@ -12,7 +12,7 @@ use crate::io::{FormatError, Reader, Writer};
 use crate::model::Material;
 
 pub const MAGIC: [u8; 4] = *b"ZBR\0";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// The blob's archive path (one per archive).
 pub fn reticles_path() -> String {

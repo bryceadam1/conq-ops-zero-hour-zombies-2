@@ -1536,17 +1536,6 @@ stand-ins (BO2's strings, checked against the install by an ignored test).
 
 ## Versioning
 
-**Pending for the next bump (anim-sound, round 8).** No ABI change. The archive must be rebuilt
-(`hud::VERSION`): the body's clip ids moved to `set × 32 + state` with 20 new directional and
-aimed-walk states (`zhbo_native::thirdperson::state`, the body manifest's ids; a manifest from an
-older archive names the old ids), the torso table gained `move_blend` rows, the weapon table the
-`SprintCycleScale` key (`fSprintCycleScale`, sim data in the content CRC), and the sound events
-changed: `ZHBO_BO2_Step`, `_SprintStep`, `_Land`, `_StepNpc`, `_SprintStepNpc` and `_LandNpc` are
-gone, replaced by `ZHBO_BO2_Step_<table>_<move>_<surface>` (BO2's five footstep tables × six
-movements × eleven surfaces, `stepsounds::step_event`) and `ZHBO_BO2_Jump_<plr|npc>_<surface>` /
-`ZHBO_BO2_Land_<plr|npc>_<surface>`. The tuning pack gained the view bob, bob cycle, footstep and
-body-gait keys (`[View]`, `[BodyAnimation]`).
-
 `ZHBO_ABI_VERSION` (`host/zhbo/zhbo_core.h`) must equal `zhbo_abi_version()`; struct sizes are asserted
 on both sides (`static_assert` in the header, `const _: ()` in `ffi.rs`). The API tables' field counts
 are shared constants (`ZHBO_LOGIC_API_FIELDS`/`ZHBO_CLIENT_API_FIELDS` in the header; `LOGIC_API_FIELDS`/
@@ -1745,94 +1734,75 @@ art (from `mp_raid`), BO2's unlit surfaces drawn self-lit (`Looks::unlit`), and 
 converted before it reads no turn add and unscaled stance decay, losing the SMGs' crouched 4×
 decay). `EventKind::Shot`'s `spread` is Rust-internal, no ABI.
 
-**Pending for the next bump** (round 8, `v1/movement-rules`; no ABI struct, field or function
-moves): the weapon table's `Move` key's second number (and an attachment's ADS walk) is now BO2's
-own `adsMoveSpeedScale` (the def's if above 0, else 1; an attachment's replacing it), no longer the
-converter's made-up 0.35 base times it: the sim multiplies by the tuning pack's `AdsWalkScale` (0.4,
-`FUN_008c4110`). A table converted before this walks aimed at 0.4 × 0.35 of the right speed, so the
-archive must be rebuilt with the bump (`hud::VERSION`); the conformance column
-`ads_move_speed_scale` now reads the stored value directly. The tuning pack (the content CRC's
-tuning part) gains the movement keys above. The sim's state (the lockstep hash) gains the body's
-`view_height`, `view_lerp` (replacing `stance_lerp`), `pm_time`, `jumping`, `jump_origin_z`,
-`jump_time`, `hard_landing`, `land_change`, `land_time` and `prone_yaw`, and the arsenal's `sights`
-(BO2's `PMF_SIGHT_AIMING`); the viewmodel motion's `land`/`airborne` become `land_seen`/`since_land`.
-The camera's eye is now `Body::view_eye` (the landing dip, `FUN_0051f760`), the sim's shots still
-fire from `Body::eye`. The client caps its own yaw while prone (`movement::cap_prone_yaw`) and the sim
-caps the yaw it is sent (`movement::prone_view_yaw`), so the input stream needs no new field. A
-landing's fall damage is the General's own `LogicHost::damage` blow (`MOD_FALLING`, the
-`[MeansOfDeath]` table's `FALLING`), reported by the scoring host like any other.
+**ABI 36** (round 8's integration, one bump for the round): `ZhboClientApi.image_quad(name,
+corners, argb)` is appended after `player_name` (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 16 →
+17, the table's size asserted on both sides): a MappedImage drawn on an arbitrary quad (8 floats,
+the image's top-left, top-right, bottom-right, bottom-left), returning 0 when the image is missing;
+the HUD's turned images (the damage-direction arcs, the crosshair's side pieces, the grenade
+pointer, a flipped kill icon) go through it, and a host without it falls back to strokes. Host
+patch 0033 (`0033-image-quad.patch`) at the same point adds `Display::drawImageQuad` (a virtual
+answering `FALSE`) and `W3DDisplay`'s two-triangle implementation over the atlas cell (a cell packed
+turned keeps its turn). `ZhboObjFlags` gains the meaning `ZHBO_OBJ_GENERAL = 1u << 13`
+(`objflags::GENERAL`), set by the bridge's object fill for a `ZHBO_General_*` object (`isGeneral`):
+no struct moves (a core that predates it sees no General and converts his BO2 hits at the exchange
+rate). Host patches 0001–0033.
 
-**Pending for the next bump (combat-rules).** Archive: the weapon table's new `Throw` key (BO2's
-`iProjectileSpeedRelativeUp`, `iProjectileSpeedForward` and `bThrowBack`; the throw `FUN_0066cf00`,
-the throwback's use list `FUN_00676d50`); `hud::VERSION` must move so launchers reconvert (an older
-table reads no relative-up or forward speed and no throwback: every grenade then throws along the
-plain view at `iProjectileSpeed` + `iProjectileSpeedUp`, and nothing can be thrown back). The UI text
-gains `PLATFORM_THROWBACKGRENADE`. The tuning pack (the content CRC's tuning part) gains the melee
-trace's and auto melee's keys (`player_meleeWidth`/`Height`, `MeleeTracePullback`,
-`aim_automelee_*`, `AutoMeleeChargeOffset`), `[Blasts]` (`DamageVisibilityWidth`,
-`DamageVisibilityShare`, `RocketPushSpeed`) and the throwback's (`player_throwbackInner/OuterRadius`,
-`bg_maxGrenadeIndicatorSpeed`, `ThrowbackHeight`, `UseListGrenadeBonus`). No ABI change:
-`WeaponAction::Launch`'s spread and jitter, `PlayerSim::use_grenade` and `Arsenal::throwback` are
-Rust-internal sim state (hashed); `LogicHost::sim_eye` is a Rust-only default method (the C host does
-not answer it).
+Rust-internal changes at the same point (no ABI): the sim's state (the lockstep hash) gains the
+body's `view_height`, `view_lerp` (replacing `stance_lerp`), `pm_time`, `jumping`,
+`jump_origin_z`, `jump_time`, `hard_landing`, `land_change`, `land_time` and `prone_yaw`, the
+arsenal's `sights` (BO2's `PMF_SIGHT_AIMING`) and `throwback`, `PlayerSim::use_grenade` and
+`taser`, and `Sim::packs` (the Scavenger packs); the viewmodel motion's `land`/`airborne` become
+`land_seen`/`since_land`. The camera's eye is `Body::view_eye` (the landing dip, `FUN_0051f760`) plus
+the view bob (`gunpos::view_bob`), the sim's shots still fire from `Body::eye`. The client caps its own
+yaw while prone (`movement::cap_prone_yaw`) and the sim caps the yaw it is sent
+(`movement::prone_view_yaw`), so the input stream needs no new field. A landing's fall damage is the
+General's own `LogicHost::damage` blow (`MOD_FALLING`). Every blow on a General is his share of
+`playerMaxHealth`, each hit a whole BO2 number (`damage::to_zh`/`general_zh`). The sim's bullets and
+projectiles stop on friendly structures (bullets on any friendly, unhurt). `WeaponAction::Launch`'s
+spread and jitter are Rust-internal; `LogicHost::sim_eye` is a Rust-only default method (the C host
+does not answer it). The events `HitMarker.alert`, `KilledBy.by/how/weapon` and `PerkFeedback` are
+presentation outputs, not hashed.
 
-**Pending for the next bump (perks-equipment).** Archive `hud::VERSION` 89 → 90 needed: the weapon
-table gains `ProjectileBounds` (the `projectileModel`'s mins and maxs, inches: the missile's box and a
-placed piece's bullet box; 174 fields; a table converted before it parses with all 0, and projectiles
-and equipment keep the old stand-in volumes), `ZHBO_BO2_Drops.ini` gains the Scavenger pack's object
-(`ZHBO_ScavengerPack`, `scavenger_item_mp`'s world model, as a `ZDR###` model), the sprite
-`ZHBO_BO2_ScavengerPickup` (`hud_scavenger_pickup`) and six sound events (`ZHBO_BO2_LStepNpc`,
-`ZHBO_BO2_LSprintStepNpc`, `ZHBO_BO2_QStepNpc`, `ZHBO_BO2_QSprintStepNpc`, `ZHBO_BO2_ScavengerPickup`,
-`ZHBO_BO2_ScavengerPickupNpc`). An archive at 89 is kept by the launcher: the pack has no object (it
-still works, unseen), the new steps and pickup sounds are silent and the icon draws nothing. The tuning
-pack (the content CRC's tuning part) loses `EquipmentArmTime` and gains `bettyactivationdelay`,
-`scr_proximityGrenadeActivationTime`, `scr_proximityGrenadeDOTDamageAmount`,
-`cg_sonarAttachmentCounterMaxSpeed`, `cg_sonarAttachmentCounterColorMultiplier`, `hackertoollockonfov`,
-`equipmenthackertoolradius`, `vehiclehackertoolradius`, `TargetCircleHalfWidth`,
-`scavenger_clip_multiplier` and `DetonateDoubleTap`. The sim state gains `Sim::packs` (world part)
-and `PlayerSim::taser` (seat part), both hashed. No ABI struct, function or table moves.
+Archive `hud::VERSION` 90 at the same point, with the native formats the material record carries:
+the record gains a trailing `lighting` block after `polygon_offset` (four `f32`: BO2's lit
+technique's specular, reflection and ambient scales and `Diffuse_Normal_Height_Facing`;
+`zhbo_native::model::Lighting`), so `model::VERSION` 5 → 6, `camo::VERSION` 3 → 4 and
+`reticles::VERSION` 2 → 3 (an older blob is refused by its version). `viewmodel::VERSION` 3,
+`thirdperson` `BODY_VERSION` 1 / `WEAPON_VERSION` 3, `anim::VERSION` 1 and `display::VERSION` 1
+are unchanged (the body's clip ids moved to `set × 32 + state` with 20 new directional and aimed-walk
+states inside the same layout; the manifest names the new ids, so only a reconverted archive has
+them). What the 90 archive carries that 89 did not:
+* the weapon table's new keys: `Throw` (Sim: `iProjectileSpeedRelativeUp`,
+  `iProjectileSpeedForward`, `bThrowBack`; an older table throws along the plain view and nothing can
+  be thrown back), `ProjectileBounds` (Sim: the `projectileModel`'s box; an older table keeps the
+  stand-in volumes), `SprintCycleScale` (presentation: `fSprintCycleScale`), `KillIcon`,
+  `KillIconShape`, `Indicator` and `IndicatorIcon` (presentation: the kill feed and the grenade
+  indicator), 180 weapon fields; the `Move` key's second number is BO2's own `adsMoveSpeedScale`
+  (the sim multiplies by `AdsWalkScale`, `FUN_008c4110`; an older table walks aimed at 0.4 × 0.35 of
+  the right speed); the UI text gains `PLATFORM_THROWBACKGRENADE` and `CGAME_QUAKE_SUICIDE`;
+* `ZZZ_ZHBO_General.ini` with the General's health from the player's heroes
+  (`zhbo_assets::toughness`; a stale archive keeps `MaxHealth 500`);
+* `ZHBO_BO2_Drops.ini`'s Scavenger pack (`ZHBO_ScavengerPack`, `scavenger_item_mp`'s world model)
+  and the sprite `ZHBO_BO2_ScavengerPickup`;
+* the HUD sprites: each weapon's `reticleSide`/`reticleCenter`, `killIcon` and `indicatorIcon`, and
+  `killicondied`, `killiconheadshot`, `hud_obit_*`, `hud_grenadeicon`, `hud_grenadepointer`,
+  `damage_feedback_flak`, `damage_feedback_tac`;
+* the sound events: the footsteps by table, move and surface (`ZHBO_BO2_Step_<table>_<move>_<surface>`,
+  BO2's five footstep tables × six movements × eleven surfaces, `stepsounds::step_event`, Awareness's
+  loud and Dead Silence's quiet tables among them) and `ZHBO_BO2_Jump_<plr|npc>_<surface>` /
+  `ZHBO_BO2_Land_<plr|npc>_<surface>`, replacing `ZHBO_BO2_Step`, `_SprintStep`, `_Land`, `_StepNpc`,
+  `_SprintStepNpc` and `_LandNpc`; `ZHBO_BO2_ScavengerPickup`/`_ScavengerPickupNpc`,
+  `ZHBO_BO2_HitMarkerLow` and `ZHBO_BO2_HitMarkerTaser`;
+* the torso table's `move_blend` rows.
 
-**Pending for the next bump** (general-health): `ZhboObjFlags` gains `ZHBO_OBJ_GENERAL = 1u << 13`
-(`objflags::GENERAL`), set by the bridge's object fill for a `ZHBO_General_*` object (`isGeneral`);
-no struct moves, only a flag's meaning (a core that predates it sees no General and converts his
-BO2 hits at the exchange rate). The converted archive's `ZZZ_ZHBO_General.ini` now carries the
-General's health from the player's heroes (`zhbo_assets::toughness`), so the archive needs a
-`hud::VERSION` bump to be reconverted (a stale one keeps `MaxHealth 500`: BO2's shots-to-kill still
-hold, Zero Hour's weapons see 2.5 heroes). The tuning pack (the content CRC's tuning part) gains
-`playerMaxHealth` (100) and `GeneralHeroToughness` (1) under `[Health]`.
-
-**Pending for the next bump (hud-feedback).** Archive `hud::VERSION` 89 → 90 needed (the ABI append is below). The
-weapon table gains four presentation keys: `KillIcon` and `KillIconShape` (BO2's `killIcon`,
-`killIconRatio`, `flipKillIcon`: the kill feed) and `Indicator` and `IndicatorIcon` (`projExplosion`,
-`bShowIndicator`, `iIndicatorRadius`, `indicatorIcon`: the grenade indicator), and the `UiText
-CGAME_QUAKE_SUICIDE` block. The archive gains sprites: each converted weapon's `reticleSide`/
-`reticleCenter`, `killIcon` and `indicatorIcon` under their material names, and the fixed
-`killicondied`, `killiconheadshot`, `hud_obit_*`, `hud_grenadeicon`, `hud_grenadepointer`,
-`damage_feedback_flak` and `damage_feedback_tac`; and the sound events `ZHBO_BO2_HitMarkerLow`
-(`mpl_hit_alert_low`) and `ZHBO_BO2_HitMarkerTaser` (`mpl_hit_alert_taser_spike`). An archive at 89
-reads none of the keys (no kill icons: the means' icons draw; no grenade indicator, whose kinds are
-unset; the crosshair already had its art keys) and plays no low or taser alert. The sim's events
-change shape only inside Rust (`HitMarker.alert`, `KilledBy.by/how/weapon`, the new `PerkFeedback`;
-presentation outputs, not hashed), so no content-CRC part moves.
-
-Also pending (hud-feedback), an ABI append: `ZhboClientApi.image_quad(name, corners, argb)` after
-`player_name` (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 16 → 17, the size asserts on both
-sides; `ZHBO_ABI_VERSION` left for the integrator). It draws a MappedImage on an arbitrary quad
-(8 floats: the image's top-left, top-right, bottom-right, bottom-left), returning 0 when the image
-is missing; host patch 0033 (`0033-image-quad.patch`) adds `Display::drawImageQuad` (a virtual
-answering `FALSE`) and `W3DDisplay`'s two-triangle implementation over the atlas cell (a cell
-packed turned keeps its turn). Until now `ClientHost::image_quad` had no engine side at all, so
-every turned HUD image fell back to strokes: the damage indicators, and now the crosshair's side
-pieces, the grenade pointer and a flipped kill icon.
-
-**Pending for the next bump (round 8, `v1/lit-shading`):** the native material record gains a
-trailing `lighting` block after `polygon_offset` (four `f32`: BO2's lit technique's specular,
-reflection and ambient scales and `Diffuse_Normal_Height_Facing`; `zhbo_native::model::Lighting`),
-so `model::VERSION` 5 → 6, `camo::VERSION` 3 → 4 and `reticles::VERSION` 2 → 3 must move with the
-archive's `hud::VERSION` (an archive built before reads 16 bytes short and is refused or misread
-until the versions move). No C ABI change: `NativeSurface.lighting` and the material uniform's
-last block are Rust/wgpu-internal; `ZhboNativeIn`/`ZhboNativeBodyIn` and the lights the bridge
-fills are unchanged.
+The tuning pack (the content CRC's tuning part) gains, at the same point: the movement keys (Pmove's
+accelerations, slopes, the jump and landing, the stance eye times, prone turning, `AdsWalkScale`,
+`FallDamageFullScale`), the view bob, bob cycle, footstep and body-gait keys (`[View]`,
+`[BodyAnimation]`), the melee trace's and auto melee's keys, `[Blasts]` and the throwback's keys,
+the perks' and equipment keys (`bettyactivationdelay`, `scr_proximityGrenade*`, the hacker's,
+`TargetCircleHalfWidth`, `scavenger_clip_multiplier`, `DetonateDoubleTap`,
+`perk_grenadeTossBackTimer`; `EquipmentArmTime` is gone), and `[Health]` (`playerMaxHealth`,
+`GeneralHeroToughness`); `tuning.ini` lists every key.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
