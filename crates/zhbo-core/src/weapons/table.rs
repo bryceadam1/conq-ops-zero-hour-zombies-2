@@ -1428,6 +1428,16 @@ mod tests {
         assert_eq!(crate::weapons::Catalog::from_table(back).ui_text("WEAPON_CANT_PLANT_EQUIPMENT"), Some("Cannot Plant Here"));
     }
 
+    /// Every key the core draws has a built-in stand-in, in the keys' order: a table without the
+    /// install's strings still says it (the install-gated test checks the stand-ins are BO2's
+    /// strings; a key added without one failed only there).
+    #[test]
+    fn every_ui_text_key_has_a_built_in_stand_in() {
+        let built_in = parse_full_table(crate::weapons::BUILTIN).unwrap().ui_text;
+        let keys: Vec<&str> = built_in.iter().map(|u| u.key.as_str()).collect();
+        assert_eq!(keys, crate::weapons::UI_TEXT_KEYS);
+    }
+
     #[test]
     fn an_attachments_compatibility_list_round_trips() {
         let a = AttachmentDef { id: "reflex".into(), short: "reflex".into(), compatible: vec!["dualclip".into(), "gl".into()], ..Default::default() };

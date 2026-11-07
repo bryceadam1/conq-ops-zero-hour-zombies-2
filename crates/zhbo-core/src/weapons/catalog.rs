@@ -654,6 +654,10 @@ UiText PLATFORM_SWAPWEAPONS
   Text = Press ^3&&1^7 for
 End
 
+UiText PLATFORM_THROWBACKGRENADE
+  Text = ^3&&1^7 throw back
+End
+
 UiText PLATFORM_RELOAD
   Text = ^3[{+reload}]^7 Reload
 End
