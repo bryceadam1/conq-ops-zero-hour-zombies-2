@@ -202,6 +202,63 @@ pub fn flinch_degrees(damage: f32, toughness: bool, t: &Tuning) -> f32 {
 /// `yaw = -(dir · left) × kick`, `pitch = (dir · forward) × kick` in the engine's angles (pitch
 /// down), and `pitch = -kick` (straight up) with no direction. So a blow from in front kicks the
 /// view up, one from behind down, one from the left turns it left.
+/// How long a flinch takes to reach its full kick (ms): `FUN_008f0e00`'s `DAT_00c733a8`.
+const FLINCH_RISE_MS: f32 = 100.0;
+
+/// The damage flinch on screen (G7; t6mp `FUN_008f0e00`, the view's damage kick): each hit
+/// **replaces** the kick (`CG_DamageFeedback` overwrites `kickAngles` and sets `damageTime`), which
+/// eases in over 100 ms (`x·(2 − |x|)`, `FUN_0075e360`) and back out by the end of the flinch
+/// window (`FlinchTime`, the hit's `now + 500`). The kick's pitch turns the view's pitch, its yaw
+/// the view's **roll**; aiming halves it (`1 − ads/2`), and an overlay scope (`FUN_008ed670`)
+/// gives half of that back (`× (1 + ads/2)`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Flinch {
+    /// The kick ([`flinch_kick`]: yaw counter-clockwise, pitch up), degrees.
+    pub yaw_deg: f32,
+    pub pitch_deg: f32,
+    /// Seconds since the hit (`None`: no flinch), and the window it lasts (`FlinchTime`).
+    pub age: Option<f32>,
+    pub window: f32,
+}
+
+impl Flinch {
+    /// A hit: its kick replaces whatever flinch is on.
+    pub fn hit(&mut self, yaw_deg: f32, pitch_deg: f32, window: f32) {
+        *self = Flinch { yaw_deg, pitch_deg, age: Some(0.0), window };
+    }
+
+    pub fn step(&mut self, dt: f32) {
+        let window = self.window;
+        self.age = self.age.map(|a| a + dt).filter(|a| *a < window);
+    }
+
+    /// The ramp at `age` seconds into a flinch `window` seconds long: 0 → 1 over the rise, back to
+    /// 0 at the window's end.
+    pub fn ramp(age: f32, window: f32) -> f32 {
+        let ease = |x: f32| x * (2.0 - x.abs());
+        let ms = age * 1000.0;
+        if ms < FLINCH_RISE_MS {
+            return ease(ms / FLINCH_RISE_MS);
+        }
+        let g = 1.0 - (ms - FLINCH_RISE_MS) / (window * 1000.0 - FLINCH_RISE_MS).max(1.0);
+        if g <= 0.0 { 0.0 } else { 1.0 - ease(1.0 - g) }
+    }
+
+    /// The view's `(pitch up, roll)` from the flinch now, degrees, at aim fraction `ads` with an
+    /// overlay scope or not.
+    pub fn view(&self, ads: f32, overlay: bool) -> (f32, f32) {
+        let window = self.window;
+        let Some(age) = self.age else { return (0.0, 0.0) };
+        let ads = ads.clamp(0.0, 1.0);
+        let mut scale = 1.0 - ads * 0.5;
+        if ads > 0.0 && overlay {
+            scale *= 1.0 + ads * 0.5;
+        }
+        let f = Self::ramp(age, window) * scale;
+        (self.pitch_deg * f, self.yaw_deg * f)
+    }
+}
+
 pub fn flinch_kick(kick: f32, dir: crate::math::Vec3, view_yaw: f32, view_pitch: f32) -> (f32, f32) {
     let d = dir.normalized_or_zero();
     if d == crate::math::Vec3::ZERO {
@@ -236,6 +293,29 @@ pub fn spread_range(def: &WeaponDef, view_height: f32, accuracy: bool, t: &Tunin
 
 #[cfg(test)]
 mod tests {
+
+    /// A flinch eases in over 100 ms and out by the end of its 500 ms window; a second hit
+    /// replaces the kick (no stacking); aiming halves it, an overlay scope gives half back.
+    #[test]
+    fn a_flinch_replaces_and_follows_bo2s_ramp() {
+        assert_eq!(Flinch::ramp(0.0, 0.5), 0.0);
+        assert!((Flinch::ramp(0.05, 0.5) - 0.75).abs() < 1e-4);
+        assert!((Flinch::ramp(0.1, 0.5) - 1.0).abs() < 1e-4);
+        assert!((Flinch::ramp(0.3, 0.5) - 0.25).abs() < 1e-4, "half-way back: 1 - e(0.5)");
+        assert_eq!(Flinch::ramp(0.5, 0.5), 0.0);
+        let mut f = Flinch::default();
+        f.hit(4.0, 6.0, 0.5);
+        f.step(0.1);
+        assert_eq!(f.view(0.0, false), (6.0, 4.0), "pitch, and the yaw kick as roll");
+        f.hit(1.0, 2.0, 0.5);
+        f.step(0.1);
+        assert_eq!(f.view(0.0, false), (2.0, 1.0), "replaced, not added");
+        assert_eq!(f.view(1.0, false), (1.0, 0.5));
+        assert_eq!(f.view(1.0, true), (1.5, 0.75));
+        f.step(0.5);
+        assert_eq!((f.age, f.view(0.0, false)), (None, (0.0, 0.0)));
+    }
+
     use super::*;
     use crate::weapons::def::Kick;
 

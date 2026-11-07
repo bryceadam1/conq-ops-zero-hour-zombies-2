@@ -90,23 +90,7 @@ pub const SFX: &[Sfx] = &[
     Sfx { event: "ZHBO_BO2_HitMarker", from: From::Common, layers: &["mpl_hit_alert"], kind: Kind::Player, limit: 2 },
     Sfx { event: "ZHBO_BO2_Heartbeat", from: From::Common, layers: &["mpl_player_heartbeat"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_Hurt", from: From::World, layers: &["prj_bullet_impact_large_player"], kind: Kind::Player, limit: 2 },
-    Sfx { event: "ZHBO_BO2_Step", from: From::World, layers: &["fly_step_run_grass"], kind: Kind::Player, limit: 2 },
-    Sfx { event: "ZHBO_BO2_SprintStep", from: From::World, layers: &["fly_step_sprint_grass", "fly_gear_sprint_plr"], kind: Kind::Player, limit: 2 },
-    Sfx { event: "ZHBO_BO2_Land", from: From::World, layers: &["fly_dtp_land_plr_grass"], kind: Kind::Player, limit: 1 },
-    // Other players' footsteps, heard at them (`zhbo_core::sounds::RemoteSteps`): BO2's
-    // third-person aliases (`_footsteps.csc`, `firstperson = 0`), positional for everyone.
-    Sfx { event: "ZHBO_BO2_StepNpc", from: From::World, layers: &["fly_step_run_npc_grass"], kind: Kind::World, limit: 4 },
-    Sfx { event: "ZHBO_BO2_SprintStepNpc", from: From::World, layers: &["fly_step_sprint_npc_grass"], kind: Kind::World, limit: 4 },
-    // The loud and quiet third-person footstep tables (t6mp `FUN_005031c0`: `default_3rd_person_loud`
-    // and `default_3rd_person_quiet`, picked per step by `FUN_004cb480`): an enemy's steps for a
-    // listener with Awareness, and a Dead Silence player's steps (`zhbo_core::sounds::RemoteSteps`).
-    // The tables' entries are these aliases (their SND hashes, read from `mp_raid`).
-    Sfx { event: "ZHBO_BO2_LStepNpc", from: From::World, layers: &["fly_lstep_run_npc_grass"], kind: Kind::World, limit: 4 },
-    Sfx { event: "ZHBO_BO2_LSprintStepNpc", from: From::World, layers: &["fly_lstep_sprint_npc_grass"], kind: Kind::World, limit: 4 },
-    Sfx { event: "ZHBO_BO2_QStepNpc", from: From::World, layers: &["fly_qstep_run_npc_grass"], kind: Kind::World, limit: 4 },
-    Sfx { event: "ZHBO_BO2_QSprintStepNpc", from: From::World, layers: &["fly_qstep_sprint_npc_grass"], kind: Kind::World, limit: 4 },
-    // ... and their landings (`_footsteps.csc` `playerland`, `fly_land_npc_<surface>`).
-    Sfx { event: "ZHBO_BO2_LandNpc", from: From::World, layers: &["fly_land_npc_grass"], kind: Kind::World, limit: 4 },
+    // The footsteps, jumps and landings are per surface: `footstep_events` below.
     // A Scavenger pack taken (`scavenger_think`, `_weapons.gsc:1797-1798`): the taker's own sound
     // and everyone else's at him.
     Sfx { event: "ZHBO_BO2_ScavengerPickup", from: From::World, layers: &["fly_equipment_pickup_plr"], kind: Kind::Player, limit: 1 },
@@ -438,6 +422,34 @@ fn volume_percent(level: f32, loudest: f32) -> u32 {
     ((100.0 * level / loudest).ceil() as u32).clamp(1, 100)
 }
 
+/// Every footstep, jump and landing event (`zhbo_core::stepsounds`), the BO2 alias it plays and
+/// whether it is the player's own (2D): the steps from `zone`'s footstep tables (each cell's alias
+/// hash matched against `src`'s alias names), the jumps and landings as `_footsteps.csc` names them.
+/// A table or cell the zone lacks leaves its events out (the core then plays nothing for them).
+fn footstep_events(zone: &Zone, src: &Source) -> Vec<(&'static str, String, bool)> {
+    use zhbo_core::stepsounds::{self, StepTable, SURFACES};
+    let by_hash: std::collections::HashMap<u32, &str> =
+        src.banks.iter().flat_map(|b| b.aliases.iter().map(|a| (zhbo_formats::footstep::alias_hash(&a.name), a.name.as_str()))).collect();
+    let tables = zhbo_formats::footstep::tables(zone);
+    let mut out = Vec::new();
+    for t in StepTable::ALL {
+        let Some(table) = tables.iter().find(|x| x.name == t.bo2_name()) else { continue };
+        for step in zhbo_core::footsteps::Step::ALL {
+            for s in SURFACES {
+                // The table's rows are BO2's surface types; the mod's surfaces carry BO2's names.
+                let Some(row) = zhbo_formats::footstep::SURFACE_NAMES.iter().position(|n| *n == s.name()) else { continue };
+                if let Some(alias) = by_hash.get(&table.aliases[row][step as usize]) {
+                    out.push((stepsounds::step_event(t, step, s), alias.to_string(), t.first_person()));
+                }
+            }
+        }
+    }
+    for (event, alias) in stepsounds::csc_aliases() {
+        out.push((event, alias.clone(), alias.contains("_plr_")));
+    }
+    out
+}
+
 fn sound_file(event: &str, variant: usize) -> String {
     format!("{}_{variant}", event.to_ascii_lowercase())
 }
@@ -573,6 +585,19 @@ pub fn files(
         }
     }
 
+    // The footsteps by table, movement and surface, and the jumps and landings by surface
+    // (`zhbo_core::stepsounds`): the map zone's footstep tables name each step's alias by hash
+    // (`zhbo_formats::footstep`), `_footsteps.csc` builds the jump's and landing's.
+    let mut steps_made = 0;
+    for (event, alias, first) in footstep_events(world, &world_src) {
+        let kind = if first { Kind::Player } else { Kind::World };
+        if add(event, &world_src, &[alias.as_str()], kind, if first { 2 } else { 4 }) {
+            steps_made += 1;
+        } else {
+            missing.push(event.to_string());
+        }
+    }
+
     // Each faction's voice (`zhbo_core::sounds::voice_event`): its language zone's `mpl_vox_*`
     // bank names the team's aliases `<teamprefix><n>_pain_small` / `_pain_death` for voice
     // numbers 0..2 (`_battlechatter_mp.gsc`; the prefix is the team's, `vox_st` for the SEALs).
@@ -673,7 +698,7 @@ pub fn files(
     );
     let wavs = out.keys().filter(|k| k.ends_with(".wav")).count();
     let summary = format!(
-        "{wavs} sounds, {} events, {ui_made} menu events, {voices_made} voice events, {} notetrack events, loudest {loudest_event}{}",
+        "{wavs} sounds, {} events, {ui_made} menu events, {steps_made} footstep events, {voices_made} voice events, {} notetrack events, loudest {loudest_event}{}",
         SFX.len() + extra_made - missing.iter().filter(|m| SFX.iter().any(|s| s.event == m.as_str())).count(),
         nt_events.values().filter(|v| **v).count(),
         if missing.is_empty() { String::new() } else { format!(", missing {missing:?}") }
@@ -803,7 +828,7 @@ mod tests {
         assert!(min > 0.0 && min < max / 4.0, "{min} {max}");
         assert_eq!(field("ZHBO_BO2_FireNpc_an94_mp_L2", "MinRange"), field("ZHBO_BO2_FireNpc_an94_mp_L2", "MaxRange"), "no Zero Hour falloff on a layer");
         let vol = |name: &str| field(name, "Volume");
-        assert!(vol("ZHBO_BO2_Fire") > vol("ZHBO_BO2_Step"), "the shot over a footstep");
+        assert!(vol("ZHBO_BO2_Fire") > vol("ZHBO_BO2_Step_1st_run_concrete"), "the shot over a footstep");
         // Every faction's pain and death voice, for every voice number (`_battlechatter_mp.gsc`):
         // positional, heard at BO2's 150..1200" (the alias's own distances).
         for v in zhbo_core::sounds::VOICE_EVENTS.iter().flatten().flatten() {
@@ -819,7 +844,24 @@ mod tests {
                 }
             }
         }
-        assert!(event("ZHBO_BO2_LandNpc").contains("world shrouded everyone"));
+        assert!(event("ZHBO_BO2_Land_npc_grass").contains("world shrouded everyone"));
+        assert!(event("ZHBO_BO2_Land_plr_concrete").contains("ui player"), "the own landing is 2D");
+        // Every step event of every table and surface converted (the map zone carries all five
+        // footstep tables), each from its own table's alias.
+        let mut absent = Vec::new();
+        for t in zhbo_core::stepsounds::StepTable::ALL {
+            for st in zhbo_core::footsteps::Step::ALL {
+                for s in zhbo_core::stepsounds::SURFACES {
+                    let e = zhbo_core::stepsounds::step_event(t, st, s);
+                    if !ini.contains(&format!("AudioEvent {e}\n")) {
+                        absent.push(e);
+                    }
+                }
+            }
+        }
+        // The one gap is BO2's own: `default_3rd_person_loud`'s snow row names aliases (hashes) no
+        // bank of the map zone holds, so BO2 hash-misses and plays nothing there, as the mod does.
+        assert!(absent.len() == 6 && absent.iter().all(|e| e.contains("_3rdl_") && e.ends_with("_snow")), "{} step events not converted: {absent:?}", absent.len());
     }
 
     /// Needs the player's BO2 install. The menu cues the converter leaves missing are in no bank

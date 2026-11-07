@@ -412,11 +412,9 @@ pub struct HudTimers {
     pub hitmarker_head: bool,
     pub damage_flash: f32,
     pub death_banner: f32,
-    /// The damage flinch's view yaw and pitch (degrees, G7: by the blow's side,
-    /// `weapons::recoil::flinch_kick`), settling back. The weapon's view kick is the sim's
-    /// (`PlayerSim::view_kick`).
-    pub flinch_yaw: f32,
-    pub flinch_pitch: f32,
+    /// The damage flinch (G7: by the blow's side, `weapons::recoil::Flinch`): each hit replaces
+    /// it, over a 500 ms window. The weapon's view kick is the sim's (`PlayerSim::view_kick`).
+    pub flinch: crate::weapons::recoil::Flinch,
     pub muzzle: f32,
     pub score_popup: f32,
     pub score_points: u32,
@@ -667,6 +665,14 @@ impl Client {
 
     /// The General this machine looks through in first person (entering, in it, or leaving), whose
     /// own body the view hides; `None` overhead.
+    /// Where the render clock is against the sim's frame clock (seconds, -LOGIC_DT..0): the
+    /// drawn world sits between the last two logic frames (host patch 0026), so a clip timed by
+    /// the sim's frame plays at `frame time + render_lag()` to move every drawn frame, as the eye
+    /// and the tablet do ([`tablet_time`]).
+    pub fn render_lag(&self) -> f32 {
+        self.since_logic.clamp(0.0, LOGIC_DT) - LOGIC_DT
+    }
+
     pub fn first_person_general(&self) -> Option<u32> {
         (!matches!(self.view, ViewMode::Rts) && self.general != 0).then_some(self.general)
     }
@@ -1135,16 +1141,18 @@ impl Client {
         self.tracers.predicted = predicting;
         self.tally_seats(sim, host, inp.local_player);
         self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
-        // Whom the presented General counts as an enemy (Awareness's loud steps): Zero Hour's
-        // relationship as the logic sees it, else nobody.
-        let ears = sim.player(viewed).map(|p| p.general);
-        let enemy = |g: u32| match (host, ears) {
-            (Some(h), Some(e)) => h.object(g, e).is_some_and(|o| o.has(crate::host::objflags::ENEMY)),
-            _ => false,
-        };
-        self.remote_steps.update(&sim.players, viewed, &enemy, &mut self.cues);
+        {
+            // Who is the listener's enemy (Awareness hears enemies' steps loud) and the ground
+            // under a stepper: the sim's own answers (`LogicHost`), the map's grid without a host.
+            let enemy = |stepper: u32, listener: u32| host.and_then(|h| h.object(stepper, listener)).is_some_and(|o| o.has(crate::host::objflags::ENEMY));
+            let surface = |at: Vec3| ground_at(host, at);
+            self.remote_steps.update(&sim.players, viewed, &enemy, &surface, &mut self.cues);
+        }
         self.remote.update(&sim.players, viewed, dt, &mut self.cues);
         crate::nativebody::ffi::publish_torso(self.remote.torsos());
+        // Each first-person General's view pitch for his body's aim (BO2's sign: down positive);
+        // an overhead General looks level.
+        crate::nativebody::ffi::publish_aim(sim.players.iter().flatten().filter(|p| p.is_first_person()).map(|p| (p.general, -p.pitch.to_degrees(), p.arsenal.current().def.is_shield())));
         self.tick_hud(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
         // the sim's record.
@@ -1309,9 +1317,10 @@ impl Client {
                     out.camera_override = 1;
                     out.near_scale = 0.0;
                     out.eye = eye;
-                    let kick_yaw = kick.0 + self.hud.flinch_yaw.to_radians();
-                    let kick_pitch = kick.1 + self.hud.flinch_pitch.to_radians();
-                    let kick_roll = kick.2;
+                    let (flinch_pitch, flinch_roll) = self.hud.flinch.view(p.arsenal.ads, crate::weapons::idle_sway::sways_view(p.arsenal.current().def));
+                    let kick_yaw = kick.0;
+                    let kick_pitch = kick.1 + flinch_pitch.to_radians();
+                    let kick_roll = kick.2 + flinch_roll.to_radians();
                     // A shellshock's view kick turns the view only (t6mp `FUN_00510270` turns the
                     // refdef's axes; the aim, which the input carries, is untouched).
                     let loops = &mut self.cues.loops;
@@ -1332,12 +1341,18 @@ impl Client {
                     // The viewmodel's motion reads the def's gun-position numbers (G4) and the
                     // sim's own stance/speed/aim; the view's `cg_fov` is G4's wide-FOV reference.
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, self.cfg.cg_fov, p, self.vm_kick.take());
+                    // The view bob moves the eye (`FUN_0051f760`: up, and along the view's right),
+                    // on the same bob cycle as the gun; the shots still leave the sim's eye.
+                    let (_, right) = crate::math::basis_xy(self.yaw);
+                    let bob = |inches: f32| crate::units::inches(inches) * crate::units::GENERAL_SCALE;
+                    out.eye = out.eye + Vec3::new(0.0, 0.0, bob(pose.view_bob.0)) + right * bob(pose.view_bob.1);
+                    self.view_eye = out.eye;
                     out.viewmodel_offset = pose.offset;
                     // The gun is placed in the unrolled eye frame (`nativevm::place::root`, the W3D
                     // pose): it rolls with the camera (BO2 draws it in the view's axes), so it
                     // stays square to the screen.
                     out.viewmodel_angles = pose.angles + Vec3::new(0.0, 0.0, kick_roll);
-                    self.cues.update(dt, p, p.input.held & buttons::FIRE != 0);
+                    self.cues.update(dt, p, p.input.held & buttons::FIRE != 0, ground_at(host, p.body.pos));
                     if unclassed {
                         // Not spawned: nothing in hand behind the class screen (BO2 shows no
                         // viewmodel before the class spawns the player).
@@ -1347,6 +1362,7 @@ impl Client {
                         // the last two logic frames by the render clock, as the eye does (else the
                         // tablet held each pose for four frames at 120 Hz).
                         let (clip, time) = viewmodel::tablet_up(tablet_time(t, self.since_logic));
+                        crate::nativevm::ffi::set_blend(None);
                         out.viewmodel = clip;
                         out.viewmodel_time = time;
                     } else {
@@ -1358,6 +1374,7 @@ impl Client {
                         out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
                         crate::nativevm::ffi::set_left_clip(f.left);
+                        crate::nativevm::ffi::set_blend(f.blend);
                     }
                 }
             }
@@ -1554,10 +1571,14 @@ impl Client {
         // The hint is cleared once its 1.8 s are up (`FUN_004ddc80`: start + 0x708 ms < now).
         h.hint = h.hint.map(|(k, t)| (k, t + dt)).filter(|&(_, t)| t <= crate::hud::HINT_TIME);
         h.hack_shown = (h.hack_shown - dt).max(0.0);
-        let decay = (1.0 - dt * 12.0).max(0.0);
-        h.flinch_pitch *= decay;
-        h.flinch_yaw *= decay;
+        h.flinch.step(dt);
     }
+}
+
+/// The ground's surface at `at`: the sim's answer (`LogicHost::surface_at`: the water table, then
+/// the map's tile class), else the loaded map's grid.
+fn ground_at(host: Option<&dyn LogicHost>, at: Vec3) -> crate::impacts::Surface {
+    host.map_or_else(|| crate::terrain::surface_at(at.x, at.y), |h| h.surface_at(at.x, at.y))
 }
 
 /// The client's tests live in their own file: `mod.rs` is at the module-size limit.

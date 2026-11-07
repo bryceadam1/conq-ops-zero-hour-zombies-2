@@ -88,6 +88,8 @@ pub struct MoveTuning {
     pub prone_yaw_cap: f32,
     pub prone_swing_speed: f32,
     pub prone_swing_margin: f32,
+    /// A walk's share of the top speed the bob cycle measures against ([`bob_top_speed`]).
+    pub bob_walk_scale: f32,
 }
 
 impl MoveTuning {
@@ -134,6 +136,7 @@ impl MoveTuning {
             prone_yaw_cap: t.bg_prone_yawcap.to_radians(),
             prone_swing_speed: t.prone_swing_speed.to_radians(),
             prone_swing_margin: t.prone_swing_margin.to_radians(),
+            bob_walk_scale: t.bob_walk_speed_scale,
         }
     }
 
@@ -461,6 +464,35 @@ pub fn step(
         Some((z0, vz0)) if landed => land::crash_land(body, z0, vz0, mods.fall_height, tuning),
         _ => None,
     }
+}
+
+/// The top speed (world units/s) the bob cycle measures the ground speed against (t6mp
+/// `FUN_008c4690`, called by `PM_Footsteps`): the run speed scaled by the movement keys' direction
+/// (both a forward/back and a side key: `((strafe − 1)·0.75 + 2)·0.5`, and backwards also
+/// `(back + 1)·0.5`; a side key alone `(strafe − 1)·0.75 + 1`; backwards alone `back`), then by a
+/// walk's [`MoveTuning::bob_walk_scale`] or the sprint scale, the weapon's move scale
+/// (`speed_scale`) and the stance's.
+pub fn bob_top_speed(body: &Body, fwd_axis: f32, right_axis: f32, speed_scale: f32, move_faster: bool, walking: bool, t: &MoveTuning) -> f32 {
+    let mut s = t.run_speed(move_faster);
+    let (strafe, back) = (t.strafe_scale, t.back_scale);
+    if fwd_axis != 0.0 {
+        if right_axis != 0.0 {
+            s *= ((strafe - 1.0) * 0.75 + 2.0) * 0.5;
+            if fwd_axis < 0.0 {
+                s *= (back + 1.0) * 0.5;
+            }
+        } else if fwd_axis < 0.0 {
+            s *= back;
+        }
+    } else if right_axis != 0.0 {
+        s *= (strafe - 1.0) * 0.75 + 1.0;
+    }
+    if walking {
+        s *= t.bob_walk_scale;
+    } else if body.sprinting {
+        s *= t.sprint_scale;
+    }
+    s * speed_scale * stance::speed_scale(body, t)
 }
 
 fn change_stance(body: &mut Body, held: u32, pressed: u32, sprint_could_start: bool) {

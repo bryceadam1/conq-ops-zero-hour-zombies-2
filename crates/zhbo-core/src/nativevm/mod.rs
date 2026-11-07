@@ -282,6 +282,9 @@ pub struct Request {
     /// when the hands differ (one fires or reloads alone); `None` plays the base clip's left half
     /// at `time`.
     pub left: Option<(i32, f32)>,
+    /// The clip idle is blending in over (`viewmodel::Frame::blend`): that clip, seconds into it,
+    /// and the base clip's weight 0..1.
+    pub blend: Option<(i32, f32, f32)>,
 }
 
 /// A surface of the composed mesh, with its textures by archive path.
@@ -950,13 +953,15 @@ impl Loaded {
     /// root (BO2's second anim channel). Bones no clip names keep what the previous layer left them
     /// in (`zhbo_native::pose::sample_over`).
     pub fn pose(&self, req: &Request, anim: Option<&Anim>, left: Option<&Anim>, ads: Option<(&Anim, f32)>, out: &mut Posed) {
-        self.pose_from(req, Base::Clip(anim), left, ads, out);
+        self.pose_from(req, Base::Clip(anim), None, left, ads, out);
     }
 
     /// [`Loaded::pose`] with the base layer's source spelled out: a clip (or none: the bind
     /// pose), or [`Base::Held`], the local pose `out` already holds from this viewmodel's last
-    /// frame, for a clip whose animation has not arrived yet (see `ffi::State::frame`).
-    pub fn pose_from(&self, req: &Request, base: Base<'_>, left: Option<&Anim>, ads: Option<(&Anim, f32)>, out: &mut Posed) {
+    /// frame, for a clip whose animation has not arrived yet (see `ffi::State::frame`); and
+    /// `from`, the clip idle is blending in over (`req.blend`'s): sampled first and faded out
+    /// under the base clip by the blend's weight, both before the layers.
+    pub fn pose_from(&self, req: &Request, base: Base<'_>, from: Option<&Anim>, left: Option<&Anim>, ads: Option<(&Anim, f32)>, out: &mut Posed) {
         let looping = crate::viewmodel::slot::loops(req.clip);
         let time = req.time * req.rate.max(0.0);
         match base {
@@ -969,6 +974,10 @@ impl Loaded {
                 out.local.clear();
                 out.local.extend(self.skeleton.bind_pose());
             }
+        }
+        if let (Some(f), Some((clip, t, w))) = (from, req.blend) {
+            self.skeleton.sample(f, f.frame_at(t * req.rate.max(0.0), crate::viewmodel::slot::loops(clip)), &mut out.under);
+            zhbo_native::pose::blend(&out.under, &mut out.local, w);
         }
         if let Some(l) = left {
             let frame = match req.left {

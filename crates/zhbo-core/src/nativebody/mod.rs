@@ -48,6 +48,7 @@ use crate::nativevm::{build_mesh, Files, Mesh, Posed};
 
 #[cfg(feature = "renderer")]
 mod gpu;
+pub mod aim;
 pub mod ffi;
 
 /// BO2 inches to world units: [`crate::nativevm::ART_SCALE`], one source with the sim.
@@ -457,10 +458,22 @@ impl Loaded {
     /// clip and seconds into it) on the bones it tracks.
     /// A held action (the death) fades in and then keeps its last frame.
     pub fn pose(&self, req: &Request, anim: Option<&AnimClip>, torso: Option<(&AnimClip, f32, bool)>, out: &mut Posed) {
+        self.pose_full(req, anim, None, torso, None, out)
+    }
+
+    /// [`Loaded::pose`] with the movement clip blending in over `from` (the clip it replaced and
+    /// the new clip's weight 0..1, both playing on the request's clock: BO2's animtree cross-fades a
+    /// movement change over the clip's blend time) and the aim controllers' pitches
+    /// ([`aim::apply`], after the torso layer: BO2 runs the controllers over the animated pose).
+    pub fn pose_full(&self, req: &Request, anim: Option<&AnimClip>, from: Option<(&AnimClip, f32)>, torso: Option<(&AnimClip, f32, bool)>, aim: Option<&[f32; aim::CONTROLLERS.len()]>, out: &mut Posed) {
         match (req.mode, anim) {
             (Mode::Body, Some(a)) => {
                 let frame = a.frame_at(req.time * req.rate.max(0.0), true);
                 self.skeleton.sample(a, frame, &mut out.local);
+                if let Some((f, w)) = from.filter(|(f, w)| *w < 1.0 && !std::ptr::eq(*f, a)) {
+                    self.skeleton.sample(f, f.frame_at(req.time * req.rate.max(0.0), true), &mut out.under);
+                    zhbo_native::pose::blend(&out.under, &mut out.local, w);
+                }
             }
             _ => {
                 out.local.clear();
@@ -472,6 +485,9 @@ impl Loaded {
             self.skeleton.sample_over(clip, clip.frame_at(t, false), &mut out.local);
             let w = if hold { (t / TORSO_BLEND).min(1.0) } else { torso_weight(t, clip.duration()) };
             zhbo_native::pose::blend(&out.under, &mut out.local, w);
+        }
+        if let (Mode::Body, Some(pitches)) = (req.mode, aim) {
+            aim::apply(&self.skeleton, &aim::bones(&self.skeleton), pitches, &mut out.local, &mut out.model);
         }
         self.skeleton.model_space(&out.local, &mut out.model);
         out.root = self.placement(req, &out.model);
@@ -520,31 +536,43 @@ impl Loaded {
     }
 }
 
-/// The body clip for the General's movement state: BO2's body animation for the stance and gait in
-/// animation set `set` (the held weapon's `WeaponDef::body_anims`: what `mp/playeranim.script`
-/// plays for its `weapClass` and `playerAnimType`). `run_speed` is the sim's own `g_speed` in world
-/// units/s (the walk/run split is a share of it), so this stays a presentation rule with a single
-/// source for the speed.
-pub fn state_of(stance: i32, speed: f32, sprinting: bool, ads: f32, set: u8, moving: bool, run_speed: f32) -> u16 {
-    state::id(set, movement_state(stance, speed, sprinting, ads, moving, run_speed))
+/// The body clip for the General's movement state: BO2's body animation for the stance, gait and
+/// direction in animation set `set` (the held weapon's `WeaponDef::body_anims`: what
+/// `mp/playeranim.script` plays for its `weapClass` and `playerAnimType`). `speed` is the ground
+/// speed in world units/s; `direction` the script's (`crate::death::move_direction`: 1 forward,
+/// 2 backward, 3 left, 4 right). BO2 runs standing at `player_animRunThreshhold` or faster and walks
+/// otherwise (`PM_Footsteps` `FUN_008c4820`), walks whenever aimed, and moves at all past
+/// `player_moveThreshhold`.
+#[allow(clippy::too_many_arguments)]
+pub fn state_of(stance: i32, speed: f32, sprinting: bool, ads: f32, set: u8, moving: bool, direction: u8, t: &crate::tuning::Tuning) -> u16 {
+    state::id(set, movement_state(stance, speed, sprinting, ads, moving, direction, t))
 }
 
 /// The movement state alone ([`state_of`] without the weapon's set).
-fn movement_state(stance: i32, speed: f32, sprinting: bool, ads: f32, moving: bool, run_speed: f32) -> u16 {
-    let run = run_speed.max(1e-3);
-    let moving = moving || speed > 0.2;
+fn movement_state(stance: i32, speed: f32, sprinting: bool, ads: f32, moving: bool, direction: u8, t: &crate::tuning::Tuning) -> u16 {
+    let inches = speed / crate::units::ZH_PER_INCH;
+    let moving = moving || inches > t.player_move_threshhold;
+    let aimed = ads > 0.5;
+    let go = |forward: u16| state::directional(forward, direction);
     match stance {
-        2 => if moving { state::PRONE_CRAWL } else { state::PRONE_IDLE },
-        1 => if moving { state::CROUCH_WALK } else if ads > 0.5 { state::CROUCH_ADS } else { state::CROUCH_IDLE },
+        2 => if moving { go(state::PRONE_CRAWL) } else { state::PRONE_IDLE },
+        1 => match (moving, aimed) {
+            (true, true) => go(state::CROUCH_ADS_WALK),
+            (true, false) => go(state::CROUCH_WALK),
+            (false, true) => state::CROUCH_ADS,
+            (false, false) => state::CROUCH_IDLE,
+        },
         _ => {
-            if ads > 0.5 {
+            if moving && aimed {
+                go(state::STAND_ADS_WALK)
+            } else if aimed {
                 state::STAND_ADS
             } else if sprinting && moving {
                 state::STAND_SPRINT
-            } else if speed > run * 0.6 {
-                state::STAND_RUN
+            } else if moving && inches >= t.player_anim_run_threshhold {
+                go(state::STAND_RUN)
             } else if moving {
-                state::STAND_WALK
+                go(state::STAND_WALK)
             } else {
                 state::STAND_IDLE
             }

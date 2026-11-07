@@ -99,13 +99,12 @@ impl Sim {
     /// Remember this frame's first-person Generals and shields for later shots (called once per
     /// step, after every system ran).
     pub(super) fn record_history(&mut self) {
-        let run_speed = self.tuning.run_speed(false);
         let bodies = self
             .players
             .iter()
             .flatten()
             .filter(|p| p.is_first_person())
-            .map(|p| Pose { general: p.general, pos: p.body.pos, yaw: p.yaw, state: p.body_state(None, run_speed) })
+            .map(|p| Pose { general: p.general, pos: p.body.pos, yaw: p.yaw, state: p.body_state(None) })
             .collect();
         let frame = Frame { frame: self.frame, bodies, shields: self.shield_bearers() };
         self.history.record(frame, self.antilag_frames as usize + 1);

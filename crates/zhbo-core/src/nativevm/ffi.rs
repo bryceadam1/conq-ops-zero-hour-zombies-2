@@ -79,6 +79,8 @@ pub(crate) struct State {
     /// Which loaded viewmodel `posed` last posed (its load key), so a frame whose clip is still
     /// on its way can hold that pose ([`super::Base::Held`]); `None` after a new load.
     posed_for: Option<(i32, u8, u64, u32)>,
+    /// The clip idle is blending in over this frame ([`set_blend`]).
+    pub(crate) blend: Option<(i32, f32, f32)>,
 }
 
 impl State {
@@ -174,6 +176,7 @@ impl State {
         }
         let mut req = request(inp);
         req.left = self.left;
+        req.blend = self.blend;
         // The layer's direction: rising → up, falling → down, held keeps the last one (firing at
         // full ADS stays on the up clip's last frame). `ads` is the arsenal's own fraction.
         if req.ads < self.ads_prev - 1e-5 {
@@ -209,6 +212,10 @@ impl State {
         if let Some(p) = &path {
             self.anim(p);
         }
+        let from_path = req.blend.and_then(|(clip, _, _)| self.loaded.as_ref().and_then(|l| l.clip_path(clip))).map(str::to_string).filter(|p| Some(p.as_str()) != path.as_deref());
+        if let Some(p) = &from_path {
+            self.anim(p);
+        }
         if let Some(p) = &left_path {
             self.anim(p);
         }
@@ -241,7 +248,8 @@ impl State {
             return LOADING;
         }
         let base = if pending { super::Base::Held } else { super::Base::Clip(anim) };
-        loaded.pose_from(&req, base, left, ads, &mut self.posed);
+        let from = from_path.as_deref().and_then(|p| loaded.anims.get(p));
+        loaded.pose_from(&req, base, from, left, ads, &mut self.posed);
         self.posed_for = Some(key);
         // BO2 poses and plays the viewmodel but does not add it to the scene while its scope
         // overlay's reticle zoom is up (`FUN_005374c0`, drawGun = 0): arms, gun and scope all go.
@@ -290,6 +298,7 @@ pub(crate) fn request(inp: &ZhboNativeIn) -> Request {
         dir: inp.dir,
         gun: GunPose::from_offset_angles(inp.offset, inp.angles),
         left: None,
+        blend: None,
     }
 }
 
@@ -299,6 +308,12 @@ pub(crate) fn request(inp: &ZhboNativeIn) -> Request {
 /// engine still passes only the base clip).
 pub fn set_left_clip(left: Option<(i32, f32)>) {
     with(|s| s.left = left);
+}
+
+/// The local client's idle blend for the next native frame (`viewmodel::Frame::blend`): the clip
+/// idle is coming in over, seconds into it and idle's weight; Rust-side like [`set_left_clip`].
+pub fn set_blend(blend: Option<(i32, f32, f32)>) {
+    with(|s| s.blend = blend);
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

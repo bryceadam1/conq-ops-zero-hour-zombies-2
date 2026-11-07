@@ -538,7 +538,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .floats("sprint_rot", &fls(&p.sprint_rot))
         .floats("pos_rates", &fls(&[p.move_rate, p.prone_move_rate, p.rot_rate, p.prone_rot_rate]))
         .float("ads_aim_pitch", fl(p.ads_aim_pitch))
-        .float("ads_bob_factor", fl(p.ads_bob_factor));
+        .float("ads_bob_factor", fl(p.ads_bob_factor))
+        .float("sprint_cycle_scale", fl(p.sprint_cycle_scale));
 
     // Crosshair and the overlay.
     let r = &d.reticle;

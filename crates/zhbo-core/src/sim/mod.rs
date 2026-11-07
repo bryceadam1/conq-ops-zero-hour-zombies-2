@@ -48,7 +48,7 @@ mod spread_tests;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
-pub use fire::{gather_targets, throw_velocity, HitBodies};
+pub use fire::{gather_targets, throw_velocity, HitBodies, MeleeCharge};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 pub use spawn::ChosenClass;
 pub use lockstep::Fingerprint;
@@ -476,19 +476,23 @@ impl PlayerSim {
     }
 
     /// The body clip his movement state picks in the held weapon's animation set
-    /// (`nativebody::state_of`). In first person the sim's own stance, gait, sprint and ADS pick
-    /// it. Under RTS control Zero Hour moves him and the sim does not step his body: he stands
-    /// (the stance, aim and sprint his body kept from his last first person are not his overhead
-    /// pose; Zero Hour has none of them), walking or running at `engine`'s speed when Zero Hour
-    /// says he moves, idle otherwise.
-    pub fn body_state(&self, engine: Option<EngineMotion>, run_speed: f32) -> u16 {
+    /// (`nativebody::state_of`). In first person the sim's own stance, gait, sprint, ADS and the
+    /// direction of his movement keys (`death::move_direction`) pick it. Under RTS control Zero
+    /// Hour moves him and the sim does not step his body: he stands (the stance, aim and sprint
+    /// his body kept from his last first person are not his overhead pose; Zero Hour has none of
+    /// them), walking or running forward at `engine`'s speed when Zero Hour says he moves (its
+    /// units turn to face their path), idle otherwise.
+    pub fn body_state(&self, engine: Option<EngineMotion>) -> u16 {
         let a = &self.arsenal;
+        let t = &a.tuning;
         let set = a.current().def.body_anims;
         if !self.is_first_person() {
             let m = engine.unwrap_or_default();
-            return crate::nativebody::state_of(0, m.speed, false, 0.0, set, m.moving, run_speed);
+            return crate::nativebody::state_of(0, m.speed, false, 0.0, set, m.moving, 1, t);
         }
-        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, set, false, run_speed)
+        let (forward, right) = self.input.move_axes();
+        let direction = crate::death::move_direction(forward, right, t);
+        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, set, false, direction, t)
     }
 
     #[cfg(test)]
@@ -1278,7 +1282,6 @@ impl Sim {
     /// other players' Generals are in first person on their own machines, and here they must show
     /// their class weapon (attachments, camo) in their hands.
     pub fn native_poses(&self, motion: &[EngineMotion], viewer: Option<u32>) -> Vec<NativePose> {
-        let run_speed = self.tuning.run_speed(false);
         let time = self.frame as f32 * LOGIC_DT;
         self.players
             .iter()
@@ -1294,7 +1297,7 @@ impl Sim {
                     general: p.general,
                     weapon: if tablet { -1 } else { a.current().def.world_index() }, // content: presentation (native_poses: the third-person draw)
                     stance: if p.is_first_person() { p.stance_index() } else { 0 },
-                    state: p.body_state(engine, run_speed),
+                    state: p.body_state(engine),
                     time,
                     rate: 1.0,
                     sidearm: a.active == 1,
@@ -1324,8 +1327,7 @@ impl Sim {
     /// sprint and ADS — never the render clock): the pose his hit boxes take in a trace. An
     /// overhead General stands (the engine's motion is presentation, so the sim poses him idle).
     pub(super) fn hit_states(&self) -> Vec<(u32, u16)> {
-        let run_speed = self.tuning.run_speed(false);
-        self.players.iter().flatten().map(|p| (p.general, p.body_state(None, run_speed))).collect()
+        self.players.iter().flatten().map(|p| (p.general, p.body_state(None))).collect()
     }
 
     /// The enemies `player`'s Sensor Grenades put on his compass ([`crate::sensor`]), and how

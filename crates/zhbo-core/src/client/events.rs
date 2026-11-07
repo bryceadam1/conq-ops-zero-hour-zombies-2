@@ -364,8 +364,8 @@ impl Client {
                     self.hud.muzzle = 0.05;
                 }
                 EventKind::Flinch { yaw_deg, pitch_deg } => {
-                    self.hud.flinch_yaw += yaw_deg;
-                    self.hud.flinch_pitch += pitch_deg;
+                    // BO2 replaces the kick per hit (`CG_DamageFeedback`), never adds to it.
+                    self.hud.flinch.hit(yaw_deg, pitch_deg, crate::tuning::get().flinch_time);
                 }
                 // The hurt cue and the screen's flash are the first-person view's (an overhead
                 // General's hurt is his body's flinch and voice alone).

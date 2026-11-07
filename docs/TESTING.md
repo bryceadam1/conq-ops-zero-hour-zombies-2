@@ -430,8 +430,8 @@ the other log's `autopilot mp: General G weapon V camo C in hand`). Results go t
 (default `$TMPDIR/ConquerOps-mp`): `host.log`, `join.log`, both stdouts, `hashes-joined.txt`.
 
 Both runs also check that each machine presented the other player: his gunshot chain and his
-footsteps were played there (`sound ZHBO_BO2_FireNpc_…: playing`; `sound ZHBO_BO2_StepNpc:
-playing` or `no sound`, the engine's answer for a step out of the listener's short range, e.g.
+footsteps were played there (`sound ZHBO_BO2_FireNpc_…: playing`; a third-person step event,
+`sound ZHBO_BO2_Step_3rd…_<move>_<surface>: playing` or `no sound`, the engine's answer for a step out of the listener's short range, e.g.
 from overhead; the core plays both only for another player). `ZHBO_MPTEST_SHOTS=1` also captures each
 machine's screen (`host-shot.*`, `join-shot.*`) every `ZHBO_MPTEST_SHOT_INTERVAL` logic frames
 (default 150).

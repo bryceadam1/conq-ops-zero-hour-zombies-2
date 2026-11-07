@@ -36,13 +36,76 @@ pub mod state {
     pub const CROUCH_ADS: u16 = 8;
     pub const PRONE_IDLE: u16 = 9;
     pub const PRONE_CRAWL: u16 = 10;
+    /// The moving states' other directions (`mp/playeranim.script`'s `direction backward`,
+    /// `left`, `right` under `walk`/`run`): each forward gait's backward, left and right, in that
+    /// order ([`directional`]).
+    pub const STAND_WALK_BACK: u16 = 11;
+    pub const STAND_WALK_LEFT: u16 = 12;
+    pub const STAND_WALK_RIGHT: u16 = 13;
+    pub const STAND_RUN_BACK: u16 = 14;
+    pub const STAND_RUN_LEFT: u16 = 15;
+    pub const STAND_RUN_RIGHT: u16 = 16;
+    pub const CROUCH_WALK_BACK: u16 = 17;
+    pub const CROUCH_WALK_LEFT: u16 = 18;
+    pub const CROUCH_WALK_RIGHT: u16 = 19;
+    pub const PRONE_CRAWL_BACK: u16 = 20;
+    pub const PRONE_CRAWL_LEFT: u16 = 21;
+    pub const PRONE_CRAWL_RIGHT: u16 = 22;
+    /// Moving while aimed (the script's `walk` with `weapon_position ads`: "the player walks when
+    /// they are ADS"), standing and crouched, forward then backward, left, right.
+    pub const STAND_ADS_WALK: u16 = 23;
+    pub const STAND_ADS_WALK_BACK: u16 = 24;
+    pub const STAND_ADS_WALK_LEFT: u16 = 25;
+    pub const STAND_ADS_WALK_RIGHT: u16 = 26;
+    pub const CROUCH_ADS_WALK: u16 = 27;
+    pub const CROUCH_ADS_WALK_BACK: u16 = 28;
+    pub const CROUCH_ADS_WALK_LEFT: u16 = 29;
+    pub const CROUCH_ADS_WALK_RIGHT: u16 = 30;
     /// The last movement state (states are `1..=COUNT`).
-    pub const COUNT: u16 = 10;
+    pub const COUNT: u16 = 30;
+    /// The states the hit boxes are posed in (`1..=POSED`): the forward gaits and the stances.
+    /// A directional state's boxes are its forward gait's ([`fallbacks`]).
+    pub const POSED: u16 = 10;
     /// Clip ids per animation set: `id = set * SET_STRIDE + state`.
-    pub const SET_STRIDE: u16 = 16;
+    pub const SET_STRIDE: u16 = 32;
     /// The most animation sets a body carries: the rifleman's and one per model condition the W3D
     /// body has for a set (`zhbo_core::names::ANIM_SET_CONDITIONS`).
     pub const MAX_SETS: u8 = 9;
+
+    /// The script's `direction` values a moving state carries ([`super::torso::DIRECTIONS`]'s
+    /// indices): 1 forward, 2 backward, 3 left, 4 right; 0 (none) reads as forward.
+    pub const fn directional(forward: u16, direction: u8) -> u16 {
+        let k = match direction {
+            2 => 1,
+            3 => 2,
+            4 => 3,
+            _ => return forward,
+        };
+        match forward {
+            STAND_WALK => STAND_WALK_BACK + k - 1,
+            STAND_RUN => STAND_RUN_BACK + k - 1,
+            CROUCH_WALK => CROUCH_WALK_BACK + k - 1,
+            PRONE_CRAWL => PRONE_CRAWL_BACK + k - 1,
+            STAND_ADS_WALK => STAND_ADS_WALK + k,
+            CROUCH_ADS_WALK => CROUCH_ADS_WALK + k,
+            _ => forward,
+        }
+    }
+
+    /// A state's forward gait and its `direction` index (1 forward, 2 backward, 3 left, 4 right;
+    /// 0 for a state that does not move).
+    pub const fn split_direction(st: u16) -> (u16, u8) {
+        match st {
+            STAND_WALK | STAND_RUN | CROUCH_WALK | PRONE_CRAWL | STAND_ADS_WALK | CROUCH_ADS_WALK => (st, 1),
+            STAND_WALK_BACK..=STAND_WALK_RIGHT => (STAND_WALK, (st - STAND_WALK_BACK) as u8 + 2),
+            STAND_RUN_BACK..=STAND_RUN_RIGHT => (STAND_RUN, (st - STAND_RUN_BACK) as u8 + 2),
+            CROUCH_WALK_BACK..=CROUCH_WALK_RIGHT => (CROUCH_WALK, (st - CROUCH_WALK_BACK) as u8 + 2),
+            PRONE_CRAWL_BACK..=PRONE_CRAWL_RIGHT => (PRONE_CRAWL, (st - PRONE_CRAWL_BACK) as u8 + 2),
+            STAND_ADS_WALK_BACK..=STAND_ADS_WALK_RIGHT => (STAND_ADS_WALK, (st - STAND_ADS_WALK) as u8 + 1),
+            CROUCH_ADS_WALK_BACK..=CROUCH_ADS_WALK_RIGHT => (CROUCH_ADS_WALK, (st - CROUCH_ADS_WALK) as u8 + 1),
+            _ => (st, 0),
+        }
+    }
 
     /// The clip id of movement `state` in animation set `set`.
     pub const fn id(set: u8, state: u16) -> u16 {
@@ -56,7 +119,7 @@ pub mod state {
 
     /// The movement states to try, in order, when the body has no clip for `state`: the nearest
     /// stance and the nearest gait, so a body missing (say) its crouch walk still crouches while it
-    /// moves.
+    /// moves. A direction falls back to its forward gait's chain.
     pub fn nearest(state: u16) -> &'static [u16] {
         match state {
             STAND_WALK => &[STAND_WALK, STAND_RUN, STAND_IDLE],
@@ -68,6 +131,26 @@ pub mod state {
             CROUCH_ADS => &[CROUCH_ADS, CROUCH_IDLE, STAND_ADS, STAND_IDLE],
             PRONE_IDLE => &[PRONE_IDLE, CROUCH_IDLE, STAND_IDLE],
             PRONE_CRAWL => &[PRONE_CRAWL, PRONE_IDLE, CROUCH_WALK, STAND_WALK, STAND_RUN, STAND_IDLE],
+            STAND_ADS_WALK => &[STAND_ADS_WALK, STAND_WALK, STAND_ADS, STAND_RUN, STAND_IDLE],
+            CROUCH_ADS_WALK => &[CROUCH_ADS_WALK, CROUCH_WALK, CROUCH_ADS, CROUCH_IDLE, STAND_WALK, STAND_IDLE],
+            STAND_WALK_BACK => &[STAND_WALK_BACK, STAND_RUN_BACK, STAND_WALK, STAND_RUN, STAND_IDLE],
+            STAND_WALK_LEFT => &[STAND_WALK_LEFT, STAND_RUN_LEFT, STAND_WALK, STAND_RUN, STAND_IDLE],
+            STAND_WALK_RIGHT => &[STAND_WALK_RIGHT, STAND_RUN_RIGHT, STAND_WALK, STAND_RUN, STAND_IDLE],
+            STAND_RUN_BACK => &[STAND_RUN_BACK, STAND_WALK_BACK, STAND_RUN, STAND_WALK, STAND_IDLE],
+            STAND_RUN_LEFT => &[STAND_RUN_LEFT, STAND_WALK_LEFT, STAND_RUN, STAND_WALK, STAND_IDLE],
+            STAND_RUN_RIGHT => &[STAND_RUN_RIGHT, STAND_WALK_RIGHT, STAND_RUN, STAND_WALK, STAND_IDLE],
+            CROUCH_WALK_BACK => &[CROUCH_WALK_BACK, CROUCH_WALK, CROUCH_IDLE, STAND_WALK_BACK, STAND_WALK, STAND_IDLE],
+            CROUCH_WALK_LEFT => &[CROUCH_WALK_LEFT, CROUCH_WALK, CROUCH_IDLE, STAND_WALK_LEFT, STAND_WALK, STAND_IDLE],
+            CROUCH_WALK_RIGHT => &[CROUCH_WALK_RIGHT, CROUCH_WALK, CROUCH_IDLE, STAND_WALK_RIGHT, STAND_WALK, STAND_IDLE],
+            PRONE_CRAWL_BACK => &[PRONE_CRAWL_BACK, PRONE_CRAWL, PRONE_IDLE, CROUCH_WALK, STAND_WALK, STAND_IDLE],
+            PRONE_CRAWL_LEFT => &[PRONE_CRAWL_LEFT, PRONE_CRAWL, PRONE_IDLE, CROUCH_WALK, STAND_WALK, STAND_IDLE],
+            PRONE_CRAWL_RIGHT => &[PRONE_CRAWL_RIGHT, PRONE_CRAWL, PRONE_IDLE, CROUCH_WALK, STAND_WALK, STAND_IDLE],
+            STAND_ADS_WALK_BACK => &[STAND_ADS_WALK_BACK, STAND_WALK_BACK, STAND_ADS_WALK, STAND_WALK, STAND_ADS, STAND_IDLE],
+            STAND_ADS_WALK_LEFT => &[STAND_ADS_WALK_LEFT, STAND_WALK_LEFT, STAND_ADS_WALK, STAND_WALK, STAND_ADS, STAND_IDLE],
+            STAND_ADS_WALK_RIGHT => &[STAND_ADS_WALK_RIGHT, STAND_WALK_RIGHT, STAND_ADS_WALK, STAND_WALK, STAND_ADS, STAND_IDLE],
+            CROUCH_ADS_WALK_BACK => &[CROUCH_ADS_WALK_BACK, CROUCH_WALK_BACK, CROUCH_ADS_WALK, CROUCH_WALK, CROUCH_ADS, CROUCH_IDLE, STAND_IDLE],
+            CROUCH_ADS_WALK_LEFT => &[CROUCH_ADS_WALK_LEFT, CROUCH_WALK_LEFT, CROUCH_ADS_WALK, CROUCH_WALK, CROUCH_ADS, CROUCH_IDLE, STAND_IDLE],
+            CROUCH_ADS_WALK_RIGHT => &[CROUCH_ADS_WALK_RIGHT, CROUCH_WALK_RIGHT, CROUCH_ADS_WALK, CROUCH_WALK, CROUCH_ADS, CROUCH_IDLE, STAND_IDLE],
             _ => &[STAND_IDLE],
         }
     }

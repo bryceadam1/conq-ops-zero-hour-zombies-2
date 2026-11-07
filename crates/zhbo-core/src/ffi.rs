@@ -1053,6 +1053,11 @@ pub unsafe extern "C" fn zhbo_client_native_poses_moving(out: *mut crate::native
     };
     let poses = with_state(|s| {
         let mut poses = s.sim.native_poses(&motion, s.client.first_person_general());
+        // The movement clips play on the render clock, not in 30 Hz steps.
+        let lag = s.client.render_lag();
+        for p in &mut poses {
+            p.time = (p.time + lag).max(0.0);
+        }
         // The dead Generals' bodies: their death clips through to the corpse (`client::remote`).
         let corpses: Vec<crate::sim::NativePose> = s.client.remote.corpses().iter().filter(|c| c.vm >= 0 && !poses.iter().any(|p| p.general == c.general)).map(|c| crate::sim::NativePose { general: c.general, weapon: c.vm, stance: 0, state: c.state, time: 0.0, rate: 1.0, sidearm: false }).collect();
         poses.extend(corpses);

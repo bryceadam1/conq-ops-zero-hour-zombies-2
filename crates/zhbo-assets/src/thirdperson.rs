@@ -37,6 +37,28 @@ const CANDIDATES: &[(u16, &[&str])] = &[
     (state::CROUCH_ADS, &["pb_crouch_ads", "pb_ducked_ads"]),
     (state::PRONE_IDLE, &["pb_prone_alert", "pb_prone_idle"]),
     (state::PRONE_CRAWL, &["pb_prone_forward_loop", "pb_prone_crawl_forward_loop", "pb_prone_fwd_loop"]),
+    // The directions and the aimed walks: the script's own rifle names (`mp/playeranim.script`'s
+    // default entries), for an install without the script.
+    (state::STAND_WALK_BACK, &["pb_stand_shoot_walk_back"]),
+    (state::STAND_WALK_LEFT, &["pb_stand_shoot_walk_left"]),
+    (state::STAND_WALK_RIGHT, &["pb_stand_shoot_walk_right"]),
+    (state::STAND_RUN_BACK, &["pb_combatrun_back_loop"]),
+    (state::STAND_RUN_LEFT, &["pb_combatrun_left_loop"]),
+    (state::STAND_RUN_RIGHT, &["pb_combatrun_right_loop"]),
+    (state::CROUCH_WALK_BACK, &["pb_crouch_run_back"]),
+    (state::CROUCH_WALK_LEFT, &["pb_crouch_run_left"]),
+    (state::CROUCH_WALK_RIGHT, &["pb_crouch_run_right"]),
+    (state::PRONE_CRAWL_BACK, &["pb_prone_crawl_back"]),
+    (state::PRONE_CRAWL_LEFT, &["pb_prone_crawl_left"]),
+    (state::PRONE_CRAWL_RIGHT, &["pb_prone_crawl_right"]),
+    (state::STAND_ADS_WALK, &["pb_stand_shoot_walk_forward"]),
+    (state::STAND_ADS_WALK_BACK, &["pb_stand_shoot_walk_back"]),
+    (state::STAND_ADS_WALK_LEFT, &["pb_stand_shoot_walk_left"]),
+    (state::STAND_ADS_WALK_RIGHT, &["pb_stand_shoot_walk_right"]),
+    (state::CROUCH_ADS_WALK, &["pb_crouch_shoot_run_forward"]),
+    (state::CROUCH_ADS_WALK_BACK, &["pb_crouch_shoot_run_back"]),
+    (state::CROUCH_ADS_WALK_LEFT, &["pb_crouch_shoot_run_left"]),
+    (state::CROUCH_ADS_WALK_RIGHT, &["pb_crouch_shoot_run_right"]),
 ];
 
 /// A weapon as BO2's player animation script reads it: its `weapClass` and `playerAnimType` names.
@@ -108,20 +130,26 @@ impl Sets {
 }
 
 /// The script's movement type and conditions for movement state `st` of a soldier holding a weapon
-/// with key `k`: hip or ADS, moving forward or still. Prone movement is the script's `walk` (its
-/// movement types have no prone run); crouched movement its `run` (`runcr`).
+/// with key `k`: hip or ADS, its `direction` (forward for a still state's `none`). Prone movement is
+/// the script's `walk` (its movement types have no prone run); crouched movement its `run`
+/// (`runcr`), crouched aimed movement its `walk` (`pb_crouch_shoot_run_*`); "the player walks
+/// when they are ADS".
 fn script_query(st: u16, k: &Key) -> (&'static str, [(&'static str, &str); 6]) {
     let ctx = |stance, pos, status, dir| [("stance", stance), ("weapon_position", pos), ("weaponclass", k.class.as_str()), ("movestatus", status), ("direction", dir), ("playeranimtype", k.anim_type.as_str())];
-    match st {
-        state::STAND_WALK => ("walk", ctx("stand", "hip", "walk", "forward")),
-        state::STAND_RUN => ("run", ctx("stand", "hip", "run", "forward")),
+    let (forward, direction) = state::split_direction(st);
+    let dir = zhbo_native::thirdperson::torso::DIRECTIONS[direction as usize];
+    match forward {
+        state::STAND_WALK => ("walk", ctx("stand", "hip", "walk", dir)),
+        state::STAND_RUN => ("run", ctx("stand", "hip", "run", dir)),
         state::STAND_SPRINT => ("sprint", ctx("stand", "hip", "run", "forward")),
         state::STAND_ADS => ("idle", ctx("stand", "ads", "stationary", "none")),
         state::CROUCH_IDLE => ("idle", ctx("crouch", "hip", "stationary", "none")),
-        state::CROUCH_WALK => ("run", ctx("crouch", "hip", "run", "forward")),
+        state::CROUCH_WALK => ("run", ctx("crouch", "hip", "run", dir)),
         state::CROUCH_ADS => ("idle", ctx("crouch", "ads", "stationary", "none")),
         state::PRONE_IDLE => ("idle", ctx("prone", "hip", "stationary", "none")),
-        state::PRONE_CRAWL => ("walk", ctx("prone", "hip", "walk", "forward")),
+        state::PRONE_CRAWL => ("walk", ctx("prone", "hip", "walk", dir)),
+        state::STAND_ADS_WALK => ("walk", ctx("stand", "ads", "walk", dir)),
+        state::CROUCH_ADS_WALK => ("walk", ctx("crouch", "ads", "walk", dir)),
         _ => ("idle", ctx("stand", "hip", "stationary", "none")),
     }
 }
@@ -356,6 +384,14 @@ pub(crate) fn torso_table(common: &Zone, t: &TorsoSets) -> (String, Vec<Clip>, V
     aliases.sort();
     aliases.dedup();
     (rows, out, aliases)
+}
+
+/// The body clips' blend times (`move_blend <clip id> <seconds>` rows for the torso table,
+/// `zhbo_core::torso`): each movement clip the script gives a `blendtime` or `blendouttime`
+/// (`FUN_008a8c40`); the rest blend over the tuning pack's `PlayerAnimBlendTime`.
+pub(crate) fn move_blends(common: &Zone, clips: &[Clip]) -> String {
+    let Some(script) = zhbo_formats::havok_lua::rawfile(common, crate::playeranim::PATH).map(|b| crate::playeranim::Script::parse(&String::from_utf8_lossy(&b))) else { return String::new() };
+    clips.iter().filter_map(|c| script.blend(&c.anim.name).map(|ms| format!("move_blend {} {:.4}\n", c.state, ms as f32 / 1000.0))).collect()
 }
 
 /// Every animation name in `zone`.

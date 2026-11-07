@@ -41,7 +41,7 @@
 # and the host past the leave (his General dies, the host's sim runs on, no mismatch).
 #
 # Both runs also check that each machine presented the other player: his gunshots and footsteps
-# were played ("sound ZHBO_BO2_FireNpc_…: playing", "sound ZHBO_BO2_StepNpc: playing|no sound").
+# were played ("sound ZHBO_BO2_FireNpc_…: playing", "sound ZHBO_BO2_Step_3rd…_<move>_<surface>: playing|no sound").
 #
 # Environment: ZHBO_ZH_DIR / ZHBO_BO2_DIR as for the launcher; DIST for a staged build other
 # than the default dist; OUT for the results folder; ZHBO_MPTEST_MAP (default Tournament Desert);
@@ -228,7 +228,7 @@ both "a rewound round hit the other General (antilag)" "antilag: General [0-9]+'
 # answers "no sound" (out of range), which still shows the core played it; "error" (a missing
 # event) does not count.
 both "another player's gunshot was heard" "sound ZHBO_BO2_FireNpc_[^ ]*: playing"
-both "another player's footsteps were played" "sound ZHBO_BO2_StepNpc: (playing|no sound)"
+both "another player's footsteps were played" "sound ZHBO_BO2_Step_3rd[a-z]*_[a-z_]+: (playing|no sound)"
 if grep -q "CRC mismatch" "$h" "$j" 2>/dev/null; then fail "no Zero Hour CRC mismatch" "$(grep -h "CRC mismatch" "$h" "$j" | head -1)"; else pass "no Zero Hour CRC mismatch"; fi
 
 # The sim's state hash, frame by frame, on the frames both machines ran: the network game's lines

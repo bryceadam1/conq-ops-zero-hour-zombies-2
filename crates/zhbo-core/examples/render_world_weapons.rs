@@ -11,6 +11,10 @@
 //! `--torso <id>`: instead, the whole General in body mode (`ZHBO_NATIVE_BODY=2`) holding weapon
 //! `<id>`, once standing and once mid-way through each torso action the archive's table gives it
 //! (`zhbo_core::torso`: reload, knife, shot, raise, and the frag's throw), into `<outdir>/torso_<id>.png`.
+//! `--motion <id>`: the whole General holding `<id>` in every movement state and direction
+//! (`zhbo_native::thirdperson::state`: walk, run, crouch, crawl and aimed walk forward, back, left,
+//! right; sprint; the stances), into `<outdir>/motion_<id>.png`, and seen from the side looking up
+//! 40°, level and down 40° (the aim controllers, `nativebody::aim`) into `<outdir>/aim_<id>.png`.
 //!
 //! **What it draws.** The pipeline the game draws the overhead weapon with: `zhbo_native_body` in
 //! weapon mode (`ZHBO_NATIVE_BODY=1`) with the engine's `tag_weapon_right` transform
@@ -84,6 +88,7 @@ fn run() -> Result<(), String> {
     let mut only = Vec::new();
     let mut all = false;
     let mut torso: Option<String> = None;
+    let mut motion: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -98,6 +103,10 @@ fn run() -> Result<(), String> {
             "--all" => all = true,
             "--torso" => {
                 torso = args.get(i + 1).cloned();
+                i += 1;
+            }
+            "--motion" => {
+                motion = args.get(i + 1).cloned();
                 i += 1;
             }
             a => return Err(format!("unknown argument {a}")),
@@ -117,6 +126,9 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     if let Some(id) = torso {
         return render_torso(&archive, &table, &id, &out);
+    }
+    if let Some(id) = motion {
+        return render_motion(&archive, &table, &id, &out);
     }
     // The game's default third person: the native weapon in the W3D body's hand.
     zhbo_core::config::init(zhbo_core::config::Config { native_body: 1, ..Default::default() });
@@ -251,6 +263,37 @@ fn render(archive: &Archive, shot: &Shot, vm: i32, general: u32) -> Result<(Vec<
     Ok((px, notes))
 }
 
+/// The General in body mode with weapon `id` in every movement state, then aiming up, level and down.
+fn render_motion(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, out: &Path) -> Result<(), String> {
+    use zhbo_native::thirdperson::state;
+    let layers = String::from_utf8(archive.bytes(zhbo_core::names::SOUND_LAYERS_PATH).ok_or("no sound_layers.txt")?).map_err(|e| e.to_string())?;
+    zhbo_core::torso::install(&layers);
+    let def = table.weapons.iter().find(|d| d.id == id).ok_or_else(|| format!("no weapon {id}"))?;
+    zhbo_core::config::init(zhbo_core::config::Config { native_body: 2, ..Default::default() });
+    let shot = open_renderer()?;
+    let mut tiles = Vec::new();
+    for (k, st) in (1..=state::COUNT).enumerate() {
+        // A third of a second in: every loop is mid-stride.
+        let px = render_body_at(archive, &shot, def.viewmodel, state::id(def.body_anims, st), 0.33, 3000 + k as u32, false)?;
+        println!("{id} motion state {st}");
+        tiles.push(to_rgb(&px));
+    }
+    write_sheet_cols(&out.join(format!("motion_{}.png", id.replace(['+', '~'], "_"))), &tiles, 6)?;
+    let mut tiles = Vec::new();
+    for (k, pitch) in [-40.0f32, 0.0, 40.0].into_iter().enumerate() {
+        let general = 3100 + k as u32;
+        ffi::publish_aim(std::iter::once((general, pitch, false)));
+        let px = render_body_at(archive, &shot, def.viewmodel, state::id(def.body_anims, state::STAND_IDLE), 0.0, general, true)?;
+        println!("{id} aim pitch {pitch}");
+        tiles.push(to_rgb(&px));
+    }
+    ffi::publish_aim(std::iter::empty());
+    write_sheet_cols(&out.join(format!("aim_{}.png", id.replace(['+', '~'], "_"))), &tiles, 3)?;
+    ffi::zhbo_native_body_reset();
+    zhbo_gfx::ffi::zhgfx_shutdown();
+    Ok(())
+}
+
 /// The General in body mode with weapon `id`: standing, then mid-way through each torso action.
 fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, out: &Path) -> Result<(), String> {
     use zhbo_core::torso;
@@ -354,11 +397,17 @@ fn render_torso(archive: &Archive, table: &zhbo_core::weapons::Table, id: &str, 
 
 /// One General in body mode, framed whole from the front-right, as a player beside him sees him.
 fn render_body(archive: &Archive, shot: &Shot, vm: i32, body_anims: u8, general: u32) -> Result<Vec<u8>, String> {
+    render_body_at(archive, shot, vm, zhbo_native::thirdperson::state::id(body_anims, zhbo_native::thirdperson::state::STAND_IDLE), 0.0, general, false)
+}
+
+/// [`render_body`] in body clip `state`, `time` seconds in, from the front-right or (`side`) from
+/// his right, square on.
+fn render_body_at(archive: &Archive, shot: &Shot, vm: i32, state: u16, time: f32, general: u32, side: bool) -> Result<Vec<u8>, String> {
     // The body is drawn at the General's size (`units::drawn_inches`).
     let k = zhbo_core::units::DRAWN_ZH_PER_INCH;
     let centre = [0.0, 0.0, 40.0 * k];
     let dist = 30.0 * k / (FOV / 2.0).tan();
-    let eye = [centre[0] + dist * 0.75, centre[1] - dist * 0.6, centre[2] + dist * 0.15];
+    let eye = if side { [centre[0], centre[1] - dist, centre[2]] } else { [centre[0] + dist * 0.75, centre[1] - dist * 0.6, centre[2] + dist * 0.15] };
     let view = look_at(eye, centre);
     let aspect = W as f32 / H as f32;
     let t = 1.0 / (FOV / 2.0).tan();
@@ -371,8 +420,8 @@ fn render_body(archive: &Archive, shot: &Shot, vm: i32, body_anims: u8, general:
         mode: 2,
         vm,
         faction: FACTION as i32,
-        state: zhbo_native::thirdperson::state::id(body_anims, zhbo_native::thirdperson::state::STAND_IDLE) as i32,
-        time: 0.0,
+        state: state as i32,
+        time,
         rate: 1.0,
         pos: [0.0; 3],
         yaw: 0.0,

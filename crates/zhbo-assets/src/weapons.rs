@@ -1126,6 +1126,7 @@ fn view_pos(p: bo2::ViewPos) -> ViewPos {
         prone_min_speed: p.prone_min_speed,
         ads_aim_pitch: p.ads_aim_pitch,
         ads_bob_factor: p.ads_bob_factor,
+        sprint_cycle_scale: p.sprint_cycle_scale,
     }
 }
 

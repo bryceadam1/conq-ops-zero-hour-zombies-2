@@ -42,6 +42,8 @@ pub mod cover;
 pub mod conformance;
 pub mod damage;
 pub mod death;
+pub mod footsteps;
+pub mod stepsounds;
 pub mod enginedamage;
 pub mod equipment;
 pub mod sensor;
