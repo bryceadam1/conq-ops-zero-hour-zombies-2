@@ -175,19 +175,19 @@ pub struct LocalShock {
     pub blur_alpha: f32,
 }
 
-static LOCAL_SHOCK: Mutex<Option<LocalShock>> = Mutex::new(None);
+presentation_global! { fn local_shock_slot() -> Mutex<Option<LocalShock>> = Mutex::new(None); }
 
 /// Set the local player's shock screen for this frame's scene (`None`: no shock). Called by
 /// `ffi::zhbo_client_frame`; read by the viewmodel draw, which queues the renderer's shock layer.
 /// Until that draw queues one, the HUD draws the whiteout itself ([`shock_layer_drawn`]).
 pub fn set_local_shock(shock: Option<LocalShock>) {
-    *LOCAL_SHOCK.lock().unwrap_or_else(|e| e.into_inner()) = shock;
+    *local_shock_slot().lock().unwrap_or_else(|e| e.into_inner()) = shock;
     SHOCK_LAYER.with(|d| d.set(false));
 }
 
 #[cfg_attr(not(feature = "renderer"), allow(dead_code))]
 pub(crate) fn local_shock() -> Option<LocalShock> {
-    *LOCAL_SHOCK.lock().unwrap_or_else(|e| e.into_inner())
+    *local_shock_slot().lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Whether the renderer took this frame's shock layer (then the HUD leaves the whiteout to it: the
@@ -360,19 +360,21 @@ pub fn visible_parts(parts: &[Part], ads: f32) -> Vec<bool> {
     parts.iter().map(|p| if aimed { p.ads_only || p.ads_swap.is_none() } else { !p.ads_only }).collect()
 }
 
-/// The viewmodel (`vm`) BO2 is not drawing this frame because its scope overlay's reticle zoom is
-/// up (`FUN_005374c0` → `FUN_00536f30` with `drawGun = 0`), or −1. Set once per client frame from
-/// [`crate::hud::state::HudLui::gun_under_overlay`]; read by the native draw.
-static GUN_UNDER_OVERLAY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+presentation_global! {
+    /// The viewmodel (`vm`) BO2 is not drawing this frame because its scope overlay's reticle zoom is
+    /// up (`FUN_005374c0` → `FUN_00536f30` with `drawGun = 0`), or −1. Set once per client frame from
+    /// [`crate::hud::state::HudLui::gun_under_overlay`]; read by the native draw.
+    fn gun_under_overlay_slot() -> std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+}
 
 /// Record (or clear, with `None`) the viewmodel hidden under its scope overlay this frame.
 pub fn set_gun_under_overlay(vm: Option<i32>) {
-    GUN_UNDER_OVERLAY.store(vm.unwrap_or(-1), std::sync::atomic::Ordering::Relaxed);
+    gun_under_overlay_slot().store(vm.unwrap_or(-1), std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether viewmodel `vm` is under its scope overlay this frame.
 pub(crate) fn gun_under_overlay(vm: i32) -> bool {
-    vm >= 0 && GUN_UNDER_OVERLAY.load(std::sync::atomic::Ordering::Relaxed) == vm
+    vm >= 0 && gun_under_overlay_slot().load(std::sync::atomic::Ordering::Relaxed) == vm
 }
 
 /// As [`build_mesh`], but skips the parts whose mask entry is false. The skeleton still holds every
@@ -507,19 +509,21 @@ impl Loaded {
     }
 }
 
-/// The local player's reticle choices from the last client frame: each slot weapon's viewmodel
-/// (and its alt modes') with the `weaponoptions.csv` row its lens takes (0: the optic's stock
-/// reticle). Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
-static LOCAL_RETICLE: Mutex<Vec<(i32, u32)>> = Mutex::new(Vec::new());
+presentation_global! {
+    /// The local player's reticle choices from the last client frame: each slot weapon's viewmodel
+    /// (and its alt modes') with the `weaponoptions.csv` row its lens takes (0: the optic's stock
+    /// reticle). Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
+    fn local_reticle_slot() -> Mutex<Vec<(i32, u32)>> = Mutex::new(Vec::new());
+}
 
 /// Record the local player's reticle choices: `(viewmodel, row)` per held optic.
 pub fn set_local_reticle(choices: Vec<(i32, u32)>) {
-    *LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()) = choices;
+    *local_reticle_slot().lock().unwrap_or_else(|e| e.into_inner()) = choices;
 }
 
 /// The reticle row for viewmodel `vm` (0, the stock reticle, when no slot's choice is its).
 pub(crate) fn local_reticle(vm: i32) -> u32 {
-    LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == vm).map_or(0, |c| c.1)
+    local_reticle_slot().lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == vm).map_or(0, |c| c.1)
 }
 
 /// The class's reticle rows by viewmodel: each `(weapon, reticle)` slot (`PlayerSim::held_reticles`)

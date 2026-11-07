@@ -322,17 +322,21 @@ fn request(inp: &ZhboNativeBodyIn, mode: Mode) -> Request {
     }
 }
 
-/// Lock-free per-General stowed weapon (`general << 32 | vm + 1`), published by the core after each
-/// logic step (`Sim::stowed_weapons`): presentation only, read by the third-person frame.
-static STOWED: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+presentation_global! {
+    /// Lock-free per-General stowed weapon (`general << 32 | vm + 1`), published by the core after each
+    /// logic step (`Sim::stowed_weapons`): presentation only, read by the third-person frame.
+    fn stowed() -> [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+}
 
-/// Each General's lethal and tactical (`general << 32 | (lethal vm + 1) << 16 | tactical vm + 1`),
-/// published with the stowed weapon (`Sim::offhand_weapons`). Presentation only.
-static OFFHANDS: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+presentation_global! {
+    /// Each General's lethal and tactical (`general << 32 | (lethal vm + 1) << 16 | tactical vm + 1`),
+    /// published with the stowed weapon (`Sim::offhand_weapons`). Presentation only.
+    fn offhands() -> [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+}
 
 pub fn publish_offhands(rows: &[(u32, [i32; 2])]) {
     use std::sync::atomic::Ordering;
-    for (i, slot) in OFFHANDS.iter().enumerate() {
+    for (i, slot) in offhands().iter().enumerate() {
         let v = rows.get(i).map_or(0, |&(g, [l, t])| ((g as u64) << 32) | (((l + 1) as u64 & 0xffff) << 16) | ((t + 1) as u64 & 0xffff));
         slot.store(v, Ordering::Relaxed);
     }
@@ -340,12 +344,12 @@ pub fn publish_offhands(rows: &[(u32, [i32; 2])]) {
 
 fn offhands_of(general: u32) -> [i32; 2] {
     use std::sync::atomic::Ordering;
-    OFFHANDS.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or([-1; 2], |v| [((v >> 16) & 0xffff) as i32 - 1, (v & 0xffff) as i32 - 1])
+    offhands().iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or([-1; 2], |v| [((v >> 16) & 0xffff) as i32 - 1, (v & 0xffff) as i32 - 1])
 }
 
 pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
     use std::sync::atomic::Ordering;
-    for (i, slot) in STOWED.iter().enumerate() {
+    for (i, slot) in stowed().iter().enumerate() {
         let v = pairs.get(i).map_or(0, |&(g, vm)| ((g as u64) << 32) | (vm + 1) as u32 as u64);
         slot.store(v, Ordering::Relaxed);
     }
@@ -353,7 +357,7 @@ pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
 
 fn stowed_of(general: u32) -> i32 {
     use std::sync::atomic::Ordering;
-    STOWED.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or(-1, |v| (v & 0xffff_ffff) as i32 - 1)
+    stowed().iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or(-1, |v| (v & 0xffff_ffff) as i32 - 1)
 }
 
 /// Each General's faction letter as the bridge names it to [`zhbo_native_body`] (`general << 8 |
@@ -376,10 +380,12 @@ pub fn faction_of(general: u32) -> Option<u8> {
     ((v >> 8) as u32 == general && v != 0).then_some((v & 0xff) as u8)
 }
 
-/// Each General's torso action this frame (`general << 32 | action << 28 | lethal << 27 | clip
-/// << 14 | milliseconds in`), published by the client (`client::remote`; the headless third-person
-/// render's `--torso` too): the body pass layers it. Presentation only.
-static TORSO: [std::sync::atomic::AtomicU64; 2 * crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; 2 * crate::sim::MAX_PLAYERS];
+presentation_global! {
+    /// Each General's torso action this frame (`general << 32 | action << 28 | lethal << 27 | clip
+    /// << 14 | milliseconds in`), published by the client (`client::remote`; the headless third-person
+    /// render's `--torso` too): the body pass layers it. Presentation only.
+    fn torso_slots() -> [std::sync::atomic::AtomicU64; 2 * crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; 2 * crate::sim::MAX_PLAYERS];
+}
 
 /// One General's torso action as the body pass takes it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -397,7 +403,7 @@ pub struct TorsoAction {
 pub fn publish_torso(torsos: impl Iterator<Item = TorsoAction>) {
     use std::sync::atomic::Ordering;
     let mut it = torsos;
-    for slot in TORSO.iter() {
+    for slot in torso_slots().iter() {
         let v = it.next().map_or(0, |a| {
             ((a.general as u64) << 32) | (((a.action & 0xf) as u64) << 28) | ((a.lethal as u64) << 27) | (((a.clip & 0x1fff) as u64) << 14) | (a.t * 1000.0).clamp(0.0, 16383.0) as u64
         });
@@ -408,7 +414,7 @@ pub fn publish_torso(torsos: impl Iterator<Item = TorsoAction>) {
 /// General `general`'s torso action, if he is in one.
 pub(crate) fn torso_of(general: u32) -> Option<TorsoAction> {
     use std::sync::atomic::Ordering;
-    TORSO.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| TorsoAction {
+    torso_slots().iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| TorsoAction {
         general,
         action: ((v >> 28) & 0xf) as u8,
         lethal: (v >> 27) & 1 != 0,
