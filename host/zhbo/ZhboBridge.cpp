@@ -27,6 +27,7 @@
 #include "Common/CRCDebug.h"
 #include "Common/File.h"
 #include "Common/FileSystem.h"
+#include "Common/GameEngine.h"
 #include "Common/AudioHandleSpecialValues.h"
 #include "Common/GameAudio.h"
 #include "Common/GameUtility.h"
@@ -662,6 +663,21 @@ void Zhbo_LogicStep(UnsignedInt frame)
 	// state hash lines, count from 0 as well), so a comparison must take the match's alone.
 	if (frame == 1)
 		logf("game start: %s", TheGameLogic->isInShellGame() ? "the shell map" : (TheNetwork ? "a network game" : "a local game"));
+	// Where this machine leaves a network game, by any path: the quit menu's Exit, the window's
+	// close or a SIGTERM (both MSG_META_DEMO_INSTANT_QUIT -> GameLogic::quit), or the harness's
+	// wall-clock exit (GGC_AUTO_EXIT_SECONDS: GameEngine::setQuitting). GameLogic::quit sends the
+	// local player's MSG_SELF_DESTRUCT, which every machine runs in lockstep (his General dies on
+	// all of them with no blow), and then this machine steps its last frames without the other
+	// players' commands: the multiplayer test compares the state hash only before this line.
+	static Bool s_leaveLogged = FALSE;
+	if (frame <= 1)
+		s_leaveLogged = FALSE;
+	if (!s_leaveLogged && TheNetwork && !TheGameLogic->isInShellGame() &&
+		(TheGameLogic->isQuitToDesktopRequested() || (TheGameEngine && TheGameEngine->getQuitting())))
+	{
+		s_leaveLogged = TRUE;
+		logf("network game: this machine is leaving the game (frame %u)", (unsigned)frame);
+	}
 	if (!s_crcMismatchLogged && TheNetwork && TheNetwork->sawCRCMismatch())
 	{
 		s_crcMismatchLogged = TRUE;

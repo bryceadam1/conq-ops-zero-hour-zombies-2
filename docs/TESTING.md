@@ -458,6 +458,18 @@ leaves a few seconds into, before its concussions land); the class change worn b
 the leave (it lets go of the leaver's General, and its sim runs on — at least 60 frames, until Zero
 Hour ends the game the host has won — with no mismatch). `ZHBO_MPTEST_ROUNDS=6` runs past ten minutes.
 
+**Where a machine leaves, the comparison stops.** However a machine quits a network game — the quit
+menu's Exit, a closed window or a SIGTERM (`MSG_META_DEMO_INSTANT_QUIT` → `GameLogic::quit`), or the
+harness's wall-clock exit — the bridge logs `network game: this machine is leaving the game (frame
+N)` once. `GameLogic::quit` sends the local player's `MSG_SELF_DESTRUCT`, which every machine runs in
+lockstep (his General dies everywhere with no blow); after that the quitting machine steps its last
+frames without the other's commands, so a self-destruct issued later by the other machine runs on
+that machine alone and the two logs part on the final frame. The script compares the state hash only
+before the first such line on either side. A run its wall-clock limit ended (`ZHBO_MPTEST_SECONDS`,
+which also sets the engine's `GGC_AUTO_EXIT_SECONDS`; under heavy machine load the lockstep crawls and
+the long run can reach it) fails `finished inside the wall-clock limit`, naming where each log
+stopped, so the cut-short checks above it read as what they are.
+
 Two machines (or the Windows VM and the Mac) need none of the above, only the same build: set
 `ZHBO_STATE_HASH_LOG=1` on both and compare the `state hash` lines afterwards. Zero Hour's online
 lobby also compares the exe CRC.

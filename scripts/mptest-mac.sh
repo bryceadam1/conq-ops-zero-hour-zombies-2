@@ -146,6 +146,7 @@ env $(shots join) ZHBO_AUTOPILOT_ROLE=target "$dist/conquerops" "${window[@]}" -
 
 # Until both runs are done (or one fails to start a game, or the limit).
 started=$(date +%s)
+hit_limit=0
 while true; do
     if grep -q "NetworkAutoStart failed" "$out/host-stdout.txt" "$out/join-stdout.txt" 2>/dev/null; then
         grep -h "NetworkAutoStart failed" "$out/host-stdout.txt" "$out/join-stdout.txt" >&2
@@ -158,7 +159,7 @@ while true; do
         (( $(date +%s) - left_at > 60 )) && break
     fi
     [[ -z "$(game_pids)" ]] && break
-    (( $(date +%s) - started > limit )) && break
+    if (( $(date +%s) - started > limit )); then hit_limit=1; break; fi
     sleep 2
 done
 # A few seconds for the last frames' hashes on both sides.
@@ -250,6 +251,15 @@ gone=$( (awk '/leaving the game in first person/ {l = 1} l && /\] spectator:/ {p
 if [[ -n "$gone" ]]; then
     awk -F '\t' -v g="$gone" '$1 + 0 < g' "$out/join-hashes.txt" >"$out/join-hashes.cut" && mv "$out/join-hashes.cut" "$out/join-hashes.txt"
 fi
+# Any machine leaving by any other path (the wall-clock limit's exit or kill, a closed window): the
+# bridge logs where its quit began. Its MSG_SELF_DESTRUCT still runs in lockstep, but from there on
+# that machine steps without the other's commands, so neither log's later frames are comparable.
+quit_frame=$( (cat "$h" "$j" 2>/dev/null | sed -nE 's/.*network game: this machine is leaving the game \(frame ([0-9]+)\).*/\1/p' || true) | sort -n | head -1)
+if [[ -n "$quit_frame" ]]; then
+    for f in "$out/host-hashes.txt" "$out/join-hashes.txt"; do
+        awk -F '\t' -v g="$quit_frame" '$1 + 0 < g' "$f" >"$f.cut" && mv "$f.cut" "$f"
+    done
+fi
 join -t $'\t' "$out/host-hashes.txt" "$out/join-hashes.txt" >"$out/hashes-joined.txt" || true
 common=$(wc -l <"$out/hashes-joined.txt" | tr -d ' ')
 differ=$(awk -F '\t' '$2 != $3' "$out/hashes-joined.txt" | wc -l | tr -d ' ')
@@ -327,6 +337,14 @@ if (( long )); then
     else
         fail "the joiner left in first person"
     fi
+fi
+
+# A run the wall-clock limit ended (ZHBO_MPTEST_SECONDS; the engine's GGC_AUTO_EXIT_SECONDS at the
+# same limit): the checks above judged a cut-short match. Say so, with where each log stopped.
+if (( hit_limit )); then
+    last_of() { awk '/game start: a network game/ {keep = 1} keep && match($0, /state hash: frame [0-9]+ /) {f = substr($0, RSTART + 18, RLENGTH - 19) + 0; if (f > m) m = f} END {print m + 0}' "$1" 2>/dev/null; }
+    last_h=$(last_of "$h"); last_j=$(last_of "$j")
+    fail "finished inside the wall-clock limit" "${limit} s ran out at host frame ${last_h:-?}, joiner frame ${last_j:-?}${quit_frame:+; a machine began leaving at frame $quit_frame}"
 fi
 
 echo "logs: $out (host.log, join.log, *-stdout.txt, hashes-joined.txt)"
