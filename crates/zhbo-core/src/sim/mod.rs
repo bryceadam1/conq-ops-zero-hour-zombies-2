@@ -809,6 +809,21 @@ impl Sim {
         self.blows.iter().rev().find(|b| b.victim == general).copied()
     }
 
+    /// A landing's fall damage (`movement::land::crash_land`): BO2's server deals the event's
+    /// percent of the player's max health, a 100% fall `FallDamageFullScale` of it, as
+    /// `MOD_FALLING` from no attacker (`FUN_005d2a30` → `G_Damage`). His own blow here: the
+    /// scoring host reports a death by it like any other (`KilledBy`).
+    fn fall_damage(&mut self, host: &dyn LogicHost, p: &PlayerSim, landing: movement::Landing) {
+        if landing.damage == 0 {
+            return;
+        }
+        let share = if landing.damage >= 100 { p.arsenal.tuning.fall_damage_full_scale } else { f32::from(landing.damage) * 0.01 };
+        let amount = (p.max_health * share).trunc();
+        if amount > 0.0 {
+            host.damage(p.general, p.general, amount, crate::damage::Blow::bare(MeansOfDeath::Falling));
+        }
+    }
+
     /// Seat `idx`'s General died: when Zero Hour's own weapons dealt his last blow, report it as
     /// the sim reports its own kills (`KilledBy`, `score`), for his death animation.
     fn engine_kill(&mut self, host: &dyn LogicHost, idx: usize, general: u32) {
@@ -1046,6 +1061,11 @@ impl Sim {
         let mut input = p.input;
         input.pressed = p.pressed_accum;
         p.pressed_accum = 0;
+        // Prone, the view turns the body after it and is held within `bg_prone_yawcap` of it
+        // (`FUN_008c29a0`, `FUN_008c2720`; the client caps its own view the same way).
+        let (fwd, side) = input.move_axes();
+        input.yaw = movement::prone_view_yaw(&mut p.body, input.yaw, fwd != 0.0 || side != 0.0, &self.tuning, LOGIC_DT);
+        p.input.yaw = input.yaw;
         // The aim is the view plus the kick the last frame left (`FUN_00549fb0`).
         let (off_yaw, off_pitch) = p.aim_offset();
         p.yaw = crate::math::wrap_angle(input.yaw + off_yaw);
@@ -1107,10 +1127,11 @@ impl Sim {
                 } else {
                     let mods = MoveModifiers {
                         // A shellshock scales the run speed for its whole duration (`PM_CmdScale`).
-                        speed_scale: p.arsenal.move_scale() * p.shock.movement(),
+                        speed_scale: p.arsenal.move_scale(p.body.stance == Stance::Prone) * p.shock.movement(),
                         block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 || p.building,
                         sprint_time_scale: p.arsenal.sprint_scale(),
                         move_faster: p.arsenal.move_faster(),
+                        fall_height: p.arsenal.has_specialty(Specialty::FallHeight),
                         charge: self.melee_charge(host, p),
                     };
                     // The aim spread's update reads the player as this frame's move finds him
@@ -1127,7 +1148,10 @@ impl Sim {
                         // The step fills the stance and the ground speed.
                         ..p.arsenal.spread_in
                     };
-                    movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
+                    let landing = movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
+                    if let Some(l) = landing {
+                        self.fall_damage(host, p, l);
+                    }
                     p.arsenal.spread_in.view_height = Some(p.body.eye_height / crate::units::DRAWN_ZH_PER_INCH);
                     let jumped = before.0 && !p.body.on_ground && p.body.vel.z > 0.0 && input.pressed & buttons::JUMP != 0;
                     let lowering = p.body.eye_height < before.1 - 1e-4;

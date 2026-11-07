@@ -118,7 +118,30 @@ mod swap_tests {
             a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
         }
         assert_eq!(a.ads, 0.0);
-        assert_eq!(a.move_scale(), shield.move_scale);
+        assert_eq!(a.move_scale(false), shield.move_scale);
+    }
+
+    #[test]
+    fn aiming_walks_at_bo2s_04_times_the_ads_move_scale() {
+        // FUN_008c4110: PMF_WALKING (the sights wanted, FUN_008c5310) scales the walk by 0.4 and
+        // takes adsMoveSpeedScale for moveSpeedScale; prone, an ADS fraction above 0 does.
+        let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef { aims: true, move_scale: 0.95, ads_move_scale: 2.0, ads_in_time: 0.3, ads_out_time: 0.3, ..Default::default() }));
+        let mut a = Arsenal::new();
+        a.weapons[0] = WeaponState::new(def);
+        a.raise_left = 0.0;
+        assert_eq!(a.move_scale(false), 0.95);
+        let mut rng = Rng::new(1);
+        let mut out = Vec::new();
+        a.step(buttons::ADS, buttons::ADS, false, 0, 0.0, &mut rng, &mut out);
+        a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert!(a.sights && a.ads > 0.0 && a.ads < 1.0);
+        let walk = a.tuning.ads_walk_scale;
+        assert_eq!(walk, 0.4);
+        assert_eq!(a.move_scale(false), walk * 2.0, "aimed from the press, not the fraction");
+        a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!a.sights && a.ads > 0.0, "coming out of the sights");
+        assert_eq!(a.move_scale(false), 0.95, "the release walks at the hip speed at once");
+        assert_eq!(a.move_scale(true), walk * 2.0, "prone: the fraction decides");
     }
 }
 

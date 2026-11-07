@@ -165,6 +165,10 @@ pub struct Arsenal {
     /// The drop under way is an alt toggle's (BO2's state 5): the mode changes when it ends.
     pub alt_pending: bool,
     pub ads: f32,
+    /// The sights are wanted this frame (BO2's `PMF_SIGHT_AIMING`, `0x10`): the aim button down
+    /// and nothing refusing the aim ([`Arsenal::step`]'s `wants_ads`). The walk reads it
+    /// ([`Arsenal::move_scale`]).
+    pub sights: bool,
     /// Seconds since sprinting stopped (weapon comes back up over `sprint_out_time`).
     pub since_sprint: f32,
     /// The melee weapon's `melee_time` left (states 0x13/0x14), in plain time.
@@ -204,7 +208,7 @@ pub struct Arsenal {
 // CRC covers it).
 crate::statehash::state_hash!(struct Arsenal {
     loadout, weapons, active, lethal, tactical, melee, class_melee, raise_left, raise_total, raise_kind, drop_left,
-    drop_total, previous, alt_pending, ads, since_sprint, melee_left, melee_recover_left, melee_delay_left, offhand,
+    drop_total, previous, alt_pending, ads, sights, since_sprint, melee_left, melee_recover_left, melee_delay_left, offhand,
     plant_ok, aim_spread, spread_in, shot_scale, swaps_pending, held_last, since_reload_press, cooked,
 } skip { tuning });
 
@@ -259,6 +263,7 @@ impl Arsenal {
             previous: 0,
             alt_pending: false,
             ads: 0.0,
+            sights: false,
             since_sprint: 10.0,
             melee_left: 0.0,
             melee_recover_left: 0.0,
@@ -347,6 +352,7 @@ impl Arsenal {
             previous: 0,
             alt_pending: false,
             ads: 0.0,
+            sights: false,
             since_sprint: 10.0,
             melee_left: 0.0,
             melee_recover_left: 0.0,
@@ -496,6 +502,7 @@ impl Arsenal {
     pub fn put_away(&mut self) {
         self.current_mut().interrupt();
         self.ads = 0.0;
+        self.sights = false;
     }
 
     /// Whether the weapon-switch key has another weapon to cycle to. BO2's client cycles its
@@ -511,15 +518,20 @@ impl Arsenal {
         self.raise_left > 0.0 || self.drop_left > 0.0 || self.current().is_reloading() || self.melee_left > 0.0 || self.melee_recover_left > 0.0 || self.offhand.is_some()
     }
 
-    /// Movement speed multiplier from the held weapon: its `adsMoveSpeedScale` while aiming, else
-    /// its `moveSpeedScale` (`FUN_008ed080`; G2). Lightweight is the movement's own
-    /// ([`Arsenal::move_faster`]).
-    pub fn move_scale(&self) -> f32 {
+    /// Movement speed multiplier from the held weapon (`FUN_008c4110` PM_CmdScale_Walk). Aiming
+    /// is BO2's `PMF_WALKING` (`FUN_008c5310`: the sights wanted, not prone — the reload states
+    /// already refuse them) or, prone, an ADS fraction above 0: the speed takes `AdsWalkScale`
+    /// (0.4) and the weapon's `adsMoveSpeedScale` (`FUN_008ed080`: the def's, an attachment's
+    /// replacing it); otherwise its `moveSpeedScale`, and a def without one takes the ADS scale
+    /// alone. Lightweight is the movement's own ([`Arsenal::move_faster`]).
+    pub fn move_scale(&self, prone: bool) -> f32 {
         let d = self.current().def;
-        if self.ads > 0.0 {
-            d.ads_move_scale
+        let aiming = if prone { self.ads > 0.0 } else { self.sights };
+        let walk = if aiming { self.tuning.ads_walk_scale } else { 1.0 };
+        if d.move_scale > 0.0 && !aiming {
+            walk * d.move_scale
         } else {
-            d.move_scale
+            walk * d.ads_move_scale
         }
     }
 
@@ -597,6 +609,7 @@ impl Arsenal {
         };
         self.raise_total = self.raise_left;
         self.ads = 0.0;
+        self.sights = false;
         // The raise opens the spread scale (`FUN_008df320`), once the drop is done.
         if self.drop_left <= 0.0 {
             self.aim_spread.open();
@@ -626,6 +639,7 @@ impl Arsenal {
         (self.raise_left, self.raise_kind) = if first { (to.first_raise_time, RaiseKind::First) } else { (to.raise_time, RaiseKind::Normal) };
         self.raise_total = self.raise_left;
         self.ads = 0.0;
+        self.sights = false;
         self.aim_spread.open();
         Some((slot, state, gave_knife))
     }
@@ -699,6 +713,7 @@ impl Arsenal {
         // aim in the alt drop and raise states, 5 and 2).
         if !self.ads_only_pair() {
             self.ads = 0.0;
+            self.sights = false;
         }
         self.previous = self.active;
         self.alt_pending = true;
@@ -730,6 +745,7 @@ impl Arsenal {
         let raise = if ads_only { 0.0 } else { to.alt_raise_time };
         if !ads_only {
             self.ads = 0.0;
+            self.sights = false;
         }
         self.raise_left = raise;
         self.raise_total = raise;
@@ -941,6 +957,7 @@ impl Arsenal {
             self.melee_left = m.melee_time.max(0.3);
             self.current_mut().interrupt();
             self.ads = 0.0;
+            self.sights = false;
             out.push(WeaponAction::MeleeSwing);
             if m.melee_delay > 0.0 {
                 self.melee_delay_left = m.melee_delay;
@@ -974,6 +991,7 @@ impl Arsenal {
             && self.melee_recover_left <= 0.0
             && !self.current().is_reloading();
         let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
+        self.sights = wants_ads;
         self.ads = if wants_ads {
             (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)
         } else if !def.aims {
@@ -1361,6 +1379,7 @@ impl Arsenal {
         w.interrupt();
         w.cooldown = 0.0;
         self.ads = 0.0;
+        self.sights = false;
         self.cooked = 0.0;
         self.raise_left = 0.0;
         // An offhand may start while the gun comes back up from a melee (0x15 is not among
@@ -1463,7 +1482,7 @@ impl Default for Arsenal {
 /// The combination holds an attachment of BO2's `eAttachment` `kind` (`FUN_008eb270`), resolved
 /// through its base weapon's allowed list (a combination's own is cleared) and the catalog's
 /// attachment table.
-fn has_attachment_kind(def: &WeaponDef, kind: u8) -> bool {
+pub(crate) fn has_attachment_kind(def: &WeaponDef, kind: u8) -> bool {
     if def.attachments.is_empty() {
         return false;
     }

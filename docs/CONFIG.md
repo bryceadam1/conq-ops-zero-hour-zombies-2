@@ -158,3 +158,20 @@ every game start (`MSG_NEW_GAME` → `Zhbo_PaceNewGame`, `ZhboDetail.cpp`):
 
 The bridge logs `render rate: up to N fps (<why>; display M Hz), logic L fps` when a game starts,
 and `game speed: N fps (a script's | the game's own)` when a script changes it.
+
+## The gameplay tuning pack (`data/ConquerOps/tuning.ini`)
+
+Not an environment variable but the mod's one gameplay ini: it ships in `ConquerOps.big`, every
+player must have the same file (it is in the content CRC), and `tuning.rs`'s defaults must equal it
+(a test checks). Keys are BO2's dvar names or, for engine constants, a descriptive name whose doc
+cites the address (CONTRACT.md "Tuning"). The `[Movement]` section carries t6mp's Pmove: `g_speed`,
+the sprint, stance and jump dvars; `StanceCrouchTime` (the 200 ms stand-crouch eye leg; the prone
+legs are `StanceProneDownTime`/`StanceProneUpTime`); `PlayerAccelStand/Crouch/Prone/Air` (9, 12, 19,
+1); `FrictionMinSpeed`; `MinWalkNormal` (0.7: the steepest walkable ground); the jump's landing
+slowdown (`jump_slowdownEnable`, `JumpLandScale`/`Time`, `JumpLandHighScale`/`Time`,
+`JumpSlowdownMax`/`Ramp`/`RampTime`, `JumpRepeatTime`; milliseconds); the fall damage
+(`bg_fallDamageMinHeight` 128, `bg_fallDamageMaxHeight` 300 inches, `FallDamageFullScale` 1.1), the
+hard landing (`HardLand*`) and the landing's view and gun dip (`LandDip*`); prone turning
+(`bg_prone_yawcap` 45, `ProneSwingSpeed` 55 deg/s, `ProneSwingMargin`); and the aimed walk's
+`AdsWalkScale` (0.4, times the weapon's `adsMoveSpeedScale`). Setting `jump_slowdownEnable = 0`
+turns the landing slowdown and the repeated-jump penalty off together, as the dvar does.

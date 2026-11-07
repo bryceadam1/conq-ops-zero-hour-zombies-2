@@ -490,10 +490,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .float("ads_zoom_fov3", fl(d.zoom.fov3))
         .float("ads_zoom_in_frac", fl(d.zoom.in_frac))
         .float("ads_zoom_out_frac", fl(d.zoom.out_frac))
-        // The definition stores the ADS walk as the converter's base (0.35 of a walk) times BO2's
-        // scale (`to_def`, `attachments::apply`): divided back, it is BO2's scale. The replacement
-        // walk never stacks the base and an attachment (evoskorpion_mp: BO2 2.55 → mod 0.8925 → 2.55).
-        .float("ads_move_speed_scale", fl(d.ads_move_scale / crate::weapons::ADS_MOVE_BASE))
+        // The definition stores BO2's scale as is (`to_def`, `attachments::apply`: an attachment's
+        // replaces the weapon's, evoskorpion_mp 2.55); the walk's 0.4 is the sim's `AdsWalkScale`.
+        .float("ads_move_speed_scale", fl(d.ads_move_scale))
         .float("move_speed_scale", fl(d.move_scale))
         .float("sprint_duration_scale", fl(d.sprint_duration_scale))
         .float("alt_scope_ads_in_time", fl(d.zoom.alt_scope_in_time))

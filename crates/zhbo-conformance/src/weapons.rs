@@ -219,7 +219,7 @@ pub fn schema() -> Schema {
     s
         .col("ads_zoom_in_frac", "ads", f, "first attachment differing from defaultattachment, else the variant's (FUN_008ec4b0)")
         .col("ads_zoom_out_frac", "ads", f, "same rule (FUN_008ec520)")
-        .col("ads_move_speed_scale", "ads", f, "the def's if > 0 else 1, then the last attachment differing from defaultattachment replaces it (FUN_008ed080); the mod's side is its stored ADS walk divided by the converter's 0.35 base")
+        .col("ads_move_speed_scale", "ads", f, "the def's if > 0 else 1, then the last attachment differing from defaultattachment replaces it (FUN_008ed080); the mod's side is the def's stored scale (the walk's 0.4 is the sim's AdsWalkScale)")
         .col("move_speed_scale", "ads", f, "moveSpeedScale")
         .col("sprint_duration_scale", "ads", f, "sprintDurationScale")
         .col("alt_scope_ads_in_time", "ads", f, "first attachment differing from defaultattachment, else the def's (FUN_008ecbc0)")

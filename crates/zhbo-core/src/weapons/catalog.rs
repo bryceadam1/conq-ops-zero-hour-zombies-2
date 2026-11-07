@@ -928,7 +928,7 @@ Weapon an94_mp
   AdsKick = 30 47.5 -50 50
   HipKick = 30 47.5 -50 50
   ViewKickCenter = 1500 1500
-  Move = 0.95 0.5 1
+  Move = 0.95 1 1
   FxWeapon = ZHBO_MTAR_FX
   Viewmodel = 0
   Anims = 60000ee003f007ff85005e
@@ -963,7 +963,7 @@ Weapon fnp45_mp
   AdsKick = 60 80 -40 40
   HipKick = 60 80 -40 40
   ViewKickCenter = 1100 1100
-  Move = 1 0.65 1
+  Move = 1 2.1 1
   FxWeapon = ZHBO_B23R_FX
   Viewmodel = 1
   Anims = 60007e60fff03fff85e256
@@ -1122,7 +1122,7 @@ Weapon riotshield_mp
   Clip = 1
   StartReserve = 0
   MaxReserve = 0
-  Move = 0.9 0.9 1
+  Move = 0.9 1 1
   Melee = 70 0.8
   MeleeDelay = 0.1
   Shield = 0 0 0 1 16 0 36 -4 -17 -26 4 17 26 0 0 1 0 -8 0 44 -4 -17 -14 4 17 14 0 0 0 1 0 0 0 -2 -17 -26 8 17 27

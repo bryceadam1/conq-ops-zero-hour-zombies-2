@@ -396,9 +396,6 @@ const INCH: f32 = zhbo_native::ART_SCALE;
 /// The bob cycle advances one swing per this many Zero Hour units walked (`ps->bobCycle`: it
 /// follows ground distance, not time).
 const BOB_STRIDE: f32 = 9.0;
-/// Landing dip (BO2 inches) and its recovery rate (per second).
-const LAND_DIP: f32 = 0.8;
-const LAND_RECOVER: f32 = 8.0;
 
 /// The viewmodel's offset from the eye this frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -411,7 +408,8 @@ pub struct Pose {
 
 /// The viewmodel's motion: BO2's gun-position state (the stance and movement offsets, sway and
 /// the gun kick spring; Ghidra G4/G5, `weapons::gunpos`), fed this frame's stance, speed, aim and
-/// view, plus the bob cycle, the sprint pose's weight and the landing dip.
+/// view, plus the bob cycle, the sprint pose's weight and the clock of the sim's last landing
+/// (`Body::land_change`, BO2's `landChange`: gunpos dips the gun by it, `FUN_00530990`).
 #[derive(Clone, Debug, Default)]
 pub struct Motion {
     gun: GunPos,
@@ -419,12 +417,13 @@ pub struct Motion {
     bob: f32,
     /// The sprint pose's weight 0..1 (G4's sprint raise/drop curve, which the caller supplies).
     sprint: f32,
-    /// The landing dip 0..1, and whether the feet were off the ground last frame.
-    land: f32,
-    airborne: bool,
+    /// The landing this motion last saw (`Body::land_time`; none before its first update) and the
+    /// seconds since it, run on this motion's own clock: the client's at the display's rate.
+    land_seen: Option<f32>,
+    since_land: f32,
 }
 
-crate::statehash::state_hash!(struct Motion { gun, bob, sprint, land, airborne });
+crate::statehash::state_hash!(struct Motion { gun, bob, sprint, land_seen, since_land });
 
 impl Motion {
     /// The gun's angles an aimed iron-sight shot follows, radians in the [`Pose`] convention (yaw
@@ -458,12 +457,14 @@ impl Motion {
         let step = rate * dt;
         self.sprint = if (target - self.sprint).abs() <= step { target } else { self.sprint + step * (target - self.sprint).signum() };
 
-        // The landing dip: down on the frame the feet touch, back up over the next eighth-second.
-        if p.body.on_ground && self.airborne {
-            self.land = 1.0;
+        // The landing's clock: a new landing starts it; a motion made after the landing takes up
+        // its age instead of replaying it.
+        match self.land_seen {
+            Some(t) if t == p.body.land_time => self.since_land += dt,
+            Some(_) => self.since_land = 0.0,
+            None => self.since_land = p.body.since_land().max(0.0),
         }
-        self.airborne = !p.body.on_ground;
-        self.land *= crate::math::det::exp(-dt * LAND_RECOVER);
+        self.land_seen = Some(p.body.land_time);
 
         if let Some(impulse) = shot {
             self.gun.spring.kick(impulse);
@@ -488,17 +489,20 @@ impl Motion {
             fov,
             // BO2's view angles: its pitch is positive looking down, the sim's looking up.
             view: (-pitch.to_degrees(), yaw.to_degrees()),
-            // The landing dip stays the client's own: the fall delta `FUN_00530990` wants is not
-            // in the sim's state (no `landChange`), so gunpos's dip contributes nothing.
-            land_change: 0.0,
-            since_land: 0.0,
+            land_change: p.body.land_change,
+            since_land: self.since_land,
+            // Only asked inside a dip's window while aimed (it resolves the attachment list).
+            target_finder: ads > 0.0
+                && p.body.land_change != 0.0
+                && self.since_land * 1000.0 < p.arsenal.tuning.land_dip_down_time + p.arsenal.tuning.land_dip_up_time
+                && crate::weapons::has_attachment_kind(def, crate::weapons::gunpos::RANGEFINDER_KIND),
             idle_time: p.idle.time,
             idle_stance: p.idle.stance,
         };
         // BO2's pose (forward, left, up; pitch down) into the renderer's: `GunPose::view`, the one
         // conversion (the sim's fire angles go through the same `view_angles`).
         let (o, a) = self.gun.step(def, &input, &p.arsenal.tuning, dt).view();
-        Pose { offset: Vec3::new(o[0] * INCH, o[1] * INCH, (o[2] - LAND_DIP * self.land) * INCH), angles: Vec3::new(a[0], a[1], a[2]) }
+        Pose { offset: Vec3::new(o[0] * INCH, o[1] * INCH, o[2] * INCH), angles: Vec3::new(a[0], a[1], a[2]) }
     }
 }
 

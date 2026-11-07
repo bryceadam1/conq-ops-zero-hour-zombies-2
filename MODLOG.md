@@ -13870,3 +13870,116 @@ item agents, and a machine crash interrupted one long run (rerun). Screenshots i
 shows at the camera's feet, under the tablet's putaway (`crop-798-806.png`, `crop-804.png`); not
 traced in this integration. The tablet's known one-frame W3D draw while the native pass loads stays as
 tablet-render left it.
+
+## Movement by t6mp's Pmove: the landing, fall damage, acceleration, the eye, prone, the aimed walk (2026-11-06, branch `v1/movement-rules`)
+
+The bo2-audit (sim-gameplay F6, F7, F10, F13; mechanical-scan F3, F4, F6; presentation M5) found the
+movement's fine print to be the mod's own: no landing slowdown, no fall damage, acceleration 9/1
+"the mod's", a 55-degree slope, a linear 0.2 s eye blend, no prone yaw cap, an uncited 0.35 ADS walk
+base and a client-side 0.8-inch landing dip. Each is now t6mp's rule, read in Ghidra (read-only
+`run.sh` queries; decompiles and disassembly in `~/.opencode/plan/movement-rules/x*.c`, `d_*.txt`,
+float constants read straight from the unpacked exe with `rd.py`), with every number a tuning-pack
+key citing its address.
+
+* **The jump's landing** (`FUN_008b4e40` Jump_ApplySlowdown, `FUN_008b4f00` Jump_ReduceFriction,
+  `FUN_008b5000` Jump_Start, `FUN_008b52f0` CheckJump, `FUN_008c20a0` PM_DropTimers). The jumping
+  flag (`pm_flags 0x4000`) stays up through the landing; the first walk frame scales the velocity by
+  0.65 and starts `pm_time` 1800 (0.5 and 1200 when the feet land at or above the take-off + 18).
+  The audit's reading was right on the constants but not on the ramp's use: the factor (2.5 above
+  1700 ms left, then `1 + pm_time x 1.5 / 1700`) multiplies **friction's control** (`FUN_008bfea0`
+  calls `FUN_008b4f00` there), not the speed scale, and divides the next jump's `v^2` (the bunny-hop
+  penalty: an immediate second jump is 39 / 2.5 inches). A jump needs 500 ms since the last. The
+  flag clears when `pm_time` runs out. `jump_slowdownEnable 0` lifts all of it.
+* **Every landing** (`FUN_008c0b20` PM_CrashLand, found as the ground trace `FUN_008c61a0`'s call
+  when the ground entity was none). The fall height is the landing speed's `v^2 / 2g`, solved by the
+  engine's quadratic from the frame's start origin and velocity. **G2's "unresolved" curve:** the
+  `bg_fallDamageMin/MaxHeight` dvars are registered and never read (their handles' only byte
+  references are the registration); PM_CrashLand calls `FUN_008bb890`/`FUN_008bb880`, which return
+  the constants 128 and 300 — the dvars' defaults — and the damage is `trunc((h - 128) / 172 x
+  100)`, 0 below one percent, 100 from 300 (disassembly `0x008c0bdc-0x008c0c56`). Lightweight's
+  `fallheight` (`ps+0x548` bit 14, specialty 14) zeroes it: BO2's Lightweight takes no fall
+  damage. The server (`FUN_005d2a30`, event `0xa9 + surface`) deals `maxhealth x damage / 100`
+  (x1.1 at 100%) as means 12, `MOD_FALLING`, with no attacker: the sim deals it as the General's own
+  `LogicHost::damage` blow, so the scoring host reports a death by it (`KilledBy`; on the ground,
+  BO2's normal death). A hurting landing runs a hard-landing timer (`damage x 35 + 500` ms, at most
+  2000; `pm_flags 0x80`) with friction's control x0.3 and the ground acceleration x0.25, and scales
+  the velocity 0.5 → 0.2; one that does not, from above 12 inches, by 0.67 — so a plain jump's
+  landing is 0.67 then 0.65.
+* **Acceleration and friction** (`FUN_008c7af0` PM_WalkMove, `FUN_008c7810` PM_AirMove,
+  `FUN_008c0100` PM_Accelerate). Ground acceleration is per stance: 9 standing, 12 crouched, 19
+  prone; air 1. Both scale `max(wish speed, stopspeed)`, so a prone crawl reaches its speed in a
+  frame. Friction stops the player below 1 in/s. **The walkable slope** is the trace's
+  (`FUN_006b7d40`: walkable when the normal's z >= 0.7, `0x00b10df0`): a gradient of 1.02 (45.6
+  degrees), measured on the terrain's facet; the mod's step allowance per 2-unit sub-step had made
+  any continuous slope climbable, so a rise now also needs walkable ground under it.
+* **Exact vertical integration.** The fall test exposed the mod's semi-implicit Euler: a 214-inch
+  drop landed at 205 inches' speed and a jump peaked short of 39 (dipping 6 instead of 8). The air
+  frame now moves by the mean of the start and end velocity, as the engine's slide move does with
+  gravity — exact under constant gravity.
+* **The landing dip** (`FUN_004c1590` CG_EntityEvent, `FUN_0051f760` the view, `FUN_00530990` the
+  gun). The event's parameter is `(int)(((h - 12) / 26 + 1) x 4)`, at most 24 (a hurting landing's
+  from its damage turned back into a height); `landChange` is its negative. The **camera** sinks by
+  all of it over 150 ms and comes back by 450 (never under 8 inches over the feet) — a view dip the
+  presentation audit only suspected — and the gun by a further 0.25 of it (0.02 aimed with a target
+  finder, `eAttachment` 19, `FUN_008eb270(w, 0x13)`). `Body` records `land_change`/`land_time`; the
+  client's camera is `Body::view_eye` (shots still leave `Body::eye`), the viewmodel's motion runs
+  the dip on its own clock from the sim's landing, and the fixed 0.8-inch curve is gone. A jump on
+  flat ground dips the view 8 inches.
+* **The eye's stance legs** (`FUN_008c1120` PM_ViewHeightAdjust, `FUN_008c1040` durations,
+  `FUN_008c1070` the table lerp). The view height goes one leg at a time (standing to prone passes
+  crouched) along four waypoint tables in the exe (`0x00f6ba88/ad0/b18/b70`, dumped with `tbl.py`):
+  going prone it sinks to 0.138 of the way at half time, comes back up to 0.24 and settles; getting
+  up it dips first. A reversed stance turns the leg round from where it is (`start = now - time x
+  (100 - frac) / 100`). The stance speed blend (`FUN_008c3e00`) reads the same leg, which also
+  means standing to prone runs the 200 ms crouch leg at prone's 0.15 before the 600 ms 0.65 → 0.15
+  blend: odd, but the engine's.
+* **Prone turning** (`FUN_008c29a0`, `FUN_008c2720`). The prone body has its own yaw; it turns after
+  the view at 55 deg/s while the view is more than 40 degrees off or the player crawls, and the
+  view is clamped to 45. The sim caps the yaw it is sent (`movement::prone_view_yaw`) and the client
+  caps its own accumulator against the predicted body (`movement::cap_prone_yaw`), so the input
+  stream needs nothing new. Not ported: the prone body's collision traces (`FUN_008bdd00`).
+* **The aimed walk** (`FUN_008c4110` PM_CmdScale_Walk, `FUN_008c5310`). The disassembly settles F10:
+  `PMF_WALKING` (`0x40`, set when the aim button is down with `PMF_SIGHT_AIMING`, not prone, not
+  in a reload state) or a lean or prone-with-ADS multiplies the speed by **0.4** (`0x00b0cfa0`)
+  and takes `adsMoveSpeedScale` instead of `moveSpeedScale`. So aiming slows from the press, not by
+  the ADS fraction, and the release walks at hip speed at once. The weapon table now stores BO2's
+  own `adsMoveSpeedScale` (the conformance column reads it directly) and the arsenal tracks the
+  sights flag; `ADS_MOVE_BASE` is gone. The built-in stand-ins take BO2's values (AN-94 1, FNP45
+  2.1, shield 1).
+
+**Already matching:** run speed and stance scales (G2), the jump height formula, friction 5.5 (a
+constant `0x00bcf80c` in t6mp, the dvar's default) and stopspeed 100.
+
+**Gotcha: a dvar that is never read.** t6mp registers `bg_fallDamageMinHeight`/`MaxHeight` but the
+crash land uses hard constants equal to their defaults; a cfg changing the dvar changes nothing.
+Search the handle's bytes in the exe (`find.py`) before concluding a dvar's reader is missing from
+Ghidra's analysis.
+
+**Gotcha: a waypoint lerp returns its `to` at 0 percent.** `FUN_008c1070` returns the leg's `to`
+height when the percent is 0; it is only called with the percent above 0 (the leg starts on one
+frame and is first sampled on the next), so the port lerps the table from its first waypoint.
+
+**Not applicable:** water level (`ps+0x5b8`: halved fall damage, water friction) — the General never
+swims; the `FUN_006bf700(4)` game-mode gate that makes fall damage 1.
+
+**Tests.** `movement::tests` (the landing slowdown and its recovery, the repeated jump, the 500 ms
+gate, the fall-damage curve and `fallheight`, the hard landing, the walkable normal, per-stance
+acceleration, the camera dip and its floor), `movement::land::tests`, `movement::stance::tests` (the
+engine tables, the legs, a reversed leg, the speed blend, prone turning and the cap),
+`weapons::swap_tests::aiming_walks_at_bo2s_04_times_the_ads_move_scale`, the gunpos dip test (the
+target finder's 0.02), and `sim::tests::a_fall_deals_its_share_of_max_health_as_mod_falling`
+(through the fake host: 50% at 214 inches as the General's own `MOD_FALLING` blow, nothing below
+128, max health x 1.1 at 100% and a `KilledBy`). The new body and arsenal state reach the lockstep
+hash (`every_field_of_the_state_changes_the_hash_and_its_own_part`).
+
+**Verified.** `cargo test --workspace` green (without `ZHBO_BO2_DIR`); clippy clean (workspace
+`--all-targets`). Real install: the roster lockstep gate (`the_install_roster_plays_in_lockstep`:
+230 classes, 78 rounds, 51,480 frames) green. Conformance CLI: weapons 0 cells, cac 0 + 4 BO2-only,
+every CSV equal to the hipfire-accuracy baseline (`ads_move_speed_scale` now reads the stored value
+directly and still matches every row). In game (`cargo xtask build`): default 18/18, `--input` 3/3,
+`--rts` 20/20, `--mp` (short) 26/26 with the state hash equal on all 3,001 common frames.
+
+**Gotcha: `cargo xtask build` without `--dist`/`ZHBO_WORK_DIR` uses the per-user default work and
+dist folders** (`~/Library/Application Support/ConquerOps/{work,dist}`), the player's own. An agent
+build must pass `--dist <plan dir>/dist` and `ZHBO_WORK_DIR=<plan dir>/work` (the integrator's
+habit); this item's legs ran from the default dist by mistake.

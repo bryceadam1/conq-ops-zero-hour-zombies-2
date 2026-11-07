@@ -672,10 +672,6 @@ fn order_attachments(d: &mut WeaponDef, item: &zhbo_conformance::bo2::combos::It
     d.allowed.sort_by_key(|(short, _)| listed.iter().position(|l| l == short).unwrap_or(listed.len()));
 }
 
-/// BO2's base aim-down-sights walking speed, as a share of the normal walk: one definition in the
-/// core, so the converter's base build and the core's attachment replacement walk agree.
-pub(crate) use zhbo_core::weapons::ADS_MOVE_BASE;
-
 /// Where the weapon table goes in the archive (the bridge hands it to the core).
 pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
 
@@ -1280,10 +1276,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         ads_kick: kick(w.ads_view_kick),
         hip_kick: kick(w.hip_view_kick),
         move_scale: if w.move_speed_scale > 0.0 { w.move_speed_scale } else { 1.0 },
-        // BO2's adsMoveSpeedScale multiplies the base ADS walk speed (rifles 1, LMGs 0.8, SMGs,
-        // pistols and shotguns 2); the base itself is engine tuning, about a third of a walk.
-        // `FUN_008ed080` starts from it (1 when unset) and clamps nothing.
-        ads_move_scale: ADS_MOVE_BASE * if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 },
+        // BO2's adsMoveSpeedScale as the def carries it (rifles 1, LMGs 0.8, SMGs, pistols and
+        // shotguns 2): `FUN_008ed080` takes it when above 0, else 1, and clamps nothing. The walk's
+        // own aimed scale (`AdsWalkScale`, 0.4) is the engine's, applied by the sim.
+        ads_move_scale: if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 },
         sprint_duration_scale: if w.sprint_duration_scale > 0.0 { w.sprint_duration_scale } else { 1.0 },
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },

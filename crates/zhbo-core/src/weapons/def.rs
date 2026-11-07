@@ -11,11 +11,6 @@ use super::handling::{CycleTimes, Traits, WeapType, Zoom};
 use super::specialty::Specialties;
 use crate::units::inches;
 
-/// BO2's base aim-down-sights walking speed, as a share of the normal walk. The weapon definition's
-/// `ads_move_scale` stores the walk as this base times BO2's `adsMoveSpeedScale`; the attachment
-/// replacement walk converts an attachment's raw scale with the same base.
-pub const ADS_MOVE_BASE: f32 = 0.35;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Class {
     Rifle,
@@ -1043,7 +1038,7 @@ impl Default for WeaponDef {
             ads_kick: Kick::default(),
             hip_kick: Kick::default(),
             move_scale: 1.0,
-            ads_move_scale: 0.6,
+            ads_move_scale: 1.0,
             sprint_duration_scale: 1.0,
             melee_damage: MELEE_DAMAGE,
             melee_time: 0.6,
