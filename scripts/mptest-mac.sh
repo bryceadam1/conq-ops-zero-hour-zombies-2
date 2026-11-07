@@ -228,16 +228,6 @@ both "a rewound round hit the other General (antilag)" "antilag: General [0-9]+'
 # event) does not count.
 both "another player's gunshot was heard" "sound ZHBO_BO2_FireNpc_[^ ]*: playing"
 both "another player's footsteps were played" "sound ZHBO_BO2_StepNpc: (playing|no sound)"
-# The kill feed is built from the sim's kill events alone (`hud::obituary`): each machine logs the
-# same deaths, killers, weapons and means, in the same order, from the network game's start.
-obits() { awk '/game start: a network game/ {k = 1} k' "$1" 2>/dev/null | grep -oE "player [0-9]+'s General (was killed: .*obituary: .*|[0-9]+ died)" || true; }
-obits "$h" >"$out/host-obits.txt"; obits "$j" >"$out/join-obits.txt"
-n_obits=$(grep -c "obituary:" "$out/host-obits.txt" || true)
-if [[ "$n_obits" -ge 1 ]] && cmp -s "$out/host-obits.txt" "$out/join-obits.txt"; then
-    pass "the kill feed's deaths agree ($n_obits kills)"
-else
-    fail "the kill feed's deaths agree" "$n_obits kills; see host-obits.txt / join-obits.txt"
-fi
 if grep -q "CRC mismatch" "$h" "$j" 2>/dev/null; then fail "no Zero Hour CRC mismatch" "$(grep -h "CRC mismatch" "$h" "$j" | head -1)"; else pass "no Zero Hour CRC mismatch"; fi
 
 # The sim's state hash, frame by frame, on the frames both machines ran: the network game's lines
@@ -270,6 +260,18 @@ else
     fail "state hash agrees frame by frame" "$common common, $differ differ${first:+, first at frame $first}"
     # The fingerprint's parts name the seat (or the world) that went apart.
     [[ -n "$first" ]] && awk -F '\t' -v f="$first" '$1 == f {print "    host: " $2; print "    join: " $3}' "$out/hashes-joined.txt"
+fi
+# The kill feed is built from the sim's kill events alone (`hud::obituary`): each machine logs the
+# same deaths, killers, weapons and means, in the same order, from the network game's start, up to
+# the last frame both machines ran (one quits a few frames before the other).
+last_common=$(awk -F '\t' '{ if ($1 + 0 > m) m = $1 + 0 } END { print m + 0 }' "$out/hashes-joined.txt")
+obits() { awk -v last="$last_common" '/game start: a network game/ {k = 1} k && match($0, /^\[[0-9]+\]/) && substr($0, 2, RLENGTH - 2) + 0 <= last' "$1" 2>/dev/null | grep -oE "player [0-9]+'s General (was killed: .*obituary: .*|[0-9]+ died)" || true; }
+obits "$h" >"$out/host-obits.txt"; obits "$j" >"$out/join-obits.txt"
+n_obits=$(grep -c "obituary:" "$out/host-obits.txt" || true)
+if [[ "$n_obits" -ge 1 ]] && cmp -s "$out/host-obits.txt" "$out/join-obits.txt"; then
+    pass "the kill feed's deaths agree ($n_obits kills to frame $last_common)"
+else
+    fail "the kill feed's deaths agree" "$n_obits kills to frame $last_common; see host-obits.txt / join-obits.txt"
 fi
 
 # Each machine draws the other player's General with what that player holds.
