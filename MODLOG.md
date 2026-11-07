@@ -13843,3 +13843,25 @@ frame and is first sampled on the next), so the port lerps the table from its fi
 
 **Not applicable:** water level (`ps+0x5b8`: halved fall damage, water friction) — the General never
 swims; the `FUN_006bf700(4)` game-mode gate that makes fall damage 1.
+
+**Tests.** `movement::tests` (the landing slowdown and its recovery, the repeated jump, the 500 ms
+gate, the fall-damage curve and `fallheight`, the hard landing, the walkable normal, per-stance
+acceleration, the camera dip and its floor), `movement::land::tests`, `movement::stance::tests` (the
+engine tables, the legs, a reversed leg, the speed blend, prone turning and the cap),
+`weapons::swap_tests::aiming_walks_at_bo2s_04_times_the_ads_move_scale`, the gunpos dip test (the
+target finder's 0.02), and `sim::tests::a_fall_deals_its_share_of_max_health_as_mod_falling`
+(through the fake host: 50% at 214 inches as the General's own `MOD_FALLING` blow, nothing below
+128, max health x 1.1 at 100% and a `KilledBy`). The new body and arsenal state reach the lockstep
+hash (`every_field_of_the_state_changes_the_hash_and_its_own_part`).
+
+**Verified.** `cargo test --workspace` green (without `ZHBO_BO2_DIR`); clippy clean (workspace
+`--all-targets`). Real install: the roster lockstep gate (`the_install_roster_plays_in_lockstep`:
+230 classes, 78 rounds, 51,480 frames) green. Conformance CLI: weapons 0 cells, cac 0 + 4 BO2-only,
+every CSV equal to the hipfire-accuracy baseline (`ads_move_speed_scale` now reads the stored value
+directly and still matches every row). In game (`cargo xtask build`): default 18/18, `--input` 3/3,
+`--rts` 20/20, `--mp` (short) 26/26 with the state hash equal on all 3,001 common frames.
+
+**Gotcha: `cargo xtask build` without `--dist`/`ZHBO_WORK_DIR` uses the per-user default work and
+dist folders** (`~/Library/Application Support/ConquerOps/{work,dist}`), the player's own. An agent
+build must pass `--dist <plan dir>/dist` and `ZHBO_WORK_DIR=<plan dir>/work` (the integrator's
+habit); this item's legs ran from the default dist by mistake.
