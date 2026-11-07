@@ -14554,3 +14554,142 @@ and failed 13; the rerun passed all), `--rts` 20/20, `--detail` 10/10, `--w3d-ad
 1/1, `--showcase` ran to its end; in-game frames in `~/.opencode/plan/lit-shading/compare/ingame_*`.
 The real-install `converts_from_real_install` fails on `Art\Native\ZVHAMC.zbv: no aim marker` (the
 builder's hammer manifest's skeleton; no material code on that path).
+
+## Round 8's integration: ABI 36, archive 90, native model 6 / camo 4 / reticle sets 3 (2026-11-07, `v1/integration12`)
+
+Merged onto main 19c7860, in this order, each `--no-ff`, with `cargo test --workspace` after each:
+`v1/movement-rules` (6fca026), `v1/combat-rules` (199bd03), `v1/perks-equipment` (d9fe29e),
+`v1/general-health` (4a682aa), `v1/anim-sound` (8a82c73), `v1/hud-feedback` (be1fe19),
+`v1/lit-shading` (634ba3f). Every branch entry above is kept as written.
+
+**Conflicts and overlaps.**
+* *State hash and weapon table unions.* combat-rules' `throwback` with movement's `sights` in the
+  arsenal's hash; perks' `taser` with combat's `use_grenade` in `PlayerSim`'s; `pub mod shock` (perks)
+  with `mod throwback` (combat). `WEAPON_FIELDS` 173 + `Throw` + `ProjectileBounds` +
+  `SprintCycleScale` + `KillIcon`/`KillIconShape`/`Indicator`/`IndicatorIcon` = 180. Roles: `Throw`
+  and `ProjectileBounds` Sim (the throw, the missile's box), the hud keys presentation, and
+  `SprintCycleScale`, left at the default Sim role by anim-sound though only the client's bob cycle
+  reads it, made presentation (0e47b41).
+* *Melee.* combat-rules rewrote the knife as BO2's nine rays; perks moved the Scavenger drop out of
+  every kill site into scoring and general-health converted the blow to a General's share: the nine
+  rays kept, the `scavenger_kill` call dropped, the blow through `damage::to_zh`, the hit marker
+  given hud-feedback's `alert`.
+* *Blasts.* combat-rules' cover fraction (`seen`), perks' Shock Charge radius 1 (the `> 10` inner
+  damage test gone) and general-health's `to_zh` all on the same lines: `to_zh(blast × seen ×
+  rule)`, the C4's too (`equipment.rs`).
+* *Awareness / Dead Silence (BRIEF9).* perks-equipment and anim-sound both played the loud and quiet
+  third-person footstep tables. anim-sound's `stepsounds.rs` (the tables by surface, read through
+  `zhbo_formats::footstep`) is the one implementation; perks' `sounds::step_table`, its four
+  `L/QStepNpc` events and its `RemoteSteps` changes are dropped, its Scavenger pickup sounds kept.
+* *The native viewmodel.* anim-sound's idle blend (`pose_blended`, `from`) met main's held-pose fix
+  (`pose_from`, `Base::Held`): one `Loaded::pose_from(req, base, from, left, ads, out)`.
+* *Movement × anim-sound.* movement replaced `stance_blend_time`/`stance_lerp` with BO2's view-height
+  lerp and moved the stance speed scale to `movement::stance`; anim-sound's `bob_top_speed` now takes
+  `stance::speed_scale` (FUN_008c4690 blends prone as the move does) and its `bob_walk_scale` sits
+  with movement's new keys. anim-sound's gait reads `Arsenal::move_scale(prone)` (movement's aimed
+  walk rule), as the sim does.
+* *Landing (BRIEF9).* movement-rules' camera dip (`Body::view_eye`: t/150 × landChange down, back by
+  450 ms, never under 8" over the feet) and gun dip (gunpos `land_change`, FUN_00530990) are in; the
+  old client dip (`LAND_DIP`) both branches touched is gone, so nothing dips twice. Checked against
+  FUN_0051f760: the eye takes the view bob (`FUN_008f0ac0` up, `FUN_008f0c70` along the right), then
+  the dip, then the floor clamp. The mod clamps the dipped eye and adds the bob after; the two differ
+  only when a dip reaches the 8" floor, which needs a landing with an eye under ~32" (prone), which
+  the sim cannot produce. Recorded, not changed.
+* *Stance blend vs bob.* BO2's `PM_Footsteps` reads the discrete stance for the cycle's rate and the
+  blended stance scale for its top speed; that is what the merge has (anim-sound's footsteps on
+  `body.stance`, the top speed on movement's blended scale).
+* *Flinch.* anim-sound's replace-and-roll flinch (`recoil::Flinch`, presentation) takes the sim's
+  Blow-direction kick unchanged (round 5's `flinch_kick` makes the event's yaw and pitch;
+  general-health's share rule its size); hud-feedback's damage arcs read the `Damaged` event's own
+  direction, and its flash keeps general-health's BO2-health scale. No overlap in code.
+* *Kill feed.* hud-feedback's `KilledBy` grew `by`/`how`/`weapon`: movement's fall death reports
+  `MOD_FALLING` (`hud_obit_death_falling`).
+
+**Semantic fixes in the integration.**
+* *Every new damage path takes a General's share* (8fb27fd): movement's fall damage truncated
+  `max_health × share` in Zero Hour health (330 ZH for a 100% fall on a 300 General, not BO2's 110 as
+  his share; a 49% landing came out 48 through `49 × 0.01` in floats) and perks' Shock Charge ticks
+  dealt 1 × the exchange rate. Both go through `damage::general_zh`. Test
+  `every_new_damage_path_kills_a_general_in_bo2s_count` (a 230-health General: the fall, a frag in
+  the open and past cover, the flash and concussion radius 1, the nine-ray knife, a Shock Charge tick,
+  each whole BO2 hits that kill on exactly the hit reaching 100; a thrown-back frag is the same
+  `blast`).
+* *The long mp autopilot* (5afd511): at BO2's health whoever fires first settles a round; on
+  general-health alone the shooter's deaths were incidental (round 2's concussion struck his head),
+  and combat-rules' new throw no longer strikes him, so his first General outlived every round
+  (`the_long_multiplayer_autopilot_run_fights_in_lockstep`: entered {100, 110}). The shooter now holds
+  his aimed bursts on every second start of a round (`Autopilot::mp_round_starts`).
+* *Fast Hands' `pin_back`* (a7b897d): combat-rules' throwback made it reachable. t6mp
+  `FUN_005d2140` tests specialty 0x2e and sets `grenadeTimeLeft = max(left,
+  perk_grenadeTossBackTimer)` (2500 ms, DAT_03160ef8). New tuning key `perk_grenadeTossBackTimer`;
+  test `fast_hands_resets_a_thrown_back_fuse`. Lightweight's `fallheight` was already read.
+* *Structures as allies* (07f5c84, combat-rules' found-elsewhere): the bullet trace skipped every
+  `ALLY` object, so rounds flew through the General's own walls, tanks and teammates; grenades too.
+  BO2's trace meets every entity (no friendly fire means no damage, not no collision). Friendlies now
+  stop a round unhurt and unmarked, the penetration walk going on past them as past an enemy; a
+  projectile collides with a friendly structure and deals friendlies no impact damage. Tests
+  `a_round_stops_on_the_shooters_own_wall`, `a_grenade_stops_on_its_throwers_own_wall`,
+  `bullets_stop_on_friendlies_as_on_anyone_unhurt` (was `bullets_pass_through_friendlies`).
+* *The colour image* (f4e98f6, lit-shading's report): `colorMap`, then `Diffuse_Map` (0xf039ec2d),
+  then the first colour-semantic image that is not the `Rim_Mask`.
+* *The long mp run, in game* (found by the first `ZHBO_MPTEST_ROUNDS=3` run: `rounds after the
+  first fight (join.log) 1 of 2`): 5afd511's per-session yield left the target's one life between
+  the first fight and his last to die in its first round on some runs. The shooter now yields the
+  odd round starts over the whole run (the first round after the first fight is the target's);
+  the headless twin's bridge stopped counting a take still on its way (it re-sent take-control
+  every 30 frames while a General sat on the class screen, using up the target's lives before he
+  ever left alive), so it exercises the same path.
+* *`PLATFORM_THROWBACKGRENADE`'s stand-in* (found by the real-install pass): combat-rules added the
+  key without a built-in row; added, with `every_ui_text_key_has_a_built_in_stand_in`.
+* lit-shading's `ZVHAMC.zbv: no aim marker` was main's 5c0157f, already in.
+
+**Bumps** (a354021). `ZHBO_ABI_VERSION` 35 → 36 on both sides (`ZhboClientApi.image_quad`,
+`CLIENT_API_FIELDS` 17, size-asserted; `ZHBO_OBJ_GENERAL`'s meaning). `hud::VERSION` 89 → 90.
+`model::VERSION` 5 → 6, `camo::VERSION` 3 → 4, `reticles::VERSION` 2 → 3 (lit-shading's Lighting
+block in the shared material record; viewmodel 3, thirdperson 1/3, anim 1, display 1 unchanged).
+The seven pending notes folded into CONTRACT's Versioning (ABI 36). Host patches 0001–0033.
+
+**The dive (round 7's open item): traced, not the General.** A per-frame capture of the default
+leg's re-entry (logic frames 785–1000, `at-cap-dive`) shows the shape at frames 802–804: a yellow
+hood with a white grille and a team-colour tab, seen from above (`crop-dive-801-804.png`,
+`crop-803.png`): the player's starting USA Dozer, which idles in front of the Command Center where
+the autopilot stands the General. The camera descends onto it at the end of the dive; the same Dozer
+fills the left and right edges of the default leg's captures at frames 300 and 450 since round 4
+(`integration8`, `integration10`). The local General's body is not drawn in first person: the sim
+leaves his native body out of `native_poses` once first person and the client hides his drawable
+from 90% of the dive on. Nothing to fix in the renderer; the scene puts the General on the Dozer.
+
+**Gotcha: an install-gated test is where a stand-in gap shows.** A key added to `UI_TEXT_KEYS`
+without a built-in row passes every headless test; only the real-install pass compares the two.
+
+**Verified (final head).** `cargo test --workspace` 1,354 passed, 0 failed (without
+`ZHBO_BO2_DIR`); clippy clean (workspace `--all-targets`; zhbo-core `harness`, `harness,renderer`,
+`autopilot`). Real install (`--ignored`, both dirs, release): zhbo-assets 81/82, the one failure
+`the_installs_ui_text_is_the_built_in_stand_ins` (the missing stand-in above), fixed and passing;
+the roster lockstep gate, the hip-fire gate, general-health's two gates
+(`the_install_roster_kills_a_general_in_bo2s_shots`,
+`zero_hours_weapons_kill_the_general_as_they_kill_its_heroes`) and combat-rules' explosive and
+projectile gates among them; zhbo-core and -formats `--ignored` pass; the conformance gate red only
+for cac's 4 BO2-only rows. Conformance CLI: weapons 12,163 rows, 0 cells / 0 clusters with the round's
+ten new columns (`projectile_speed_relative_up`, `projectile_speed_forward`, `throw_back`,
+`projectile_bounds`, `sprint_cycle_scale`, `crosshair_color_change`, `kill_icon`,
+`kill_icon_shape`, `indicator`, `indicator_icon`); cac 0 + 4 BO2-only, its four files and the
+weapons diff byte-identical to round 7's. `cargo xtask build` (own work dir and dist; host patches
+0001–0033), the archive built at 90. Legs (first build): default 22/22, `--input` 3/3,
+`--equipment` 12/12, `--rts` 20/20, `--rts-dry` 5/5, `--build` 21/21, `--classpick` 12/12,
+`--scope` 1/1, `--w3d-ads` 2/2, `--replay` 5/5, `--splash` 5/5, `--smoke` 7/7, `--detail` 10/10,
+`--drops` 10/10, `--flicker` 8/8, `--hipfire` 5/5, `--showcase`, `--mp` 27/27 (2,818 common frames,
+content CRC A962F938 both), `ZHBO_MPTEST_ROUNDS=3` 35/36 (the round count above) and 36/36. Final
+build: default 22/22, `--equipment` 12/12, `--drops` 10/10, `--mp` 27/27 (2,893 frames),
+`ZHBO_MPTEST_ROUNDS=3` twice 36/36 (8,656 and 6,789 frames; the target's rounds 3 and 2). No desync,
+CRC mismatch or panic in any log. Screenshots in `~/.opencode/plan/integration12/`: the kill feed
+(`shot-killfeed.png`), BO2's crosshair pieces and a damage arc (`shot-crosshair-indicator-300.png`,
+`shot-damage-indicator-450.png`), the AN-94 under the lit shader (`shot-lit-an94.png`), a remote
+General walking under the red crosshair (`shot-remote-general.png`, `-crop.png`), the dive's end
+(`sheet-dive-raw.png`, `crop-dive-801-804.png`, `shot-dive-806.png`).
+
+**Open.** No in-game capture of a Scavenger pack: a pack drops only for a player victim, and no
+scripted scene kills a General with a Scavenger class (`cap-scav`, against rebels, dropped none, as
+the rule says). Next round's items from the briefs stand: the Engineer's `_detect` model outlines,
+the C4 double-tap timer, Awareness's sound-mix snapshot, hold-breath's walk slowdown. Friendly units
+still let a grenade by (only friendly structures stop it).
