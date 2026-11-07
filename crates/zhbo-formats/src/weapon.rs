@@ -909,6 +909,21 @@ pub struct Weapon {
     pub ammo_pickup_sound_player: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
     pub hud_icon_key: Option<crate::ipak::ImageKey>,
+    /// The obituary's icon (`killIcon`, CG_Obituary t6mp `FUN_004c0080`), its `killIconRatio`
+    /// (`weaponIconRatioType_t`: 0 1:1, 1 2:1, 2 4:1) and `flipKillIcon`, and the icon's image in
+    /// the `.ipak` packs (inline like the HUD icon's).
+    pub kill_icon: Option<String>,
+    pub kill_icon_ratio: u32,
+    pub flip_kill_icon: bool,
+    pub kill_icon_key: Option<crate::ipak::ImageKey>,
+    /// The grenade indicator (t6mp `FUN_004ae7b0`/`FUN_004ae5b0`): its icon (`indicatorIcon`,
+    /// the default `hud_grenadeicon` when empty) and that icon's image, `bShowIndicator` and
+    /// `iIndicatorRadius` (inches; 0 takes the larger of `cg_hudGrenadeIconMaxRangeFrag` and the
+    /// explosion radius).
+    pub indicator_icon: Option<String>,
+    pub indicator_icon_key: Option<crate::ipak::ImageKey>,
+    pub show_indicator: bool,
+    pub indicator_radius: i32,
     pub dpad_icon: Option<String>,
     /// The d-pad icon's image in the `.ipak` packs (its material is inline in the variant, like
     /// the HUD icon's: `hud_gl_select` has no standalone asset in any MP zone).
@@ -1518,6 +1533,14 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.ammo_pickup_sound_player = opt_str(z, d + WD::ammoPickupSoundPlayer);
     w.weapon_camo = named(z, d + WD::weaponCamo);
     w.hud_icon_key = icon_key(z, z.try_u32(d + WD::hudIcon)?);
+    w.kill_icon = named(z, d + WD::killIcon);
+    w.kill_icon_ratio = z.u32(d + WD::killIconRatio);
+    w.flip_kill_icon = z.u8(d + WD::flipKillIcon) != 0;
+    w.kill_icon_key = icon_key(z, z.try_u32(d + WD::killIcon)?);
+    w.indicator_icon = named(z, d + WD::indicatorIcon);
+    w.indicator_icon_key = icon_key(z, z.try_u32(d + WD::indicatorIcon)?);
+    w.show_indicator = z.u8(d + WD::bShowIndicator) != 0;
+    w.indicator_radius = int(z, d + WD::iIndicatorRadius);
     Ok(w)
 }
 

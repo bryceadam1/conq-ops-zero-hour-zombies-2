@@ -159,7 +159,12 @@ pub enum EventKind {
     /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound. `exit`: the round
     /// left a solid it penetrated here (BO2's impact flag 4: the type's exit row and family).
     Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32, exit: bool },
-    HitMarker { headshot: bool, kill: bool },
+    /// A hit on an enemy: the hit marker, and `alert` the sound BO2 plays for it
+    /// ([`crate::damage::HitAlert`], from the means and the inflictor).
+    HitMarker { headshot: bool, kill: bool, alert: crate::damage::HitAlert },
+    /// The last hit's victim wore a perk that took it: the hit marker's variant
+    /// ([`crate::damage::PerkFeedback`]), after the hit's own `HitMarker` this step.
+    PerkFeedback { perk: crate::damage::PerkFeedback },
     /// A shot's gun kick spring impulse (`weapons::recoil::GunKickSpring`). The view kick is the
     /// sim's own (`PlayerSim::view_kick`): it moves the aim.
     Recoil { gun_kick: (f32, f32) },
@@ -185,7 +190,9 @@ pub enum EventKind {
     /// (its means of death and weapon, [`crate::death::DmgType::of`]) and the way it travelled
     /// (BO2's `vDir`; zero: none). Presentation: the death animation's `dmgType` and
     /// `dmgDirection` (`crate::death`). A death to anything else (Zero Hour's own weapons) has none.
-    KilledBy { dmg: crate::death::DmgType, dir: Vec3 },
+    /// `by` is the killer's seat (the victim's own for a suicide), `how` and `weapon` the killing
+    /// blow's means and weapon as BO2's `obituary` takes them (the kill feed, `hud::obituary`).
+    KilledBy { dmg: crate::death::DmgType, dir: Vec3, by: Option<u8>, how: crate::damage::MeansOfDeath, weapon: Option<&'static crate::weapons::WeaponDef> },
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },
@@ -254,6 +261,8 @@ pub struct Struck {
     pub victim: u32,
     pub dir: Vec3,
     pub dmg: crate::death::DmgType,
+    /// BO2's means of death of it (the kill feed's icon for a death to Zero Hour's weapons).
+    pub how: crate::damage::MeansOfDeath,
     pub engine: bool,
 }
 
@@ -804,7 +813,7 @@ impl Sim {
     /// since the last step ([`Sim::blows`]).
     fn last_blow(&self, host: &dyn LogicHost, general: u32) -> Option<Struck> {
         if let Some(b) = host.last_blow(general) {
-            return Some(Struck { victim: general, dir: b.dir, dmg: crate::death::DmgType::of(b.how, b.weapon, false), engine: false });
+            return Some(Struck { victim: general, dir: b.dir, dmg: crate::death::DmgType::of(b.how, b.weapon, false), how: b.how, engine: false });
         }
         self.blows.iter().rev().find(|b| b.victim == general).copied()
     }
@@ -813,7 +822,7 @@ impl Sim {
     /// the sim reports its own kills (`KilledBy`, `score`), for his death animation.
     fn engine_kill(&mut self, host: &dyn LogicHost, idx: usize, general: u32) {
         if let Some(b) = self.last_blow(host, general).filter(|b| b.engine) {
-            self.emit(idx, EventKind::KilledBy { dmg: b.dmg, dir: b.dir });
+            self.emit(idx, EventKind::KilledBy { dmg: b.dmg, dir: b.dir, by: None, how: b.how, weapon: None });
         }
     }
 
@@ -825,7 +834,7 @@ impl Sim {
         let Some(p) = self.players.iter().flatten().find(|p| p.general == victim) else { return };
         let how = p.arsenal.tuning.zh_damage.means(kind);
         let dmg = crate::death::DmgType::of(how, None, !p.body.on_ground);
-        self.blows.push(Struck { victim, dir, dmg, engine: true });
+        self.blows.push(Struck { victim, dir, dmg, how, engine: true });
     }
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
@@ -860,7 +869,7 @@ impl Sim {
             self.emit(owner, EventKind::Bounced { at, sound });
         }
         for (owner, kill) in struck {
-            self.emit(owner, EventKind::HitMarker { headshot: false, kill });
+            self.emit(owner, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_entity(MeansOfDeath::Impact, false) });
             if kill {
                 // A strike that did not end the flight: the def does not go off on impact.
                 self.scavenge(owner, MeansOfDeath::Impact);
@@ -880,13 +889,13 @@ impl Sim {
                     self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, proj.def.effect, &mut ev);
                     self.equipment_events(host, ev);
                     if hit_enemy {
-                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_entity(crate::damage::splash(d), false) });
                     }
                 }
                 Outcome::Dud { at, hit_enemy, kill, surface } => {
                     self.emit(*owner, EventKind::Dud { at, sound: proj.def.dud_sound.as_str(), surface });
                     if hit_enemy {
-                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_entity(crate::damage::strike(proj.def, true), false) });
                     }
                     if kill {
                         self.scavenge(*owner, crate::damage::strike(proj.def, true));
@@ -894,13 +903,13 @@ impl Sim {
                 }
                 Outcome::Hit { kill, .. } => {
                     if kill {
-                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_entity(crate::damage::strike(proj.def, false), false) });
                         self.scavenge(*owner, crate::damage::strike(proj.def, false));
                     }
                 }
                 Outcome::Spawned { at, stuck_to, hit_enemy, kill } => {
                     if hit_enemy {
-                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_entity(crate::damage::strike(proj.def, false), false) });
                     }
                     if kill {
                         self.scavenge(*owner, crate::damage::strike(proj.def, false));
@@ -939,12 +948,15 @@ impl Sim {
                     self.emit(owner, EventKind::Exploded { at, sound, impact_type, surface });
                     self.deployed_caught_in_blast(host, owner, def, at);
                     if hit_enemy {
-                        self.emit(owner, EventKind::HitMarker { headshot: false, kill });
+                        // The Shock Charge's hit is `taser_spike`'s (`_proximity_grenade.gsc:172-177`).
+                        let taser = score::Tactical::of(def, false) == Some(score::Tactical::Proximity);
+                        self.emit(owner, EventKind::HitMarker { headshot: false, kill, alert: crate::damage::HitAlert::by_entity(crate::damage::splash(def), taser) });
                     }
                 }
                 EquipEvent::Destroyed { by: Some(by), .. } => {
                     self.emit(by, EventKind::DestroyedEquipment);
-                    self.emit(by, EventKind::HitMarker { headshot: false, kill: false });
+                    // `_weaponobjects.gsc:652`'s `updatedamagefeedback()`: no means, no sound.
+                    self.emit(by, EventKind::HitMarker { headshot: false, kill: false, alert: crate::damage::HitAlert::Silent });
                 }
                 EquipEvent::Destroyed { by: None, .. } => {}
                 EquipEvent::Intercepted { owner, at } => self.emit(owner, EventKind::Intercepted { at }),
@@ -1378,9 +1390,18 @@ pub fn describe_event(e: &Event) -> Option<String> {
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
         GeneralDied { general } => format!("player {}'s General {general} died", e.player),
         Assist { level, tactical } => format!("player {} scored an assist ({})", e.player, tactical.map_or_else(|| (level as u32 * 25).to_string(), |t| format!("{t:?}").to_ascii_lowercase())),
-        HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
+        HitMarker { headshot, kill: true, .. } => format!("player {} killed a target (headshot: {headshot})", e.player),
         Damaged { amount, dir } => format!("player {}'s General took {amount:.0} damage along ({:.2}, {:.2})", e.player, dir.normalized_or_zero().x, dir.normalized_or_zero().y),
-        KilledBy { dmg, dir } => format!("player {}'s General was killed: dmgType {} along ({:.2}, {:.2})", e.player, dmg.name(), dir.normalized_or_zero().x, dir.normalized_or_zero().y),
+        KilledBy { dmg, dir, by, how, weapon } => format!(
+            "player {}'s General was killed: dmgType {} along ({:.2}, {:.2}); obituary: by {} with {} ({})",
+            e.player,
+            dmg.name(),
+            dir.normalized_or_zero().x,
+            dir.normalized_or_zero().y,
+            by.map_or_else(|| "the world".to_string(), |s| format!("player {s}")),
+            weapon.map_or("none", |w| w.id.as_str()),
+            how.name()
+        ),
         Swapped => format!("player {} swapped weapons", e.player),
         Melee => format!("player {} meleed", e.player),
         MeleeHit => format!("player {}'s melee landed", e.player),

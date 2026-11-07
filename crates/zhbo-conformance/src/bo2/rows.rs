@@ -436,12 +436,17 @@ impl<'a> Expected<'a> {
             .list("reticle_sizes", &[d.reticle_center_size(), d.reticle_side_size(), d.reticle_min_ofs()].map(|x| x.to_string()))
             .floats("reticle_fracs", &fls(&[d.hip_reticle_side_pos(), d.ads_crosshair_in_frac(), d.ads_crosshair_out_frac()]))
             .bool("keep_crosshair_when_ads", d.keep_crosshair_when_ads())
+            .bool("crosshair_color_change", d.crosshair_color_change())
             .opt_text("overlay_material", overlay.0)
             .opt_text("overlay_material_low_res", overlay.1)
             .text("overlay_reticle", enum_name(cols::OVERLAY_RETICLE, overlay.2))
             .floats("overlay_size", &fls(&[d.overlay_width(), d.overlay_height()]))
             .opt_text("hud_icon", d.hud_icon())
-            .opt_text("dpad_icon", v.dpad_icon());
+            .opt_text("dpad_icon", v.dpad_icon())
+            .opt_text("kill_icon", d.kill_icon())
+            .list("kill_icon_shape", &[d.kill_icon_ratio().to_string(), (d.flip_kill_icon() as u8).to_string()])
+            .list("indicator", &[d.proj_explosion_kind().to_string(), (d.show_indicator() as u8).to_string(), d.indicator_radius().to_string()])
+            .opt_text("indicator_icon", d.indicator_icon());
 
         // Alt mode, dual wield, flags, specialties.
         let dw = resolve::dual_wield(w);

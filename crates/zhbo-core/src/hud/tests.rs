@@ -67,6 +67,15 @@ fn fps_state() -> (Sim, Client) {
     (sim, client)
 }
 
+/// Give the held weapon BO2's common crosshair (`reticle_side_small` at 8, the rifles' 0/1/0.2
+/// fractions): the built-in table carries no crosshair art.
+fn with_bo2_crosshair(sim: &mut Sim) {
+    let w = sim.players[0].as_mut().expect("the player").arsenal.current_mut();
+    let mut d = w.def.clone();
+    d.reticle = crate::weapons::Reticle { side: "reticle_side_small".into(), center_size: 4.0, side_size: 8.0, ads_in_frac: 1.0, ads_out_frac: 0.2, ..Default::default() };
+    w.def = Box::leak(Box::new(d));
+}
+
 #[test]
 fn uses_bo2_numerals_when_the_art_is_installed() {
     let (sim, client) = fps_state();
@@ -110,7 +119,8 @@ fn map_key_shows_the_radar_or_says_there_is_none() {
             })
             .count()
     };
-    let (sim, mut client) = fps_state();
+    let (mut sim, mut client) = fps_state();
+    with_bo2_crosshair(&mut sim);
     client.hud.map_open = true;
     let rec = Recorder { has_art: true, ..Default::default() };
     let _ = draw_hud(&rec, &client, &sim);
@@ -369,13 +379,14 @@ fn the_scoped_hud_hides_the_map_compass_and_indicators() {
 fn the_crosshair_fades_under_the_overlay_to_the_floor() {
     // `FUN_004b5ea0`: under the overlay the side pieces take `1 − zoom / max(scale, 1)` before
     // `FUN_004b5e40`'s floor, `cg_crosshairAlphaMin` (`DAT_01062db4`, 0.5).
-    let (sim, client) = fps_state();
+    let (mut sim, client) = fps_state();
+    with_bo2_crosshair(&mut sim);
     let p = sim.players[0].as_ref().expect("the player");
     let alpha = |zoom: Option<f32>| {
         let mut prims = Vec::new();
         draw_crosshair(&mut prims, 1280.0, 720.0, 1.0, &client, p, zoom);
         prims.iter().find_map(|q| match q {
-            Prim::Line { argb, .. } => Some(argb >> 24),
+            Prim::Quad { argb, name, .. } if name.ends_with("reticle_side_small") => Some(argb >> 24),
             _ => None,
         })
     };
@@ -539,14 +550,14 @@ fn the_scoreboard_lists_every_player_in_the_match() {
         if f == 100 {
             // Seat 1 kills twice and dies once; the local player kills once.
             for kind in [
-                crate::sim::EventKind::HitMarker { headshot: false, kill: true },
-                crate::sim::EventKind::HitMarker { headshot: true, kill: true },
-                crate::sim::EventKind::HitMarker { headshot: false, kill: false },
+                crate::sim::EventKind::HitMarker { headshot: false, kill: true, alert: crate::damage::HitAlert::Player },
+                crate::sim::EventKind::HitMarker { headshot: true, kill: true, alert: crate::damage::HitAlert::Player },
+                crate::sim::EventKind::HitMarker { headshot: false, kill: false, alert: crate::damage::HitAlert::Player },
                 crate::sim::EventKind::GeneralDied { general: 2 },
             ] {
                 sim.events.push(crate::sim::Event { player: 1, kind });
             }
-            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::HitMarker { headshot: false, kill: true } });
+            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::HitMarker { headshot: false, kill: true, alert: crate::damage::HitAlert::Player } });
         }
         client.frame_with(&mut sim, Some(&host), &inp);
         sim.step(&host, f);
@@ -560,7 +571,8 @@ fn the_scoreboard_lists_every_player_in_the_match() {
     let texts = rec.texts.borrow();
     let at = |want: &str| texts.iter().position(|t| t == want).unwrap_or_else(|| panic!("{want} in {texts:?}"));
     // The local row (the HUD's tally: 1 kill, 100) comes before the other player's (200, 2, 1).
-    assert!(at("General") < at("Player 2"), "{texts:?}");
+    // (The kill feed names him first: his death's line.)
+    assert!(at("General") < texts.iter().rposition(|t| t == "Player 2").expect("his row"), "{texts:?}");
     for want in ["100", "200", "2"] {
         at(want);
     }
@@ -618,4 +630,74 @@ fn a_spectators_hud_is_the_followed_generals_reduced() {
     assert!(!images.iter().any(|i| i.contains("hud_mp_vis_ks_dpad")), "no scorestreak column");
     let texts = rec.texts.borrow();
     assert!(texts.iter().any(|t| t.contains("[LMB]") && t.contains("[RMB]") && t.contains("Spectating")), "{texts:?}");
+}
+
+/// Every hurt with a way fills a damage-direction slot pointing back at its source (G7
+/// `FUN_004e8ab0`), the overhead General's too, and the slot draws as `hit_direction`.
+#[test]
+fn a_hurt_points_the_indicator_back_at_its_source() {
+    let (mut sim, mut client) = fps_state();
+    client.yaw = 0.0;
+    // A blow travelling +X: it came from behind (yaw 180), give or take the 10° jitter.
+    sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Damaged { amount: 10.0, dir: Vec3::new(1.0, 0.0, 0.0) } });
+    // And one with no way (BO2's yaw byte 255): no slot.
+    sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Damaged { amount: 10.0, dir: Vec3::ZERO } });
+    client.frame(&mut sim, &ClientIn::default());
+    let live = client.hud.lui.live_indicators();
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert!((live[0].0 - 180.0).abs() <= 10.0, "{live:?}");
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let prims = draw_hud(&rec, &client, &sim);
+    assert!(prims.iter().any(|q| matches!(q, Prim::Quad { name, .. } if *name == crate::lui::materials::image("hit_direction"))));
+}
+
+/// The kill feed is built from the sim's events alone, so two machines given the same events in the
+/// same order show the same lines (the lockstep sim gives every machine the same events).
+#[test]
+fn the_kill_feed_is_the_same_on_every_machine() {
+    let rifle = crate::weapons::catalog().all().first().copied();
+    let events = [
+        crate::sim::Event { player: 1, kind: crate::sim::EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::new(1.0, 0.0, 0.0), by: Some(0), how: crate::damage::MeansOfDeath::RifleBullet, weapon: rifle } },
+        crate::sim::Event { player: 1, kind: crate::sim::EventKind::GeneralDied { general: 2 } },
+        crate::sim::Event { player: 0, kind: crate::sim::EventKind::GeneralDied { general: 1 } },
+    ];
+    let feed = |local: i32| {
+        let (mut sim, mut client) = fps_state();
+        sim.events.extend(events);
+        client.frame(&mut sim, &ClientIn { local_player: local, ..Default::default() });
+        client.feedback.obits.lines.iter().map(|l| (l.attacker, l.victim, l.icon.material.clone())).collect::<Vec<_>>()
+    };
+    let a = feed(0);
+    let b = feed(1);
+    assert_eq!(a, b);
+    assert_eq!(a.len(), 2, "one line per death: {a:?}");
+    assert_eq!(a[1], (None, 0, "killicondied".to_string()), "a death no blow explains is the world's");
+}
+
+/// The grenade indicator collects the player's own and enemies' resting grenades in range, never
+/// an ally's or a flying one.
+#[test]
+fn the_grenade_indicator_shows_own_and_enemy_grenades_at_rest_in_range() {
+    let (mut sim, _client) = fps_state();
+    let p = sim.players[0].clone().expect("the player");
+    let mut def = crate::weapons::WeaponDef { timed_detonation: true, explosion_radius: crate::units::inches(256.0), ..Default::default() };
+    def.traits.weap_type = crate::weapons::WeapType::Grenade;
+    let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+    let host = FakeHost::default();
+    let at = p.body.pos + Vec3::new(crate::units::inches(100.0), 0.0, 0.0);
+    let mut g = crate::projectiles::Projectile::launch(def, p.general, at, Vec3::new(1.0, 0.0, 0.0), 3.0, &host, 0.0);
+    g.vel = Vec3::ZERO;
+    g.pos = at;
+    sim.projectiles = vec![(0, g.clone()), (1, g.clone()), (2, g.clone())];
+    let ally = |seat: usize| seat == 2;
+    let shown = crate::hud::grenade::collect(&sim, 0, &p, &ally);
+    assert_eq!(shown.len(), 2, "own and the enemy's, not the ally's");
+    assert_eq!(shown[0].icon, "hud_grenadeicon");
+    // Flying fast: not shown; far beyond its 256-inch range: not shown.
+    let mut fast = g.clone();
+    fast.vel = Vec3::new(crate::units::inches(400.0), 0.0, 0.0);
+    let mut far = g;
+    far.pos = p.body.pos + Vec3::new(crate::units::inches(400.0), 0.0, 0.0);
+    sim.projectiles = vec![(0, fast), (0, far)];
+    assert!(crate::hud::grenade::collect(&sim, 0, &p, &ally).is_empty());
 }

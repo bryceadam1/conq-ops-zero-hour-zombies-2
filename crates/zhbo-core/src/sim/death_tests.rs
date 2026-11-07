@@ -36,7 +36,7 @@ fn step(sim: &mut Sim, host: &FakeHost, shooter: FpsInput, victim_yaw: f32, n: u
 /// The victim's death report, and the side BO2 names for it in his view.
 fn killed(sim: &Sim, victim_yaw: f32) -> Option<(DmgType, u8)> {
     sim.events.iter().find_map(|e| match e.kind {
-        EventKind::KilledBy { dmg, dir } if e.player == 1 => Some((dmg, dmg_direction(dir, victim_yaw))),
+        EventKind::KilledBy { dmg, dir, .. } if e.player == 1 => Some((dmg, dmg_direction(dir, victim_yaw))),
         _ => None,
     })
 }
@@ -252,7 +252,7 @@ fn an_overhead_general_hurt_by_zero_hour_units_flinches_by_the_blows_side() {
     });
     step(&mut sim);
     let killed = sim.events.iter().find_map(|e| match e.kind {
-        EventKind::KilledBy { dmg, dir } if e.player == 0 => Some((dmg, dmg_direction(dir, 0.0))),
+        EventKind::KilledBy { dmg, dir, .. } if e.player == 0 => Some((dmg, dmg_direction(dir, 0.0))),
         _ => None,
     });
     assert_eq!(killed, Some((DmgType::Explosive, 2)));

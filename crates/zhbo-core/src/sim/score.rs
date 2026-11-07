@@ -198,9 +198,15 @@ impl Sim {
             // Where it came from and what it was, for his hurt and death (presentation).
             let airborne = self.players[victim_seat].as_ref().is_some_and(|p| !p.body.on_ground);
             let dmg = crate::death::DmgType::of(h.blow.how, h.blow.weapon, airborne);
-            self.blows.push(super::Struck { victim: h.victim, dir: h.blow.dir, dmg, engine: false });
+            self.blows.push(super::Struck { victim: h.victim, dir: h.blow.dir, dmg, how: h.blow.how, engine: false });
             if let Some(seat) = shooter.filter(|&s| s != victim_seat) {
                 self.score.track(host, seat, h.shooter, h.victim, h.amount / crate::units::BO2_TO_ZH_DAMAGE, None);
+                // His Flak Jacket took an explosion: the attacker's marker shows it
+                // (`doperkfeedback`, `_globallogic_player.gsc:1166-1179`; presentation).
+                let flak = self.players[victim_seat].as_ref().is_some_and(|p| p.arsenal.class_specialties().has(crate::weapons::Specialty::FlakJacket));
+                if flak && h.blow.how.is_explosive_damage() {
+                    self.emit(seat, EventKind::PerkFeedback { perk: crate::damage::PerkFeedback::FlakJacket });
+                }
             }
             if h.kill {
                 if let Some(killer) = shooter.filter(|&s| s != victim_seat) {
@@ -208,7 +214,9 @@ impl Sim {
                 }
                 self.score.forget(h.victim);
                 // How he died, for his death animation (presentation: the script's `DEATH`).
-                self.emit(victim_seat, EventKind::KilledBy { dmg, dir: h.blow.dir });
+                // And for the kill feed: who, with what and how (BO2's `obituary( victim, attacker,
+                // weapon, means )`, `_globallogic_player.gsc:1318`).
+                self.emit(victim_seat, EventKind::KilledBy { dmg, dir: h.blow.dir, by: shooter.map(|s| s as u8), how: h.blow.how, weapon: h.blow.weapon });
             }
         }
     }
@@ -243,6 +251,17 @@ impl Sim {
         }
         if let Some(seat) = self.score.seat_of(&self.players, owner).filter(|&s| self.players.get(s).and_then(|p| p.as_ref()).is_none_or(|p| p.general != victim)) {
             self.score.track(host, seat, owner, victim, 1.0, Some(tactical));
+            // A flash, concussion or Shock Charge his Tactical Mask took (`doperkfeedback`'s
+            // `isflashorstundamage && hastacticalmask`, `_class.gsc:1087-1090`): the attacker's
+            // marker shows it (presentation).
+            use crate::weapons::Specialty as S;
+            let masked = self.players.iter().flatten().find(|p| p.general == victim).is_some_and(|p| {
+                let sp = p.arsenal.class_specialties();
+                sp.has(S::StunProtection) || sp.has(S::FlashProtection) || sp.has(S::ProximityProtection)
+            });
+            if masked && tactical != Tactical::Emp {
+                self.emit(seat, EventKind::PerkFeedback { perk: crate::damage::PerkFeedback::TacticalMask });
+            }
         }
     }
 }
@@ -376,8 +395,10 @@ mod tests {
         assert_eq!(assists(&sim), [(1, 3)], "seat 1's 60 is assist_75; the killer scores none");
         assert_eq!(sim.score.assists, { let mut a = [0; MAX_PLAYERS]; a[1] = 1; a });
         assert!(sim.score.attacked.iter().all(|a| a.victim != 102), "his list ends with him");
-        // His death's presentation: BO2's dmgType of the blow and the way it travelled.
-        assert!(sim.events.iter().any(|e| e.player == 2 && e.kind == EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::new(1.0, 0.0, 0.0) }));
+        // His death's presentation: BO2's dmgType of the blow and the way it travelled, and for the
+        // kill feed the killer's seat and the means (`obituary`).
+        let killed = EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::new(1.0, 0.0, 0.0), by: Some(0), how: crate::damage::MeansOfDeath::RifleBullet, weapon: None };
+        assert!(sim.events.iter().any(|e| e.player == 2 && e.kind == killed), "{:?}", sim.events);
         assert_eq!([assist_level(0.0), assist_level(25.0), assist_level(25.5), assist_level(50.0), assist_level(51.0), assist_level(500.0)], [1, 1, 2, 2, 3, 3]);
     }
 

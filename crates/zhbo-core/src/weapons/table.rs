@@ -1203,6 +1203,18 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "HudIcon", "BO2's `hudIcon`: the weapon's HUD icon material (the class buttons, the editor's rows, the offhand counters draw it), empty when none.", FieldKind::Str,
         |d: &WeaponDef| d.hud_icon.clone(),
         |d: &mut WeaponDef, v: Values| { d.hud_icon = v.text.into(); Ok(()) }),
+    field!(present "KillIcon", "BO2's `killIcon`: the obituary's icon material, empty when none (BO2 then draws `hud_obit_death_suicide`).", FieldKind::Str,
+        |d: &WeaponDef| d.kill_icon.material.clone(),
+        |d: &mut WeaponDef, v: Values| { d.kill_icon.material = v.text.into(); Ok(()) }),
+    field!(present "KillIconShape", "The obituary icon's `killIconRatio` (0 1:1, 1 2:1, 2 4:1) and `flipKillIcon` (1: mirrored).", FieldKind::Nums(2),
+        |d: &WeaponDef| format!("{} {}", d.kill_icon.ratio, d.kill_icon.flip as u8),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.kill_icon.ratio = v.num(0) as u8; d.kill_icon.flip = v.num(1) != 0.0; Ok(()) }),
+    field!(present "Indicator", "The grenade indicator: `projExplosion`, `bShowIndicator` (0/1) and `iIndicatorRadius` (inches).", FieldKind::Nums(3),
+        |d: &WeaponDef| format!("{} {} {}", d.indicator.proj_explosion, d.indicator.show as u8, d.indicator.radius),
+        |d: &mut WeaponDef, v: Values| { v.need(3)?; d.indicator.proj_explosion = v.num(0) as u8; d.indicator.show = v.num(1) != 0.0; d.indicator.radius = v.num(2); Ok(()) }),
+    field!(present "IndicatorIcon", "BO2's `indicatorIcon`: the grenade indicator's icon material, empty for the default `hud_grenadeicon`.", FieldKind::Str,
+        |d: &WeaponDef| d.indicator.icon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.indicator.icon = v.text.into(); Ok(()) }),
     field!(present "WorldWeapon", "The third-person weapon's own index (`W{index}{k}`, `ZW<index>.zbw`) when it is not the viewmodel's: an alt mode BO2 draws with its own worldModel; -1 for the viewmodel's.", FieldKind::Num,
         |d: &WeaponDef| d.world_weapon.to_string(),
         |d: &mut WeaponDef, v: Values| { d.world_weapon = v.text.parse().map_err(|_| "number")?; Ok(()) }),
@@ -1357,7 +1369,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 173);
+        assert_eq!(WEAPON_FIELDS.len(), 177);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

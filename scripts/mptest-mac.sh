@@ -228,6 +228,16 @@ both "a rewound round hit the other General (antilag)" "antilag: General [0-9]+'
 # event) does not count.
 both "another player's gunshot was heard" "sound ZHBO_BO2_FireNpc_[^ ]*: playing"
 both "another player's footsteps were played" "sound ZHBO_BO2_StepNpc: (playing|no sound)"
+# The kill feed is built from the sim's kill events alone (`hud::obituary`): each machine logs the
+# same deaths, killers, weapons and means, in the same order, from the network game's start.
+obits() { awk '/game start: a network game/ {k = 1} k' "$1" 2>/dev/null | grep -oE "player [0-9]+'s General (was killed: .*obituary: .*|[0-9]+ died)" || true; }
+obits "$h" >"$out/host-obits.txt"; obits "$j" >"$out/join-obits.txt"
+n_obits=$(grep -c "obituary:" "$out/host-obits.txt" || true)
+if [[ "$n_obits" -ge 1 ]] && cmp -s "$out/host-obits.txt" "$out/join-obits.txt"; then
+    pass "the kill feed's deaths agree ($n_obits kills)"
+else
+    fail "the kill feed's deaths agree" "$n_obits kills; see host-obits.txt / join-obits.txt"
+fi
 if grep -q "CRC mismatch" "$h" "$j" 2>/dev/null; then fail "no Zero Hour CRC mismatch" "$(grep -h "CRC mismatch" "$h" "$j" | head -1)"; else pass "no Zero Hour CRC mismatch"; fi
 
 # The sim's state hash, frame by frame, on the frames both machines ran: the network game's lines

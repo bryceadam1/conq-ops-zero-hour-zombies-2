@@ -235,7 +235,7 @@ impl Predictor {
             match owed.iter().position(|o| std::mem::discriminant(o) == same) {
                 Some(i) => {
                     owed.remove(i);
-                    if let EventKind::HitMarker { headshot, kill: true } = kind {
+                    if let EventKind::HitMarker { headshot, kill: true, .. } = kind {
                         out.kills.push(headshot);
                     }
                 }
@@ -349,9 +349,9 @@ mod tests {
     #[test]
     fn the_sims_events_are_matched_against_the_predicted_ones() {
         let mut p = Predictor::default();
-        let owed = vec![shot(), EventKind::HitMarker { headshot: false, kill: false }, EventKind::ReloadStarted];
+        let owed = vec![shot(), EventKind::HitMarker { headshot: false, kill: false, alert: crate::damage::HitAlert::Player }, EventKind::ReloadStarted];
         let impact = EventKind::Impact { at: Vec3::ZERO, dir: Vec3::ZERO, surface: Surface::Dirt, head: false, fatal: false, impact_type: 0, exit: false };
-        let auth = vec![shot(), shot(), EventKind::HitMarker { headshot: true, kill: true }, EventKind::Damaged { amount: 5.0, dir: crate::math::Vec3::ZERO }, impact];
+        let auth = vec![shot(), shot(), EventKind::HitMarker { headshot: true, kill: true, alert: crate::damage::HitAlert::Player }, EventKind::Damaged { amount: 5.0, dir: crate::math::Vec3::ZERO }, impact];
         let r = p.reconcile(auth, owed);
         // The second shot and the impact were not predicted (late); the damage is never predicted.
         assert_eq!(r.present, vec![shot(), EventKind::Damaged { amount: 5.0, dir: crate::math::Vec3::ZERO }, impact]);
