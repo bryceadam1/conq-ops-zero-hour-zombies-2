@@ -1231,9 +1231,10 @@ fn shooting_kills_an_enemy_and_reports_hitmarkers() {
 
 /// Scavenger tops the reserve up to BO2's stock cap: `iMaxAmmo` spare rounds beside the
 /// magazine (`FUN_005e08d0`; a rifle's 8 magazines of 30 = 240), not a magazine fewer. The
-/// magazine is untouched; the HUD's reserve is that number.
+/// magazine is untouched; the HUD's reserve is that number. The kill drops a pack where the
+/// soldier fell; nothing is refilled until the killer walks over it (`sim::scavenger`).
 #[test]
-fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
+fn a_scavenger_pack_tops_the_reserve_up_to_the_stock_cap() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     host.add(soldier(2, 1, 60.0));
@@ -1252,58 +1253,39 @@ fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 20);
     assert!(host.get(2).has(objflags::DEAD), "enemy killed");
+    assert_eq!(sim.player(0).unwrap().arsenal.current().reserve, 230, "nothing on the kill");
+    assert_eq!(sim.packs.len(), 1, "a pack where he fell");
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 30);
+    let at = sim.packs[0].pos;
+    let p = sim.players[0].as_mut().unwrap();
+    p.body.pos = Vec3::new(at.x, at.y, p.body.pos.z);
+    host.objects.borrow_mut().iter_mut().find(|o| o.id == 1).unwrap().pos = p.body.pos;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert!(sim.packs.is_empty(), "taken");
     let a = &sim.player(0).unwrap().arsenal;
     assert_eq!(a.current().reserve, 240, "topped up to the stock cap, not past it");
     assert!(a.current().ammo > 0 && a.current().ammo < 30, "the magazine is the one being fired");
 }
 
-/// BO2's Scavenger pack is a player's death outside the grace period: a kill in the grace period,
-/// or of anything but a soldier, refills nothing; and a C4 is not refilled while one of the
-/// killer's is down (`_weapons.gsc` `scavenger_think`'s `satchel_charge_mp` case).
+/// What a pack gives (`scavenger_think`, `_weapons.gsc:1804-1888`): a magazine per gun; one more
+/// of each named offhand up to the class's count; the C4 none while one of his is down; the
+/// Tactical Insertion none (not in the script's switch).
 #[test]
-fn scavenger_follows_bo2s_drop_rules() {
-    let c4: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { id: "satchel_charge_mp".into(), equipment_kind: crate::equipment::Kind::C4, ..Default::default() }));
-    let mut sim = Sim::new();
-    let kit = || {
-        let mut a = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
-        a.loadout.perks.push(crate::weapons::Perk::SCAVENGER);
-        a.current_mut().reserve = 0;
-        a
-    };
-    let mut a = kit();
-    assert!(sim.in_grace_period());
-    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
-    assert_eq!(a.current().reserve, 0, "no pack in the grace period");
-    sim.frame = frames(crate::tuning::get().class_change_grace_period);
-    sim.scavenger_kill(0, &mut a, false, crate::damage::MeansOfDeath::RifleBullet);
-    assert_eq!(a.current().reserve, 0, "no pack from a vehicle or a building");
-    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
-    assert!(a.current().reserve > 0, "a soldier's pack");
-    // Not for a grenade or a blast (`_globallogic_player.gsc:1913`); a launcher's impact is one.
-    use crate::damage::MeansOfDeath as M;
-    for how in [M::Grenade, M::GrenadeSplash, M::Explosive, M::ProjectileSplash] {
-        let mut b = kit();
-        sim.scavenger_kill(0, &mut b, true, how);
-        assert_eq!(b.current().reserve, 0, "no pack for {how:?}");
-    }
-    for how in [M::PistolBullet, M::HeadShot, M::Melee, M::Impact, M::Projectile] {
-        let mut b = kit();
-        sim.scavenger_kill(0, &mut b, true, how);
-        assert!(b.current().reserve > 0, "a pack for {how:?}");
-    }
-    // C4 in hand, one of his down: the guns refill, the C4 does not; none down, it does.
-    let mut a = kit();
-    a.lethal.def = c4;
-    a.loadout.lethal = c4.id.clone();
-    a.loadout.lethal_count = Some(1);
-    a.lethal.count = 0;
-    sim.equipment.placed.push(crate::equipment::Placed::new(c4, 0, 1, 0, Vec3::ZERO, 0.0, None));
-    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
-    assert_eq!(a.lethal.count, 0, "no C4 while one is down");
-    assert!(a.current().reserve > 0);
-    sim.equipment.placed.clear();
-    sim.scavenger_kill(0, &mut a, true, crate::damage::MeansOfDeath::RifleBullet);
-    assert_eq!(a.lethal.count, 1, "the C4 back once none is down");
+fn a_scavenger_pack_refills_by_bo2s_rules() {
+    let c4 = crate::weapons::weapon("satchel_charge_mp");
+    assert_eq!(c4.equipment_kind, crate::equipment::Kind::C4);
+    // The Tactical Insertion as the tactical (the class's count from the table's concussion).
+    let ti: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { id: "tactical_insertion_mp".into(), equipment_kind: crate::equipment::Kind::Insertion, cac_slot: "specialgrenade".into(), ..Default::default() }));
+    let mut a = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
+    a.current_mut().reserve = 0;
+    (a.lethal.def, a.loadout.lethal, a.loadout.lethal_count, a.lethal.count) = (c4, c4.id.clone(), Some(1), 0);
+    (a.tactical.def, a.loadout.tactical, a.loadout.tactical_count, a.tactical.count) = (ti, "concussion_grenade_mp".into(), Some(1), 0);
+    a.scavenge(true);
+    assert!(a.current().reserve > 0, "the gun's magazine");
+    assert_eq!((a.lethal.count, a.tactical.count), (0, 0), "no C4 while one is down; never a Tactical Insertion");
+    a.scavenge(false);
+    a.scavenge(false);
+    assert_eq!(a.lethal.count, 1, "the C4 back once none is down, up to the class's one");
 }
 
 /// BO2 traces a non-spread round `bulletrange` (8192 in, `Bullet_Fire`), whatever the def's

@@ -405,6 +405,9 @@ pub use autopilot::{Autopilot, Scripted};
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HudTimers {
     pub hitmarker: f32,
+    /// The Scavenger pickup icon (`hud_scavenger_pickup`): alpha 1, fading over
+    /// [`crate::hud::SCAVENGER_ICON_FADE`] (`scavenger_think`, `_weapons.gsc:1799-1801`).
+    pub scavenger_icon: f32,
     pub hitmarker_kill: bool,
     pub hitmarker_head: bool,
     pub damage_flash: f32,
@@ -1131,7 +1134,14 @@ impl Client {
         self.tracers.predicted = predicting;
         self.tally_seats(sim, host, inp.local_player);
         self.consume_events(sim, inp, presented_before, own_before, player.as_ref().map(|p| p.body.pos), owed);
-        self.remote_steps.update(&sim.players, viewed, &mut self.cues);
+        // Whom the presented General counts as an enemy (Awareness's loud steps): Zero Hour's
+        // relationship as the logic sees it, else nobody.
+        let ears = sim.player(viewed).map(|p| p.general);
+        let enemy = |g: u32| match (host, ears) {
+            (Some(h), Some(e)) => h.object(g, e).is_some_and(|o| o.has(crate::host::objflags::ENEMY)),
+            _ => false,
+        };
+        self.remote_steps.update(&sim.players, viewed, &enemy, &mut self.cues);
         self.remote.update(&sim.players, viewed, dt, &mut self.cues);
         crate::nativebody::ffi::publish_torso(self.remote.torsos());
         self.tick_hud(dt);
@@ -1535,6 +1545,7 @@ impl Client {
         h.build_shown = (h.build_shown - dt).max(0.0);
         h.build_note_time = (h.build_note_time - dt).max(0.0);
         h.hitmarker = (h.hitmarker - dt).max(0.0);
+        h.scavenger_icon = (h.scavenger_icon - dt).max(0.0);
         h.damage_flash = (h.damage_flash - dt * 0.6).max(0.0);
         h.death_banner = (h.death_banner - dt).max(0.0);
         h.muzzle = (h.muzzle - dt).max(0.0);

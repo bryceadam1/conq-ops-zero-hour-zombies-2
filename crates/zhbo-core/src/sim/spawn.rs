@@ -168,6 +168,7 @@ impl Sim {
             charge: None,
             use_grenade: 0,
             shock: Default::default(),
+            taser: None,
             combat: false,
             spawned: false,
         }

@@ -73,6 +73,31 @@ pub const LAND: &str = "ZHBO_BO2_Land";
 /// `fly_step_sprint_npc_<surface>`), positional for everyone ([`RemoteSteps`]).
 pub const STEP_NPC: &str = "ZHBO_BO2_StepNpc";
 pub const SPRINT_STEP_NPC: &str = "ZHBO_BO2_SprintStepNpc";
+/// The loud third-person steps (`default_3rd_person_loud`: `fly_lstep_*_npc_<surface>`), an
+/// enemy's for a listener with Awareness, and the quiet ones (`default_3rd_person_quiet`:
+/// `fly_qstep_*`), a Dead Silence player's (t6mp `FUN_004cb480`, [`step_table`]).
+pub const LSTEP_NPC: &str = "ZHBO_BO2_LStepNpc";
+pub const LSPRINT_STEP_NPC: &str = "ZHBO_BO2_LSprintStepNpc";
+pub const QSTEP_NPC: &str = "ZHBO_BO2_QStepNpc";
+pub const QSPRINT_STEP_NPC: &str = "ZHBO_BO2_QSprintStepNpc";
+
+/// Which third-person footstep table another player's step plays from (t6mp `FUN_004cb480`, case
+/// 1): the event carries the walker's `quieter` (Dead Silence, `FUN_004e6f40` bit 0x32) and
+/// whether the listener hears him loud — the listener has `loudenemies` (Awareness, `FUN_004c1170`:
+/// `BG_HasPerk( ps, 0x26 )`) and the walker is on another team. Quiet and not loud: the quiet table;
+/// quiet and loud: the plain one; loud: the loud one; else the plain one. Returns the run and
+/// sprint events.
+pub fn step_table(quiet: bool, loud: bool) -> (&'static str, &'static str) {
+    match (quiet, loud) {
+        (true, false) => (QSTEP_NPC, QSPRINT_STEP_NPC),
+        (false, true) => (LSTEP_NPC, LSPRINT_STEP_NPC),
+        _ => (STEP_NPC, SPRINT_STEP_NPC),
+    }
+}
+/// BO2's Scavenger pack taken (`scavenger_think`, `_weapons.gsc:1797-1798`): the taker's own
+/// `fly_equipment_pickup_plr`, and `fly_equipment_pickup_npc` at him for everyone else.
+pub const SCAVENGER_PICKUP: &str = "ZHBO_BO2_ScavengerPickup";
+pub const SCAVENGER_PICKUP_NPC: &str = "ZHBO_BO2_ScavengerPickupNpc";
 /// Another player's landing (`_footsteps.csc` `playerland`: `fly_land_npc_<surface>`).
 pub const LAND_NPC: &str = "ZHBO_BO2_LandNpc";
 /// A player's voice when he is hurt and when he dies (`_battlechatter_mp.gsc` `painvox`,
@@ -343,8 +368,11 @@ pub struct Cues {
 /// every stride he walks on the ground, at the stride the own steps use, heard at him
 /// ([`STEP_NPC`]/[`SPRINT_STEP_NPC`]). BO2 plays every other player's steps this way
 /// (`_footsteps.csc`'s `firstperson = 0` aliases), and his jump and landing too: `playerjump`
-/// plays the step alias, `playerland` `fly_land_npc_<surface>` ([`LAND_NPC`]). A General with Dead
-/// Silence (`specialty_quieter`) makes none. Presentation only: read off the sim's records.
+/// plays the step alias, `playerland` `fly_land_npc_<surface>` ([`LAND_NPC`]). Each step comes from
+/// the table [`step_table`] picks: a Dead Silence walker's quiet, an enemy's loud for a listener
+/// with Awareness. The jump and landing are the script's (`playerjump`/`playerland`, which build
+/// one alias whatever `quiet` and `islouder` say): they always play. Presentation only: read off
+/// the sim's records.
 #[derive(Clone, Debug, Default)]
 pub struct RemoteSteps {
     seats: [Option<StepSeat>; crate::sim::MAX_PLAYERS],
@@ -363,7 +391,8 @@ struct StepSeat {
 
 impl RemoteSteps {
     /// This frame's footfalls of every seat's first-person General but `presented`'s.
-    pub fn update(&mut self, players: &[Option<PlayerSim>], presented: i32, cues: &mut Cues) {
+    pub fn update(&mut self, players: &[Option<PlayerSim>], presented: i32, enemy: &dyn Fn(u32) -> bool, cues: &mut Cues) {
+        let loud_ears = players.get(usize::try_from(presented).unwrap_or(usize::MAX)).and_then(|p| p.as_ref()).is_some_and(|p| p.arsenal.has_specialty(crate::weapons::specialty::Specialty::LoudEnemies));
         for (seat, slot) in self.seats.iter_mut().enumerate() {
             let p = players.get(seat).and_then(|p| p.as_ref()).filter(|p| seat as i32 != presented && p.is_first_person());
             let Some(p) = p else {
@@ -372,7 +401,8 @@ impl RemoteSteps {
             };
             let pos = p.body.pos;
             let quiet = p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter);
-            let (stride, event) = if p.body.sprinting { (SPRINT_STRIDE, SPRINT_STEP_NPC) } else { (STRIDE, STEP_NPC) };
+            let (run, sprint) = step_table(quiet, loud_ears && enemy(p.general));
+            let (stride, event) = if p.body.sprinting { (SPRINT_STRIDE, sprint) } else { (STRIDE, run) };
             let mut s = match *slot {
                 Some(s) if s.general == p.general => s,
                 // A new General (or one just seen): his first step half a stride on.
@@ -381,7 +411,7 @@ impl RemoteSteps {
             let moved = (pos - s.last).length_xy();
             if p.body.on_ground {
                 // He landed: BO2's landing (`playerland`), when he fell fast enough to be heard.
-                if s.airborne && s.fall > LAND_SPEED && !quiet {
+                if s.airborne && s.fall > LAND_SPEED {
                     cues.play_at(LAND_NPC, pos);
                     s.left = STRIDE * 0.5;
                 }
@@ -393,16 +423,14 @@ impl RemoteSteps {
                 s.fall = 0.0;
             } else {
                 // He left the ground going up: BO2's jump plays the step alias (`playerjump`).
-                if !s.airborne && p.body.vel.z > 0.0 && !quiet {
+                if !s.airborne && p.body.vel.z > 0.0 {
                     cues.play_at(STEP_NPC, pos);
                 }
                 s.airborne = true;
                 s.fall = s.fall.max(-p.body.vel.z);
             }
             if s.left <= 0.0 {
-                if !quiet {
-                    cues.play_at(event, pos);
-                }
+                cues.play_at(event, pos);
                 s.left += stride;
                 if s.left < 0.0 {
                     s.left = STRIDE;
@@ -905,8 +933,10 @@ mod tests {
     }
 
     /// Another first-person General's steps are heard at him, one per stride, the sprint's with
-    /// its own event; the presented seat's are not (he hears his own 2D steps), nor a General
-    /// with Dead Silence's (`specialty_quieter`).
+    /// its own event; the presented seat's are not (he hears his own 2D steps). A Dead Silence
+    /// walker's come from the quiet table, an enemy's from the loud one for a listener with
+    /// Awareness (and a Dead Silence enemy's then from the plain one), a teammate's never loud
+    /// (t6mp `FUN_004cb480`, `FUN_004c1170`). The jump and landing play whatever the perks.
     #[test]
     fn other_generals_footsteps_are_heard_at_them() {
         let walker = |general: u32| {
@@ -923,7 +953,7 @@ mod tests {
                 for p in players.iter_mut().flatten() {
                     p.body.pos.x += 1.0;
                 }
-                steps.update(players, 0, c);
+                steps.update(players, 0, &|g| g == 2, c);
                 n.extend(c.queue.drain(..).map(|r| (r.event, r.at)));
             }
             n
@@ -934,27 +964,46 @@ mod tests {
         players[1].as_mut().unwrap().body.sprinting = true;
         let n = heard(&mut players, &mut steps, &mut c);
         assert!(!n.is_empty() && n.iter().all(|(e, _)| *e == SPRINT_STEP_NPC), "{n:?}");
-        // Dead Silence: none.
+        players[1].as_mut().unwrap().body.sprinting = false;
+        // Dead Silence: the quiet table.
         let p = players[1].as_mut().unwrap();
         p.arsenal.loadout.perks.push(crate::weapons::Perk::by_id("DeadSilence").expect("Dead Silence"));
         assert!(p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter));
-        assert!(heard(&mut players, &mut steps, &mut c).is_empty(), "Dead Silence");
+        let n = heard(&mut players, &mut steps, &mut c);
+        assert!(!n.is_empty() && n.iter().all(|(e, _)| *e == QSTEP_NPC), "Dead Silence: {n:?}");
+        // The listener with Awareness hears the Dead Silence enemy from the plain table ...
+        let ears = players[0].as_mut().unwrap();
+        ears.arsenal.loadout.perks.push(crate::weapons::Perk::by_id("Awareness").expect("Awareness"));
+        assert!(ears.arsenal.has_specialty(crate::weapons::specialty::Specialty::LoudEnemies));
+        let n = heard(&mut players, &mut steps, &mut c);
+        assert!(!n.is_empty() && n.iter().all(|(e, _)| *e == STEP_NPC), "Awareness against Dead Silence: {n:?}");
+        // ... and a plain enemy from the loud one, a teammate never.
+        players[1].as_mut().unwrap().arsenal.loadout.perks.clear();
+        let n = heard(&mut players, &mut steps, &mut c);
+        assert!(!n.is_empty() && n.iter().all(|(e, _)| *e == LSTEP_NPC), "Awareness: {n:?}");
+        let mut n = Vec::new();
+        for _ in 0..100 {
+            players[1].as_mut().unwrap().body.pos.x += 1.0;
+            steps.update(&players, 0, &|_| false, &mut c);
+            n.extend(c.queue.drain(..).map(|r| r.event));
+        }
+        assert!(!n.is_empty() && n.iter().all(|e| *e == STEP_NPC), "a teammate: {n:?}");
+        players[1].as_mut().unwrap().arsenal.loadout.perks.push(crate::weapons::Perk::by_id("DeadSilence").unwrap());
         // A jump plays the step at him, the landing his landing.
+        // (Dead Silence on: the script's jump and landing play anyway.)
         players[0] = None;
-        let p = players[1].as_mut().unwrap();
-        p.arsenal.loadout.perks.clear();
         let mut steps = RemoteSteps::default();
-        steps.update(&players, 0, &mut c);
+        steps.update(&players, 0, &|_| true, &mut c);
         c.queue.clear();
         let p = players[1].as_mut().unwrap();
         p.body.on_ground = false;
         p.body.vel.z = 120.0;
-        steps.update(&players, 0, &mut c);
+        steps.update(&players, 0, &|_| true, &mut c);
         assert_eq!(events(&mut c), [STEP_NPC], "the jump");
         players[1].as_mut().unwrap().body.vel.z = -200.0;
-        steps.update(&players, 0, &mut c);
+        steps.update(&players, 0, &|_| true, &mut c);
         players[1].as_mut().unwrap().body.on_ground = true;
-        steps.update(&players, 0, &mut c);
+        steps.update(&players, 0, &|_| true, &mut c);
         assert_eq!(events(&mut c), [LAND_NPC], "the landing");
         // Overhead (no first person): none either.
         players[1] = None;

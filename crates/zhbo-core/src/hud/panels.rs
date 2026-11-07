@@ -92,36 +92,88 @@ pub(super) fn project(client: &Client, w: f32, h: f32, at: Vec3) -> Option<(f32,
     (x.abs() <= 1.0 && y.abs() <= 1.0).then_some((w * 0.5 * (1.0 + x), h * 0.5 * (1.0 - y)))
 }
 
-/// Marks over the world: the target finder's red diamonds on enemies while aiming, and Engineer's
-/// outline on enemy equipment.
+/// Draws a diamond mark centred on a screen point in a colour.
+type Diamond<'a> = &'a dyn Fn(&mut Vec<Prim>, f32, f32, u32);
+
+/// Marks over the world: the target finder's red diamonds on enemies while aiming, and
+/// Engineer's view of enemy equipment.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_marks(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, sim: &Sim, p: &PlayerSim) {
     let def = p.arsenal.current().def;
     // The lens draws the target finder's own diamonds (BO2's display, `sim::optics`) when the
     // native viewmodel drew its reticle; the W3D fallback keeps these.
     let finder = def.target_finder && p.arsenal.ads > 0.6 && !crate::nativevm::lens_reticle_drawn();
-    let engineer = p.arsenal.has(crate::weapons::Perk::ENGINEER);
-    if !finder && !engineer {
-        return;
-    }
-    let mut objs = Vec::new();
-    host.query(p.body.pos, 400.0, p.general, &mut objs);
-    objs.sort_by_key(|o| o.id);
-    for o in objs.iter().filter(|o| o.has(objflags::ENEMY) && !o.has(objflags::DEAD)) {
-        let equipment = sim.equipment.placed.iter().any(|e| e.object == o.id);
-        let mark = if equipment { engineer } else { finder && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE) };
-        if !mark {
-            continue;
+    let diamond = |prims: &mut Vec<Prim>, x: f32, y: f32, col: u32| {
+        let r = 7.0 * s;
+        for ((ax, ay), (bx, by)) in [((x, y - r), (x + r, y)), ((x + r, y), (x, y + r)), ((x, y + r), (x - r, y)), ((x - r, y), (x, y - r))] {
+            prims.push(Prim::Line { x0: ax, y0: ay, x1: bx, y1: by, width: 2.0 * s, argb: col });
         }
-        let at = Vec3::new(o.pos.x, o.pos.y, o.pos.z + o.height.max(2.0) * 0.6);
-        if let Some((x, y)) = project(client, w, h, at) {
-            let r = 7.0 * s;
-            let col = if equipment { AMBER } else { RED };
-            for ((ax, ay), (bx, by)) in [((x, y - r), (x + r, y)), ((x + r, y), (x, y + r)), ((x, y + r), (x - r, y)), ((x - r, y), (x, y - r))] {
-                prims.push(Prim::Line { x0: ax, y0: ay, x1: bx, y1: by, width: 2.0 * s, argb: col });
+    };
+    if finder {
+        let mut objs = Vec::new();
+        host.query(p.body.pos, 400.0, p.general, &mut objs);
+        objs.sort_by_key(|o| o.id);
+        let placed = |id: u32| sim.equipment.placed.iter().any(|e| e.object == id);
+        for o in objs.iter().filter(|o| o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE) && !placed(o.id)) {
+            let at = Vec3::new(o.pos.x, o.pos.y, o.pos.z + o.height.max(2.0) * 0.6);
+            if let Some((x, y)) = project(client, w, h, at) {
+                diamond(prims, x, y, RED);
             }
         }
     }
+    draw_recon(host, prims, w, h, s, client, sim, p, &diamond);
+}
+
+/// Engineer's `specialty_showenemyequipment` (`gametypes/_weaponobjects.gsc`
+/// `resetreconmodelvisibility`, `:2253-2300`; `_riotshield.gsc:160-190`): every enemy weapon
+/// object whose watcher has a recon model — the Bouncing Betty, C4, Claymore, Sensor Grenade,
+/// Tactical Insertion, Shock Charge and Trophy System — and every enemy deployed Assault Shield
+/// shows to him through walls at any distance (`setforcenocull`, visible only to him). BO2 draws the
+/// item's `_detect` model in its detectable material; here its outline: the box of its projectile
+/// model (BO2's own bounds, `WeaponDef::projectile_box`) drawn over everything, a diamond where the
+/// def carries none.
+#[allow(clippy::too_many_arguments)]
+fn draw_recon(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, sim: &Sim, p: &PlayerSim, diamond: Diamond) {
+    if !p.arsenal.has_specialty(crate::weapons::Specialty::ShowEnemyEquipment) {
+        return;
+    }
+    let enemy = |id: u32, at: Vec3| {
+        let mut objs = Vec::new();
+        host.query(at, 4.0, p.general, &mut objs);
+        objs.iter().any(|o| o.id == id && o.has(objflags::ENEMY) && !o.has(objflags::DEAD))
+    };
+    for e in sim.equipment.placed.iter().filter(|e| e.object != 0 && recon(e.kind) && enemy(e.object, e.pos)) {
+        match e.def.projectile_box() {
+            Some((c, half)) => {
+                let corner = |i: usize| e.pos + c + Vec3::new(if i & 1 == 0 { -half.x } else { half.x }, if i & 2 == 0 { -half.y } else { half.y }, if i & 4 == 0 { -half.z } else { half.z });
+                let pts: Vec<Option<(f32, f32)>> = (0..8).map(|i| project(client, w, h, corner(i))).collect();
+                for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
+                    if let (Some((ax, ay)), Some((bx, by))) = (pts[a], pts[b]) {
+                        prims.push(Prim::Line { x0: ax, y0: ay, x1: bx, y1: by, width: 2.0 * s, argb: RED });
+                    }
+                }
+            }
+            None => {
+                if let Some((x, y)) = project(client, w, h, e.pos) {
+                    diamond(prims, x, y, RED);
+                }
+            }
+        }
+    }
+    for d in sim.deployed.iter().filter(|d| d.object != 0 && d.destroyed.is_none()) {
+        let at = Vec3::new(d.bearer.pos.x, d.bearer.pos.y, d.bearer.pos.z + crate::units::inches(crate::tuning::get().riotshield_placement_zoffset));
+        if enemy(d.object, at) {
+            if let Some((x, y)) = project(client, w, h, at) {
+                diamond(prims, x, y, RED);
+            }
+        }
+    }
+}
+
+/// Whether a piece of `kind` has a recon model (its watcher's `reconmodel`): everything that is
+/// placed but the mod's `Other` (the Black Hat never stays down).
+pub(super) fn recon(kind: crate::equipment::Kind) -> bool {
+    kind != crate::equipment::Kind::Other
 }
 
 /// Whether BO2 draws the hold-breath hint (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed

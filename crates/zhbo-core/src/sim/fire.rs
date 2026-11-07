@@ -187,9 +187,6 @@ impl Sim {
             self.emit(idx, EventKind::Impact { at: point, dir, surface, head: headshot, fatal: kill, impact_type: def.impact_type, exit: false });
         }
         self.emit(idx, EventKind::HitMarker { headshot, kill });
-        if kill {
-            self.scavenger_kill(idx, &mut p.arsenal, infantry, how);
-        }
         BulletHit { id, surface, head: headshot, kill }
     }
 }
@@ -499,9 +496,6 @@ impl Sim {
         // The blow travels the way he faces (BO2's melee passes his forward as `vDir`).
         let kill = host.damage(p.general, v.id, damage * rule * BO2_TO_ZH_DAMAGE, crate::damage::Blow::new(MeansOfDeath::Melee, melee, fwd));
         self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-        if kill {
-            self.scavenger_kill(idx, &mut p.arsenal, v.has(objflags::INFANTRY), MeansOfDeath::Melee);
-        }
     }
 }
 

@@ -15,10 +15,11 @@ pub mod antilag;
 mod build;
 pub mod deploy;
 pub mod drops;
+pub mod scavenger;
 pub mod guard;
 mod fire;
 mod hack;
-mod shock;
+pub mod shock;
 mod throwback;
 pub use shock::FLASH_WEAPON;
 pub mod optics;
@@ -54,14 +55,13 @@ pub use lockstep::Fingerprint;
 
 use crate::host::{geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HIT_RADIUS};
-use crate::damage::MeansOfDeath;
 use crate::impacts::Surface;
 use crate::input::{buttons, FpsInput};
 use crate::math::{basis_xy, dir_from_angles, Vec3};
 use crate::movement::{self, Blocker, Body, MoveModifiers, MoveTuning, World};
 use crate::units::{BO2_TO_ZH_DAMAGE, LOGIC_DT};
 use crate::movement::Stance;
-use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_COS};
+use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed};
 use crate::projectiles::{Outcome, Projectile};
 use crate::units::inches;
 use crate::building::{self, Hammer, Site};
@@ -244,6 +244,9 @@ pub enum EventKind {
     /// He walked over a dropped weapon and took its ammo (EV_AMMO_PICKUP): `ammoPickupSoundPlayer`,
     /// `ammoPickupSound` for everyone else.
     AmmoPickedUp { def: &'static crate::weapons::WeaponDef, at: Vec3 },
+    /// He walked over a Scavenger pack and took it (`scavenger_think`): `fly_equipment_pickup_plr`
+    /// and the `hud_scavenger_pickup` icon for him, `fly_equipment_pickup_npc` at `at` for others.
+    ScavengerPickedUp { at: Vec3 },
     /// This player's round or strike met an Assault Shield (held, stowed or deployed) at `at`:
     /// no damage to its bearer; drawn as a metal impact, heard as the shield's.
     ShieldHit { at: Vec3, dir: Vec3, knife: bool, impact_type: i32 },
@@ -358,6 +361,8 @@ pub struct PlayerSim {
     pub use_grenade: u32,
     /// The shellshock running on him in first person ([`crate::shellshock`]).
     pub shock: crate::shellshock::Shellshock,
+    /// A Shock Charge's zap on him: its damage ticks and the hidden HUD ([`shock::Taser`]).
+    pub taser: Option<shock::Taser>,
     /// BO2's `hasdonecombat` for this life: he has fired, thrown, launched or been hurt since he
     /// spawned (`spawn::is_combat`). A class change then waits for the next spawn.
     pub combat: bool,
@@ -369,7 +374,7 @@ pub struct PlayerSim {
 crate::statehash::state_hash!(struct PlayerSim {
     general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
     view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, very_hurt, hack,
-    rts, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, combat, spawned,
+    rts, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, taser, combat, spawned,
 });
 
 impl PlayerSim {
@@ -525,6 +530,7 @@ impl PlayerSim {
             charge: None,
             use_grenade: 0,
             shock: Default::default(),
+            taser: None,
             combat: false,
             spawned: true,
         }
@@ -594,6 +600,8 @@ pub struct Sim {
     pub deployed: Vec<deploy::Deployed>,
     /// Weapons lying in the world (`sim/drops.rs`).
     pub drops: Vec<drops::Dropped>,
+    /// Scavenger packs lying in the world (`sim/scavenger.rs`).
+    pub packs: Vec<scavenger::Pack>,
     /// Kills of seat Generals not yet read by their death, and whether each was friendly (a
     /// suicide or a teammate's: no drop).
     pub kills: Vec<drops::Kill>,
@@ -652,6 +660,7 @@ impl Sim {
             shields: Vec::new(),
             deployed: Vec::new(),
             drops: Vec::new(),
+            packs: Vec::new(),
             kills: Vec::new(),
             blows: Vec::new(),
             combat_seen: 0,
@@ -765,6 +774,7 @@ impl Sim {
         for general in died {
             self.score.forget(general);
         }
+        self.drop_scavenger_packs(host, &witness.take_killings());
         self.note_kills(witness.take());
     }
 
@@ -795,6 +805,7 @@ impl Sim {
         self.apply_shock_hits(host);
         self.step_deployed(host);
         self.step_drops(host);
+        self.step_packs(host);
         let (frame, smoke) = (self.frame, self.smoke);
         self.smokes.retain(|s| s.stands(frame, &smoke));
         for s in &self.smokes {
@@ -826,7 +837,7 @@ impl Sim {
         let share = if landing.damage >= 100 { p.arsenal.tuning.fall_damage_full_scale } else { f32::from(landing.damage) * 0.01 };
         let amount = (p.max_health * share).trunc();
         if amount > 0.0 {
-            host.damage(p.general, p.general, amount, crate::damage::Blow::bare(MeansOfDeath::Falling));
+            host.damage(p.general, p.general, amount, crate::damage::Blow::bare(crate::damage::MeansOfDeath::Falling));
         }
     }
 
@@ -853,11 +864,12 @@ impl Sim {
         let mut done = Vec::new();
         let mut bounces = Vec::new();
         let mut struck = Vec::new();
+        let players: Vec<u32> = self.players.iter().flatten().map(|p| p.general).collect();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
             // Its blast reaches each General through his guard (`sim::guard`).
             let hits = std::cell::RefCell::new(Vec::new());
             let guarded = guard::Guarded { host, guards: &self.equipment.guards, def: proj.def, stuck_to: proj.stuck_to, thrown: true, owner: proj.owner, at: None, hits: &hits };
-            let outcome = proj.step_shielded(&guarded, &self.shields);
+            let outcome = proj.step_shielded(&guarded, &self.shields, &players);
             // What it did to first-person Generals, placed where it went off.
             let at = match outcome {
                 Some(Outcome::Exploded { at, .. }) => Some(at),
@@ -882,10 +894,6 @@ impl Sim {
         }
         for (owner, kill) in struck {
             self.emit(owner, EventKind::HitMarker { headshot: false, kill });
-            if kill {
-                // A strike that did not end the flight: the def does not go off on impact.
-                self.scavenge(owner, MeansOfDeath::Impact);
-            }
         }
         for (i, owner, outcome) in done.iter().rev() {
             let (_, proj) = self.projectiles.remove(*i);
@@ -909,22 +917,15 @@ impl Sim {
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                     }
-                    if kill {
-                        self.scavenge(*owner, crate::damage::strike(proj.def, true));
-                    }
                 }
                 Outcome::Hit { kill, .. } => {
                     if kill {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
-                        self.scavenge(*owner, crate::damage::strike(proj.def, false));
                     }
                 }
                 Outcome::Spawned { at, stuck_to, hit_enemy, kill } => {
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
-                    }
-                    if kill {
-                        self.scavenge(*owner, crate::damage::strike(proj.def, false));
                     }
                     // A table without the spawned grenade has nothing to leave (noted once by
                     // `weapon_or_none`).
@@ -973,27 +974,6 @@ impl Sim {
         }
     }
 
-    /// Scavenger: a kill by a projectile's strike (`how`, its means of death; never its blast)
-    /// refills ammo. The victim's kind is not known here (a struck object): it counts as a soldier.
-    fn scavenge(&mut self, idx: usize, how: MeansOfDeath) {
-        let Some(Some(mut p)) = self.players.get_mut(idx).map(Option::take) else { return };
-        self.scavenger_kill(idx, &mut p.arsenal, true, how);
-        self.players[idx] = Some(p);
-    }
-
-    /// BO2's Scavenger pack (`_weapons.gsc` `dropscavengerfordeath`, `scavenger_think`): a kill
-    /// refills the killer's ammo when he has the perk, the victim was a soldier (BO2 drops it only
-    /// for a player), outside the grace period (`_globallogic_player.gsc:1911`, `if (
-    /// !level.ingraceperiod )`), and not by a grenade or a blast (`how`,
-    /// [`MeansOfDeath::drops_scavenger`]). His C4 gets none while one of his is down.
-    pub(super) fn scavenger_kill(&self, idx: usize, arsenal: &mut crate::weapons::Arsenal, soldier: bool, how: MeansOfDeath) {
-        if !soldier || !how.drops_scavenger() || self.in_grace_period() || !arsenal.has_specialty(Specialty::Scavenger) {
-            return;
-        }
-        let c4_down = self.equipment.placed.iter().any(|q| q.owner == idx && q.kind == crate::equipment::Kind::C4);
-        arsenal.scavenge(c4_down);
-    }
-
     /// Hand a first-person General back to RTS control where he stands.
     fn return_to_rts(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) {
         p.mode = Mode::Rts;
@@ -1040,6 +1020,11 @@ impl Sim {
             return false;
         }
         p.shock.step();
+        if p.is_first_person() {
+            shock::step_taser(host, p);
+        } else {
+            p.taser = None;
+        }
         if !p.is_first_person() {
             // Overhead: hits still count as combat (BO2's damage callback sets `hasdonecombat`),
             // and the health stays current for the next take-control. His body is drawn for
@@ -1220,7 +1205,10 @@ impl Sim {
                     p.gun = gun;
                     self.step_hack(host, idx, p);
                     let dir = dir_from_angles(p.yaw, p.pitch);
-                    p.optics.step(host, p.general, p.body.eye(), dir, p.arsenal.ads, p.arsenal.current().def, self.frame);
+                    // The other Generals' class perks (Cold Blooded against the optics).
+                    let players = &self.players;
+                    let perks = |id: u32| players.iter().flatten().find(|q| q.general == id).map_or(crate::weapons::Specialties::NONE, |q| q.arsenal.class_specialties());
+                    p.optics.step(host, p.general, p.body.eye(), dir, p.arsenal.ads, p.arsenal.current().def, self.frame, &perks);
                 }
             }
             Mode::FieldComputer { t } => {
@@ -1437,6 +1425,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         WeaponDropped { def, at } => format!("player {}'s General dropped his {} at ({:.0}, {:.0})", e.player, def.id, at.x, at.y),
         WeaponPickedUp { def, .. } => format!("player {} picked up the {}", e.player, def.id),
         AmmoPickedUp { def, .. } => format!("player {} took ammo from a dropped {}", e.player, def.id),
+        ScavengerPickedUp { at } => format!("player {} took a Scavenger pack at ({:.0}, {:.0})", e.player, at.x, at.y),
         _ => return None,
     };
     Some(msg)

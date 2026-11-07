@@ -202,6 +202,7 @@ pub fn schema() -> Schema {
         .col("throw_back", "damage", Kind::Bool, "bThrowBack (FUN_00676d50 / FUN_005d2140: a live one may be thrown back)")
         .col("projectile_impact_explode", "damage", Kind::Bool, "bProjImpactExplode")
         .col("projectile_model", "damage", Kind::Text, "projectileModel").asset()
+        .col("projectile_bounds", "damage", Kind::Floats(F32_EPS), "projectileModel's mins x,y,z then maxs x,y,z: the missile's box (FUN_00607cb0 -> FUN_007825b0)")
         .col("impact_type", "damage", Kind::Text, "ImpactType");
 
     // Spread.

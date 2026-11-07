@@ -49,7 +49,7 @@ impl Tactical {
         use crate::weapons::Effect;
         match def.effect {
             Effect::Emp => Some(Tactical::Emp),
-            Effect::Stun if !thrown => Some(Tactical::Proximity),
+            Effect::Stun if !thrown || def.equipment_kind == crate::weapons::Kind::Shock => Some(Tactical::Proximity),
             Effect::Stun if def.id == super::shock::FLASH_WEAPON => Some(Tactical::Flash),
             Effect::Stun if def.id == super::shock::CONCUSSION_WEAPON => Some(Tactical::Concussion),
             _ => None,
@@ -199,8 +199,12 @@ impl Sim {
             let airborne = self.players[victim_seat].as_ref().is_some_and(|p| !p.body.on_ground);
             let dmg = crate::death::DmgType::of(h.blow.how, h.blow.weapon, airborne);
             self.blows.push(super::Struck { victim: h.victim, dir: h.blow.dir, dmg, engine: false });
+            // A tactical's own radius damage (the concussion's, the flashbang's, the Shock Charge's 1,
+            // t6mp `FUN_0060a480`) is that tactical's hit: BO2 keeps the weapon of each attacker's
+            // damage, and `processassist` reads it.
+            let tactical = h.blow.weapon.and_then(|w| Tactical::of(w, true));
             if let Some(seat) = shooter.filter(|&s| s != victim_seat) {
-                self.score.track(host, seat, h.shooter, h.victim, h.amount / crate::units::BO2_TO_ZH_DAMAGE, None);
+                self.score.track(host, seat, h.shooter, h.victim, h.amount / crate::units::BO2_TO_ZH_DAMAGE, tactical);
             }
             if h.kill {
                 if let Some(killer) = shooter.filter(|&s| s != victim_seat) {
@@ -235,9 +239,13 @@ impl Sim {
     }
 
     /// A tactical's hit on a first-person General (`sim::guard`'s shock hit: the weapon and its
-    /// owner): BO2's 1-damage tactical blast on his attacker list, as that weapon.
+    /// owner) that dealt no damage of its own (the EMP grenade's 0): on his attacker list as that
+    /// weapon. One with radius damage was already tracked by it ([`Sim::score_hits`]).
     pub(super) fn score_shock(&mut self, host: &dyn LogicHost, owner: u32, victim: u32, def: &crate::weapons::WeaponDef, thrown: bool) {
         let Some(tactical) = Tactical::of(def, thrown) else { return };
+        if def.explosion_inner_damage != 0.0 {
+            return;
+        }
         if !self.players.iter().flatten().any(|p| p.general == victim) {
             return;
         }
@@ -425,24 +433,33 @@ mod tests {
     }
 
     /// A tactical as the attacker's last hit scores its own event (`processassist`'s switch): the
-    /// concussion's stun, then the kill by his teammate; a later plain hit makes it a plain one.
+    /// concussion's own radius damage, then the kill by his teammate; a later plain hit makes it a
+    /// plain one. A tactical without damage (the EMP's) is tracked by its shock.
     #[test]
     fn a_tactical_as_the_last_hit_scores_its_own_assist() {
         let (mut sim, host) = match_of_four();
         let conc = crate::weapons::catalog().get(super::super::shock::CONCUSSION_WEAPON).expect("the concussion");
-        sim.score_shock(&host, 101, 102, conc, true);
+        let stun_blow = crate::damage::Blow::new(crate::damage::MeansOfDeath::GrenadeSplash, conc, Vec3::new(1.0, 0.0, 0.0));
+        sim.scored(&host, |_, h| {
+            h.damage(101, 102, crate::units::BO2_TO_ZH_DAMAGE, stun_blow);
+        });
         hit(&mut sim, &host, 100, 102, 1000.0);
         let got: Vec<_> = sim.events.iter().filter_map(|e| match e.kind { EventKind::Assist { level, tactical } => Some((e.player, level, tactical)), _ => None }).collect();
         assert_eq!(got, [(1, 1, Some(Tactical::Concussion))]);
         let (mut sim, host) = match_of_four();
-        sim.score_shock(&host, 101, 102, conc, true);
+        sim.scored(&host, |_, h| {
+            h.damage(101, 102, crate::units::BO2_TO_ZH_DAMAGE, stun_blow);
+        });
         hit(&mut sim, &host, 101, 102, 30.0);
         hit(&mut sim, &host, 100, 102, 1000.0);
         assert!(sim.events.iter().any(|e| matches!(e.kind, EventKind::Assist { level: 2, tactical: None })), "his last hit was the gun");
-        // A teammate's stun is not tracked; the classification by BO2's names.
+        // A teammate's stun is not tracked; the EMP's shock is; the classification by BO2's names.
+        let emp: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { effect: crate::weapons::Effect::Emp, id: "emp_grenade_mp".into(), ..Default::default() }));
         let (mut sim, host) = match_of_four();
-        sim.score_shock(&host, 103, 102, conc, true);
+        sim.score_shock(&host, 103, 102, emp, true);
         assert!(sim.score.attacked.is_empty());
+        sim.score_shock(&host, 101, 102, emp, true);
+        assert!(sim.score.attacked.iter().any(|a| a.victim == 102 && a.attackers.iter().any(|x| x.tactical == Some(Tactical::Emp))));
         let def = |effect, id: &str| crate::weapons::WeaponDef { effect, id: id.into(), ..Default::default() };
         use crate::weapons::Effect;
         assert_eq!(Tactical::of(&def(Effect::Stun, "flash_grenade_mp"), true), Some(Tactical::Flash));

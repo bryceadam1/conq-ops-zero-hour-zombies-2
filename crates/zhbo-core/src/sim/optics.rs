@@ -25,12 +25,25 @@
 //!   into the code's ui3d texture only above 0.99 ADS) marks every enemy player with a diamond
 //!   centred `RangeFinderMarkHeight` above his feet (BO2's 70 − 25", standing): the marks are
 //!   [`Optics::blips`] then.
+//!
+//! Cold Blooded works on both, as BO2 tests the target's specialties there (`FUN_004e6f40`, the
+//! client's bit for another client): the scanner shows an `immunemms` character by
+//! `cg_sonarAttachmentCounterMaxSpeed` instead of the max speed, his visibility times
+//! `cg_sonarAttachmentCounterColorMultiplier` (`FUN_004e7b40`, bit 0x21); the target finder draws
+//! no diamond on an `immunerangefinder` enemy (`FUN_00526780`, bit 0x23) and does not spot a
+//! `noname` one (`FUN_00528ec0`, bit 0x2a: the reticle keeps its colour). The perks are the
+//! target General's class's ([`Perks`]); Zero Hour's infantry have none.
 
 use super::fire::{gather_targets, target_from, HitBodies};
 use crate::hitscan::{self, HitResult};
 use crate::host::{objflags, LogicHost, ObjInfo};
 use crate::math::Vec3;
 use crate::units::{inches, LOGIC_DT, LOGIC_FPS};
+use crate::weapons::{Specialties, Specialty};
+
+/// The specialties of the character an object is: a seat General's class's, none for anything
+/// else.
+pub type Perks<'a> = &'a dyn Fn(u32) -> Specialties;
 
 /// The most characters the scanner shows at once (the renderer's `NATIVE_MAX_BLIPS`).
 pub const MAX_BLIPS: usize = 8;
@@ -98,21 +111,21 @@ impl Optics {
     /// Update both displays for the weapon in hand. `eye`/`dir` are the view; `ads` BO2's
     /// `fWeaponPosFrac`.
     #[allow(clippy::too_many_arguments)]
-    pub fn step(&mut self, host: &dyn LogicHost, me: u32, eye: Vec3, dir: Vec3, ads: f32, def: &crate::weapons::WeaponDef, frame: u32) {
+    pub fn step(&mut self, host: &dyn LogicHost, me: u32, eye: Vec3, dir: Vec3, ads: f32, def: &crate::weapons::WeaponDef, frame: u32, perks: Perks) {
         let t = crate::tuning::get();
         if def.traits.mms && def.mms_max_dist > 0.0 {
-            self.step_scanner(host, me, eye, def.mms_max_dist, &t);
+            self.step_scanner(host, me, eye, def.mms_max_dist, &t, perks);
         } else {
             self.tracks.clear();
             self.blips.clear();
         }
-        self.step_finder(host, me, eye, dir, ads, def.target_finder, frame, &t);
+        self.step_finder(host, me, eye, dir, ads, def.target_finder, frame, &t, perks);
         if def.target_finder && !def.traits.mms {
-            self.blips = if ads >= t.range_finder_display_ads { marks(host, me, eye, &t) } else { Vec::new() };
+            self.blips = if ads >= t.range_finder_display_ads { marks(host, me, eye, &t, perks) } else { Vec::new() };
         }
     }
 
-    fn step_scanner(&mut self, host: &dyn LogicHost, me: u32, eye: Vec3, max_dist: f32, t: &crate::tuning::Tuning) {
+    fn step_scanner(&mut self, host: &dyn LogicHost, me: u32, eye: Vec3, max_dist: f32, t: &crate::tuning::Tuning, perks: Perks) {
         let mut objs = Vec::new();
         host.query(eye, inches(max_dist), me, &mut objs);
         let hide_friendlies = t.sonar_hide_friendlies != 0.0;
@@ -131,7 +144,10 @@ impl Optics {
             // Inches, and inches per BO2 frame.
             let dist = (o.pos - eye).length() / inches(1.0);
             let near = (dist / max_dist).min(1.0);
-            let threshold = t.sonar_max_speed + t.sonar_distance_factor * (1.0 - near);
+            // Cold Blooded: the counter speed, and a dimmer character (`FUN_004e7b40`, 0x21).
+            let immune = perks(o.id).has(Specialty::ImmuneMms);
+            let max_speed = if immune { t.sonar_counter_max_speed } else { t.sonar_max_speed };
+            let threshold = max_speed + t.sonar_distance_factor * (1.0 - near);
             let speed = if near < 1.0 { (o.pos - track.last).length() / inches(1.0) / per_frame } else { threshold };
             track.last = o.pos;
             track.fractions.push(speed / threshold.max(1e-6));
@@ -142,6 +158,7 @@ impl Optics {
             let mean = track.fractions.iter().sum::<f32>() / window as f32;
             let visibility = (1.0 - mean).clamp(0.0, 1.0).max(t.sonar_speed_time_ratio);
             if visibility > 0.0 {
+                let visibility = if immune { visibility * t.sonar_counter_color_multiplier } else { visibility };
                 // The scanner draws a character's outline: the plain body cylinder (no hit boxes).
                 let shape = target_from(o, &HitBodies::default(), false);
                 let (radius, height) = match shape.shape {
@@ -158,9 +175,9 @@ impl Optics {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn step_finder(&mut self, host: &dyn LogicHost, me: u32, eye: Vec3, dir: Vec3, ads: f32, finder: bool, frame: u32, t: &crate::tuning::Tuning) {
+    fn step_finder(&mut self, host: &dyn LogicHost, me: u32, eye: Vec3, dir: Vec3, ads: f32, finder: bool, frame: u32, t: &crate::tuning::Tuning, perks: Perks) {
         // BO2 traces only at full ADS (`cg + 0x48288 == 1.0`).
-        let range = if finder && ads >= 1.0 { spotted(host, me, eye, dir, t) } else { None };
+        let range = if finder && ads >= 1.0 { spotted(host, me, eye, dir, t, perks) } else { None };
         let limit = t.range_finder_min_enemy_spotting_dist;
         let within = range.is_some_and(|r| limit < 0.0 || (r as f32) < limit);
         if within {
@@ -174,13 +191,15 @@ impl Optics {
 }
 
 /// The target finder's diamonds: every live enemy soldier in reach (BO2 marks every enemy player
-/// it draws), at his chest, the nearest [`MAX_BLIPS`].
-fn marks(host: &dyn LogicHost, me: u32, eye: Vec3, t: &crate::tuning::Tuning) -> Vec<Blip> {
+/// it draws), at his chest, the nearest [`MAX_BLIPS`]; never one with Cold Blooded's
+/// `immunerangefinder` (`FUN_00526780`, bit 0x23).
+fn marks(host: &dyn LogicHost, me: u32, eye: Vec3, t: &crate::tuning::Tuning, perks: Perks) -> Vec<Blip> {
     let mut objs = Vec::new();
     host.query(eye, inches(t.range_finder_trace_dist), me, &mut objs);
     let mut out: Vec<(f32, Blip)> = objs
         .iter()
         .filter(|o| o.id != me && o.has(objflags::ENEMY) && o.has(objflags::INFANTRY) && !o.has(objflags::DEAD) && o.origin_within(eye, inches(t.range_finder_trace_dist)))
+        .filter(|o| !perks(o.id).has(Specialty::ImmuneRangefinder))
         .map(|o| {
             let pos = o.pos + Vec3::new(0.0, 0.0, inches(t.range_finder_mark_height));
             ((pos - eye).length(), Blip { id: o.id, pos, radius: 0.0, height: 0.0, intensity: 1.0 })
@@ -190,15 +209,16 @@ fn marks(host: &dyn LogicHost, me: u32, eye: Vec3, t: &crate::tuning::Tuning) ->
     out.into_iter().take(MAX_BLIPS).map(|(_, b)| b).collect()
 }
 
-/// The range (feet) to an enemy under the crosshair, if the trace hits one.
-fn spotted(host: &dyn LogicHost, me: u32, eye: Vec3, dir: Vec3, t: &crate::tuning::Tuning) -> Option<i32> {
+/// The range (feet) to an enemy under the crosshair, if the trace hits one that may be spotted:
+/// never one with Cold Blooded's `noname` (`FUN_00528ec0`, bit 0x2a).
+fn spotted(host: &dyn LogicHost, me: u32, eye: Vec3, dir: Vec3, t: &crate::tuning::Tuning, perks: Perks) -> Option<i32> {
     let reach = inches(t.range_finder_trace_dist);
     // The spotting trace meets a character's body volume, not its hit-location boxes.
     let targets = gather_targets(host, eye, reach, me, &HitBodies::default(), false);
     let ground = |x: f32, y: f32| host.ground_height(x, y);
     let HitResult::Object { id, distance, .. } = hitscan::trace(eye, dir, reach, &targets, me, &ground) else { return None };
     let o = host.object(id, me)?;
-    let enemy = o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && (o.has(objflags::INFANTRY) || o.has(objflags::VEHICLE));
+    let enemy = o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && (o.has(objflags::INFANTRY) || o.has(objflags::VEHICLE)) && !perks(id).has(Specialty::NoName);
     // Feet: BO2's `|hit − eye| · (1/12)`, truncated (`_DAT_00c73718`).
     enemy.then(|| (distance / inches(1.0) / 12.0) as i32)
 }
@@ -215,6 +235,10 @@ mod tests {
     /// Player 2's soldier; the viewer (object 1) is player 1's General.
     fn enemy(id: u32, x: f32) -> ObjInfo {
         soldier(id, 2, x)
+    }
+
+    fn none(_: u32) -> Specialties {
+        Specialties::NONE
     }
 
     fn world() -> FakeHost {
@@ -239,7 +263,7 @@ mod tests {
             if let Some(w) = host.objects.borrow_mut().iter_mut().find(|o| o.id == 11) {
                 w.pos.x = 60.0 + run * f as f32;
             }
-            o.step(&host, 1, eye, Vec3::new(1.0, 0.0, 0.0), 0.0, &def, f);
+            o.step(&host, 1, eye, Vec3::new(1.0, 0.0, 0.0), 0.0, &def, f, &none);
         }
         let still = o.blips.iter().find(|b| b.id == 10).expect("the still enemy is on the scanner");
         assert_eq!(still.intensity, 1.0);
@@ -248,7 +272,7 @@ mod tests {
         let runner = o.blips.iter().find(|b| b.id == 11).map_or(0.0, |b| b.intensity);
         assert!(runner < 0.2, "the runner faded: {:?}", o.blips);
         assert!(o.blips.iter().all(|b| b.id != 12), "teammates are hidden");
-        o.step(&host, 1, eye, Vec3::new(1.0, 0.0, 0.0), 0.0, &crate::weapons::WeaponDef::default(), 41);
+        o.step(&host, 1, eye, Vec3::new(1.0, 0.0, 0.0), 0.0, &crate::weapons::WeaponDef::default(), 41, &none);
         assert!(o.blips.is_empty(), "no MMS, no scanner");
     }
 
@@ -262,20 +286,64 @@ mod tests {
         let mut o = Optics::default();
         let eye = Vec3::new(0.0, 0.0, 6.0);
         let along = Vec3::new(1.0, 0.0, 0.0);
-        o.step(&host, 1, eye, along, 0.9, &def, 1);
+        o.step(&host, 1, eye, along, 0.9, &def, 1, &none);
         assert_eq!((o.spotted_range, o.alt), (None, 0.0), "not fully aimed");
-        o.step(&host, 1, eye, along, 1.0, &def, 2);
+        o.step(&host, 1, eye, along, 1.0, &def, 2, &none);
         assert!(o.spotted_range.is_some() && o.alt == 0.0, "spotted, the colour waits a tick");
-        o.step(&host, 1, eye, along, 1.0, &def, 3);
+        o.step(&host, 1, eye, along, 1.0, &def, 3, &none);
         assert_eq!(o.alt, 1.0);
         // 60 units at 6" each is 360" = 30 ft, less the hit cylinder's radius.
         assert!((27..=30).contains(&o.spotted_range.unwrap()), "{:?}", o.spotted_range);
         assert_eq!(o.blips.len(), 1, "the enemy is marked on the display");
         assert!((o.blips[0].pos.z - inches(45.0)).abs() < 1e-4, "at his chest");
-        o.step(&host, 1, eye, Vec3::new(0.0, 1.0, 0.0), 1.0, &def, 4);
+        o.step(&host, 1, eye, Vec3::new(0.0, 1.0, 0.0), 1.0, &def, 4, &none);
         assert_eq!((o.spotted_range, o.alt), (None, 0.0), "looked away");
         assert_eq!(o.blips.len(), 1, "still marked: the display marks every enemy, not just the aimed one");
-        o.step(&host, 1, eye, along, 0.5, &def, 5);
+        o.step(&host, 1, eye, along, 0.5, &def, 5, &none);
         assert!(o.blips.is_empty(), "the display draws only fully aimed");
+    }
+
+    /// Cold Blooded against both optics (`FUN_004e6f40` on the target): an `immunemms` enemy is
+    /// all but gone from the scanner even standing still (the counter speed 0.2 and the 0.02
+    /// colour multiplier, `FUN_004e7b40`); the target finder draws no diamond on an
+    /// `immunerangefinder` enemy (`FUN_00526780`) and does not spot a `noname` one
+    /// (`FUN_00528ec0`). Before, the bits were parsed and read nowhere.
+    #[test]
+    fn cold_blooded_hides_from_the_scanner_and_the_target_finder() {
+        let cold = |id: u32| if id == 11 { crate::weapons::Perk::COLD_BLOODED.specialties() } else { Specialties::NONE };
+        assert!(cold(11).has(Specialty::ImmuneMms) && cold(11).has(Specialty::ImmuneRangefinder) && cold(11).has(Specialty::NoName));
+        let host = world();
+        host.add(enemy(10, 50.0));
+        host.add(enemy(11, 52.0));
+        let mut o = Optics::default();
+        let eye = Vec3::new(0.0, 0.0, 10.0);
+        for f in 0..40 {
+            o.step(&host, 1, eye, Vec3::new(1.0, 0.0, 0.0), 0.0, &mms_def(), f, &cold);
+        }
+        let t = crate::tuning::get();
+        let shown = |o: &Optics, id| o.blips.iter().find(|b| b.id == id).map(|b| b.intensity);
+        assert_eq!(shown(&o, 10), Some(1.0), "a still enemy shows fully");
+        assert_eq!(shown(&o, 11), Some(t.sonar_counter_color_multiplier), "a still Cold Blooded one at the colour multiplier");
+        // Walking (3" a 60 Hz frame, under the 2.2 + 3 x 0.7 a plain enemy fades by there) he is past
+        // the counter threshold (0.2 + 3 x 0.7) and gone.
+        for f in 40..80 {
+            if let Some(w) = host.objects.borrow_mut().iter_mut().find(|o| o.id == 11) {
+                w.pos.x += crate::units::inches(3.0 * 2.0);
+            }
+            o.step(&host, 1, eye, Vec3::new(1.0, 0.0, 0.0), 0.0, &mms_def(), f, &cold);
+        }
+        assert_eq!(shown(&o, 11), None, "gone from the scanner");
+        // The target finder: aimed straight at the Cold Blooded enemy, no spot; no diamond on him.
+        let host = world();
+        host.add(enemy(11, 60.0));
+        host.add(enemy(12, 80.0));
+        let def = crate::weapons::WeaponDef { target_finder: true, ..Default::default() };
+        let mut o = Optics::default();
+        let eye = Vec3::new(0.0, 0.0, 6.0);
+        for f in 1..4 {
+            o.step(&host, 1, eye, Vec3::new(1.0, 0.0, 0.0), 1.0, &def, f, &cold);
+        }
+        assert_eq!((o.spotted_range, o.alt), (None, 0.0), "noname: not spotted");
+        assert_eq!(o.blips.iter().map(|b| b.id).collect::<Vec<_>>(), vec![12], "immunerangefinder: no diamond on him");
     }
 }

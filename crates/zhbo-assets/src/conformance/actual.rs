@@ -474,6 +474,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         // The projectile object the def fires is converted from its base weapon's BO2
         // `projectileModel` (`generals::files`).
         .opt_text("projectile_model", (!d.projectile_object.is_empty()).then(|| sh.bo2.iter().find(|w| w.name == crate::generals::base_id(&d.id)).and_then(|w| w.projectile_model.clone())).flatten())
+        .floats("projectile_bounds", &if d.projectile_bounds.iter().all(|v| *v == 0.0) { Vec::new() } else { fls(&d.projectile_bounds) })
         .text("impact_type", enum_name(cols::IMPACT_TYPE, d.impact_type.max(0) as u32));
 
     // Spread.

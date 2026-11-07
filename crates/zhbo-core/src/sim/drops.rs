@@ -61,19 +61,37 @@ pub struct Kill {
 
 crate::statehash::state_hash!(struct Kill { victim, friendly });
 
+/// A kill the step dealt, as the Scavenger pack's drop reads it (`dropscavengerfordeath`): who
+/// dealt it, by what means, where the victim was and whether he was a soldier.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Killing {
+    pub victim: u32,
+    pub by: u32,
+    pub how: crate::damage::MeansOfDeath,
+    pub at: Vec3,
+    pub yaw: f32,
+    pub soldier: bool,
+}
+
 /// The engine with every kill noted: the step runs through it, so a death knows who caused it.
 pub(super) struct Witness<'a> {
     host: &'a dyn LogicHost,
     kills: RefCell<Vec<Kill>>,
+    killings: RefCell<Vec<Killing>>,
 }
 
 impl<'a> Witness<'a> {
     pub(super) fn new(host: &'a dyn LogicHost) -> Self {
-        Witness { host, kills: RefCell::new(Vec::new()) }
+        Witness { host, kills: RefCell::new(Vec::new()), killings: RefCell::new(Vec::new()) }
     }
 
     pub(super) fn take(&self) -> Vec<Kill> {
         self.kills.take()
+    }
+
+    /// The step's kills with their killers and places, in the order they were dealt.
+    pub(super) fn take_killings(&self) -> Vec<Killing> {
+        self.killings.take()
     }
 }
 
@@ -111,9 +129,13 @@ impl LogicHost for Witness<'_> {
     fn damage(&self, shooter: u32, victim: u32, amount: f32, blow: crate::damage::Blow) -> bool {
         // The relation as the blow lands (the shooter may be gone by the time the death is read).
         let friendly = shooter == victim || self.host.object(shooter, victim).is_some_and(|o| o.has(objflags::ALLY));
+        let before = self.host.object(victim, shooter);
         let kill = self.host.damage(shooter, victim, amount, blow);
         if kill {
             self.kills.borrow_mut().push(Kill { victim, friendly });
+            if let Some(o) = before {
+                self.killings.borrow_mut().push(Killing { victim, by: shooter, how: blow.how, at: o.pos, yaw: o.yaw, soldier: o.has(objflags::INFANTRY) });
+            }
         }
         kill
     }
@@ -220,10 +242,8 @@ impl Sim {
     /// wait and its object are set here): the cleanup first when the world is full
     /// (`FUN_005f9230`), then its record and its Zero Hour object.
     fn put_down(&mut self, host: &dyn LogicHost, mut d: Dropped) {
+        self.make_room_for_an_item(host);
         let t = crate::tuning::get();
-        if self.drops.len() >= (t.g_max_dropped_weapons.max(1.0) as usize) {
-            self.free_a_drop(host);
-        }
         let def = d.weapon.def;
         d.object = if def.drop_object.is_empty() { 0 } else { host.spawn(&def.drop_object, d.owner, d.pos, d.yaw) };
         let shown = if def.drop_object.is_empty() { "(none)" } else { def.drop_object.as_str() };
@@ -233,27 +253,44 @@ impl Sim {
         self.drops.push(d);
     }
 
-    /// Free the dropped weapon farthest from every General (the nearest General's distance, the
-    /// largest), sparing `avoidDropCleanup`; the first one when all are spared (`FUN_005f9230`'s
-    /// "Using index zero").
+    /// BO2's item cleanup before an item goes down (`FUN_005fab50` calls `FUN_005f9230`): with
+    /// `g_maxDroppedWeapons` items in the world — dropped weapons and Scavenger packs alike, both
+    /// items — the one farthest from every General goes.
+    pub(super) fn make_room_for_an_item(&mut self, host: &dyn LogicHost) {
+        let t = crate::tuning::get();
+        if self.drops.len() + self.packs.len() >= (t.g_max_dropped_weapons.max(1.0) as usize) {
+            self.free_a_drop(host);
+        }
+    }
+
+    /// Free the item (a dropped weapon or a Scavenger pack) farthest from every General (the
+    /// nearest General's distance, the largest), sparing `avoidDropCleanup` weapons; the first one
+    /// when all are spared (`FUN_005f9230`'s "Using index zero").
     fn free_a_drop(&mut self, host: &dyn LogicHost) {
         let generals: Vec<Vec3> = self.players.iter().flatten().map(|p| host.object(p.general, p.general).map_or(p.body.pos, |o| o.pos)).collect();
+        let near = |at: Vec3| generals.iter().map(|g| { let v = *g - at; v.dot(v) }).fold(f32::MAX, f32::min);
+        // Weapons first, then packs: the index into both lists in that order.
         let mut best: Option<(usize, f32)> = None;
-        for (i, d) in self.drops.iter().enumerate() {
-            if d.weapon.def.drop.avoid_drop_cleanup {
+        let spots = self.drops.iter().map(|d| (d.pos, d.weapon.def.drop.avoid_drop_cleanup)).chain(self.packs.iter().map(|k| (k.pos, false)));
+        for (i, (at, spared)) in spots.enumerate() {
+            if spared {
                 continue;
             }
-            let near = generals.iter().map(|g| { let v = *g - d.pos; v.dot(v) }).fold(f32::MAX, f32::min);
-            if best.is_none_or(|(_, b)| near > b) {
-                best = Some((i, near));
+            let n = near(at);
+            if best.is_none_or(|(_, b)| n > b) {
+                best = Some((i, n));
             }
         }
         let i = best.map_or(0, |(i, _)| i);
-        if i < self.drops.len() {
-            let d = self.drops.remove(i);
-            if d.object != 0 {
-                host.destroy(d.object);
-            }
+        let object = if i < self.drops.len() {
+            self.drops.remove(i).object
+        } else if i - self.drops.len() < self.packs.len() {
+            self.packs.remove(i - self.drops.len()).object
+        } else {
+            0
+        };
+        if object != 0 {
+            host.destroy(object);
         }
     }
 

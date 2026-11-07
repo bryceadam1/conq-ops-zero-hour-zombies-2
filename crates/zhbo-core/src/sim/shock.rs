@@ -15,7 +15,8 @@
 //! * the flashbang — `flashbang` for the script's flash duration ([`rules::flash_duration`]);
 //! * the EMP grenade — `flashbang` for 1 s on anyone it reaches (`_empgrenade.gsc:105`);
 //! * the Shock Charge — `proximity_grenade` for 1.5 s, then `proximity_grenade_exit` once its
-//!   damage ticks and the script's wait are over (`_proximity_grenade.gsc:186-206`);
+//!   damage ticks and the script's wait are over (`_proximity_grenade.gsc:186-206`); the zap's own
+//!   damage and the hidden HUD are its [`Taser`];
 //! * explosive damage over 10 — `frag_grenade_mp` for 0.5 s unless a flashbang's is running
 //!   (`_shellshock.gsc:14-38`).
 
@@ -95,17 +96,77 @@ fn apply(p: &mut PlayerSim, h: &ShockHit) {
                 p.shock.play(names::FLASHBANG, secs);
             }
         }
-        ShockHitKind::Stun(_) if !h.thrown => {
+        ShockHitKind::Stun(_) if h.def.equipment_kind == crate::weapons::Kind::Shock => {
             // The Shock Charge: the zap, then the exit after its damage ticks and the wait.
             p.shock.play(names::PROXIMITY, t.proximity_shock_duration);
             let exit_after = t.proximity_dot_time * t.proximity_dot_instances + t.proximity_exit_wait;
             p.shock.queue(exit_after, names::PROXIMITY_EXIT, t.proximity_exit_duration);
+            // A new zap starts the ticks over (`notify( "proximityGrenadeDamageStart" )` ends the
+            // last one's thread, `:161-162`).
+            p.taser = Some(Taser::new(h.owner, h.def, h.at.unwrap_or(p.body.pos), &t));
         }
         ShockHitKind::Stun(secs) if h.def.id == CONCUSSION_WEAPON => p.shock.play(names::CONCUSSION, secs),
         // Any other thrown stun has no shellshock in the script.
         ShockHitKind::Stun(_) => {}
     }
 }
+
+/// A Shock Charge's zap running on a first-person General (`damageplayerinradius`,
+/// `_proximity_grenade.gsc:159-207`): `scr_proximityGrenadeDOTDamageInstances` ticks of
+/// `scr_proximityGrenadeDOTDamageAmount` (BO2's 100-HP scale), `MOD_GAS`, one every
+/// `scr_proximityGrenadeDOTDamageTime` from the owner at the charge; his HUD hidden
+/// (`setclientuivisibilityflag( "hud_visible", 0 )`, `:191`) from the zap until the exit shock
+/// (`:206-207`, after the ticks and `wait 0.85`), or his death (`watch_death`, `:236-241`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Taser {
+    /// The charge's owner (the damage is his) and its weapon.
+    pub owner: u32,
+    pub def: &'static WeaponDef,
+    /// Where the charge went off (each tick's `position`).
+    pub at: Vec3,
+    pub ticks_left: u8,
+    /// Seconds to the next tick.
+    pub next: f32,
+    /// Seconds the HUD stays hidden.
+    pub hud: f32,
+}
+
+crate::statehash::state_hash!(struct Taser { owner, def, at, ticks_left, next, hud });
+
+impl Taser {
+    pub fn new(owner: u32, def: &'static WeaponDef, at: Vec3, t: &crate::tuning::Tuning) -> Taser {
+        let ticks = t.proximity_dot_instances.clamp(0.0, 255.0) as u8;
+        Taser { owner, def, at, ticks_left: ticks, next: t.proximity_dot_time, hud: t.proximity_dot_time * f32::from(ticks) + t.proximity_exit_wait }
+    }
+
+    /// Whether the HUD is hidden now.
+    pub fn hides_hud(&self) -> bool {
+        self.hud > 1e-4
+    }
+}
+
+/// One logic frame of `p`'s zap: a tick's damage when it is due, and the HUD's wait. The tick's
+/// weapon is the script's `proximity_grenade_aoe_mp` when the table has it, else the charge's.
+pub(super) fn step_taser(host: &dyn LogicHost, p: &mut PlayerSim) {
+    let Some(mut z) = p.taser else { return };
+    let dt = crate::units::LOGIC_DT;
+    z.hud -= dt;
+    if z.ticks_left > 0 {
+        z.next -= dt;
+        if z.next <= 1e-4 {
+            let t = &p.arsenal.tuning;
+            let def = crate::weapons::catalog().get(AOE_WEAPON).unwrap_or(z.def);
+            let blow = crate::damage::Blow::from_to(crate::damage::MeansOfDeath::Gas, def, z.at, p.body.pos);
+            host.damage(z.owner, p.general, t.proximity_dot_damage * crate::units::BO2_TO_ZH_DAMAGE, blow);
+            z.ticks_left -= 1;
+            z.next += t.proximity_dot_time;
+        }
+    }
+    p.taser = (z.ticks_left > 0 || z.hides_hud()).then_some(z);
+}
+
+/// The weapon the Shock Charge's ticks are dealt as (`_proximity_grenade.gsc:202`).
+pub const AOE_WEAPON: &str = "proximity_grenade_aoe_mp";
 
 #[cfg(test)]
 mod tests {
@@ -215,5 +276,75 @@ mod tests {
         let p = sim.player(1).unwrap();
         assert_eq!(p.shock.name(), Some(names::FRAG));
         assert!(p.shock.active.as_ref().unwrap().left <= crate::tuning::get().blast_shock_duration);
+    }
+
+    /// The Shock Charge's zap on a first-person General is BO2's `damageplayerinradius`
+    /// (`_proximity_grenade.gsc:159-207`): the charge's own 1-point radius damage (no more `> 10`
+    /// gate that left it harmless), then four `MOD_GAS` ticks of 1 every 0.15 s from its owner,
+    /// the HUD hidden until the exit shock (0.6 + 0.85 s after the zap); a new zap starts over.
+    #[test]
+    fn the_shock_charge_zaps_four_ticks_and_hides_the_hud() {
+        let charge: &'static WeaponDef = Box::leak(Box::new(WeaponDef {
+            id: "proximity_grenade_mp".into(),
+            effect: Effect::Stun,
+            equipment_kind: crate::weapons::Kind::Shock,
+            explosion_radius: crate::units::inches(200.0),
+            explosion_inner_damage: 1.0,
+            explosion_outer_damage: 1.0,
+            ..weapon(CONCUSSION_WEAPON).clone()
+        }));
+        let t = crate::tuning::get();
+        let (host, mut sim) = duel(20.0);
+        let at = Vec3::new(20.0, 0.0, 0.0);
+        let mut p = crate::equipment::Placed::new(charge, 0, 1, 0, at, 0.0, None);
+        p.triggered = Some(0.0);
+        sim.equipment.add(p);
+        let hits = |host: &FakeHost| host.damage_log.borrow().iter().filter(|d| d.0 == 1 && d.1 == 2).map(|d| d.2).collect::<Vec<f32>>();
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+        let unit = crate::units::BO2_TO_ZH_DAMAGE;
+        assert_eq!(hits(&host), [unit], "the charge's own radius damage, BO2's 1");
+        let z = sim.player(1).unwrap().taser.expect("zapped");
+        assert!(z.hides_hud() && z.ticks_left == 4 && z.owner == 1, "{z:?}");
+        assert_eq!(sim.player(1).unwrap().shock.name(), Some(names::PROXIMITY));
+        let frames = |s: f32| (s / crate::units::LOGIC_DT).round() as u32;
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(t.proximity_dot_time * 4.0) + 1);
+        assert_eq!(hits(&host), [unit; 5], "and four ticks of 1");
+        assert!(host.damage_how.borrow().iter().filter(|d| d.0 == 2).skip(1).all(|d| d.1 == crate::damage::MeansOfDeath::Gas), "the ticks are MOD_GAS");
+        assert!(sim.player(1).unwrap().taser.is_some_and(|z| z.hides_hud()), "the HUD waits out the 0.85 s");
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(t.proximity_exit_wait) + 1);
+        assert_eq!(sim.player(1).unwrap().taser, None, "the HUD is back with the exit shock");
+    }
+
+    /// A Shock Charge thrown into an enemy player goes off at once (`watchproximitygrenadehitplayer`,
+    /// `_proximity_grenade.gsc:127-145`); into Zero Hour infantry it bounces on and lands.
+    #[test]
+    fn a_shock_charge_that_strikes_an_enemy_player_goes_off() {
+        let charge: &'static WeaponDef = Box::leak(Box::new(WeaponDef {
+            id: "proximity_grenade_mp".into(),
+            effect: Effect::Stun,
+            equipment_kind: crate::weapons::Kind::Shock,
+            explosion_radius: crate::units::inches(200.0),
+            explosion_inner_damage: 1.0,
+            explosion_outer_damage: 1.0,
+            ..weapon(CONCUSSION_WEAPON).clone()
+        }));
+        for (target_is_player, goes_off) in [(true, true), (false, false)] {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut target = if target_is_player { general(2, 1) } else { crate::sim::tests::soldier(2, 1, 0.0) };
+            target.pos = Vec3::new(10.0, 0.0, 0.0);
+            host.add(target);
+            let mut p = Projectile::launch(charge, 1, Vec3::new(0.0, 0.0, 3.0), Vec3::new(1.0, 0.0, 0.0), 0.0, &host, 0.0);
+            p.vel = Vec3::new(60.0, 0.0, 0.0);
+            let players = if target_is_player { vec![1, 2] } else { vec![1] };
+            let mut out = None;
+            for _ in 0..10 {
+                if let Some(o) = p.step_shielded(&host, &[], &players) {
+                    out = Some(o);
+                    break;
+                }
+            }
+            assert_eq!(matches!(out, Some(crate::projectiles::Outcome::Exploded { .. })), goes_off, "player {target_is_player}: {out:?}");
+        }
     }
 }
