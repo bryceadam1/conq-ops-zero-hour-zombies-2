@@ -157,7 +157,8 @@ pub(super) fn step_taser(host: &dyn LogicHost, p: &mut PlayerSim) {
             let t = &p.arsenal.tuning;
             let def = crate::weapons::catalog().get(AOE_WEAPON).unwrap_or(z.def);
             let blow = crate::damage::Blow::from_to(crate::damage::MeansOfDeath::Gas, def, z.at, p.body.pos);
-            host.damage(z.owner, p.general, t.proximity_dot_damage * crate::units::BO2_TO_ZH_DAMAGE, blow);
+            // A tick is BO2 health on BO2's player: his share of `playerMaxHealth`.
+            host.damage(z.owner, p.general, crate::damage::general_zh(t, t.proximity_dot_damage, p.max_health), blow);
             z.ticks_left -= 1;
             z.next += t.proximity_dot_time;
         }
@@ -301,7 +302,9 @@ mod tests {
         sim.equipment.add(p);
         let hits = |host: &FakeHost| host.damage_log.borrow().iter().filter(|d| d.0 == 1 && d.1 == 2).map(|d| d.2).collect::<Vec<f32>>();
         run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
-        let unit = crate::units::BO2_TO_ZH_DAMAGE;
+        // BO2's 1 on BO2's player: his share of `playerMaxHealth` (`damage::general_zh`).
+        let max = host.objects.borrow().iter().find(|o| o.id == 2).unwrap().max_health;
+        let unit = crate::damage::general_zh(&t, 1.0, max);
         assert_eq!(hits(&host), [unit], "the charge's own radius damage, BO2's 1");
         let z = sim.player(1).unwrap().taser.expect("zapped");
         assert!(z.hides_hud() && z.ticks_left == 4 && z.owner == 1, "{z:?}");

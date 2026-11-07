@@ -2360,7 +2360,9 @@ fn a_fall_deals_its_share_of_max_health_as_mod_falling() {
     // 100%: max health x FallDamageFullScale.
     let (host, sim) = fall(400.0);
     let (_, _, amount) = *host.damage_log.borrow().last().unwrap();
-    assert_eq!(amount, (max * crate::tuning::Tuning::default().fall_damage_full_scale).trunc());
+    // (BO2's `(int)(playerMaxHealth x 1.1)` = 110, taken as his share of his own health.)
+    let t = crate::tuning::Tuning::default();
+    assert_eq!(amount, crate::damage::general_zh(&t, (t.player_max_health * t.fall_damage_full_scale).trunc(), max));
     // It kills, and the death is reported (on the ground: BO2's normal death, `FUN_005effe0`).
     assert!(events(&sim).contains(&EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::ZERO }), "{:?}", events(&sim));
 }

@@ -828,14 +828,17 @@ impl Sim {
 
     /// A landing's fall damage (`movement::land::crash_land`): BO2's server deals the event's
     /// percent of the player's max health, a 100% fall `FallDamageFullScale` of it, as
-    /// `MOD_FALLING` from no attacker (`FUN_005d2a30` → `G_Damage`). His own blow here: the
-    /// scoring host reports a death by it like any other (`KilledBy`).
+    /// `MOD_FALLING` from no attacker (`FUN_005d2a30` → `G_Damage`). BO2's max health is
+    /// `playerMaxHealth` and the hit is truncated there (`(int)`), then taken as his share of his
+    /// own Zero Hour health ([`crate::damage::general_zh`]), as every other blow on a General is.
+    /// His own blow here: the scoring host reports a death by it like any other (`KilledBy`).
     fn fall_damage(&mut self, host: &dyn LogicHost, p: &PlayerSim, landing: movement::Landing) {
         if landing.damage == 0 {
             return;
         }
-        let share = if landing.damage >= 100 { p.arsenal.tuning.fall_damage_full_scale } else { f32::from(landing.damage) * 0.01 };
-        let amount = (p.max_health * share).trunc();
+        let t = &p.arsenal.tuning;
+        let share = if landing.damage >= 100 { t.fall_damage_full_scale } else { f32::from(landing.damage) / 100.0 };
+        let amount = crate::damage::general_zh(t, (t.player_max_health * share).trunc(), p.max_health);
         if amount > 0.0 {
             host.damage(p.general, p.general, amount, crate::damage::Blow::bare(crate::damage::MeansOfDeath::Falling));
         }

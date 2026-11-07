@@ -300,3 +300,95 @@ fn a_whole_general_dies_in_bo2s_shots() {
         assert!(total >= t.player_max_health && before_last < t.player_max_health, "{health}: killed by the round that reached 100: {bo2:?}");
     }
 }
+
+/// Every damage path round 8 added takes a General's health as BO2's share of `playerMaxHealth`,
+/// each hit a whole BO2 number (`damage::to_zh`): so a General whose Zero Hour health is not BO2's
+/// 100 (230 here, as a hero's toughness makes it) dies to exactly the hit whose BO2 numbers reach
+/// 100 — a landing's fall damage (`MOD_FALLING`), a blast seen past cover, the nine-ray knife, the
+/// Shock Charge's radius 1 and its ticks, a thrown-back frag's blast (the same `blast` as any
+/// frag's, owned by the thrower) and the flashbang's and concussion's radius 1.
+#[test]
+fn every_new_damage_path_kills_a_general_in_bo2s_count() {
+    use crate::weapons::weapon;
+    let t = crate::tuning::get();
+    const HEALTH: f32 = 230.0;
+    let him = ObjInfo { health: HEALTH, max_health: HEALTH, ..general(2, 1) };
+    // One hit of `zh` is the whole BO2 number `bo2`, and `ceil(100 / bo2)` of them kill him where
+    // one fewer leaves him alive (the fake host's own sum, `health -= amount`).
+    let in_bo2s_count = |what: &str, zh: f32| {
+        let bo2 = crate::damage::to_bo2(&t, &him, zh);
+        assert!(bo2 >= 1.0 && (bo2 - bo2.round()).abs() < 0.01 + bo2 * crate::damage::LETHAL_MARGIN * 2.0, "{what}: a whole BO2 hit, {bo2}");
+        let n = (t.player_max_health / bo2.round()).ceil() as u32;
+        let left = |k: u32| (0..k).fold(HEALTH, |h, _| h - zh);
+        assert!(left(n) <= 0.0 && left(n - 1) > 0.0, "{what}: {n} hits of {} kill", bo2.round());
+        bo2.round()
+    };
+    let blows_on = |host: &FakeHost, victim: u32| host.damage_log.borrow().iter().filter(|d| d.1 == victim).map(|d| d.2).collect::<Vec<f32>>();
+    let blast_at = |def: &'static crate::weapons::WeaponDef, at: Vec3, wall: Option<ObjInfo>| {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(him);
+        if let Some(w) = wall {
+            host.add(w);
+        }
+        crate::projectiles::blast(&host, def, 1, at, crate::projectiles::Hit::NONE, 1.0, 1.0, &[]);
+        blows_on(&host, 2)
+    };
+
+    // A landing: a 100% fall is 110 of BO2's 100 in one blow; a 49% one kills on the third.
+    for (up, want) in [(400.0, Some(110.0)), (214.0, None)] {
+        let host = FakeHost::default();
+        host.add(ObjInfo { health: HEALTH, max_health: HEALTH, ..general(1, 0) });
+        let mut sim = Sim::new();
+        spawn(&mut sim, &host, 0, 1);
+        super::tests::wait_until_ready(&mut sim, &host);
+        let p = sim.players[0].as_mut().unwrap();
+        p.body.pos.z = crate::units::inches(up);
+        p.body.on_ground = false;
+        super::tests::run(&mut sim, &host, 0, 1, FpsInput::default(), 90);
+        let falls = blows_on(&host, 1);
+        assert_eq!(falls.len(), 1, "{up}: one landing, {falls:?}");
+        let bo2 = in_bo2s_count("a fall", falls[0]);
+        if let Some(w) = want {
+            assert_eq!(bo2, w, "a 100% fall");
+        }
+    }
+
+    // A frag in the open and past a low wall that hides his middle and feet (two of five points:
+    // `DamageVisibilityShare` each), the second also the thrown-back frag's blast.
+    let frag = weapon("frag_grenade_mp");
+    let at = Vec3::new(him.pos.x - crate::units::inches(60.0), 0.0, crate::units::inches(1.0));
+    let open = blast_at(frag, at, None);
+    assert_eq!(open.len(), 1, "{open:?}");
+    let open_bo2 = in_bo2s_count("a frag in the open", open[0]);
+    let eye = crate::cover::soldier_eye(&FakeHost::default(), &t, &him);
+    let wall = ObjInfo { id: 9, flags: objflags::STRUCTURE, pos: Vec3::new(him.pos.x - crate::units::inches(20.0), 0.0, 0.0), geom_type: crate::host::geom::BOX, major_radius: 1.0, minor_radius: 30.0, height: eye * 0.6, ..Default::default() };
+    let covered = blast_at(frag, Vec3::new(at.x, 0.0, eye * 0.5 + 0.01), Some(wall));
+    assert_eq!(covered.len(), 1, "{covered:?}");
+    assert!(in_bo2s_count("a frag past cover", covered[0]) < open_bo2, "the wall cut it");
+
+    // The flashbang's, the concussion's and the Shock Charge's radius damage: BO2's 1.
+    for id in [super::shock::FLASH_WEAPON, super::shock::CONCUSSION_WEAPON] {
+        let def = weapon(id);
+        assert!(def.explosion_inner_damage >= 1.0, "{id}: BO2's radius 1");
+        let near = Vec3::new(him.pos.x - crate::units::inches(30.0), 0.0, crate::units::inches(40.0));
+        let hits = blast_at(def, near, None);
+        assert!(!hits.is_empty(), "{id}: {hits:?}");
+        in_bo2s_count(id, hits[0]);
+    }
+
+    // The knife's nine rays: one blow, past his 100.
+    let (host, mut sim) = duel(Loadout::test_kit(), 8.0, FACING);
+    for o in host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2) {
+        (o.health, o.max_health) = (HEALTH, HEALTH);
+    }
+    step(&mut sim, &host, FpsInput { pressed: buttons::MELEE, ..Default::default() }, FACING, 1);
+    step(&mut sim, &host, FpsInput::default(), FACING, 20);
+    let knife = blows_on(&host, 2);
+    assert_eq!(knife.len(), 1, "{knife:?}");
+    assert!(in_bo2s_count("the knife", knife[0]) >= t.player_max_health && killed(&sim, FACING).is_some(), "one blow kills");
+
+    // The Shock Charge's ticks (`proximity_dot_damage`): each BO2's 1 of his 100.
+    let unit = crate::damage::general_zh(&t, t.proximity_dot_damage, HEALTH);
+    assert_eq!(in_bo2s_count("a Shock Charge tick", unit), t.proximity_dot_damage.trunc());
+}

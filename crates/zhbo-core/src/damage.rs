@@ -494,7 +494,19 @@ pub fn callback_idamage(bo2: f32) -> f32 {
 ///   Hour's own units.
 pub fn to_zh(t: &Tuning, victim: &crate::host::ObjInfo, bo2: f32) -> f32 {
     if is_player(victim) {
-        idamage(bo2) * victim.max_health / t.player_max_health.max(1e-3) * (1.0 + LETHAL_MARGIN)
+        general_zh(t, bo2, victim.max_health)
+    } else {
+        bo2 * crate::units::BO2_TO_ZH_DAMAGE
+    }
+}
+
+/// [`to_zh`] for a General known by his full Zero Hour health `max_health` rather than by his
+/// object (the sim's own blows on a seat's General: a landing's fall damage, the Shock Charge's
+/// ticks): the hit's share of `playerMaxHealth`, rounded as BO2's callback receives it. A General
+/// with no health known (`0`) takes the exchange rate, as anything else does.
+pub fn general_zh(t: &Tuning, bo2: f32, max_health: f32) -> f32 {
+    if max_health > 0.0 {
+        idamage(bo2) * max_health / t.player_max_health.max(1e-3) * (1.0 + LETHAL_MARGIN)
     } else {
         bo2 * crate::units::BO2_TO_ZH_DAMAGE
     }
