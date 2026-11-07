@@ -21,7 +21,8 @@ the ground rules.
 5. [docs/TESTING.md](docs/TESTING.md) — every test layer and how to run it.
 6. [MODLOG.md](MODLOG.md) — the development journal and its gotchas. **Append to it**, do not
    rewrite history.
-7. As needed: [docs/RENDERER.md](docs/RENDERER.md), [docs/PLATFORMS.md](docs/PLATFORMS.md).
+7. As needed: [docs/RENDERER.md](docs/RENDERER.md), [docs/PLATFORMS.md](docs/PLATFORMS.md),
+   [docs/COMMANDS.md](docs/COMMANDS.md) (the first-person command system; design, not built yet).
 
 ## Ground rules (do not break)
 

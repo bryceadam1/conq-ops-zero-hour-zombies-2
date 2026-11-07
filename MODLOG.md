@@ -14710,3 +14710,24 @@ opencode, Kilo Code and GitHub Copilot are retired from this project; Claude Cod
   game lock included. Earlier entries in this journal that cite `~/.opencode/plan/<item>/` mean the same
   folder under `~/.conquerops/plan/`. The briefs and scripts inside it were rewritten, as were the three
   source comments that cite it.
+
+## First-person commands: design (2026-11-07)
+
+Design only, nothing built: [docs/COMMANDS.md](docs/COMMANDS.md). The General will command his army from
+first person with sentences in a canonical English-like command language (SELECTION + ACTION), produced
+by a scroll-wheel menu, typed entry and later on-device voice.
+- **Decisions (user):** everything the overhead view does must be possible as a command, except the
+  General's own actions. The resolver respects fog of war, but buildings seen before stay selectable as
+  ghosts. Only own units can be selected. Map place names are used when a map has them. Voice uses a small
+  on-device generative model with grammar-constrained decoding, an abstain production, a confidence check,
+  and fine-tuning on the language.
+- **Lockstep:** commands resolve on the issuing client to object IDs and points and leave as the standard
+  engine messages (the autopilot's path). No new sim message and nothing in `state_hash`.
+- **Coverage from data:** verbs come from each object's live command set (`GUICommandType` and its
+  `NEED_TARGET_*` options) and one context verb per `ActionManager::can*` query. A two-part coverage gate
+  (every `CommandButton`; every order-type message in `MessageStream.h`) is planned.
+- **Synonyms:** accepted input is canonical text plus synonym and alias tables in mod INI data
+  (fixed-word synonyms, per-faction type aliases such as `tanks`, the player's own synonyms per
+  profile), rewritten by one normaliser that the typed entry, voice and training data share.
+  `go to` is a synonym of `move to`, never the right-click. The right-click verb is `act on`, because
+  "go to the oil derrick" must not have an Engineer capture it.
