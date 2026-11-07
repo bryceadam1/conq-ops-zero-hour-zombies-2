@@ -113,6 +113,21 @@ pub(crate) struct State {
     flash: HashMap<u32, [[f32; 4]; 3]>,
     /// The movement states drawn so far (`state::split`'s state), each logged once.
     moves: HashSet<u16>,
+    /// Each General's presentation between frames: his movement clip's blend and his aim.
+    present: HashMap<u32, Present>,
+    /// The tuning pack's default movement blend (seconds), read once.
+    default_blend: Option<f32>,
+}
+
+/// One General's body between frames (presentation only).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Present {
+    /// The clock of his last frame (the request's `time`).
+    time: f32,
+    /// His movement clip, and the one it is blending in over: `(clip id, start, seconds)`.
+    state: u16,
+    from: Option<(u16, f32, f32)>,
+    aim: super::aim::Aim,
 }
 
 impl State {
@@ -147,6 +162,7 @@ impl State {
         }
         self.rigs.clear();
         self.flash.clear();
+        self.present.clear();
         self.last = None;
     }
 
@@ -258,6 +274,29 @@ impl State {
         // The body clip for this movement state, or the bind pose when the weapon-only mode (or a
         // body with no clip) is drawing.
         let clip = rig.loaded.clip_for(inp.state as u16);
+        // A movement change cross-fades over the new clip's blend time (the script's
+        // `blendtime`/`blendouttime`, else the tuning pack's default; `FUN_008a8c40`), the old clip
+        // playing on beneath; and the aim controllers follow his view pitch.
+        let default_blend = *self.default_blend.get_or_insert_with(|| crate::tuning::get().player_anim_blend_time / 1000.0);
+        let p = self.present.entry(general).or_insert(Present { time: req.time, state: req.state, ..Default::default() });
+        let ms = ((req.time - p.time) * 1000.0).clamp(0.0, 100.0);
+        p.time = req.time;
+        if req.state != p.state {
+            let len = crate::torso::get().move_blend(req.state).unwrap_or(default_blend);
+            p.from = Some((p.state, req.time, len));
+            p.state = req.state;
+        }
+        let blend = p.from.map(|(id, start, len)| (id, ((req.time - start) / len.max(1e-3)).clamp(0.0, 1.0)));
+        if blend.is_some_and(|(_, w)| w >= 1.0) {
+            p.from = None;
+        }
+        let from = blend.and_then(|(id, w)| rig.loaded.clip_for(id).map(|c| (c, w)));
+        let (pitch, shield) = aim_of(general).unwrap_or((0.0, false));
+        let prone = {
+            use zhbo_native::thirdperson::state;
+            matches!(state::split_direction(state::split(req.state).1).0, state::PRONE_IDLE | state::PRONE_CRAWL)
+        };
+        let pitches = p.aim.step(super::aim::AimIn { view_pitch: pitch, prone, shield }, ms);
         // The upper body's action over it, while the client times one for him (`client::remote`).
         // Its clip loads the first time anyone plays it; until then the body runs without it.
         let action = torso_of(general).filter(|_| mode == Mode::Body);
@@ -266,7 +305,9 @@ impl State {
         }
         // A death is played through and held (the corpse); every other action fades out at its end.
         let torso = action.and_then(|a| self.torso.get(&a.clip).map(|c| (c, a.t, a.action == zhbo_native::thirdperson::torso::DEATH)));
-        rig.loaded.pose(&req, clip, torso, &mut self.posed);
+        // A corpse's death clip owns the whole body: no aim on it.
+        let aimed = (!corpse).then_some(&pitches);
+        rig.loaded.pose_full(&req, clip, from, torso, aimed, &mut self.posed);
         // A grenade's pin and throw: BO2 draws the offhand on `tag_inhand` as the entity's one
         // weapon (t6mp `FUN_0052a4c0` attaches only the entity's current weapon; `FUN_0052a470`
         // puts a grenade on `tag_inhand`), so the gun in hand is not drawn meanwhile.
@@ -415,6 +456,28 @@ pub(crate) fn torso_of(general: u32) -> Option<TorsoAction> {
         clip: ((v >> 14) & 0x1fff) as u16,
         t: (v & 0x3fff) as f32 / 1000.0,
     })
+}
+
+/// Each General's aim (`general << 32 | shield << 16 | view pitch in hundredths of a degree`, BO2's
+/// sign: positive looking down), published by the client each frame (`publish_aim`): the body's
+/// aim controllers read it (`aim`). Presentation only.
+static AIM: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+/// Publish the Generals' aims: `(general, view pitch in degrees with BO2's sign, holding a riot
+/// shield)`.
+pub fn publish_aim(aims: impl Iterator<Item = (u32, f32, bool)>) {
+    use std::sync::atomic::Ordering;
+    let mut it = aims;
+    for slot in AIM.iter() {
+        let v = it.next().map_or(0, |(g, pitch, shield)| ((g as u64) << 32) | ((shield as u64) << 16) | ((pitch * 100.0).round().clamp(-32768.0, 32767.0) as i16 as u16) as u64);
+        slot.store(v, Ordering::Relaxed);
+    }
+}
+
+/// General `general`'s published aim: (view pitch, degrees, BO2's sign; a riot shield in hand).
+pub(crate) fn aim_of(general: u32) -> Option<(f32, bool)> {
+    use std::sync::atomic::Ordering;
+    AIM.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map(|v| ((v & 0xffff) as u16 as i16 as f32 / 100.0, (v >> 16) & 1 != 0))
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

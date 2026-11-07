@@ -445,7 +445,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     }
     // The torso clips layer over them (`zhbo_core::nativebody`), and their sound notetracks are
     // what others hear of a reload or a pin (`zhbo_core::torso`).
-    let (torso_rows, torso_clips, torso_aliases) = crate::thirdperson::torso_table(&common, &torso_sets);
+    let (mut torso_rows, torso_clips, torso_aliases) = crate::thirdperson::torso_table(&common, &torso_sets);
+    // The movement clips' own blend times ride the same table (`zhbo_core::torso::Table::move_blend`).
+    torso_rows.push_str(&crate::thirdperson::move_blends(&common, &body_clips));
     for c in &torso_clips {
         crate::native::put_anim(&mut out, &c.anim);
     }
@@ -463,8 +465,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     if !body_clips.iter().any(|c| c.state == zhbo_native::thirdperson::state::STAND_IDLE) {
         return Err("no stand-idle body clip for the hit boxes".into());
     }
-    table.hit_boxes = crate::thirdperson::hit_boxes(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &body_clips);
-    summary.push(format!("soldier hit boxes: {} over {} body states", table.hit_boxes.len(), body_clips.len()));
+    // Posed in the forward gaits and the stances (`state::POSED`): a direction's boxes are its
+    // forward gait's (`state::fallbacks`), so the strafes add no pose to the trace.
+    let posed: Vec<crate::thirdperson::Clip> = body_clips.iter().filter(|c| zhbo_native::thirdperson::state::split(c.state).1 <= zhbo_native::thirdperson::state::POSED).map(|c| crate::thirdperson::Clip { state: c.state, anim: c.anim.clone() }).collect();
+    table.hit_boxes = crate::thirdperson::hit_boxes(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &posed);
+    summary.push(format!("soldier hit boxes: {} over {} body states", table.hit_boxes.len(), posed.len()));
     // The shellshocks the GSC plays (`shock/<name>.shock` in the weapon pool).
     table.shocks = crate::weapons::shocks(&pool)?;
     summary.push(format!("{} shellshocks", table.shocks.len()));

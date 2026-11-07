@@ -278,14 +278,14 @@ fn zero_hour_infantry_stand() {
 fn the_body_state_takes_the_held_weapons_animation_set() {
     let mut p = PlayerSim::spawn_for_tests();
     let run = 31.7;
-    assert_eq!(p.body_state(None, run), state::id(p.arsenal.current().def.body_anims, state::STAND_IDLE));
+    assert_eq!(p.body_state(None), state::id(p.arsenal.current().def.body_anims, state::STAND_IDLE));
     let mut pistol = p.arsenal.current().def.clone();
     pistol.body_anims = 5;
     p.arsenal.current_mut().def = Box::leak(Box::new(pistol));
-    assert_eq!(p.body_state(None, run), state::id(5, state::STAND_IDLE));
+    assert_eq!(p.body_state(None), state::id(5, state::STAND_IDLE));
     p.mode = super::Mode::Rts;
     let walking = super::EngineMotion { general: p.general, moving: true, speed: 0.3 * run };
-    assert_eq!(p.body_state(Some(walking), run), state::id(5, state::STAND_WALK), "moving under RTS control walks the set's walk");
+    assert_eq!(p.body_state(Some(walking)), state::id(5, state::STAND_WALK), "moving under RTS control walks the set's walk");
 }
 
 /// Under RTS control Zero Hour walks the General: his drawn body (and his hit pose) stands — never
@@ -302,13 +302,13 @@ fn an_overhead_general_walks_and_runs_at_the_engines_speed_standing() {
     p.arsenal.ads = 1.0;
     p.mode = super::Mode::Rts;
     let motion = |moving: bool, speed: f32| Some(super::EngineMotion { general: p.general, moving, speed });
-    assert_eq!(p.body_state(None, run), state::id(set, state::STAND_IDLE), "no motion reported: he stands idle");
-    assert_eq!(p.body_state(motion(false, 0.0), run), state::id(set, state::STAND_IDLE));
-    assert_eq!(p.body_state(motion(true, 0.4 * run), run), state::id(set, state::STAND_WALK));
-    assert_eq!(p.body_state(motion(true, run), run), state::id(set, state::STAND_RUN), "Zero Hour's speed past the walk/run split runs");
+    assert_eq!(p.body_state(None), state::id(set, state::STAND_IDLE), "no motion reported: he stands idle");
+    assert_eq!(p.body_state(motion(false, 0.0)), state::id(set, state::STAND_IDLE));
+    assert_eq!(p.body_state(motion(true, 0.4 * run)), state::id(set, state::STAND_WALK));
+    assert_eq!(p.body_state(motion(true, run)), state::id(set, state::STAND_RUN), "Zero Hour's speed past the walk/run split runs");
     // Back in first person his own stance rules again.
     p.mode = super::Mode::Fps;
-    assert_eq!(p.body_state(motion(true, run), run), state::id(set, state::PRONE_IDLE), "first person ignores the engine's motion");
+    assert_eq!(p.body_state(motion(true, run)), state::id(set, state::PRONE_IDLE), "first person ignores the engine's motion");
 }
 
 /// A click picks a General the native pass draws (`Sim::pick_general`, host patch 0029) by the hit

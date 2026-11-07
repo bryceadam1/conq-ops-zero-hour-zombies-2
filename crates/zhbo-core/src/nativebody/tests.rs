@@ -178,27 +178,47 @@ fn a_missing_manifest_is_refused_once() {
 
 #[test]
 fn the_body_clip_follows_the_stance_gait_and_sights() {
-    let run = 31.7; // the sim's g_speed, world units/s
+    let run = 31.7; // the sim's g_speed, world units/s (190"/s)
+    let t = crate::tuning::Tuning::default();
     use zhbo_native::thirdperson::state;
     // Standing still, then each gait.
-    assert_eq!(state_of(0, 0.0, false, 0.0, 0, false, run), state::STAND_IDLE);
-    assert_eq!(state_of(0, 4.0, false, 0.0, 0, false, run), state::STAND_WALK);
-    assert_eq!(state_of(0, run, false, 0.0, 0, false, run), state::STAND_RUN);
-    assert_eq!(state_of(0, run, true, 0.0, 0, false, run), state::STAND_SPRINT);
+    assert_eq!(state_of(0, 0.0, false, 0.0, 0, false, 1, &t), state::STAND_IDLE);
+    assert_eq!(state_of(0, 4.0, false, 0.0, 0, false, 1, &t), state::STAND_WALK);
+    assert_eq!(state_of(0, run, false, 0.0, 0, false, 1, &t), state::STAND_RUN);
+    assert_eq!(state_of(0, run, true, 0.0, 0, false, 1, &t), state::STAND_SPRINT);
     // ADS, and the held weapon's own animation set for every state.
-    assert_eq!(state_of(0, 0.0, false, 1.0, 0, false, run), state::STAND_ADS);
-    assert_eq!(state_of(0, 0.0, false, 1.0, 3, false, run), state::id(3, state::STAND_ADS));
-    assert_eq!(state_of(0, 4.0, false, 0.0, 3, false, run), state::id(3, state::STAND_WALK), "a pistol walks its own walk");
-    assert_eq!(state_of(2, 4.0, false, 0.0, 5, false, run), state::id(5, state::PRONE_CRAWL));
+    assert_eq!(state_of(0, 0.0, false, 1.0, 0, false, 1, &t), state::STAND_ADS);
+    assert_eq!(state_of(0, 0.0, false, 1.0, 3, false, 1, &t), state::id(3, state::STAND_ADS));
+    assert_eq!(state_of(0, 4.0, false, 0.0, 3, false, 1, &t), state::id(3, state::STAND_WALK), "a pistol walks its own walk");
+    assert_eq!(state_of(2, 4.0, false, 0.0, 5, false, 1, &t), state::id(5, state::PRONE_CRAWL));
     // Crouch: idle, walk, ADS.
-    assert_eq!(state_of(1, 0.0, false, 0.0, 0, false, run), state::CROUCH_IDLE);
-    assert_eq!(state_of(1, 4.0, false, 0.0, 0, false, run), state::CROUCH_WALK);
-    assert_eq!(state_of(1, 0.0, false, 1.0, 0, false, run), state::CROUCH_ADS);
+    assert_eq!(state_of(1, 0.0, false, 0.0, 0, false, 1, &t), state::CROUCH_IDLE);
+    assert_eq!(state_of(1, 4.0, false, 0.0, 0, false, 1, &t), state::CROUCH_WALK);
+    assert_eq!(state_of(1, 0.0, false, 1.0, 0, false, 1, &t), state::CROUCH_ADS);
     // Prone: idle and crawl.
-    assert_eq!(state_of(2, 0.0, false, 0.0, 0, false, run), state::PRONE_IDLE);
-    assert_eq!(state_of(2, 4.0, false, 0.0, 0, false, run), state::PRONE_CRAWL);
+    assert_eq!(state_of(2, 0.0, false, 0.0, 0, false, 1, &t), state::PRONE_IDLE);
+    assert_eq!(state_of(2, 4.0, false, 0.0, 0, false, 1, &t), state::PRONE_CRAWL);
     // Under RTS the bridge's "moving" runs even though the sim's speed is zero.
-    assert_eq!(state_of(0, 0.0, false, 0.0, 0, true, run), state::STAND_WALK);
+    assert_eq!(state_of(0, 0.0, false, 0.0, 0, true, 1, &t), state::STAND_WALK);
+    // BO2's gait split: running from `player_animRunThreshhold` (140"/s) up, walking under it.
+    let inches = |i: f32| i * crate::units::ZH_PER_INCH;
+    assert_eq!(state_of(0, inches(139.0), false, 0.0, 0, false, 1, &t), state::STAND_WALK);
+    assert_eq!(state_of(0, inches(141.0), false, 0.0, 0, false, 1, &t), state::STAND_RUN);
+    // Every direction of every moving gait (`death::move_direction`: 2 back, 3 left, 4 right).
+    assert_eq!(state_of(0, run, false, 0.0, 0, false, 2, &t), state::STAND_RUN_BACK);
+    assert_eq!(state_of(0, run, false, 0.0, 0, false, 3, &t), state::STAND_RUN_LEFT);
+    assert_eq!(state_of(0, 4.0, false, 0.0, 3, false, 4, &t), state::id(3, state::STAND_WALK_RIGHT));
+    assert_eq!(state_of(1, 4.0, false, 0.0, 0, false, 2, &t), state::CROUCH_WALK_BACK);
+    assert_eq!(state_of(2, 4.0, false, 0.0, 0, false, 3, &t), state::PRONE_CRAWL_LEFT);
+    // Aimed and moving walks aimed, in its direction; a sprint stays forward.
+    assert_eq!(state_of(0, 4.0, false, 1.0, 0, false, 4, &t), state::STAND_ADS_WALK_RIGHT);
+    assert_eq!(state_of(1, 4.0, false, 1.0, 0, false, 1, &t), state::CROUCH_ADS_WALK);
+    assert_eq!(state_of(0, run, true, 0.0, 0, false, 2, &t), state::STAND_SPRINT);
+    for st in 1..=state::COUNT {
+        let (forward, dir) = state::split_direction(st);
+        assert_eq!(state::directional(forward, dir.max(1)), st, "state {st} round-trips its direction");
+        assert!(state::fallbacks(state::id(4, st)).next() == Some(state::id(4, st)) && state::nearest(st).contains(&forward), "state {st} falls back to its forward gait");
+    }
 }
 
 #[test]

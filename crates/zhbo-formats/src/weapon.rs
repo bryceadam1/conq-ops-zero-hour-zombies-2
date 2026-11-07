@@ -614,6 +614,8 @@ pub struct ViewPos {
     pub prone_min_speed: f32,
     pub ads_aim_pitch: f32,
     pub ads_bob_factor: f32,
+    /// `fSprintCycleScale`: the bob cycle's rate while sprinting (`FUN_008c1d00`).
+    pub sprint_cycle_scale: f32,
 }
 
 /// The weapon's own crosshair (G6).
@@ -1397,6 +1399,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         prone_min_speed: z.f32(d + WD::fProneMoveMinSpeed),
         ads_aim_pitch: z.f32(d + WD::fAdsAimPitch),
         ads_bob_factor: z.f32(d + WD::fAdsBobFactor),
+        sprint_cycle_scale: z.f32(d + WD::fSprintCycleScale),
     };
     w.reticle = Reticle {
         center: named(z, d + WD::reticleCenter),

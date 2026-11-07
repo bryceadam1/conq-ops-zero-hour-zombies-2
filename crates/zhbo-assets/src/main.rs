@@ -153,6 +153,8 @@ fn run(args: &[String]) -> Result<(), String> {
         "posew3d" => cmd_posew3d(args),
         "props" => cmd_props(args),
         "dump" => cmd_dump(args),
+        "rawfile" => cmd_rawfile(args),
+        "footsteps" => cmd_footsteps(args),
         "find" => cmd_find(args),
         "list" => cmd_list(args),
         "fonts" => cmd_fonts(args),
@@ -1012,6 +1014,34 @@ fn cmd_posew3d(args: &[String]) -> Result<(), String> {
 }
 
 /// `zhbo-assets dump`.
+fn cmd_rawfile(args: &[String]) -> Result<(), String> {
+    // rawfile <ff> <path>: a zone's raw file (a script, a table) printed as text.
+    let usage = "rawfile <ff> <path>";
+    let zone = load_full_zone(args.get(1).ok_or(usage)?)?;
+    let path = args.get(2).ok_or(usage)?;
+    let bytes = zhbo_formats::havok_lua::rawfile(&zone, path).ok_or_else(|| format!("{path} is not in the zone"))?;
+    print!("{}", String::from_utf8_lossy(&bytes));
+    Ok(())
+}
+
+fn cmd_footsteps(args: &[String]) -> Result<(), String> {
+    // footsteps <ff>: the zone's footstep tables, each cell's alias resolved against its banks.
+    let zone = load_full_zone(args.get(1).ok_or("footsteps <ff>")?)?;
+    let names: std::collections::HashMap<u32, String> = zhbo_formats::sndalias::banks(&zone)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .flat_map(|b| b.aliases.into_iter().map(|a| (zhbo_formats::footstep::alias_hash(&a.name), a.name)))
+        .collect();
+    for t in zhbo_formats::footstep::tables(&zone) {
+        println!("table {}", t.name);
+        for (s, row) in t.aliases.iter().enumerate() {
+            let cells: Vec<String> = row.iter().map(|h| if *h == 0 { "-".into() } else { names.get(h).cloned().unwrap_or_else(|| format!("{h:#010x}")) }).collect();
+            println!("  {s:>2}: {}", cells.join(" "));
+        }
+    }
+    Ok(())
+}
+
 fn cmd_dump(args: &[String]) -> Result<(), String> {
     // Hex dump around each occurrence of a string in a zone, for format work.
     let zone = open_zone(args.get(1).ok_or("dump <ff> <text> [before] [after]")?)?;

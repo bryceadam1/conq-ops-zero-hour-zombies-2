@@ -54,6 +54,9 @@ pub struct Script {
     /// engine picks one).
     deaths: Vec<(Conditions, Vec<String>)>,
     defines: HashMap<(String, String), Define>,
+    /// Each animation's `blendtime` and `blendouttime` (milliseconds), from whichever line names
+    /// them: the engine keeps them on the animation itself (`FUN_008a7c10`: +0x40 and +0x44).
+    blends: HashMap<String, (Option<u32>, Option<u32>)>,
 }
 
 /// What a player is doing, as the script's conditions read it (lower-case keys and values).
@@ -72,6 +75,7 @@ impl Script {
             if line.is_empty() {
                 continue;
             }
+            s.blend_line(line);
             if depth == 0 && matches!(line, "DEFINES" | "ANIMATIONS" | "EVENTS" | "DEATH") {
                 section = match line {
                     "DEFINES" => "defines",
@@ -134,6 +138,31 @@ impl Script {
             }
         }
         s
+    }
+
+    /// An animation line's `blendtime` / `blendouttime` parameters (`<part> <anim> ... blendtime N`).
+    fn blend_line(&mut self, line: &str) {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let (Some(part), Some(anim)) = (words.first(), words.get(1)) else { return };
+        if !matches!(part.to_ascii_lowercase().as_str(), "both" | "legs" | "torso") {
+            return;
+        }
+        for (i, w) in words.iter().enumerate().skip(2) {
+            let Some(ms) = words.get(i + 1).and_then(|v| v.parse::<u32>().ok()) else { continue };
+            let e = self.blends.entry(anim.to_ascii_lowercase()).or_default();
+            match w.to_ascii_lowercase().as_str() {
+                "blendtime" => e.0 = Some(ms),
+                "blendouttime" => e.1 = Some(ms),
+                _ => {}
+            }
+        }
+    }
+
+    /// How long animation `anim` blends in when it starts (milliseconds; `FUN_008a8c40`): its
+    /// `blendtime`, else its `blendouttime`, else `None` (the engine's default).
+    pub fn blend(&self, anim: &str) -> Option<u32> {
+        let (bt, bo) = self.blends.get(&anim.to_ascii_lowercase()).copied().unwrap_or_default();
+        bt.or(bo)
     }
 
     /// One line of the `EVENTS` section: `<event> { <conditions> { torso <clip> ... } ... }` (one
@@ -372,6 +401,16 @@ fireweapon
         assert_eq!(after.event("prime_grenade", &[]), Some("pt_prime"));
         assert_eq!(after.event("reload", &[]), Some("pt_a"));
         assert!(s.pick("idle", &rifle).is_some(), "the movement types still parse after the events");
+    }
+
+    /// The blend parameters ride the animation (`FUN_008a7c10`): `blendtime`, else `blendouttime`
+    /// (`FUN_008a8c40`), else none (the engine's default).
+    #[test]
+    fn an_animations_blend_is_its_blendtime_else_its_blendouttime() {
+        let s = Script::parse("ANIMATIONS\nSTATE COMBAT\n{\n\tsprint\n\t{\n\t\tdefault\n\t\t{\n\t\t\tboth pb_sprint blendOutTime 200\n\t\t}\n\t}\n}\nEVENTS\nfireweapon\n{\n\tdefault\n\t{\n\t\ttorso pt_fire blendTime 133 blendouttime 50\n\t}\n}\n");
+        assert_eq!(s.blend("pb_sprint"), Some(200));
+        assert_eq!(s.blend("PT_FIRE"), Some(133));
+        assert_eq!(s.blend("pb_walk"), None);
     }
 
     #[test]

@@ -39,6 +39,8 @@ pub struct Table {
     picks: HashMap<(u16, u8, u8), u16>,
     clips: HashMap<u16, Clip>,
     deaths: HashMap<u16, Vec<u16>>,
+    /// Movement clip id -> seconds it blends in over (the script's `blendtime`/`blendouttime`).
+    blends: HashMap<u16, f32>,
 }
 
 impl Table {
@@ -54,6 +56,12 @@ impl Table {
     /// The `DEATH` section's alternatives in death context `context` ([`death_context`]).
     pub fn death(&self, context: u16) -> &[u16] {
         self.deaths.get(&context).map_or(&[], Vec::as_slice)
+    }
+
+    /// How long movement clip `id` blends in, when the script gives it a time (`FUN_008a8c40`;
+    /// otherwise the tuning pack's `PlayerAnimBlendTime`).
+    pub fn move_blend(&self, id: u16) -> Option<f32> {
+        self.blends.get(&id).copied()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -84,6 +92,11 @@ pub fn parse(text: &str) -> Table {
             Some("death") => {
                 if let Some(c) = it.next().and_then(|c| c.parse::<u16>().ok()) {
                     t.deaths.insert(c, it.filter_map(|x| x.parse().ok()).collect());
+                }
+            }
+            Some("move_blend") => {
+                if let (Some(id), Some(secs)) = (it.next().and_then(|x| x.parse::<u16>().ok()), it.next().and_then(|x| x.parse::<f32>().ok())) {
+                    t.blends.insert(id, secs);
                 }
             }
             Some("torso_note") => {
@@ -129,13 +142,14 @@ mod tests {
     fn rows_parse_into_picks_clips_and_notes() {
         let t = parse(
             "; comment\nlayer x y z 1 2\ntorso 3 0 0 4096\ntorso 3 0 30 4097\ntorso_clip 4096 2.3 pt_reload_stand_rifle\n\
-             torso_note 4096 0.0322 ZHBO_NTN_fly_assault_reload_npc_mag_out\ntorso_note 4096 0.966 ZHBO_NTN_fly_assault_reload_npc_mag_in\ntorso bad\n",
+             torso_note 4096 0.0322 ZHBO_NTN_fly_assault_reload_npc_mag_out\ntorso_note 4096 0.966 ZHBO_NTN_fly_assault_reload_npc_mag_in\ntorso bad\nmove_blend 4 0.2000\n",
         );
         assert_eq!(t.pick(3, RELOAD, 0), Some(4096));
         assert_eq!(t.pick(3, RELOAD, context(1, 0, 0, false)), Some(4097));
         assert_eq!(t.pick(3, MELEE, 0), None);
         let c = t.clip(4096).unwrap();
         assert_eq!((c.length, c.name.as_str()), (2.3, "pt_reload_stand_rifle"));
+        assert_eq!((t.move_blend(4), t.move_blend(3)), (Some(0.2), None));
         assert_eq!(c.notes, [(0.0322, "ZHBO_NTN_fly_assault_reload_npc_mag_out"), (0.966, "ZHBO_NTN_fly_assault_reload_npc_mag_in")]);
     }
 }

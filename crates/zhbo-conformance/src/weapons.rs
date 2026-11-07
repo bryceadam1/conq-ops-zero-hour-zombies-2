@@ -258,7 +258,8 @@ pub fn schema() -> Schema {
         .col("sprint_rot", "viewpos", v3, "vSprintRot")
         .col("pos_rates", "viewpos", v3, "fPosMoveRate, fPosProneMoveRate, fPosRotRate, fPosProneRotRate")
         .col("ads_aim_pitch", "viewpos", f, "fAdsAimPitch")
-        .col("ads_bob_factor", "viewpos", f, "fAdsBobFactor");
+        .col("ads_bob_factor", "viewpos", f, "fAdsBobFactor")
+        .col("sprint_cycle_scale", "viewpos", f, "fSprintCycleScale (FUN_008c1d00)");
 
     // Crosshair and the scope overlay.
     s.col("reticle_center", "reticle", Kind::Text, "reticleCenter material").asset()

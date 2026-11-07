@@ -32,7 +32,13 @@ pub mod slot {
     pub const FINALSHOT: i32 = 0x07;
     pub const RECHAMBER: i32 = 0x08;
     pub const MELEE: i32 = 0x09;
+    /// The melee's variants (`anim_melee1..3`): BO2 picks one of the run of them a weapon has
+    /// (`_g_move.c` case 10).
+    pub const MELEE1: i32 = 0x0A;
     pub const MELEE_EMPTY: i32 = 0x0D;
+    /// The lunge (`anim_melee_charge`, and its empty version; cases 0xc/0xd).
+    pub const MELEE_CHARGE: i32 = 0x0E;
+    pub const MELEE_CHARGE_EMPTY: i32 = 0x0F;
     pub const RELOAD: i32 = 0x10;
     pub const RELOAD_EMPTY: i32 = 0x12;
     pub const RELOAD_START: i32 = 0x13;
@@ -122,8 +128,10 @@ pub fn native_vm(model: i32, clip: i32) -> i32 {
     }
 }
 
-/// How long the fire clip owns the viewmodel after a shot before idle resumes.
-const FIRE_HOLD: f32 = 0.3;
+/// How long idle takes to blend in over the clip before it (seconds): BO2 plays idle (`weapAnim`
+/// 0/1, `_g_move.c` 8657-8800) through `FUN_0052b670` with `DAT_00c733cc` = 0.5 s whenever another
+/// clip still has weight; every other clip change is a cut (blend 0).
+pub const IDLE_BLEND: f32 = 0.5;
 
 /// What happened to the local player's weapon this frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -141,6 +149,9 @@ pub struct Frame {
     pub model: i32,
     pub clip: i32,
     pub t: f32,
+    /// The clip idle is blending in over (BO2's 0.5 s idle blend, [`IDLE_BLEND`]): that clip,
+    /// seconds into it, and idle's weight 0..1. `None` once idle is fully in, or for any other clip.
+    pub blend: Option<(i32, f32, f32)>,
     /// A dual-wield weapon's left gun on its own clip (its `_LEFT` slot: the matching right slot
     /// with `INSTANCE_LEFT`) and seconds into it, while each hand fires, reloads or idles on its
     /// own. `None` when both hands play the base clip (raise, drop, sprint, melee, offhand) or the
@@ -165,12 +176,36 @@ pub struct Viewmodel {
     swing_t: f32,
     /// The last frame picked, which an offhand's wait (state 0x16) plays on.
     last: Frame,
+    /// Idle coming in: the clip it replaced, that clip's time now, seconds into the blend.
+    idle_from: Option<(i32, f32, f32)>,
+    /// The melee under way: seconds in, whether it lunges, and the variant picked for it.
+    melee_t: f32,
+    melee_charge: bool,
+    melee_variant: i32,
+    /// The client's own stream for BO2's `rand` picks (presentation only, never the sim's).
+    rng: u32,
 }
 
 impl Default for Viewmodel {
     fn default() -> Self {
         // First person starts from the field computer: the tablet goes down first.
-        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, left_since_shot: 10.0, left_shot_was_last: false, since_sprint_start: 0.0, hammer_t: 0.0, swing_t: 0.0, last: Frame { model: NONE, clip: slot::IDLE, t: 0.0, left: None } }
+        Viewmodel {
+            tablet_putaway: Some(0.0),
+            since_shot: 10.0,
+            shot_was_last: false,
+            shot_aimed: false,
+            left_since_shot: 10.0,
+            left_shot_was_last: false,
+            since_sprint_start: 0.0,
+            hammer_t: 0.0,
+            swing_t: 0.0,
+            last: Frame { model: NONE, clip: slot::IDLE, t: 0.0, blend: None, left: None },
+            idle_from: None,
+            melee_t: 0.0,
+            melee_charge: false,
+            melee_variant: slot::MELEE,
+            rng: 0x2545_f491,
+        }
     }
 }
 
@@ -187,13 +222,63 @@ impl Viewmodel {
         // (`FUN_008dcb70` sets the state, events 0x1d and 0x11, no animation), so the clip that was
         // playing — the raise, the shot — plays on, at the state's rate (`FUN_0052b1d0`: 0x16 is
         // an offhand state).
-        let f = if matches!(p.arsenal.offhand, Some(OffhandUse::Starting { .. })) {
+        let mut f = if matches!(p.arsenal.offhand, Some(OffhandUse::Starting { .. })) {
             Frame { t: self.last.t + dt * p.arsenal.anim_rate(), ..self.last }
         } else {
             self.pick(dt, p, ev)
         };
+        f.blend = self.idle_blend(dt, p, &f);
         self.last = f;
         f
+    }
+
+    /// BO2's idle blend: idle coming in on the same viewmodel over another clip fades that clip out
+    /// over [`IDLE_BLEND`] while it plays on; any other change cuts.
+    fn idle_blend(&mut self, dt: f32, p: &PlayerSim, f: &Frame) -> Option<(i32, f32, f32)> {
+        let rate = p.arsenal.anim_rate();
+        let base = p.arsenal.current().def.clip_base;
+        let is_idle = |clip: i32| clip == slot::IDLE + base || clip == slot::EMPTY_IDLE + base;
+        let last = self.last;
+        if !is_idle(f.clip) || f.model != last.model {
+            self.idle_from = None;
+        } else if !is_idle(last.clip) {
+            self.idle_from = Some((last.clip, last.t, 0.0));
+        }
+        let (clip, t, into) = self.idle_from?;
+        let into = into + dt;
+        if into >= IDLE_BLEND {
+            self.idle_from = None;
+            return None;
+        }
+        let t = t + dt * rate;
+        self.idle_from = Some((clip, t, into));
+        Some((clip, t, into / IDLE_BLEND))
+    }
+
+    /// A draw from the client's own stream in `0..n` (BO2's `rand` for a presentation pick).
+    fn rand(&mut self, n: u32) -> u32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 17;
+        self.rng ^= self.rng << 5;
+        self.rng % n.max(1)
+    }
+
+    /// The melee clip of weapon `d` (`_g_move.c` cases 10-13): the lunge's
+    /// (`anim_melee_charge[_empty]`) when it charges, else the empty melee when the magazine is dry
+    /// and the weapon has one, else one of `anim_melee` and the run of variants after it
+    /// (`9 + rand(n)`, n counting `anim_melee1..3` until the first the weapon lacks). `None` when
+    /// the weapon has no melee clip at all.
+    fn melee_clip(&mut self, d: &WeaponDef, empty: bool) -> Option<i32> {
+        if !d.has_anim(slot::MELEE as usize) {
+            return None;
+        }
+        if self.melee_charge && d.has_anim(slot::MELEE_CHARGE as usize) {
+            return Some(if empty && d.has_anim(slot::MELEE_CHARGE_EMPTY as usize) { slot::MELEE_CHARGE_EMPTY } else { slot::MELEE_CHARGE });
+        }
+        if empty && d.has_anim(slot::MELEE_EMPTY as usize) {
+            return Some(slot::MELEE_EMPTY);
+        }
+        Some(self.melee_variant)
     }
 
     fn pick(&mut self, dt: f32, p: &PlayerSim, ev: Events) -> Frame {
@@ -228,7 +313,7 @@ impl Viewmodel {
         if let Some(Reload::Magazine { t, empty, .. }) = h.reload {
             return (if empty { slot::RELOAD_EMPTY } else { slot::RELOAD }, t);
         }
-        if self.left_since_shot < FIRE_HOLD.max(def.fire_time) {
+        if self.left_since_shot < def.fire_time {
             return (if self.left_shot_was_last { slot::LASTSHOT } else { slot::FIRE }, self.left_since_shot);
         }
         (if h.ammo == 0 { slot::EMPTY_IDLE } else { slot::IDLE }, self.left_since_shot)
@@ -240,9 +325,9 @@ impl Viewmodel {
         let w = a.current();
         let def = w.def;
         let model = def.viewmodel;
-        let frame = |model: i32, clip: i32, t: f32| Frame { model, clip, t: t.max(0.0), left: None };
+        let frame = |model: i32, clip: i32, t: f32| Frame { model, clip, t: t.max(0.0), blend: None, left: None };
         // The held weapon's own clips (an alt mode's sit after its weapon's on the same viewmodel).
-        let wf = |clip: i32, t: f32| Frame { model, clip: clip + def.clip_base, t: t.max(0.0), left: None };
+        let wf = |clip: i32, t: f32| Frame { model, clip: clip + def.clip_base, t: t.max(0.0), blend: None, left: None };
 
         if let Some(t) = self.tablet_putaway.as_mut() {
             *t += dt;
@@ -294,19 +379,27 @@ impl Viewmodel {
                 OffhandUse::Raising { t, .. } => wf(or(def, slot::QUICK_RAISE, slot::RAISE), t),
             };
         }
-        // Melee: the weapon's own (pistol whip) or the class melee weapon's knife.
+        // Melee: the weapon's own (pistol whip) or the class melee weapon's knife, its variant
+        // drawn once as it starts and its lunge while the sim charges (`PlayerSim::charge`).
         if a.melee_left > 0.0 {
             let m = a.melee_weapon();
-            let t = m.melee_time.max(0.3) - a.melee_left;
-            let own = if empty { slot::MELEE_EMPTY } else { slot::MELEE };
-            if def.has_anim(own as usize) {
-                return wf(own, t);
+            let starting = self.melee_t == 0.0;
+            self.melee_t += dt;
+            self.melee_charge |= p.charge.is_some();
+            if starting {
+                let user = if def.has_anim(slot::MELEE as usize) { def } else { m };
+                let n = 1 + (slot::MELEE1..slot::MELEE1 + 3).take_while(|&s| user.has_anim(s as usize)).count() as u32;
+                self.melee_variant = slot::MELEE + self.rand(n) as i32;
             }
-            if def.has_anim(slot::MELEE as usize) {
-                return wf(slot::MELEE, t);
+            let t = self.melee_t - dt;
+            if let Some(c) = self.melee_clip(def, empty) {
+                return wf(c, t);
             }
-            return frame(m.viewmodel, slot::MELEE, t);
+            let c = self.melee_clip(m, false).unwrap_or(slot::MELEE);
+            return frame(m.viewmodel, c, t);
         }
+        self.melee_t = 0.0;
+        self.melee_charge = false;
         // After a melee with the class melee weapon the gun comes back up in its quick raise (0x15).
         if a.melee_recover_left > 0.0 {
             return wf(or(def, slot::QUICK_RAISE, slot::RAISE), def.quick_raise_time - a.melee_recover_left);
@@ -372,8 +465,9 @@ impl Viewmodel {
                 return wf(rechamber, t);
             }
         }
-        // Fire (or the last shot), then the pump/bolt rechamber if the weapon has one.
-        let fire_len = FIRE_HOLD.max(def.fire_time);
+        // Fire (or the last shot) for the weapon's fire time (the firing state), then the pump/bolt
+        // rechamber if the weapon has one; idle then blends in ([`IDLE_BLEND`]).
+        let fire_len = def.fire_time;
         if self.since_shot < fire_len {
             let clip = match (self.shot_aimed, self.shot_was_last) {
                 (true, true) => or(def, slot::ADS_LASTSHOT, or(def, slot::LASTSHOT, slot::FIRE)),
@@ -384,7 +478,7 @@ impl Viewmodel {
             return wf(clip, self.since_shot);
         }
         if !def.timing.bolt_action && def.has_anim(rechamber as usize) && !self.shot_was_last && self.since_shot < fire_len + def.fire_time {
-            return wf(rechamber, self.since_shot - FIRE_HOLD.min(def.fire_time * 0.3));
+            return wf(rechamber, self.since_shot - fire_len);
         }
         wf(if empty { or(def, slot::EMPTY_IDLE, slot::IDLE) } else { slot::IDLE }, self.since_shot)
     }
@@ -393,9 +487,6 @@ impl Viewmodel {
 /// BO2 inches to the viewmodel's art units: the converter's scale, the same one the composed
 /// model is drawn at (`zhbo_native::ART_SCALE`).
 const INCH: f32 = zhbo_native::ART_SCALE;
-/// The bob cycle advances one swing per this many Zero Hour units walked (`ps->bobCycle`: it
-/// follows ground distance, not time).
-const BOB_STRIDE: f32 = 9.0;
 /// Landing dip (BO2 inches) and its recovery rate (per second).
 const LAND_DIP: f32 = 0.8;
 const LAND_RECOVER: f32 = 8.0;
@@ -407,6 +498,8 @@ pub struct Pose {
     pub offset: Vec3,
     /// Radians: yaw (left positive), pitch (muzzle up positive), roll.
     pub angles: Vec3,
+    /// The view (camera) bob, inches up and to the right of the eye (`gunpos::view_bob`).
+    pub view_bob: (f32, f32),
 }
 
 /// The viewmodel's motion: BO2's gun-position state (the stance and movement offsets, sway and
@@ -415,7 +508,7 @@ pub struct Pose {
 #[derive(Clone, Debug, Default)]
 pub struct Motion {
     gun: GunPos,
-    /// The bob cycle, turns (`ps->bobCycle`).
+    /// The bob cycle, 0..256 (`ps->bobCycle`, advanced by `PM_Footsteps`: [`crate::footsteps`]).
     bob: f32,
     /// The sprint pose's weight 0..1 (G4's sprint raise/drop curve, which the caller supplies).
     sprint: f32,
@@ -427,6 +520,12 @@ pub struct Motion {
 crate::statehash::state_hash!(struct Motion { gun, bob, sprint, land, airborne });
 
 impl Motion {
+    /// The bob cycle, 0..256 (`ps->bobCycle`): the weapon bob, the view bob and the footsteps
+    /// read it.
+    pub fn bob_cycle(&self) -> f32 {
+        self.bob
+    }
+
     /// The gun's angles an aimed iron-sight shot follows, radians in the [`Pose`] convention (yaw
     /// left, pitch muzzle up): `GunPos::fire_angles`.
     pub fn fire_angles(&self) -> (f32, f32) {
@@ -446,10 +545,8 @@ impl Motion {
         // The gun-position math is BO2's, in its inches and inches/s.
         let speed = speed_zh / crate::units::ZH_PER_INCH;
 
-        // The bob cycle follows the distance walked on the ground (`ps->bobCycle`).
-        if p.body.on_ground {
-            self.bob = (self.bob + speed_zh * dt / BOB_STRIDE * std::f32::consts::PI) % std::f32::consts::TAU;
-        }
+        // The bob cycle (`ps->bobCycle`): BO2's `PM_Footsteps` rule.
+        self.bob = crate::footsteps::advance(self.bob, &gait_of(p), &p.arsenal.tuning, dt);
 
         // The sprint pose comes up over the def's sprint-in time (`sprintInTime`) and drops over its
         // sprint-out time.
@@ -484,7 +581,7 @@ impl Motion {
             ads,
             sprinting: p.body.sprinting,
             sprint_weight: self.sprint,
-            bob_cycle: (self.bob / std::f32::consts::TAU).rem_euclid(1.0),
+            bob_cycle: self.bob / 255.0,
             fov,
             // BO2's view angles: its pitch is positive looking down, the sim's looking up.
             view: (-pitch.to_degrees(), yaw.to_degrees()),
@@ -498,8 +595,33 @@ impl Motion {
         // BO2's pose (forward, left, up; pitch down) into the renderer's: `GunPose::view`, the one
         // conversion (the sim's fire angles go through the same `view_angles`).
         let (o, a) = self.gun.step(def, &input, &p.arsenal.tuning, dt).view();
-        Pose { offset: Vec3::new(o[0] * INCH, o[1] * INCH, (o[2] - LAND_DIP * self.land) * INCH), angles: Vec3::new(a[0], a[1], a[2]) }
+        let view_bob = crate::weapons::gunpos::view_bob(&input, &p.arsenal.tuning);
+        Pose { offset: Vec3::new(o[0] * INCH, o[1] * INCH, (o[2] - LAND_DIP * self.land) * INCH), angles: Vec3::new(a[0], a[1], a[2]), view_bob }
     }
+}
+
+/// The move as `PM_Footsteps` reads it ([`crate::footsteps::Gait`]): the sim's stance, ground speed,
+/// sprint and movement keys, and the top speed they allow (`movement::bob_top_speed`, with the
+/// weapon's move scale and the shellshock's, as the move itself is scaled).
+pub fn gait_of(p: &PlayerSim) -> crate::footsteps::Gait {
+    let t = &p.arsenal.tuning;
+    let mt = crate::movement::MoveTuning::from_tuning(t);
+    let (forward, right) = p.input.move_axes();
+    let xyspeed = p.body.horizontal_speed() / crate::units::ZH_PER_INCH;
+    let mut g = crate::footsteps::Gait {
+        stance: p.body.stance,
+        xyspeed,
+        on_ground: p.body.on_ground,
+        sprinting: p.body.sprinting,
+        forward,
+        right,
+        top_speed: 0.0,
+        sprint_cycle_scale: p.arsenal.current().def.view_pos.sprint_cycle_scale,
+    };
+    let walking = crate::footsteps::walking(&g, t);
+    let scale = p.arsenal.move_scale() * p.shock.movement();
+    g.top_speed = crate::movement::bob_top_speed(&p.body, forward, right, scale, p.arsenal.move_faster(), walking, &mt) / crate::units::ZH_PER_INCH;
+    g
 }
 
 #[cfg(test)]
@@ -653,6 +775,69 @@ mod tests {
         assert_eq!(vm.update(0.05, &p, Events::default()).clip, slot::ALT_DROP + def.clip_base);
     }
 
+    /// The shot's clip holds for the weapon's fire time (no 0.3 s floor), then idle comes in over
+    /// BO2's 0.5 s blend with the fire clip playing on beneath; a fresh shot cuts back in.
+    #[test]
+    fn idle_blends_in_over_the_fire_clip() {
+        let mut p = player();
+        p.mode = Mode::Fps;
+        let mut vm = Viewmodel::default();
+        vm.update(TABLET_PUTAWAY_TIME + 0.2, &p, Events::default());
+        let w = p.arsenal.active;
+        let mut def = p.arsenal.weapons[w].def.clone();
+        def.fire_time = 0.1;
+        def.anims = (1u128 << slot::IDLE) | (1u128 << slot::FIRE);
+        p.arsenal.weapons[w].def = Box::leak(Box::new(def.clone()));
+        p.arsenal.raise_left = 0.0;
+        let base = def.clip_base;
+        let f = vm.update(0.016, &p, Events { shot: true, ..Default::default() });
+        assert_eq!((f.clip, f.blend), (slot::FIRE + base, None), "the shot cuts in");
+        assert_eq!(vm.update(0.05, &p, Events::default()).clip, slot::FIRE + base);
+        let f = vm.update(0.06, &p, Events::default());
+        assert_eq!(f.clip, slot::IDLE + base, "past the fire time: idle");
+        let (from, t, w0) = f.blend.expect("idle blends in");
+        assert_eq!(from, slot::FIRE + base);
+        assert!(w0 > 0.0 && w0 < 0.2 && (t - 0.11).abs() < 1e-3, "{:?}", f.blend);
+        let f = vm.update(0.25, &p, Events::default());
+        assert!(f.blend.is_some_and(|(_, _, w)| (w - (0.31 / IDLE_BLEND)).abs() < 1e-3), "{:?}", f.blend);
+        assert_eq!(vm.update(0.25, &p, Events::default()).blend, None, "fully in after 0.5 s");
+        // Another shot mid-blend cuts straight to the fire clip.
+        vm.update(0.016, &p, Events { shot: true, ..Default::default() });
+        vm.update(0.11, &p, Events::default());
+        assert_eq!(vm.update(0.016, &p, Events { shot: true, ..Default::default() }).blend, None);
+    }
+
+    /// A melee plays one of the weapon's `anim_melee` run (slot 9 and its variants 10..12 up to the
+    /// first missing one, `_g_move.c` case 10), drawn once per swing; the lunge plays
+    /// `anim_melee_charge` (case 0xc).
+    #[test]
+    fn melee_picks_a_variant_and_the_lunge_its_own_clip() {
+        let mut p = player();
+        p.mode = Mode::Fps;
+        let mut vm = Viewmodel::default();
+        vm.update(TABLET_PUTAWAY_TIME + 0.2, &p, Events::default());
+        let w = p.arsenal.active;
+        let mut def = p.arsenal.weapons[w].def.clone();
+        // MELEE, MELEE1, MELEE2 (MELEE3 missing): three to pick from.
+        def.anims = (1u128 << slot::IDLE) | (1u128 << slot::MELEE) | (1u128 << slot::MELEE1) | (1u128 << (slot::MELEE1 + 1)) | (1u128 << slot::MELEE_CHARGE);
+        p.arsenal.weapons[w].def = Box::leak(Box::new(def.clone()));
+        p.arsenal.raise_left = 0.0;
+        let base = def.clip_base;
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..40 {
+            p.arsenal.melee_left = 0.5;
+            let first = vm.update(0.016, &p, Events::default()).clip;
+            assert_eq!(vm.update(0.016, &p, Events::default()).clip, first, "one variant per swing");
+            seen.insert(first - base);
+            p.arsenal.melee_left = 0.0;
+            vm.update(0.016, &p, Events::default());
+        }
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), [slot::MELEE, slot::MELEE1, slot::MELEE1 + 1]);
+        p.arsenal.melee_left = 0.5;
+        p.charge = Some(crate::sim::MeleeCharge { target: 2, left: 0.3 });
+        assert_eq!(vm.update(0.016, &p, Events::default()).clip, slot::MELEE_CHARGE + base, "the lunge");
+    }
+
     #[test]
     fn the_tools_draw_through_their_own_native_viewmodels() {
         for clip in [TABLET_PULLOUT, TABLET_IDLE, TABLET_PUTAWAY] {
@@ -737,7 +922,9 @@ mod tests {
             }
             hi - lo
         };
+        // A walk on the ground with the forward key held (the bob cycle holds without one).
         p.body.vel = Vec3::new(30.0, 0.0, 0.0);
+        p.input.move_packed = crate::input::pack_move(1.0, 0.0);
         let most = swing(&mut m, &p);
         p.arsenal.ads = 1.0;
         let aimed = swing(&mut m, &p);

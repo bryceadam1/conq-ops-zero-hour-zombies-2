@@ -65,16 +65,8 @@ pub const DRY_FIRE: &str = "ZHBO_BO2_DryFire";
 pub const HIT_MARKER: &str = "ZHBO_BO2_HitMarker";
 pub const HEARTBEAT: &str = "ZHBO_BO2_Heartbeat";
 pub const HURT: &str = "ZHBO_BO2_Hurt";
-pub const STEP: &str = "ZHBO_BO2_Step";
-pub const SPRINT_STEP: &str = "ZHBO_BO2_SprintStep";
-pub const LAND: &str = "ZHBO_BO2_Land";
-/// Another player's footfalls, heard at him: BO2's third-person aliases
-/// (`clientscripts/mp/_footsteps.csc` builds `fly_step_run_npc_<surface>`; the sprint's
-/// `fly_step_sprint_npc_<surface>`), positional for everyone ([`RemoteSteps`]).
-pub const STEP_NPC: &str = "ZHBO_BO2_StepNpc";
-pub const SPRINT_STEP_NPC: &str = "ZHBO_BO2_SprintStepNpc";
-/// Another player's landing (`_footsteps.csc` `playerland`: `fly_land_npc_<surface>`).
-pub const LAND_NPC: &str = "ZHBO_BO2_LandNpc";
+/// Footsteps, jumps and landings by surface: [`crate::stepsounds`].
+pub use crate::stepsounds::RemoteSteps;
 /// A player's voice when he is hurt and when he dies (`_battlechatter_mp.gsc` `painvox`,
 /// `deathvox`: `level.teamprefix[team] + bcvoicenumber + "_pain_small"` / `"_pain_death"`, played
 /// on his `J_Head` for everyone). One event per faction's voice bank (the faction letters of
@@ -302,15 +294,9 @@ ui_cues! {
     UinToggleDrc = "uin_toggle_drc",
 }
 
-/// Distance between footsteps (Zero Hour units): a 54" step, 69" sprinting, at the one BO2-inches
-/// factor (`units::inches`). Kept at the values the footstep cadence was tuned to.
-const STRIDE: f32 = crate::units::inches(54.0);
-const SPRINT_STRIDE: f32 = crate::units::inches(69.0);
 /// Below this share of health the heartbeat plays, once per beat.
 const HEARTBEAT_HEALTH: f32 = 0.35;
 const HEARTBEAT_PERIOD: f32 = 0.9;
-/// A landing needs at least this downward speed (units/s) to be heard.
-const LAND_SPEED: f32 = 20.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Request {
@@ -325,10 +311,8 @@ pub struct Request {
 /// Per-player state for the cues that depend on movement and health.
 #[derive(Clone, Debug, Default)]
 pub struct Cues {
-    stride_left: f32,
-    last_pos: Option<Vec3>,
-    was_airborne: bool,
-    fall_speed: f32,
+    /// The own feet (`stepsounds::Feet`).
+    feet: crate::stepsounds::Feet,
     heartbeat_in: f32,
     fire_was_held: bool,
     breath: BreathSounds,
@@ -337,81 +321,6 @@ pub struct Cues {
     /// Looping events' gains this frame (`ClientHost::sound_loop`; 0 stops one): a shellshock's
     /// ringing (`shellshock::Presented`).
     pub loops: Vec<(&'static str, f32)>,
-}
-
-/// Other players' footsteps: each first-person General but the presented one puts a foot down
-/// every stride he walks on the ground, at the stride the own steps use, heard at him
-/// ([`STEP_NPC`]/[`SPRINT_STEP_NPC`]). BO2 plays every other player's steps this way
-/// (`_footsteps.csc`'s `firstperson = 0` aliases), and his jump and landing too: `playerjump`
-/// plays the step alias, `playerland` `fly_land_npc_<surface>` ([`LAND_NPC`]). A General with Dead
-/// Silence (`specialty_quieter`) makes none. Presentation only: read off the sim's records.
-#[derive(Clone, Debug, Default)]
-pub struct RemoteSteps {
-    seats: [Option<StepSeat>; crate::sim::MAX_PLAYERS],
-}
-
-/// One seat's footfall state: his General, where his body was last frame, the stride left to the
-/// next step, and whether he was in the air (with his fastest fall).
-#[derive(Clone, Copy, Debug)]
-struct StepSeat {
-    general: u32,
-    last: Vec3,
-    left: f32,
-    airborne: bool,
-    fall: f32,
-}
-
-impl RemoteSteps {
-    /// This frame's footfalls of every seat's first-person General but `presented`'s.
-    pub fn update(&mut self, players: &[Option<PlayerSim>], presented: i32, cues: &mut Cues) {
-        for (seat, slot) in self.seats.iter_mut().enumerate() {
-            let p = players.get(seat).and_then(|p| p.as_ref()).filter(|p| seat as i32 != presented && p.is_first_person());
-            let Some(p) = p else {
-                *slot = None;
-                continue;
-            };
-            let pos = p.body.pos;
-            let quiet = p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter);
-            let (stride, event) = if p.body.sprinting { (SPRINT_STRIDE, SPRINT_STEP_NPC) } else { (STRIDE, STEP_NPC) };
-            let mut s = match *slot {
-                Some(s) if s.general == p.general => s,
-                // A new General (or one just seen): his first step half a stride on.
-                _ => StepSeat { general: p.general, last: pos, left: STRIDE * 0.5, airborne: !p.body.on_ground, fall: 0.0 },
-            };
-            let moved = (pos - s.last).length_xy();
-            if p.body.on_ground {
-                // He landed: BO2's landing (`playerland`), when he fell fast enough to be heard.
-                if s.airborne && s.fall > LAND_SPEED && !quiet {
-                    cues.play_at(LAND_NPC, pos);
-                    s.left = STRIDE * 0.5;
-                }
-                // Teleports and respawns are not steps.
-                if moved < 50.0 && !s.airborne {
-                    s.left -= moved;
-                }
-                s.airborne = false;
-                s.fall = 0.0;
-            } else {
-                // He left the ground going up: BO2's jump plays the step alias (`playerjump`).
-                if !s.airborne && p.body.vel.z > 0.0 && !quiet {
-                    cues.play_at(STEP_NPC, pos);
-                }
-                s.airborne = true;
-                s.fall = s.fall.max(-p.body.vel.z);
-            }
-            if s.left <= 0.0 {
-                if !quiet {
-                    cues.play_at(event, pos);
-                }
-                s.left += stride;
-                if s.left < 0.0 {
-                    s.left = STRIDE;
-                }
-            }
-            s.last = pos;
-            *slot = Some(s);
-        }
-    }
 }
 
 /// The hold-breath sounds' state (`FUN_0052e3d0`, the client frame): how long the current breath
@@ -642,36 +551,15 @@ impl Cues {
         *self = Cues { queue, loops, ..Default::default() };
     }
 
-    /// Footsteps, landing, heartbeat and dry fire for this frame.
-    pub fn update(&mut self, dt: f32, p: &PlayerSim, fire_held: bool) {
-        let pos = p.body.pos;
-        if p.body.on_ground {
-            if self.was_airborne && self.fall_speed > LAND_SPEED {
-                self.play(LAND);
-                self.stride_left = STRIDE * 0.5;
-            }
-            if let Some(last) = self.last_pos {
-                let moved = ((pos.x - last.x).powi(2) + (pos.y - last.y).powi(2)).sqrt();
-                // Teleports and respawns are not steps.
-                if moved < 50.0 {
-                    self.stride_left -= moved;
-                }
-            }
-            if self.stride_left <= 0.0 {
-                let sprint = p.body.sprinting;
-                self.play(if sprint { SPRINT_STEP } else { STEP });
-                self.stride_left += if sprint { SPRINT_STRIDE } else { STRIDE };
-                if self.stride_left < 0.0 {
-                    self.stride_left = STRIDE;
-                }
-            }
-            self.was_airborne = false;
-            self.fall_speed = 0.0;
-        } else {
-            self.was_airborne = true;
-            self.fall_speed = self.fall_speed.max(-p.body.vel.z);
+    /// Footsteps, jump and landing (on `surface`, the ground under him: `stepsounds`), heartbeat
+    /// and dry fire for this frame.
+    pub fn update(&mut self, dt: f32, p: &PlayerSim, fire_held: bool, surface: crate::impacts::Surface) {
+        let quiet = p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter);
+        let mut feet = Vec::new();
+        self.feet.update(p, crate::stepsounds::StepTable::pick(true, quiet, false), surface, &mut feet);
+        for e in feet {
+            self.play(e);
         }
-        self.last_pos = Some(pos);
 
         if p.max_health > 0.0 && p.health / p.max_health < HEARTBEAT_HEALTH && p.health > 0.0 {
             self.heartbeat_in -= dt;
@@ -814,18 +702,18 @@ mod tests {
         let weapon = |c: &mut Cues| -> Vec<&'static str> { events(c).into_iter().filter(|e| e.starts_with(crate::names::DEF_SOUND_PREFIX)).collect() };
         let a = &mut p.arsenal;
         (a.raise_left, a.raise_kind, a.drop_left, a.ads) = (0.5, RaiseKind::First, 0.0, 0.0);
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_generic_first_raise_plr"], "the spawn's first raise");
         p.arsenal.raise_left = 0.4;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert!(weapon(&mut c).is_empty(), "once per raise");
         // A swap: the drop starts (putaway), then the raise once the drop is done.
         let a = &mut p.arsenal;
         (a.drop_left, a.raise_left, a.raise_kind) = (0.3, 0.6, RaiseKind::Normal);
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_generic_down_plr"]);
         p.arsenal.drop_left = 0.0;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_generic_raise_plr"]);
         // An alt toggle plays the incoming mode's alt-switch sound once; its raise is silent.
         let alt: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
@@ -835,28 +723,28 @@ mod tests {
         }));
         let def_switch: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { alt_switch_sound: "ZHBO_BO2_Snd_main_mode_switch".into(), ..def.clone() }));
         p.arsenal.weapons[p.arsenal.active].def = def_switch;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         let a = &mut p.arsenal;
         let active = a.active;
         a.weapons[active].def = alt;
         (a.raise_left, a.raise_kind) = (0.7, RaiseKind::Alt);
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_alt_mode_switch"], "the incoming mode's alt switch, no raise");
         p.arsenal.raise_left = 0.5;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert!(weapon(&mut c).is_empty(), "once per toggle");
         // And back: the main mode's own alt-switch sound.
         let a = &mut p.arsenal;
         a.weapons[active].def = def_switch;
         a.raise_left = 0.7;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_main_mode_switch"]);
         p.arsenal.raise_left = 0.0;
         p.arsenal.ads = 0.2;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_scope_zoom"], "zoom as aiming starts");
         p.arsenal.ads = 0.6;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert!(weapon(&mut c).is_empty());
     }
 
@@ -878,87 +766,6 @@ mod tests {
         assert_eq!(some(NO_SOUND), None);
         assert_eq!(some(&crate::names::def_sound_event(NULL_SOUND_ALIAS)), None);
         assert_eq!(some("ZHBO_BO2_Snd_fly_scope_zoom"), Some("ZHBO_BO2_Snd_fly_scope_zoom"));
-    }
-
-    #[test]
-    fn footsteps_follow_distance() {
-        let mut p = PlayerSim::spawn_for_tests();
-        let mut c = Cues::default();
-        c.update(0.016, &p, false);
-        events(&mut c);
-        let mut steps = 0;
-        for _ in 0..100 {
-            p.body.pos.x += 1.0; // 100 units walked
-            c.update(0.016, &p, false);
-            steps += events(&mut c).iter().filter(|e| **e == STEP).count();
-        }
-        assert!((10..=12).contains(&steps), "{steps} steps over 100 units");
-        // Sprinting takes longer strides.
-        p.body.sprinting = true;
-        let mut sprint_steps = 0;
-        for _ in 0..100 {
-            p.body.pos.x += 1.0;
-            c.update(0.016, &p, false);
-            sprint_steps += events(&mut c).iter().filter(|e| **e == SPRINT_STEP).count();
-        }
-        assert!(sprint_steps < steps, "{sprint_steps} sprint steps");
-    }
-
-    /// Another first-person General's steps are heard at him, one per stride, the sprint's with
-    /// its own event; the presented seat's are not (he hears his own 2D steps), nor a General
-    /// with Dead Silence's (`specialty_quieter`).
-    #[test]
-    fn other_generals_footsteps_are_heard_at_them() {
-        let walker = |general: u32| {
-            let mut p = PlayerSim::spawn_for_tests();
-            p.general = general;
-            p
-        };
-        let mut players: Vec<Option<PlayerSim>> = vec![Some(walker(1)), Some(walker(2)), None];
-        let mut steps = RemoteSteps::default();
-        let mut c = Cues::default();
-        let heard = |players: &mut Vec<Option<PlayerSim>>, steps: &mut RemoteSteps, c: &mut Cues| {
-            let mut n = Vec::new();
-            for _ in 0..100 {
-                for p in players.iter_mut().flatten() {
-                    p.body.pos.x += 1.0;
-                }
-                steps.update(players, 0, c);
-                n.extend(c.queue.drain(..).map(|r| (r.event, r.at)));
-            }
-            n
-        };
-        let n = heard(&mut players, &mut steps, &mut c);
-        assert!((10..=12).contains(&n.len()), "{} steps over 100 units", n.len());
-        assert!(n.iter().all(|(e, at)| *e == STEP_NPC && at.is_some_and(|a| a.y == 0.0 && a.x > 0.0)), "his, at him: {n:?}");
-        players[1].as_mut().unwrap().body.sprinting = true;
-        let n = heard(&mut players, &mut steps, &mut c);
-        assert!(!n.is_empty() && n.iter().all(|(e, _)| *e == SPRINT_STEP_NPC), "{n:?}");
-        // Dead Silence: none.
-        let p = players[1].as_mut().unwrap();
-        p.arsenal.loadout.perks.push(crate::weapons::Perk::by_id("DeadSilence").expect("Dead Silence"));
-        assert!(p.arsenal.has_specialty(crate::weapons::specialty::Specialty::Quieter));
-        assert!(heard(&mut players, &mut steps, &mut c).is_empty(), "Dead Silence");
-        // A jump plays the step at him, the landing his landing.
-        players[0] = None;
-        let p = players[1].as_mut().unwrap();
-        p.arsenal.loadout.perks.clear();
-        let mut steps = RemoteSteps::default();
-        steps.update(&players, 0, &mut c);
-        c.queue.clear();
-        let p = players[1].as_mut().unwrap();
-        p.body.on_ground = false;
-        p.body.vel.z = 120.0;
-        steps.update(&players, 0, &mut c);
-        assert_eq!(events(&mut c), [STEP_NPC], "the jump");
-        players[1].as_mut().unwrap().body.vel.z = -200.0;
-        steps.update(&players, 0, &mut c);
-        players[1].as_mut().unwrap().body.on_ground = true;
-        steps.update(&players, 0, &mut c);
-        assert_eq!(events(&mut c), [LAND_NPC], "the landing");
-        // Overhead (no first person): none either.
-        players[1] = None;
-        assert!(heard(&mut players, &mut steps, &mut c).is_empty());
     }
 
     #[test]
@@ -994,22 +801,22 @@ mod tests {
         let mut c = Cues::default();
         p.body.on_ground = false;
         p.body.vel.z = -60.0;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Metal);
         p.body.on_ground = true;
-        c.update(0.016, &p, false);
-        assert!(events(&mut c).contains(&LAND));
+        c.update(0.016, &p, false, crate::impacts::Surface::Metal);
+        assert!(events(&mut c).contains(&crate::stepsounds::land_event(true, crate::impacts::Surface::Metal)), "the own landing is fly_land_plr_<surface>");
 
         p.health = p.max_health * 0.2;
-        c.update(0.016, &p, false);
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
         assert!(events(&mut c).contains(&HEARTBEAT));
-        c.update(0.5, &p, false);
+        c.update(0.5, &p, false, crate::impacts::Surface::Default);
         assert!(!events(&mut c).contains(&HEARTBEAT), "one beat per period");
 
         let w = p.arsenal.active;
         p.arsenal.weapons[w].ammo = 0;
-        c.update(0.016, &p, true);
+        c.update(0.016, &p, true, crate::impacts::Surface::Default);
         assert!(events(&mut c).contains(&DRY_FIRE));
-        c.update(0.016, &p, true);
+        c.update(0.016, &p, true, crate::impacts::Surface::Default);
         assert!(!events(&mut c).contains(&DRY_FIRE), "only on the press");
     }
 }

@@ -358,6 +358,7 @@ getters!(Def, WD {
     f32 pos_prone_rot_rate = fPosProneRotRate;
     f32 ads_aim_pitch = fAdsAimPitch;
     f32 ads_bob_factor = fAdsBobFactor;
+    f32 sprint_cycle_scale = fSprintCycleScale;
     f32 move_speed_scale = moveSpeedScale;
     f32 ads_move_speed_scale = adsMoveSpeedScale;
     f32 sprint_duration_scale = sprintDurationScale;

@@ -108,6 +108,9 @@ tuning! {
     player_run_threshhold: "player_runThreshhold" = 110.0, "`movestatus run` above this speed, inches/s (`FUN_008ad980`; `dvars-t6mp.tsv`).";
     player_move_threshhold: "player_moveThreshhold" = 2.0, "`movestatus walk` above this speed, inches/s (`FUN_008ad980`; `dvars-t6mp.tsv`).";
     player_strafe_anim_cos_angle: "player_strafeAnimCosAngle" = 0.5, "The normalised forward key past which `direction` is forward (backward past its negative), else the strafe's side (`FUN_008adb70`; `dvars-t6mp.tsv`).";
+    player_anim_walk_threshhold: "player_animWalkThreshhold" = 30.0, "The third-person body walks above this speed, inches/s (`PM_Footsteps` `FUN_008c4820`; `dvars-t6mp.tsv`).";
+    player_anim_run_threshhold: "player_animRunThreshhold" = 140.0, "The third-person body runs above this speed, inches/s (`FUN_008c4820`; `dvars-t6mp.tsv`).";
+    player_anim_blend_time: "PlayerAnimBlendTime" = 200.0, "Milliseconds a body clip blends in when the script names no `blendtime`/`blendouttime` (`FUN_008a8c40`'s value for no animation; `FUN_008a7c10` parses the script's own).";
     // ---- Spread and the view (G4, G6) ----------------------------------------------------------
     player_standing_view_height: "player_standingViewHeight" = 60.0, "Standing eye height, inches: spread blends crouched->standing up to it (G2, G6).";
     view_height_crouch: "ViewHeightCrouch" = 40.0, "Crouched eye height, inches (the engine's 40; G6).";
@@ -137,6 +140,40 @@ tuning! {
     bob_sprinting_h: "bg_weaponBobAmplitudeSprinting.x" = 0.02, "Sprinting bob, horizontal, x the weapon's `vSprintBob` (G4).";
     bob_sprinting_v: "bg_weaponBobAmplitudeSprinting.y" = 0.014, "Sprinting bob, vertical (G4).";
     bob_roll: "bg_weaponBobAmplitudeRoll" = 1.5, "Bob roll multiplier (G4).";
+    // The view (camera) bob (G4 `FUN_008f0ac0`/`FUN_008f0c70`, added to the eye by `FUN_0051f760`).
+    bg_bob_max: "bg_bobMax" = 8.0, "View bob amplitude cap, inches (G4).";
+    view_bob_standing_h: "bg_viewBobAmplitudeStanding.x" = 0.007, "Standing view bob, horizontal, x speed (G4).";
+    view_bob_standing_v: "bg_viewBobAmplitudeStanding.y" = 0.007, "Standing view bob, vertical (G4).";
+    view_bob_standing_ads_h: "bg_viewBobAmplitudeStandingAds.x" = 0.007, "Standing aimed view bob, horizontal (G4).";
+    view_bob_standing_ads_v: "bg_viewBobAmplitudeStandingAds.y" = 0.007, "Standing aimed view bob, vertical (G4).";
+    view_bob_ducked_h: "bg_viewBobAmplitudeDucked.x" = 0.0075, "Crouched view bob, horizontal (G4).";
+    view_bob_ducked_v: "bg_viewBobAmplitudeDucked.y" = 0.0075, "Crouched view bob, vertical (G4).";
+    view_bob_ducked_ads_h: "bg_viewBobAmplitudeDuckedAds.x" = 0.0075, "Crouched aimed view bob, horizontal (G4).";
+    view_bob_ducked_ads_v: "bg_viewBobAmplitudeDuckedAds.y" = 0.0075, "Crouched aimed view bob, vertical (G4).";
+    view_bob_prone_h: "bg_viewBobAmplitudeProne.x" = 0.08, "Prone view bob, horizontal (G4).";
+    view_bob_prone_v: "bg_viewBobAmplitudeProne.y" = 0.04, "Prone view bob, vertical (G4).";
+    view_bob_sprinting_h: "bg_viewBobAmplitudeSprinting.x" = 0.02, "Sprinting view bob, horizontal (G4).";
+    view_bob_sprinting_v: "bg_viewBobAmplitudeSprinting.y" = 0.014, "Sprinting view bob, vertical (G4).";
+    // The bob cycle (`ps->bobCycle`, `PM_Footsteps` `FUN_008c4820`): each frame it advances by
+    // msec x the speed's share of the move's top speed (`FUN_008c4690`) x the stance's factor
+    // (the engine table at `0x00bd265c`: [stance][walking], a second half for running backwards).
+    player_sprint_camera_bob: "player_sprintCameraBob" = 0.5, "Bob cycle factor sprinting (`FUN_008c4820`; `dvars-t6mp.tsv`).";
+    player_sprint_threshhold: "player_sprintThreshhold" = 185.0, "Speed (inches/s) a sprint must reach to bob and step as one (`FUN_008c4820`; `dvars-t6mp.tsv`).";
+    player_runbk_threshhold: "player_runbkThreshhold" = 60.0, "Standing at or below this speed (inches/s) bobs and steps as a walk (`FUN_008c4820`; `dvars-t6mp.tsv`).";
+    player_footsteps_threshhold: "player_footstepsThreshhold" = 10.0, "The least speed (inches/s) a footstep is heard at (`FUN_008c1760`; `dvars-t6mp.tsv`).";
+    bob_walk_speed_scale: "BobWalkSpeedScale" = 0.4, "A walk's top-speed share in the bob's speed ratio (`FUN_008c4690`, `0x00b0cfa0`).";
+    bob_factor_stand: "BobFactorStand" = 0.335, "Bob cycle factor standing (`0x00bd265c`).";
+    bob_factor_stand_walk: "BobFactorStandWalk" = 0.28, "Standing, walking (`0x00bd2660`).";
+    bob_factor_prone: "BobFactorProne" = 0.25, "Prone (`0x00bd2664`).";
+    bob_factor_prone_walk: "BobFactorProneWalk" = 0.24, "Prone, walking (`0x00bd2668`).";
+    bob_factor_crouch: "BobFactorCrouch" = 0.34, "Crouched (`0x00bd266c`).";
+    bob_factor_crouch_walk: "BobFactorCrouchWalk" = 0.29, "Crouched, walking (`0x00bd2670`).";
+    bob_factor_back_stand: "BobFactorBackStand" = 0.36, "Standing, running backwards (`0x00bd2674`).";
+    bob_factor_back_stand_walk: "BobFactorBackStandWalk" = 0.3, "Standing, walking backwards (`0x00bd2678`).";
+    bob_factor_back_prone: "BobFactorBackProne" = 0.25, "Prone, backwards (`0x00bd267c`).";
+    bob_factor_back_prone_walk: "BobFactorBackProneWalk" = 0.24, "Prone, walking backwards (`0x00bd2680`).";
+    bob_factor_back_crouch: "BobFactorBackCrouch" = 0.34, "Crouched, backwards (`0x00bd2684`).";
+    bob_factor_back_crouch_walk: "BobFactorBackCrouchWalk" = 0.29, "Crouched, walking backwards (`0x00bd2688`).";
     // ---- Hold breath (`FUN_008e4860`, `FUN_008dea30`, `FUN_0052e3d0`; dvars-t6mp.tsv) -------------
     player_breath_hold_time: "player_breath_hold_time" = 4.5, "The longest a breath holds, seconds.";
     player_breath_gasp_time: "player_breath_gasp_time" = 0.0, "Extra seconds of gasping once the breath runs out.";

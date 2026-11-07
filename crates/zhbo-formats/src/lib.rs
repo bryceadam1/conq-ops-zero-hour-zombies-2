@@ -6,6 +6,7 @@
 pub mod big;
 pub mod fastfile;
 pub mod font;
+pub mod footstep;
 pub mod fx;
 pub mod havok_lua;
 pub mod ipak;

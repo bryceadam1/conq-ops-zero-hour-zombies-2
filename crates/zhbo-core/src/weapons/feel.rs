@@ -104,6 +104,8 @@ pub struct ViewPos {
     pub prone_min_speed: f32,
     pub ads_aim_pitch: f32,
     pub ads_bob_factor: f32,
+    /// `fSprintCycleScale`: the bob cycle's rate while sprinting (`footsteps::advance`; 0 reads as 1).
+    pub sprint_cycle_scale: f32,
 }
 
 /// The weapon's own crosshair (G6): the side and centre materials, their sizes and minimum

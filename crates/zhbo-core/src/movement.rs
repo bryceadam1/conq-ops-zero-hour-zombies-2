@@ -57,6 +57,8 @@ pub struct MoveTuning {
     pub prone_eye: f32,
     /// Seconds to blend the eye between stances.
     pub stance_blend_time: f32,
+    /// A walk's share of the top speed the bob cycle measures against ([`bob_top_speed`]).
+    pub bob_walk_scale: f32,
 }
 
 impl MoveTuning {
@@ -92,6 +94,7 @@ impl MoveTuning {
             crouch_eye: inches(t.view_height_crouch) * crate::units::GENERAL_SCALE,
             prone_eye: inches(t.view_height_prone) * crate::units::GENERAL_SCALE,
             stance_blend_time: 0.2,
+            bob_walk_scale: t.bob_walk_speed_scale,
         }
     }
 
@@ -328,6 +331,35 @@ pub fn step(
     move_horizontally(body, tuning, world, dt);
     move_vertically(body, tuning, world, dt);
     blend_eye(body, tuning, dt);
+}
+
+/// The top speed (world units/s) the bob cycle measures the ground speed against (t6mp
+/// `FUN_008c4690`, called by `PM_Footsteps`): the run speed scaled by the movement keys' direction
+/// (both a forward/back and a side key: `((strafe − 1)·0.75 + 2)·0.5`, and backwards also
+/// `(back + 1)·0.5`; a side key alone `(strafe − 1)·0.75 + 1`; backwards alone `back`), then by a
+/// walk's [`MoveTuning::bob_walk_scale`] or the sprint scale, the weapon's move scale
+/// (`speed_scale`) and the stance's.
+pub fn bob_top_speed(body: &Body, fwd_axis: f32, right_axis: f32, speed_scale: f32, move_faster: bool, walking: bool, t: &MoveTuning) -> f32 {
+    let mut s = t.run_speed(move_faster);
+    let (strafe, back) = (t.strafe_scale, t.back_scale);
+    if fwd_axis != 0.0 {
+        if right_axis != 0.0 {
+            s *= ((strafe - 1.0) * 0.75 + 2.0) * 0.5;
+            if fwd_axis < 0.0 {
+                s *= (back + 1.0) * 0.5;
+            }
+        } else if fwd_axis < 0.0 {
+            s *= back;
+        }
+    } else if right_axis != 0.0 {
+        s *= (strafe - 1.0) * 0.75 + 1.0;
+    }
+    if walking {
+        s *= t.bob_walk_scale;
+    } else if body.sprinting {
+        s *= t.sprint_scale;
+    }
+    s * speed_scale * stance_scale(body, t)
 }
 
 /// The stance's speed scale (`FUN_008c3e00` PM_CmdScaleForStance): crouch and prone scale the

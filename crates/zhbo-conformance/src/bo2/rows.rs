@@ -420,7 +420,8 @@ impl<'a> Expected<'a> {
             .floats("sprint_rot", &fls(&d.sprint_rot()))
             .floats("pos_rates", &fls(&[d.pos_move_rate(), d.pos_prone_move_rate(), d.pos_rot_rate(), d.pos_prone_rot_rate()]))
             .float("ads_aim_pitch", fl(d.ads_aim_pitch()))
-            .float("ads_bob_factor", fl(d.ads_bob_factor()));
+            .float("ads_bob_factor", fl(d.ads_bob_factor()))
+            .float("sprint_cycle_scale", fl(d.sprint_cycle_scale()));
 
         // Crosshair and the overlay.
         let overlay = match w.base() {

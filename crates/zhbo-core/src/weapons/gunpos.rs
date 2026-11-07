@@ -257,9 +257,54 @@ pub fn bob_angles(def: &WeaponDef, i: &GunInput, t: &Tuning) -> [f32; 3] {
     out
 }
 
+/// BO2's view (camera) bob: how far the eye moves up and to the right this frame, inches
+/// (G4 `FUN_008f0ac0` vertical and `FUN_008f0c70` horizontal, which `FUN_0051f760` adds to the
+/// view origin: up to its height, along the view's right vector). The same waveform as the gun's
+/// bob on the bob cycle, with the `bg_viewBob*` amplitudes × the ground speed: crouched and
+/// standing blend hip → aimed by the aim fraction, crouched checked before the sprint, prone and
+/// sprinting unblended; capped by `bg_bobMax`. Presentation: the eye the shots leave from is the
+/// sim's own, unbobbed.
+pub fn view_bob(i: &GunInput, t: &Tuning) -> (f32, f32) {
+    let c = i.bob_cycle * PI * 2.0 + 2.0 * PI;
+    let ads = i.ads.clamp(0.0, 1.0);
+    let amp = |h: bool| -> f32 {
+        let pick = |x: f32, y: f32| if h { x } else { y };
+        let lerp = |hip: f32, aimed: f32| (1.0 - ads) * hip + aimed * ads;
+        let a = if i.stance == 2 {
+            pick(t.view_bob_prone_h, t.view_bob_prone_v) * i.speed
+        } else if i.stance == 1 {
+            lerp(pick(t.view_bob_ducked_h, t.view_bob_ducked_v), pick(t.view_bob_ducked_ads_h, t.view_bob_ducked_ads_v)) * i.speed
+        } else if i.sprinting {
+            pick(t.view_bob_sprinting_h, t.view_bob_sprinting_v) * i.speed
+        } else {
+            lerp(pick(t.view_bob_standing_h, t.view_bob_standing_v), pick(t.view_bob_standing_ads_h, t.view_bob_standing_ads_v)) * i.speed
+        };
+        a.min(t.bg_bob_max)
+    };
+    let up = (det::sin(2.0 * c) + det::sin(4.0 * c + PI / 2.0) * 0.2) * 0.75 * amp(false);
+    let right = det::sin(c) * amp(true);
+    (up, right)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The view bob: still is nothing; a walk swings the eye up to 0.75 × 1.2 × amp and sideways by
+    /// amp (`0.007 × speed`, under `bg_bobMax`); prone is larger and sprinting takes its own.
+    #[test]
+    fn the_view_bob_follows_g4() {
+        let t = Tuning::default();
+        let walk = |cycle: f32, stance: usize, sprinting: bool| view_bob(&GunInput { speed: 190.0, stance, sprinting, bob_cycle: cycle, ..Default::default() }, &t);
+        assert_eq!(view_bob(&GunInput { bob_cycle: 0.3, ..Default::default() }, &t), (0.0, 0.0));
+        let amp = 0.007 * 190.0;
+        let (_, side) = walk(0.25, 0, false);
+        assert!((side - amp).abs() < 1e-3, "{side} vs {amp}");
+        let peak = (0..256).map(|n| walk(n as f32 / 255.0, 0, false).0.abs()).fold(0.0, f32::max);
+        assert!(peak <= 0.75 * 1.2 * amp + 1e-3 && peak > 0.75 * amp, "{peak}");
+        assert!((walk(0.25, 2, false).1 - (0.08f32 * 190.0).min(8.0)).abs() < 1e-3);
+        assert!((walk(0.25, 0, true).1 - 0.02 * 190.0).abs() < 1e-3);
+    }
 
     fn gun() -> WeaponDef {
         let mut d = WeaponDef::default();
