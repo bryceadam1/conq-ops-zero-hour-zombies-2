@@ -687,7 +687,7 @@ fn the_multiplayer_autopilot_fights_in_lockstep() {
         assert!(count(player, &|k| matches!(k, EventKind::Thrown { lethal: true })) >= 1, "player {player} threw the lethal");
     }
     assert!(count(1, &|k| matches!(k, EventKind::GeneralDied { .. })) >= 1, "the shooter killed the target's General");
-    assert_eq!(count(0, &|k| matches!(k, EventKind::GeneralDied { .. })), 0, "the target's short burst did not kill the shooter");
+    assert_eq!(count(0, &|k| matches!(k, EventKind::GeneralDied { .. })), 0, "the target's round did not kill the shooter");
     assert!(count(0, &|k| matches!(k, EventKind::FieldComputerOpened)) >= 1, "the shooter left through the field computer");
     // The target's next General was picked for: one pick per General, the second the same class
     // (the screen's pre-selection, taken with one press).

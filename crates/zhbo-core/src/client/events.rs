@@ -7,6 +7,10 @@
 use super::*;
 use crate::sim::Event;
 
+/// The hit, in BO2 health, that flashes the screen full (the mod's presentation: an AN-94 round up
+/// close, 40 of BO2's 100); smaller hits flash it in proportion and they add up.
+const DAMAGE_FLASH_FULL: f32 = 40.0;
+
 impl Client {
     /// The sim's events since the last frame: others' shots and throws as heard here, and the
     /// presented seat's own. `me` is the seat whose view was presented (its events are the
@@ -366,7 +370,9 @@ impl Client {
                 EventKind::Damaged { .. } if !auth.is_some_and(PlayerSim::is_first_person) => {}
                 EventKind::Damaged { amount, .. } => {
                     self.cues.play(sounds::HURT);
-                    self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
+                    // By the hit in BO2 health (his share of `playerMaxHealth`).
+                    let bo2 = auth.map_or(0.0, |p| crate::damage::general_bo2(&crate::tuning::get(), amount, p.max_health));
+                    self.hud.damage_flash = (self.hud.damage_flash + bo2 / DAMAGE_FLASH_FULL).min(1.0);
                 }
                 EventKind::Shot { left: false, .. } => self.vm_events.shot = true,
                 EventKind::Shot { left: true, .. } => self.vm_events.left_shot = true,

@@ -167,7 +167,7 @@ impl Sim {
         // a soldier BO2's vehicle rule for a bullet (`level.vehicledamagescalar` alone).
         let how = crate::damage::bullet(def, infantry, location);
         let rule = victim.map_or(1.0, |v| crate::damage::scale_on(&p.arsenal.tuning, &def.id, how, &v));
-        let amount = def.damage_at(distance) * mult * at * pierce * rule * BO2_TO_ZH_DAMAGE;
+        let amount = crate::damage::bullet_damage(&p.arsenal.tuning, victim.as_ref(), def.damage_at(distance), mult, at, pierce, rule);
         let kill = host.damage(p.general, id, amount, crate::damage::Blow::new(how, def, dir));
         // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
         // surface comes from what was hit.
@@ -339,7 +339,8 @@ impl Sim {
             let melee = p.arsenal.melee_weapon();
             let rule = crate::damage::scale_on(&p.arsenal.tuning, &melee.id, MeansOfDeath::Melee, &v);
             // The blow travels the way he faces (BO2's melee passes his forward as `vDir`).
-            let kill = host.damage(p.general, v.id, damage * rule * BO2_TO_ZH_DAMAGE, crate::damage::Blow::new(MeansOfDeath::Melee, melee, fwd));
+            let amount = crate::damage::to_zh(&p.arsenal.tuning, &v, damage * rule);
+            let kill = host.damage(p.general, v.id, amount, crate::damage::Blow::new(MeansOfDeath::Melee, melee, fwd));
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
             if kill {
                 self.scavenger_kill(idx, &mut p.arsenal, v.has(objflags::INFANTRY), MeansOfDeath::Melee);

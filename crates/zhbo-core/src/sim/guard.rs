@@ -155,12 +155,18 @@ impl LogicHost for Guarded<'_> {
         let how = blow.how;
         let flak = how.is_explosive_damage() && self.def.effect == Effect::Explode && victim != shooter && self.stuck_to != Some(victim);
         let scale = if flak { self.guard(victim).map_or(1.0, |g| g.blast) } else { 1.0 };
+        // Flak Jacket is the damage callback's (`cac_modified_damage`): it scales BO2's whole hit,
+        // which the callback rounds again ([`crate::damage::callback_scaled`]).
+        let t = crate::tuning::get();
+        let info = self.host.object(victim, shooter);
+        let amount = info.as_ref().map_or(amount * scale, |o| crate::damage::callback_scaled(&t, o, amount, scale));
         // `_shellshock.gsc:19`: the explosive causes shake him (a rocket's direct hit too, not an
-        // impact).
+        // impact), by the hit in BO2 health.
         if how.shellshocks() && self.first_person(victim) {
-            self.hit(victim, ShockHitKind::Damage(amount * scale / crate::units::BO2_TO_ZH_DAMAGE));
+            let bo2 = info.as_ref().map_or(amount / crate::units::BO2_TO_ZH_DAMAGE, |o| crate::damage::to_bo2(&t, o, amount));
+            self.hit(victim, ShockHitKind::Damage(bo2));
         }
-        self.host.damage(shooter, victim, amount * scale, blow)
+        self.host.damage(shooter, victim, amount, blow)
     }
     fn heal(&self, id: u32, amount: f32) {
         self.host.heal(id, amount)
@@ -252,7 +258,11 @@ mod tests {
         g(frag, None).damage(1, 2, 100.0, bare(Impact));
         g(frag, None).damage(1, 2, 100.0, bare(ProjectileSplash));
         let log: Vec<f32> = host.damage_log.borrow().iter().map(|d| d.2).collect();
-        assert_eq!(log, [100.0 * flak, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0 * flak]);
+        // On a General (BO2's player) the callback scales the whole hit and rounds it again
+        // (`int`, `_globallogic_player.gsc:779`): 100 Zero Hour of his 300 is 33 BO2, 11 after it.
+        let t = crate::tuning::get();
+        let cut = crate::damage::to_zh(&t, &host.get(2), (100.0f32 * 100.0 / 300.0 * flak).trunc());
+        assert_eq!(log, [cut, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, 100.0, cut]);
     }
 
     /// Tactical Mask cuts a thrown concussion's stun to x0.1 whoever threw it
@@ -347,6 +357,12 @@ mod tests {
         };
         let (plain, flak) = (taken(false), taken(true));
         assert!(plain > 0.0);
-        assert!((flak - plain * crate::tuning::get().perk_flak_jacket * 0.01).abs() < 1e-3, "{flak} vs {plain}");
+        // BO2's integer hit, scaled and rounded again by the callback, as his share of 300.
+        let t = crate::tuning::get();
+        let him = general(2, 1);
+        let bo2 = crate::damage::to_bo2(&t, &him, plain);
+        assert!((bo2 - bo2.round()).abs() < 0.05, "a whole BO2 hit (and the lethal margin): {bo2}");
+        let want = crate::damage::to_zh(&t, &him, (bo2.round() * t.perk_flak_jacket * 0.01).trunc());
+        assert!((flak - want).abs() < 1e-3, "{flak} vs {want} (plain {plain})");
     }
 }

@@ -8,7 +8,7 @@ use crate::damage::MeansOfDeath;
 use crate::host::{disable_kind, objflags, LogicHost, ObjInfo};
 use crate::impacts::Surface;
 use crate::math::Vec3;
-use crate::units::{inches, BO2_TO_ZH_DAMAGE, LOGIC_DT};
+use crate::units::{inches, LOGIC_DT};
 use crate::weapons::{Effect, WeaponDef};
 
 /// Gravity on thrown and launched things: the tuning pack's `bg_gravity` (G2; the same value the
@@ -451,7 +451,8 @@ fn struck_solid(o: &ObjInfo) -> crate::hitscan::Target {
 /// `getvehicleprojectilescalar` share (a fifth for the SMAW and FHJ-18, whose 1000 is there to kill
 /// any player outright), an impact (`MOD_IMPACT`: a dud, a frag or a bolt striking) all of it.
 pub fn impact_damage(def: &WeaponDef, o: &ObjInfo, how: MeansOfDeath) -> f32 {
-    def.damage[0] * crate::damage::scale_on(&crate::tuning::get(), &def.id, how, o) * BO2_TO_ZH_DAMAGE
+    let t = crate::tuning::get();
+    crate::damage::to_zh(&t, o, def.damage[0] * crate::damage::scale_on(&t, &def.id, how, o))
 }
 
 /// How far a blast at `at` is from `o`, for its damage: to the object's solid (its Zero Hour
@@ -580,22 +581,25 @@ pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3
                 // `FUN_00608c10` damages the struck entity first, then passes it to the radius
                 // damage (`FUN_005f2130`) as the one to skip. Each by its means of death, under
                 // BO2's vehicle rule for it on anything but a soldier.
-                let (how, mut amount) = if direct_hit {
+                // In BO2 health until the end, where the victim's share is taken
+                // ([`crate::damage::to_zh`]).
+                let (how, mut bo2) = if direct_hit {
                     let how = crate::damage::strike(d, false);
-                    (how, impact_damage(d, o, how))
+                    (how, d.damage[0] * crate::damage::scale_on(&tuning, &d.id, how, o))
                 } else if stuck_hit {
                     let how = crate::damage::direct(d);
-                    (how, d.explosion_inner_damage * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE)
+                    (how, d.explosion_inner_damage * crate::damage::scale_on(&tuning, &d.id, how, o))
                 } else {
                     let how = crate::damage::splash(d);
-                    (how, d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE)
+                    (how, d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o))
                 };
                 if own {
-                    amount *= self_blast_scale;
+                    bo2 *= self_blast_scale;
                 }
                 if let Some(b) = shields.iter().find(|b| b.general == o.id) {
-                    amount *= 1.0 - b.blast_protection(at, &tuning);
+                    bo2 *= 1.0 - b.blast_protection(at, &tuning);
                 }
+                let amount = crate::damage::to_zh(&tuning, o, bo2);
                 if amount > 0.0 {
                     let k = host.damage(owner, o.id, amount, crate::damage::Blow::from_to(how, d, at, o.pos));
                     if !own {
@@ -624,7 +628,7 @@ pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3
                     host.disable(o.id, disable_kind::PARALYZED, secs);
                     // The Shock Charge also hurts.
                     let how = crate::damage::splash(d);
-                    let amount = d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE;
+                    let amount = crate::damage::to_zh(&tuning, o, d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o));
                     if amount > 0.0 && d.explosion_inner_damage > 10.0 {
                         kill |= host.damage(owner, o.id, amount, crate::damage::Blow::from_to(how, d, at, o.pos));
                     }
@@ -704,6 +708,7 @@ impl Projectile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::BO2_TO_ZH_DAMAGE;
     use crate::sim::tests::{general, soldier, FakeHost};
     use crate::weapons::weapon;
 

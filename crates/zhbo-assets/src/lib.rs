@@ -16,6 +16,7 @@ pub mod generals;
 pub mod impacts;
 mod hipfire_gate;
 mod lockstep_gate;
+mod health_gate;
 pub mod ini;
 pub mod emblems;
 pub mod paks;
@@ -41,6 +42,7 @@ pub mod screenshot;
 pub mod shield;
 pub mod props;
 pub mod weapons;
+pub mod toughness;
 #[cfg(test)]
 mod content_tests;
 #[cfg(test)]

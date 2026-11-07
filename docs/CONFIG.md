@@ -66,6 +66,19 @@ environment mid-game.
 | `ZHBO_SFX_DUMP` | The real-install sound test writes the converted `ZHBO_BO2.ini` sound effects to this file (`sfx.rs`). |
 | `ZHBO_DUMP_DIR` | The real-install range-finder test writes the converted display images here (`rangefinder.rs`). |
 
+## The General's health (the tuning pack)
+
+Two `[Health]` keys of `data/ConquerOps/tuning.ini` (sim data: in the content CRC, identical on
+every machine) decide how tough a General is:
+
+| Key | Meaning |
+|---|---|
+| `playerMaxHealth` | BO2's player health, 100 (`gametype_setting playerMaxHealth`, `mp/gamesettings_default.cfg:62`). Every BO2 weapon's damage is authored against it; a General takes a BO2 hit as its share of this of his own Zero Hour health (`zhbo_core::damage::to_zh`), so BO2's weapons kill him in BO2's shots (an AN-94 body shot up close: 3; the knife: 1) at any Zero Hour health, veterancy included. Leave it at BO2's value. |
+| `GeneralHeroToughness` | **The playtest knob** for Zero Hour's own weapons (its units, structures and superweapons, the engine's damage path). The converter sets the General's `MaxHealth`/`InitialHealth` to Zero Hour's heroes' mean health (Colonel Burton, Black Lotus, Jarmen Kell, read from the player's `INIZH.big`; all three 200 in `HumanArmor`, the General's armour) times this: 1 is exactly a hero's toughness (a Ranger's rifle, 5 a round, kills him in 40 rounds, as it does Burton), 1.5 half again. It is applied at conversion (`zhbo_assets::toughness`), so after changing it rebuild the archive (and keep `tuning.rs`'s default equal, the shipped-file test holds them). BO2 weapons are unaffected. |
+
+Zero Hour's other objects take a BO2 hit times `zhbo_core::units::BO2_TO_ZH_DAMAGE` (1.5), the
+mod's exchange rate between the games (CONTRACT.md "Damage").
+
 ## The archive and the camo conversion
 
 `ConquerOps_BO2.big` carries the class camo art (the set images `Art\Textures\zhbo_t6_camo_*`,

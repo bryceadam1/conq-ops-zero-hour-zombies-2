@@ -13752,3 +13752,85 @@ machine (load 17), saw Zero Hour end the match at frame 2,673 with no sim kill l
 General gone from 500 hp in one frame, then the joiner's on the joiner only) and the hashes
 parting on that last frame alone — the engine's teardown, not a sim divergence. The long runs were
 then dropped by the round's testing-scope change; the integrator's ladder reruns them.
+
+## The General's health: BO2's shots for BO2's weapons, a hero's toughness for Zero Hour's (2026-11-06, branch `v1/general-health`)
+
+The audit (`bo2-audit/sim-gameplay.md` F2) found the General at `MaxHealth 500` with every BO2 hit
+× `BO2_TO_ZH_DAMAGE` 1.5: 333 BO2 health against BO2's `playerMaxHealth` 100 (an AN-94 body shot
+up close 9 rounds instead of 3, the knife 3 blows instead of 1). Re-verified: `gametype_setting
+playerMaxHealth 100` (`mp/gamesettings_default.cfg:62`), `self.maxhealth = level.playermaxhealth`
+(`_globallogic_spawn.gsc:223`). The user's ruling: match BO2 for BO2 weapons; against Zero Hour's
+own weapons make him about as tough as Colonel Burton, Black Lotus and Jarmen Kell.
+
+**Design: two scales, one per game.** A General is BO2's player: a BO2 hit takes its share of
+`playerMaxHealth` (a new tuning key) of *his own* Zero Hour health (`damage::to_zh`), so his Zero
+Hour health is free to be a hero's without touching BO2's shots-to-kill, veterancy included (Zero
+Hour's `HealthBonus_*` raises his maximum, and the share with it). Zero Hour's weapons go through
+the engine's damage path untouched, so his toughness against them is his `MaxHealth` and armour:
+the converter now sets it from the player's install (`zhbo_assets::toughness`): the three heroes'
+`ActiveBody MaxHealth` (200 each) in their default `ArmorSet` (all `HumanArmor`, the General's own;
+a hero in other armour is refused rather than weighted by guesswork), mean × `GeneralHeroToughness`
+(the playtest knob, 1). Every other Zero Hour object keeps `BO2_TO_ZH_DAMAGE` 1.5, rewritten as what
+it is: the mod's exchange rate between BO2's weapons and Zero Hour's units (a Ranger's 180 falls to
+three AN-94 rounds); its "keeps shots-to-kill" comment was true only for a 150-health target. The
+bridge flags a General `ZHBO_OBJ_GENERAL` (bit 13, pending for the ABI bump), which is how the sim
+knows the victim is BO2's player for every damage site, overhead or never taken into first person.
+
+**BO2's integer hit.** "Exactly BO2's shots" needs BO2's rounding: its engine hands the damage
+callback an integer — the range curve truncates (`FUN_008edb80` returns `(int)` of its linear
+interpolation, which also confirms the audit's LIKELY-OK falloff rule), the bullet's multiplier
+(`FUN_005cfc60`: `(int)(damage * param_2[2])`), the location multiplier (`FUN_005f05c0` via
+`FUN_00a24ad0`, floored at 1, nothing under 1), the radius damage (`FUN_005f2130`: `(int)` per
+entity) — and the callback rounds again after its perks (`int(idamage)` `_globallogic_player.gsc:779`,
+at least 1 at `:1026`). On a General the core now does the same (`damage::idamage`,
+`bullet_damage` stage by stage, `callback_scaled` for Flak Jacket); Zero Hour's other objects keep
+the unrounded product. **Gotcha: shares are not whole in floats.** At 230 health a 50 hit is 115.0000x
+twice, which can leave him alive at 1e-5; `to_zh` adds `LETHAL_MARGIN` (1e-4 relative) — hits adding
+up to 100 always kill, and hits a whole point short stay 1 % short.
+
+**Everything that reads health, swept.** Regen (shares of full: `regenrate`, `healthoverlaycutoff`,
+the heartbeat's 0.35, the low-health overlay's fractions) was already scale-free. Converted at the
+boundary to BO2 health: the flinch (`flinch_degrees` takes BO2 damage), the shellshock's blast
+threshold (`> 10`), the assist tracking and its regen decay, the aim spread's `damage × 100 / max`
+(a share already), the hurt flash (`DAMAGE_FLASH_FULL`, 40 BO2 health). The pain voice's "not at full"
+test and death (Zero Hour's body at 0) need nothing. **Assists** (audit F14): whole again, he forgets
+his attackers (`newhealth >= 1.0` → `resetattackerlist`, `_healthoverlay.gsc:172-175`); a kill
+before he is whole still credits the decayed damage.
+
+**The multiplayer script at BO2's lethality.** The two-instance script was written for 333-health
+Generals: the target's 0.3 s hip burst killed the shooter (three AN-94 rounds), and the long run's
+bursts, left running at the spot a General fell, killed every replacement standing there before
+anyone took him. The target now fires one logic frame of trigger (one round), the later rounds'
+hip burst goes wide (as the first fight's sidearm) and every burst fires only while the other
+General is in first person to aim at. The lockstep harness's Generals had 1e6 health to live out
+the round under fire; with BO2's share that made every hit a kill, so the fake host's
+`undying` keeps a General at 1 instead (his real health, every hit landing and hashed).
+
+**A hero's toughness is short against a squad.** In game the scenes' General had his health
+tripled (to 1500 at 500); at a hero's 200 the tripled 600 lasted 14 s under the three rebels' 5-a-round
+fire (the `--equipment` leg died at frame 427 before its C4 went off) — as Burton would. The scene
+now logs his own health (`autopilot: the General's own health 200 (a hero's)`, the default leg's new
+check) and sets the 1500 the scripts were timed for. That is the playtest question the knob is for:
+a hero dies to three rebels in about 4.5 s.
+
+**His own C4 kills him now, as in BO2.** The `--equipment` run threw its C4 a few steps ahead and
+set it off standing there: at 500 its centre (205 BO2) took 300 of 1500; as BO2's share it takes
+twice his health. The run now backs off for `EQ_BACK_OFF` (1.7 s) after the throw.
+
+**Verified.** `cargo test --workspace` green (without `ZHBO_BO2_DIR`; `nativebody`'s
+`the_shield_rides_the_left_hand_and_the_back` failed once under load and passes alone and on the
+rerun: shared FFI statics, unrelated); clippy clean (workspace `--all-targets`). Real installs
+(release, `--ignored`): `the_install_roster_kills_a_general_in_bo2s_shots` (12,202 weapons and
+combinations, 900,335 cases at 200/240/260/300/500 health: every one BO2's shots),
+`zero_hours_weapons_kill_the_general_as_they_kill_its_heroes` (307 Zero Hour weapons: the General's
+hits equal each hero's), and the roster lockstep gate `the_install_roster_plays_in_lockstep` (230
+classes, 78 rounds). Conformance: no weapon-table or CaC field changed (the weapon table's text is
+untouched; only the General INI and the sim's damage rule moved), so the CSVs are the baseline's.
+In game (`cargo xtask build`, a fresh dist and archive, the launcher logging `General health 200
+(AmericaInfantryColonelBurton 200 / ChinaInfantryBlackLotus 200 / GLAInfantryJarmenKell 200 x 1,
+HumanArmor)`): default 19/19 (the new `...at a hero's health` check), `--rts` 20/20, `--splash` 5/5,
+`--equipment` 12/12, `--mp` 26/26 (state hash equal on all 2,964 common frames; the shooter's AN-94
+killed the target with its third round: 80 + 80 of 200 logged, the third killing). The first default
+run of the fresh dist, whose launch also built the 1.5 GB archive, logged a game with no autopilot
+(a stale save's General at 500): a rerun passed; build the archive first
+(`zhbo-assets build-archive <dist>/ConquerOps_BO2.big`) when a leg follows a new dist.

@@ -93,6 +93,7 @@ void fillInfo(const Object *obj, const Object *viewer, ZhboObjInfo *out)
 	if (obj->isKindOf(KINDOF_DRONE)) flags |= ZHBO_OBJ_DRONE;
 	if (obj->isKindOf(KINDOF_PROJECTILE)) flags |= ZHBO_OBJ_PROJECTILE;
 	if (obj->testStatus(OBJECT_STATUS_IS_FIRING_WEAPON)) flags |= ZHBO_OBJ_FIRING;
+	if (isGeneral(obj)) flags |= ZHBO_OBJ_GENERAL;
 	if (viewer && viewer != obj)
 	{
 		const Relationship rel = viewer->getRelationship(obj);

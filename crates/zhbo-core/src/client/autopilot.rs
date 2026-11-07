@@ -37,6 +37,8 @@ fn nth_custom_class_key(n: usize) -> Option<Key> {
 /// The short fight's bound: the shooter fires at the target until he is down or this many seconds
 /// into the fight have passed, reloading every [`MP_RELOAD_EVERY`].
 const MP_KILL_TIME: f32 = 30.0;
+/// The equipment run's back-off after the C4's throw, seconds (then the tactical).
+const EQ_BACK_OFF: f32 = 1.7;
 const MP_RELOAD_EVERY: f32 = 4.5;
 
 /// How long the other General must be out of the field before his return starts a long-run round
@@ -161,7 +163,7 @@ pub struct Autopilot {
     pub(crate) classpick_last_t: f32,
     /// The two-instance multiplayer run (`ZHBO_AUTOPILOT=mp`, [`Autopilot::mp_input`]).
     pub mp: bool,
-    /// Its part: the shooter fires the long burst, the other the short one
+    /// Its part: the shooter fires the long burst, the other a single round
     /// (`ZHBO_AUTOPILOT_ROLE`, [`crate::config::MpRole`]).
     pub mp_shooter: bool,
     /// How many first-person lives the run plays (`ZHBO_AUTOPILOT_ROUNDS`; 1 the short run). More
@@ -466,7 +468,7 @@ impl Autopilot {
     /// when the profile has one, else the first preset), steps forward and sideways, then — once
     /// the other General is in first person to aim at — swaps to the sidearm and fires it, swaps
     /// back, throws the lethal wide of him (so the throw is covered without settling the fight),
-    /// fires the primary at him (the shooter a long aimed burst, the target a short one from the
+    /// fires the primary at him (the shooter a long aimed burst, the target one round from the
     /// hip), and opens the field computer. A General who died comes back from the Command Center:
     /// his second session meets the class screen again (every General is picked for), opened on the
     /// last class: Enter re-picks it; he walks and leaves overhead.
@@ -543,7 +545,7 @@ impl Autopilot {
         if (3.4..3.8).contains(&c) {
             keys.set_down(b.lethal, true);
         }
-        // The primary at him: the target's short burst from the hip first, then the shooter's
+        // The primary at him: the target's round from the hip first, then the shooter's
         // long aimed one. The shooter's fight starts a couple of seconds before the target's (he
         // waited at the meeting point; the target's clock starts after his own entry), so the
         // windows are far enough apart that the target fires before he is killed.
@@ -566,7 +568,10 @@ impl Autopilot {
             } else if firing {
                 keys.set_down(b.fire, true);
             }
-        } else if (5.0..5.3).contains(&c) {
+        } else if (5.0..5.0 + crate::units::LOGIC_DT).contains(&c) {
+            // One logic frame of trigger, one round (no MP gun fires faster than one round a
+            // logic frame): a hit, never a kill, on a whole General — at BO2's health three of
+            // the old 0.3 s burst's rounds killed him.
             keys.set_down(b.fire, true);
         }
         // A long run of two lives changes class here, in the first fight, after the target's throw
@@ -609,7 +614,7 @@ impl Autopilot {
 
     /// A life of the long multiplayer run after the first fight: at the meeting point again (the
     /// bridge walks every General there), each throws his tactical at the other (the concussion:
-    /// a shellshock on both machines' sims), fires a hip burst and an aimed one at him, reloads,
+    /// a shellshock on both machines' sims), fires a hip burst wide of him and an aimed one at him, reloads,
     /// knifes, and leaves by the field computer, or dies; the shooter ends with a long aimed burst.
     /// In [`Self::mp_change_life`] the target changes class mid-life once his throw has made him a
     /// combatant (BO2's `MP_CHANGE_CLASS_NEXT_SPAWN`) and stays for the bursts, so his next
@@ -660,13 +665,21 @@ impl Autopilot {
         if (0.4..0.8).contains(&c) {
             keys.set_down(b.tactical, true);
         }
-        if (2.5..3.2).contains(&c) {
+        // The hip burst a little wide of him (as the first fight's sidearm): at BO2's health a
+        // burst on target settles the fight, and the aimed one is the round's.
+        if (2.3..3.3).contains(&c) {
+            look = self.mp_aim.map(|(yaw, pitch)| (yaw + 0.2, pitch));
+        }
+        // Every burst is at him while he is in first person: one left running where he fell
+        // would kill his next General standing there (at BO2's health, in a few rounds).
+        let at_him = self.mp_aim.is_some();
+        if (2.5..3.2).contains(&c) && at_him {
             keys.set_down(b.fire, true);
         }
         if (4.0..7.0).contains(&c) {
             keys.set_down(b.ads, true);
         }
-        if (4.5..6.5).contains(&c) {
+        if (4.5..6.5).contains(&c) && at_him {
             keys.set_down(b.fire, true);
         }
         if (7.2..7.3).contains(&c) {
@@ -686,7 +699,7 @@ impl Autopilot {
         // The shooter ends each round with a long aimed burst at him; the target stays for it in
         // the life he changed class in (his next General's screen opens on the new class).
         let changing = !self.mp_shooter && life == self.mp_change_life();
-        if self.mp_shooter && (14.0..19.0).contains(&c) {
+        if self.mp_shooter && (14.0..19.0).contains(&c) && at_him {
             keys.set_down(b.ads, true);
             if c >= 14.5 {
                 keys.set_down(b.fire, true);
@@ -885,9 +898,14 @@ impl Autopilot {
         }
         let lethal_done = self.eq_lethal_at.is_some_and(|at| t > at + 0.5 && self.eq_lethal_left == 0) || (self.eq_lethal_at.is_none() && self.eq_lethal_left == 0);
         if self.eq_tactical_from.is_none() && lethal_done && self.eq_idle {
-            self.eq_tactical_from = Some(t + 0.2);
+            self.eq_tactical_from = Some(t + EQ_BACK_OFF);
         }
         let Some(from) = self.eq_tactical_from else { return keys };
+        // Out of his own C4's blast before he sets it off: at BO2's health its 205 at the centre
+        // kills him (his own explosive hurts him in BO2 too), so he backs off while it settles.
+        if self.eq_lethal_at.is_some() && (from - EQ_BACK_OFF + 0.2..from).contains(&t) {
+            keys.set_down(b.back, true);
+        }
         let tn = crate::tuning::get();
         let hold = tn.hacker_tool_lock_start + tn.vehicle_hacker_tool_time_ms / 1000.0 + 2.0;
         let end = from + hold;

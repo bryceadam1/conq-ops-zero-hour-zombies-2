@@ -46,6 +46,10 @@ pub struct FakeHost {
     /// Alliances: `(player, team)`; players on one team are allies (each player is his own team
     /// when unset, a free-for-all).
     pub teams: RefCell<Vec<(i32, i32)>>,
+    /// No General dies of damage: his health stops at 1 (the lockstep harness, whose Generals must live
+    /// out the round's script under the others' fire at their real health; every hit still lands
+    /// and is hashed).
+    pub undying: std::cell::Cell<bool>,
 }
 
 impl FakeHost {
@@ -119,6 +123,9 @@ impl LogicHost for FakeHost {
         let mut objs = self.objects.borrow_mut();
         let v = objs.iter_mut().find(|o| o.id == victim).unwrap();
         v.health -= amount;
+        if self.undying.get() && v.has(objflags::GENERAL) {
+            v.health = v.health.max(1.0);
+        }
         if v.health <= 0.0 {
             v.flags |= objflags::DEAD;
             return true;
@@ -189,7 +196,7 @@ pub fn general(id: u32, player: i32) -> ObjInfo {
     ObjInfo {
         id,
         owner_player: player,
-        flags: objflags::INFANTRY,
+        flags: objflags::INFANTRY | objflags::GENERAL,
         geom_type: geom::CYLINDER,
         major_radius: 10.0,
         minor_radius: 10.0,
@@ -201,6 +208,6 @@ pub fn general(id: u32, player: i32) -> ObjInfo {
 }
 
 pub fn soldier(id: u32, player: i32, x: f32) -> ObjInfo {
-    ObjInfo { pos: Vec3::new(x, 0.0, 0.0), health: 120.0, max_health: 120.0, ..general(id, player) }
+    ObjInfo { pos: Vec3::new(x, 0.0, 0.0), health: 120.0, max_health: 120.0, flags: objflags::INFANTRY, ..general(id, player) }
 }
 

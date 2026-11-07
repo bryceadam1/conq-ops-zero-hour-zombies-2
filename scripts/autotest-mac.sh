@@ -731,6 +731,9 @@ EOF
     check "returned to RTS" "returned General [0-9]+ to RTS control"
     check "re-entered" "taking control again"
     check "took enemy fire" "General took [0-9]+ damage"
+    # His health is Zero Hour's heroes' (the converter reads Burton's, Black Lotus's and Kell's 200
+    # from INIZH.big; GeneralHeroToughness 1) before the scene raises it for the script's length.
+    check "  ...at a hero's health" "the General's own health 200 \(a hero's\)"
     # R8d: impacts land. The sim's once-a-second line says what each pellet hit (the three rebels
     # in front are flesh; the pellets that miss them stop on the ground, whose class comes from the
     # new terrain query), and the bridge's line says the name resolved and the FXList played.

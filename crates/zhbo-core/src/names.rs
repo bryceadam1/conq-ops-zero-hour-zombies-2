@@ -184,6 +184,10 @@ pub fn general(faction: &str) -> String {
 pub fn is_general(name: &str) -> bool {
     name.starts_with(GENERAL_PREFIX)
 }
+/// Zero Hour's heroes, by their stock objects: the General is as tough as they are against Zero
+/// Hour's own weapons (the tuning pack's `GeneralHeroToughness`; the converter reads their health
+/// and armour from the player's `INIZH.big`, `zhbo_assets::generals::general_health`).
+pub const TOUGHNESS_HEROES: [&str; 3] = ["AmericaInfantryColonelBurton", "ChinaInfantryBlackLotus", "GLAInfantryJarmenKell"];
 /// The faction a General object belongs to (`ZHBO_General_USA` → `USA`).
 pub fn general_faction(name: &str) -> Option<&str> {
     name.strip_prefix(GENERAL_PREFIX).filter(|f| !f.is_empty())
