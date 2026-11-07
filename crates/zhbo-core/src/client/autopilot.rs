@@ -193,6 +193,11 @@ pub struct Autopilot {
     /// other General comes in, the round starts over for him once, so its closing burst is not
     /// fired into a General just taking the field.
     pub(crate) mp_fight_alone: bool,
+    /// How many times this session's long-run round has started (each start over counts). The
+    /// shooter holds his aimed bursts on every second start, so the target's kill him: at BO2's
+    /// health whoever fires first settles a round, and without it the shooter's General outlived
+    /// every round, his deaths left to chance (a tactical's strike, a late burst).
+    pub(crate) mp_round_starts: u32,
     /// The equipment run's view of his arsenal, set by the client from the sim each frame: no
     /// offhand, raise or put-away running, and the lethals left.
     pub(crate) eq_idle: bool,
@@ -629,6 +634,7 @@ impl Autopilot {
             Some(_) if self.mp_fight_alone && self.mp_aim.is_some() => {
                 self.mp_fight_alone = false;
                 self.mp_fight = Some(t);
+                self.mp_round_starts += 1;
                 self.log.push(format!("autopilot mp: round {life} starts over (the other General came in)"));
                 t
             }
@@ -637,12 +643,14 @@ impl Autopilot {
             Some(_) if self.mp_aim.is_some() && self.mp_aim_lost.is_some_and(|lost| t - lost >= MP_AWAY) => {
                 self.mp_aim_lost = None;
                 self.mp_fight = Some(t);
+                self.mp_round_starts += 1;
                 self.log.push(format!("autopilot mp: round {life} starts over (the other General is back)"));
                 t
             }
             Some(start) => start,
             None if t >= 1.0 && self.mp_armed && (self.mp_aim.is_some() || t >= 20.0) => {
                 self.mp_fight = Some(t);
+                self.mp_round_starts += 1;
                 self.mp_fight_alone = self.mp_aim.is_none();
                 self.log.push(format!("autopilot mp: round {life} starts ({})", if self.mp_aim.is_some() { "the other General is in first person" } else { "nobody to aim at" }));
                 t
@@ -673,13 +681,15 @@ impl Autopilot {
         // Every burst is at him while he is in first person: one left running where he fell
         // would kill his next General standing there (at BO2's health, in a few rounds).
         let at_him = self.mp_aim.is_some();
+        // The shooter's turn to yield ([`Autopilot::mp_round_starts`]): no aimed fire this round.
+        let yields = self.mp_shooter && self.mp_round_starts % 2 == 0;
         if (2.5..3.2).contains(&c) && at_him {
             keys.set_down(b.fire, true);
         }
         if (4.0..7.0).contains(&c) {
             keys.set_down(b.ads, true);
         }
-        if (4.5..6.5).contains(&c) && at_him {
+        if (4.5..6.5).contains(&c) && at_him && !yields {
             keys.set_down(b.fire, true);
         }
         if (7.2..7.3).contains(&c) {
@@ -699,7 +709,7 @@ impl Autopilot {
         // The shooter ends each round with a long aimed burst at him; the target stays for it in
         // the life he changed class in (his next General's screen opens on the new class).
         let changing = !self.mp_shooter && life == self.mp_change_life();
-        if self.mp_shooter && (14.0..19.0).contains(&c) && at_him {
+        if self.mp_shooter && (14.0..19.0).contains(&c) && at_him && !yields {
             keys.set_down(b.ads, true);
             if c >= 14.5 {
                 keys.set_down(b.fire, true);

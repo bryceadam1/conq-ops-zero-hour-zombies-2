@@ -970,6 +970,7 @@ impl Client {
             ap.mp_fight = None;
             ap.mp_aim_lost = None;
             ap.mp_fight_alone = false;
+            ap.mp_round_starts = 0;
             ap.mp_leave_at = None;
             ap.eq_lethal_at = None;
             ap.eq_tactical_from = None;
