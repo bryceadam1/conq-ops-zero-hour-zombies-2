@@ -1686,7 +1686,10 @@ mod tests {
             let parts: Vec<PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
             let (skel, problems) = Skeleton::compose(&parts, &vm.markers, &vm.hide);
             assert!(problems.is_empty(), "{path}: {problems:?}");
-            assert!(skel.bone(crate::native::AIM_TAG).is_some(), "{path}: no aim marker");
+            // A gun carries its aim marker; the tools (the tablet's and the hammer's own manifests,
+            // `zhbo_native::TABLET_VM`/`HAMMER_VM`) never aim, so they have none to carry.
+            let tool = FACTIONS.iter().any(|f| [zhbo_native::TABLET_VM, zhbo_native::HAMMER_VM].iter().any(|&t| *path == zhbo_native::viewmodel_path(t, f.letter)));
+            assert!(tool || skel.bone(crate::native::AIM_TAG).is_some(), "{path}: no aim marker");
             for (_, clip) in &vm.clips {
                 Anim::from_bytes(file(clip).unwrap_or_else(|| panic!("{path}: no {clip}"))).unwrap_or_else(|e| panic!("{clip}: {e}"));
             }
