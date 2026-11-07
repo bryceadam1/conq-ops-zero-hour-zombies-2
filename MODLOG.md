@@ -13752,3 +13752,121 @@ machine (load 17), saw Zero Hour end the match at frame 2,673 with no sim kill l
 General gone from 500 hp in one frame, then the joiner's on the joiner only) and the hashes
 parting on that last frame alone — the engine's teardown, not a sim divergence. The long runs were
 then dropped by the round's testing-scope change; the integrator's ladder reruns them.
+
+## Round 7's integration: ABI 35, archive 89, native model 5 / camo 3 / reticle sets 2 (2026-11-06, `v1/integration11`)
+
+Merged onto main 4cb42be, in this order, each `--no-ff`: `v1/render-flicker` (fc27bbf),
+`v1/tablet-render` (137a43d), `v1/hipfire-accuracy` (4b4bb90). Every branch entry above is kept as
+written.
+
+**Conflicts.** render-flicker × tablet-render: only CONTRACT's pending notes and the MODLOG entries
+(both kept, in merge order); tablet-render was written against render-flicker's `NativeFrame.layer`
+and reversed viewmodel depth and merged on top of them with no code conflict. × hipfire-accuracy:
+the two new autopilot modes (`flicker`, `hipfire`) collided in every place a mode is listed
+(`config::Autopilot::Scripted`, its parser and test, `ffi`'s init, `client::Autopilot` and
+`fresh`, the C++ no-enemy rule in `autopilotSpawn`, `autotest-mac.sh`'s help and mode list):
+resolved as unions, both modes tested, and neither scene spawns the riflemen. No overlap in the
+crosshair (hipfire's `hud/center.rs`) or the viewmodel code (render-flicker's `nativevm`, the
+tablet's `client::tablet_time`).
+
+**Bumps.** `ZHBO_ABI_VERSION` 34 → 35 on both sides (`ZhboClientOut.fps_near`/`near_scale`, 4880 →
+4888 bytes, size-asserted; `Zhbo_GetCameraOverride`'s `nearPlane` in/out). `hud::VERSION` 88 → 89.
+The material record shared by the model, camo and reticle-set blobs gained render-flicker's
+trailing `polygon_offset` byte, so `model::VERSION` 4 → 5, `camo::VERSION` 2 → 3,
+`reticles::VERSION` 1 → 2 (also covering `sonar`, appended in an earlier round without a move);
+`viewmodel` 3, `thirdperson` 1/3, `anim` 1 and `display` 1 are unchanged. The three pending notes
+are folded into CONTRACT's "Versioning" (ABI 35). Host patches 0001–0032.
+
+**The merged head was pushed first** (db0d09e, `MERGED-HEAD` in the plan dir's STATUS) as soon as it
+compiled and `cargo test --workspace` passed, so round 8's item agents could branch off it; the
+ladder below ran after.
+
+**(b) The vanishing tablet: real, and not the tablet's.** tablet-render saw single captured frames a
+few frames after damage at the tablet without the native viewmodel (logic frames 652/656).
+Reproduced on the merged build by capturing every logic frame of the default leg (560–1945): frames
+657 and 1328 are lone outliers, each exactly 42 logic frames after the field computer opened (615,
+1286; tablet-render's fit the same offset), the second with no damage at all. The tablet is not
+gone: its top edge sits at the foot of the screen, the bind pose. The idle clip takes over from the
+pullout at `TABLET_PULLOUT_TIME`, and the native viewmodel asked for a clip's file only when the clip
+first played; the bridge serves file requests after the native frame, so that frame posed the
+skeleton with no animation. The engine's capture is always the first render after a logic frame,
+which is where a clip switch lands, so the capture caught it every time; on screen it was one render
+frame per opening. It is general: every re-composed viewmodel (the tablet each opening, a gun after
+it or after a switch) drew a bind-pose frame on each clip's first play. Fix (9dd6dc8, 5182f6b):
+composing requests every clip its manifest names (decoding stays lazy); a clip still on its way holds
+the last pose (`Loaded::pose_from`, `Base::Held`); a freshly composed viewmodel reports `LOADING`
+until its current clip is here; a held frame logs `played before its file arrived`, which the default
+leg and `--build` now fail on. The native body was not affected (its movement clips load before it
+draws; a late torso clip only skips its layer for a frame). Test:
+`a_clip_still_on_its_way_holds_the_last_pose_not_the_bind_pose`. Evidence in
+`~/.opencode/plan/integration11/evidence-b/`, `sheet-vanish-657.png`, `sheet-vanish-1328.png`,
+`cmp-1327-1328.png`.
+
+**(a) hipfire's ROUNDS=3 run 2: teardown, not a desync.** That run (load 17) ended at frame 2,673:
+the host's General dead from 500 hp in one frame on both machines, the joiner's on the joiner only,
+the hash parting on the final frame. Evidence: the run spanned 13:25–14:10 against the long run's
+1,800 s limit (a normal long run passes frame 7,000), so the limit ended it; a death from full health
+with no blow is `MSG_SELF_DESTRUCT`, which `GameLogic::quit` sends for the local player on any quit
+(the quit menu's Exit; a SIGTERM or closed window via `MSG_META_DEMO_INSTANT_QUIT`; the script's
+`stop_games` sends SIGTERM at the limit), and every machine runs it in lockstep, the same signature
+as the long run's deliberate leaver (integration10, General 160 at 7,069). Reproduced: a long run
+SIGTERMed mid-match at host frame 1,530 logged both leaves (1,534/1,535) and both Generals died from
+full health four frames later on both machines, hash equal on all common frames; a run cut by a
+150 s limit (the engine's own `GGC_AUTO_EXIT_SECONDS`, `setQuitting`) ends with no self-destruct and
+equal hashes on all 1,846 frames. In run 2 the host had stopped waiting on the joiner when the
+joiner's quit was scheduled, so it ran on the joiner alone: the documented "steps its last frames
+without the other's commands" case, which the script cut only for the autopilot's own leave. Fix in
+the test (18d001b): the bridge logs `network game: this machine is leaving the game (frame N)`
+whatever the path; `mptest-mac.sh` compares hashes only before the first such line on either side,
+and a run the limit ended fails `finished inside the wall-clock limit` naming where each log stopped.
+
+**Also fixed in the integration.**
+* *The real-install viewmodel sweep* (`generals::tests::converts_from_real_install`) required an aim
+  marker of every `.zbv`; tablet-render's tool manifests (`ZVTAB<F>`, `ZVHAM<F>`) never aim and failed
+  it (`ZVHAMC.zbv: no aim marker`). The tools keep every other check of the sweep (5c0157f).
+* *`--classpick` failed "combination viewmodel drawn"*: tablet-render logged a composed viewmodel by its
+  archive path (`Art\Native\ZV7368U.zbv composed`) where the leg and TESTING.md read `ZV7368U
+  composed`. The log takes the manifest's name again, the tools' `ZVTABU`/`ZVHAMU` (27f5bb1, test
+  `the_log_names_a_composed_viewmodel_by_its_manifest`).
+* *A flaky body test* (`the_shield_rides_the_left_hand_and_the_back`, once in a full run): the
+  third-person stowed weapons, offhands and torso actions are process-wide statics the client
+  publishes every frame, and a parallel client test cleared the torso between the body test's two
+  draws. `presentation_global!` makes each (and the viewmodel's overlay, shock and reticle globals) a
+  per-thread instance under `cfg(test)`; the game keeps the shared static (3be4e7b).
+
+**Gotcha: a branch that adds a native manifest kind meets every sweep over `ZV*.zbv`.** Item agents
+run only their legs and tests (BRIEF8); the integrator's full ladder is where the classpick log check
+and the real-install sweep caught the tools.
+
+**Gotcha: the shell map logs its own frames.** A watcher waiting for "frame 1500" in an instance log
+can match the shell map's logic before the network game starts; key on `game start: a network game`
+first.
+
+**Verified (final head).** `cargo test --workspace` 1,262 passed, 0 failed (without
+`ZHBO_BO2_DIR`); clippy clean (workspace `--all-targets`; zhbo-core `harness`, `harness,renderer`,
+`autopilot`). Real install (`--ignored`, both dirs): zhbo-assets 80/80 with the sweep fix (the roster
+lockstep gate, the hip-fire gate over the roster, the tritium polygon offset and
+`every_converted_weapon_draws` among them); zhbo-core, -formats, -native and -gfx `--ignored` pass; the
+conformance gate red only for the 4 BO2-only cac rows. Conformance CLI: weapons 0 cells / 0 clusters
+with hipfire's two new columns, cac 0 + 4 BO2-only, 1 gap cluster; all ten files byte-identical to
+hipfire-accuracy's. `cargo xtask build` (own work dir and dist; host patches 0001–0032), archive built
+at 89. Legs: default 18/19 then 19/19 on the final build (the miss was `impacts: flesh`: that run's
+opening burst struck only concrete and the grenade made the kill; the two earlier runs and the rerun
+hit flesh), `--input` 3/3, `--equipment` 12/12, `--rts` 20/20, `--rts-dry` 5/5, `--build` 21/21
+(twice), `--classpick` 11/12 then 12/12 after the log-name fix, `--scope` 1/1, `--w3d-ads` 2/2,
+`--replay` 5/5, `--splash` 5/5, `--smoke` 7/7, `--detail` 10/10, `--drops` 10/10, `--flicker` 8/8
+(tritium least 86–95 glowing pixels of 96–106, 0 flipped ground pixels), `--hipfire` 5/5 (120 shots, 0
+outside their cone, mean r 0.520, 21/21 first shots at the minimum, 32/32 running at the maximum),
+`--showcase`, `--mp` 26/26 (2,752 common frames to the leave cut, content CRC BC3A68EE both),
+`ZHBO_MPTEST_ROUNDS=3` three times 35/35 (6,965, 6,764 and 6,860 frames; 5 shellshocks on both; CQB
+worn). No desync, CRC mismatch or panic in any log. The legs shared the game lock with round 8's seven
+item agents, and a machine crash interrupted one long run (rerun). Screenshots in
+`~/.opencode/plan/integration11/`: the tablet raised (`shot-tablet-raised.png`), the hammer in
+`--build` over the site's timbers (`shot-build-hammer.png`), the MP7's tritium sights
+(`shot-mp7-tritium*.png`), a hip-fire burst (`shot-hipfire-burst.png`), the dive into first person
+(`sheet-dive.png`: the road whole all the way down).
+
+**Open.** At the end of a re-entry dive (default autopilot, frames 802/804) a magenta and yellow shape
+shows at the camera's feet, under the tablet's putaway (`crop-798-806.png`, `crop-804.png`); not
+traced in this integration. The tablet's known one-frame W3D draw while the native pass loads stays as
+tablet-render left it.

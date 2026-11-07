@@ -526,7 +526,11 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   velocities in BO2's axes. Everything played with no matrix (a blast through the `fx` callback, a
   bounce, a dud, the General's impacts) is the world copy, BO2's X (the normal) swapped to up;
   `vViewShellEjectOffset`/`Rotation` are not applied.
-  `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Viewmodel sound notetracks
+  `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Composing a viewmodel asks
+  for every clip its manifest names (decoded lazily); the frame it finishes composing stays
+  `LOADING` until its current clip's file is here, and a clip whose file is still on its way later
+  holds the last pose (logged `played before its file arrived`) — never a frame of the bind pose.
+  Viewmodel sound notetracks
   are unchanged (the bridge's `playNotes` runs before either path). The bridge logs once per
   model and game which path drew it (`viewmodel: <name> drawn by the native path` / `W3D path` /
   `W3D (native loading) path`); the autotests read it.
