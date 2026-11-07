@@ -115,6 +115,43 @@ fn a_round_into_a_vehicle_is_a_rifle_bullet_at_full_damage() {
     assert_eq!(host.damage_how.borrow().as_slice(), [(2, crate::damage::MeansOfDeath::RifleBullet)]);
 }
 
+/// A friendly stops a round and takes nothing (BO2's bullet trace meets every entity; its core
+/// modes have no friendly fire): the shooter's own wall between him and an enemy vehicle takes the
+/// round, the vehicle nothing, and the wall no damage; an enemy wall takes it (Zero Hour's damage).
+#[test]
+fn a_round_stops_on_the_shooters_own_wall() {
+    let shoot_through = |wall_owner: i32| {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(ObjInfo { id: 2, owner_player: 1, flags: objflags::VEHICLE, geom_type: geom::BOX, major_radius: 26.0, minor_radius: 13.0, height: 15.0, health: 5000.0, max_health: 5000.0, pos: Vec3::new(90.0, 0.0, 0.0), ..Default::default() });
+        host.add(ObjInfo { id: 3, owner_player: wall_owner, flags: objflags::STRUCTURE, geom_type: geom::BOX, major_radius: 2.0, minor_radius: 30.0, height: 40.0, health: 5000.0, max_health: 5000.0, pos: Vec3::new(45.0, 0.0, 0.0), ..Default::default() });
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+        let mut def = w.def.clone();
+        def.pellets = 1;
+        def.traits.penetrate = Default::default();
+        def.specialties = crate::weapons::Specialties::default();
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+        (w.def, w.main) = (def, def);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, ..Default::default() }, 20);
+        host.damage_log.borrow_mut().clear();
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, ..Default::default() }, 1);
+        let hit: Vec<u32> = host.damage_log.borrow().iter().map(|d| d.1).collect();
+        let marker = sim.events.iter().any(|e| matches!(e.kind, EventKind::HitMarker { .. }));
+        let impact = sim.events.iter().any(|e| matches!(e.kind, EventKind::Impact { .. }));
+        (hit, marker, impact)
+    };
+    let (hit, marker, impact) = shoot_through(0);
+    assert!(hit.is_empty() && !marker && impact, "his own wall stops it, unhurt and unmarked: {hit:?}");
+    let (hit, marker, _) = shoot_through(1);
+    assert_eq!(hit, [3], "an enemy wall takes it");
+    assert!(marker);
+}
+
 /// A knife reaches a vehicle's side, not a circle of its length (BO2's melee trace meets the
 /// entity's bounds): beside a tank turned side-on, the blow lands on its side when the side is in
 /// reach, by `MOD_MELEE`, and not when the side is a unit past it (its centre is then well inside

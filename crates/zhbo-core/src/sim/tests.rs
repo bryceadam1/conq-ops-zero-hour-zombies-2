@@ -1619,21 +1619,30 @@ fn a_kill_reports_a_fatal_flesh_impact() {
     assert!(flesh.iter().any(|(_, fatal)| *fatal), "one of them killed: {flesh:?}");
 }
 
+/// A friendly in the way is solid as anyone (BO2's bullet trace meets every entity) but takes
+/// nothing (no friendly fire in core modes): the round goes on past him exactly as past an enemy
+/// standing there (BO2's penetration walk), so the soldier behind takes the same either way.
 #[test]
-fn bullets_pass_through_friendlies() {
-    let host = FakeHost::default();
-    host.add(general(1, 0));
-    host.add(soldier(3, 0, 30.0));
-    host.add(soldier(2, 1, 60.0));
-    let mut sim = Sim::new();
-    spawn(&mut sim, &host, 0, 1);
-    sim.choose_class(0, 1, 0, &[]);
-    wait_until_ready(&mut sim, &host);
-    let pitch = -(4.0f32 / 60.0).atan();
-    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
-    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 10);
-    assert_eq!(host.get(3).health, 120.0, "friendly untouched");
-    assert!(host.get(2).health < 120.0, "enemy behind was hit");
+fn bullets_stop_on_friendlies_as_on_anyone_unhurt() {
+    let fire = |middle_owner: i32| {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(3, middle_owner, 30.0) });
+        host.add(soldier(2, 1, 60.0));
+        let mut sim = Sim::new();
+        spawn(&mut sim, &host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let pitch = -(4.0f32 / 60.0).atan();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 10);
+        (host.get(3).health, host.get(2).health)
+    };
+    let (friend, behind_friend) = fire(0);
+    let (enemy, behind_enemy) = fire(1);
+    assert_eq!(friend, 5000.0, "friendly untouched");
+    assert!(enemy < 5000.0, "the same soldier as an enemy takes the rounds");
+    assert_eq!(behind_friend, behind_enemy, "the round goes on past him as past an enemy");
 }
 
 fn option(template: u32, status: i32) -> crate::building::BuildOption {

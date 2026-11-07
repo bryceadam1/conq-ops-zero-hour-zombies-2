@@ -179,14 +179,19 @@ impl Sim {
         let how = crate::damage::bullet(def, infantry, location);
         let rule = victim.map_or(1.0, |v| crate::damage::scale_on(&p.arsenal.tuning, &def.id, how, &v));
         let amount = crate::damage::bullet_damage(&p.arsenal.tuning, victim.as_ref(), def.damage_at(distance), mult, at, pierce, rule);
-        let kill = host.damage(p.general, id, amount, crate::damage::Blow::new(how, def, dir));
+        // A friendly (a teammate, his soldiers and vehicles, his and the shooter's own structures)
+        // stops the round and takes nothing: BO2's core modes have no friendly fire.
+        let friendly = victim.is_some_and(|v| v.has(objflags::ALLY));
+        let kill = !friendly && host.damage(p.general, id, amount, crate::damage::Blow::new(how, def, dir));
         // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
         // surface comes from what was hit.
         let surface = Surface::of_object(victim.as_ref());
         if fx {
             self.emit(idx, EventKind::Impact { at: point, dir, surface, head: headshot, fatal: kill, impact_type: def.impact_type, exit: false });
         }
-        self.emit(idx, EventKind::HitMarker { headshot, kill, alert: crate::damage::HitAlert::by_player(how) });
+        if !friendly {
+            self.emit(idx, EventKind::HitMarker { headshot, kill, alert: crate::damage::HitAlert::by_player(how) });
+        }
         BulletHit { id, surface, head: headshot, kill }
     }
 }
@@ -520,8 +525,10 @@ impl HitBodies<'_> {
     }
 }
 
-/// Convert nearby objects into hitscan targets. Friendlies are skipped so bullets pass through them
-/// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped. Infantry
+/// Convert nearby objects into hitscan targets. Friendlies are solid like anything else: BO2's
+/// bullet trace stops on a teammate and on his things (no friendly fire in core modes means no
+/// damage, [`Sim::bullet_hit`], not a round that passes through); dead and non-colliding objects
+/// are skipped. Infantry
 /// are traced as BO2's hit boxes (`bodies`) when there are any, ranked as a `rifle` bullet ranks
 /// them.
 pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32, bodies: &HitBodies, rifle: bool) -> Vec<Target> {
@@ -534,7 +541,7 @@ pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32,
 fn targets_of(objs: &[ObjInfo], shooter: u32, bodies: &HitBodies, rifle: bool) -> Vec<Target> {
     let mut targets: Vec<Target> = objs
         .iter()
-        .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
+        .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE))
         .map(|o| target_from(o, bodies, rifle))
         .collect();
     // Deterministic order regardless of partition iteration order.

@@ -307,7 +307,9 @@ impl Projectile {
         let dir = if len > 1e-6 { seg * (1.0 / len) } else { Vec3::new(0.0, 0.0, -1.0) };
         let met: Vec<(ObjInfo, f32)> = objs
             .into_iter()
-            .filter(|o| o.id != self.owner && o.id != self.object && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
+            // A friendly structure is a wall like any other (BO2's missiles collide with every
+            // entity); friendly units still let it by (no strike on them is modelled).
+            .filter(|o| o.id != self.owner && o.id != self.object && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && (!o.has(objflags::ALLY) || o.has(objflags::STRUCTURE)))
             .filter_map(|o| {
                 let solid = struck_solid(&o, self.def);
                 let t = crate::hitscan::ray_vs_target(from, dir, len.max(1e-6), &solid)?;
@@ -373,7 +375,8 @@ impl Projectile {
     fn impact(&mut self, host: &dyn LogicHost, o: ObjInfo, dud: bool) -> Outcome {
         self.remove_object(host);
         let how = crate::damage::strike(self.def, dud);
-        let kill = host.damage(self.owner, o.id, impact_damage(self.def, &o, how), self.blow(how));
+        let amount = impact_damage(self.def, &o, how);
+        let kill = amount > 0.0 && host.damage(self.owner, o.id, amount, self.blow(how));
         Outcome::Hit { at: self.pos, kill }
     }
 
@@ -470,6 +473,10 @@ fn struck_solid(o: &ObjInfo, def: &WeaponDef) -> crate::hitscan::Target {
 /// `getvehicleprojectilescalar` share (a fifth for the SMAW and FHJ-18, whose 1000 is there to kill
 /// any player outright), an impact (`MOD_IMPACT`: a dud, a frag or a bolt striking) all of it.
 pub fn impact_damage(def: &WeaponDef, o: &ObjInfo, how: MeansOfDeath) -> f32 {
+    // A friendly takes no impact damage (no friendly fire in BO2's core modes).
+    if o.has(objflags::ALLY) {
+        return 0.0;
+    }
     let t = crate::tuning::get();
     crate::damage::to_zh(&t, o, def.damage[0] * crate::damage::scale_on(&t, &def.id, how, o))
 }
@@ -774,6 +781,25 @@ mod tests {
         // No bounds: the old stand-in (half of 2.5 units all round).
         let r = HIT_RADIUS * 0.5 / inches(1.0);
         assert!(hits([0.0; 6], 15.0 + r - 0.5) && !hits([0.0; 6], 15.0 + r + 0.5));
+    }
+
+    /// The thrower's own wall is a wall: a frag thrown at it stops there (it never reaches the
+    /// enemy soldier behind it) and strikes it for nothing (no friendly fire).
+    #[test]
+    fn a_grenade_stops_on_its_throwers_own_wall() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(crate::host::ObjInfo { id: 5, owner_player: 0, flags: objflags::STRUCTURE, geom_type: crate::host::geom::BOX, major_radius: 2.0, minor_radius: 40.0, height: 60.0, health: 5000.0, max_health: 5000.0, pos: Vec3::new(40.0, 0.0, 0.0), ..Default::default() });
+        let frag = weapon("frag_grenade_mp");
+        let mut p = Projectile::launch(frag, 1, Vec3::new(0.0, 0.0, 11.0), Vec3::new(1.0, 0.0, 0.05), frag.fuse_time, &host, 0.0);
+        let mut steps = 0;
+        let mut furthest: f32 = 0.0;
+        while p.step(&host).is_none() && steps < 600 {
+            furthest = furthest.max(p.pos.x);
+            steps += 1;
+        }
+        assert!(furthest < 40.0, "it never passed the wall: {furthest}");
+        assert!(host.damage_log.borrow().iter().all(|h| h.1 != 5), "no damage to his own wall");
     }
 
     /// A frag thrown into a tank's hull strikes it once (its `iDamage`), however long it lies
