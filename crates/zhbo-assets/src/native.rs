@@ -96,7 +96,50 @@ pub(crate) fn material_record(mat: Option<&xmodel::Material>, texture: Option<&s
         emblem: texture.is_some_and(|t| looks.emblem.contains(t)),
         sonar: texture.and_then(|t| looks.sonar.get(t)).cloned(),
         polygon_offset: mat.map_or(0, |m| m.polygon_offset()),
+        lighting: mat.map_or_else(nm::Lighting::default, lighting),
     }
+}
+
+/// BO2's character skin technique (`sw4_3d_char_skin_*`), its cloth (`sw4_3d_char_cloth_*`) and
+/// the IW lit family (`lit_*`, the guns and props).
+const SKIN_TECHSET: &str = "_char_skin_";
+const LIT_TECHSET: &str = "_lit_";
+
+/// The scales `m`'s lit technique reads from its constants (the `lit_sun` pixel shaders' DXBC,
+/// MODLOG "BO2's lit shading, from its DXBC"); any constant the material leaves out is BO2's
+/// neutral 1.
+/// * `sw4_3d_char_skin` (`pimp_shader_sw4_3d_char_skin_7f1d600`): the highlight times
+///   `Specular_Amount`, the reflection times `Reflection_Amount`, the diffuse sees the normal
+///   map's bump times `Diffuse_Normal_Height_Facing`.
+/// * `lit_*` with an occlusion map (`..o0`, `pimp_shader_lprobe_bc900d1`): the highlight times
+///   `colorDetailScale.z`; the map itself occludes (its red, in the colour map's alpha).
+/// * `lit_*` with a specular map and no occlusion map (`pimp_shader_lprobe_a96c9c79`):
+///   `occlusionAmount` stands in for the map: `.x` the highlight and the ambient, `.y` the
+///   reflection. Without a specular map the shader has neither term and reads neither.
+/// * `sw4_3d_char_cloth` reads none of them.
+pub(crate) fn lighting(m: &xmodel::Material) -> nm::Lighting {
+    let mut out = nm::Lighting::default();
+    let k = |name: &str| m.constant(name);
+    if m.techset.contains(SKIN_TECHSET) {
+        out.specular = k("Specular_Amount").map_or(1.0, |v| v[0]);
+        out.reflection = k("Reflection_Amount").map_or(1.0, |v| v[0]);
+        out.diffuse_normal = k("Diffuse_Normal_Height_Facing").map_or(1.0, |v| v[0]);
+    } else if m.techset.contains(LIT_TECHSET) {
+        if m.image(xmodel::TS_OCCLUSION_MAP).is_some() {
+            out.specular = k("colorDetailScale").map_or(1.0, |v| v[2]);
+        } else if m.image(xmodel::TS_SPECULAR_MAP).is_some() {
+            if let Some([x, y, _, _]) = k("occlusionAmount") {
+                (out.specular, out.ambient, out.reflection) = (x, x, y);
+            }
+        }
+    }
+    // The blob refuses a non-finite value; BO2's neutral stands in for one.
+    for v in [&mut out.specular, &mut out.reflection, &mut out.ambient, &mut out.diffuse_normal] {
+        if !v.is_finite() {
+            *v = 1.0;
+        }
+    }
+    out
 }
 
 /// Which camo layer a surface carries, from the semantic-22 image's name (research §2.1).
@@ -404,6 +447,30 @@ mod tests {
             coll_surfs: Vec::new(),
             materials: vec![None],
         }
+    }
+
+    /// Each lit technique's scales come from the constants its shader reads, by the install's
+    /// own materials: the SEAL arm's skin (`Specular_Amount` 1.5, `Reflection_Amount` 1,
+    /// `Diffuse_Normal_Height_Facing` 0.8), a gun with an occlusion map (`colorDetailScale`
+    /// 8, 8, 0.7), one without (`occlusionAmount` 0.5, 0.25), the cloth (none read), and a lit
+    /// surface without a specular map (its shader reads no `occlusionAmount`).
+    #[test]
+    fn each_lit_technique_takes_the_scales_its_shader_reads() {
+        let k = |name: &str, value: [f32; 4]| xmodel::Constant { name_hash: xmodel::sampler_hash(name), value };
+        let map = |semantic: u8| xmodel::Texture { name_hash: 0, semantic, image: Some(xmodel::Image { name: "m".into(), hash: 0, stream_hash: 0, streamed_parts: 0, width: 1, height: 1 }) };
+        let mat = |techset: &str, textures: Vec<xmodel::Texture>, constants: Vec<xmodel::Constant>| xmodel::Material { techset: techset.into(), textures, constants, ..Default::default() };
+        let skin = mat("mc_sw4_3d_char_skin_j92387z3", vec![], vec![k("Reflection_Amount", [1.0, 0.0, 0.0, 1.0]), k("Diffuse_Normal_Height_Facing", [0.8, 0.0, 0.0, 1.0]), k("Specular_Amount", [1.5, 0.0, 0.0, 1.0])]);
+        assert_eq!(lighting(&skin), nm::Lighting { specular: 1.5, reflection: 1.0, ambient: 1.0, diffuse_normal: 0.8 });
+        let occluded = mat("mc_lit_sm_r0c0n0s0o0_3z86zq2z", vec![map(xmodel::TS_SPECULAR_MAP), map(xmodel::TS_OCCLUSION_MAP)], vec![k("colorDetailScale", [8.0, 8.0, 0.7, 0.0]), k("occlusionAmount", [0.5, 0.25, 1.0, 1.0])]);
+        assert_eq!(lighting(&occluded), nm::Lighting { specular: 0.7, ..Default::default() }, "the map occludes; occlusionAmount is not read");
+        let bare = mat("mc_lit_sm_r0c0n0s0_7j414q0z", vec![map(xmodel::TS_SPECULAR_MAP)], vec![k("colorDetailScale", [8.0, 8.0, 0.7, 0.0]), k("occlusionAmount", [0.5, 0.25, 1.0, 1.0])]);
+        assert_eq!(lighting(&bare), nm::Lighting { specular: 0.5, reflection: 0.25, ambient: 0.5, diffuse_normal: 1.0 });
+        let matte = mat("mc_lit_sm_r0c0n0_2z223015", vec![], vec![k("occlusionAmount", [0.5, 0.25, 1.0, 1.0])]);
+        assert_eq!(lighting(&matte), nm::Lighting::default());
+        let cloth = mat("mc_sw4_3d_char_cloth_4z8fq5wu", vec![map(xmodel::TS_SPECULAR_MAP)], vec![k("Specular_Amount", [3.0, 0.0, 0.0, 1.0])]);
+        assert_eq!(lighting(&cloth), nm::Lighting::default());
+        let broken = mat("mc_sw4_3d_char_skin_j92387z3", vec![], vec![k("Specular_Amount", [f32::INFINITY, 0.0, 0.0, 1.0])]);
+        assert_eq!(lighting(&broken).specular, 1.0, "a non-finite constant falls back to BO2's neutral");
     }
 
     #[test]

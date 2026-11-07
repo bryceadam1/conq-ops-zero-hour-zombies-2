@@ -142,7 +142,13 @@ pub(crate) fn native_surface(s: &SurfaceSpec, handle: impl Fn(&Option<String>) -
         reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), &handle)),
         sonar: s.sonar.as_ref().map(|so| native_sonar(so, &handle)),
         polygon_offset: s.polygon_offset,
+        lighting: native_lighting(&s.lighting),
     }
+}
+
+#[cfg(feature = "renderer")]
+fn native_lighting(l: &zhbo_native::model::Lighting) -> zhbo_gfx::runtime::NativeLighting {
+    zhbo_gfx::runtime::NativeLighting { specular: l.specular, reflection: l.reflection, ambient: l.ambient, diffuse_normal: l.diffuse_normal }
 }
 
 /// Whether the native viewmodel drew a lens reticle in its last frame: the HUD then leaves its
@@ -296,7 +302,7 @@ pub struct SurfaceSpec {
     pub emissive: bool,
     pub color: Option<String>,
     pub maps: Option<String>,
-    /// BO2's specular colour map (`Material::specular`), or `None` for the maps' scalar level.
+    /// BO2's specular colour map (`Material::specular`), or `None`: no spec map (no highlight).
     pub specular: Option<String>,
     pub sort_key: u8,
     pub cull: Cull,
@@ -323,6 +329,8 @@ pub struct SurfaceSpec {
     pub display: Option<zhbo_native::display::RangeFinderDisplay>,
     /// BO2's polygon offset level (`Material::polygon_offset`): a decal's pull towards the eye.
     pub polygon_offset: u8,
+    /// BO2's lit technique's scales for the material (`Material::lighting`).
+    pub lighting: zhbo_native::model::Lighting,
 }
 
 fn is_ui3d(s: &SurfaceSpec) -> bool {
@@ -461,6 +469,7 @@ pub fn build_mesh_visible<'a>(
                 sonar: m.and_then(|m| m.sonar.clone()),
                 display: None,
                 polygon_offset: m.map_or(0, |m| m.polygon_offset),
+                lighting: m.map_or_else(Default::default, |m| m.lighting),
             });
         }
     }

@@ -1,19 +1,20 @@
 // The native BO2 model pass (Track R): GPU-skinned BO2 models lit as BO2's material model does.
 //
-// The lighting is the engine's bo2Shade (host patch 0009, MODLOG #74), which was tuned in game on
-// the W3D path: per-pixel normals with the tangent frame from screen-space derivatives, a
-// gloss-driven normalized Blinn-Phong highlight with Fresnel, and a reflection of a sky and ground
-// built from the scene's lights. It runs in display (gamma) space, as bo2Shade does and as the rest
-// of Zero Hour's scene is lit: colour maps are sampled raw and the lights are Zero Hour's own
-// display-encoded values. (A linear-light port washed dark finishes out to grey under Zero Hour's
-// bright map ambients: the environment term, tuned in gamma space, is several times stronger in
-// linear light. Integrator finding #1, round 2.) Only when the target view is itself sRGB is the
+// The lit shading (`fs`) is BO2's own, read from the DXBC of its `lit_sun` pixel shaders in the
+// install (the guns' `lit_sm_*`, the bodies' and arms' `sw4_3d_char_cloth`/`_skin`; MODLOG "BO2's
+// lit shading, from its DXBC"; the Rust reference with BO2's formulas is `runtime/lit.rs`, and the
+// two are kept equal by `tests/native.rs`). BO2 works in gamma 2: colours (the colour map, the
+// spec map, the lights) are squared on the way in and the sum is square-rooted on the way out, so
+// the result lands in display space like the rest of Zero Hour's scene. Zero Hour's light colours
+// are display values and are squared the same way. Only when the target view is itself sRGB is the
 // result decoded first, since the hardware encodes it again (`decode_output`).
+//
+// Zero Hour has no light grid, reflection probe, sun shadow or exposure; each stand-in is an engine
+// constraint (`lit.rs`, RENDERER.md "Lit shading"): BO2's sun is Zero Hour's light 0, the light
+// grid Zero Hour's irradiance without it (the ambient plus lights 1 and 2), the probe that
+// irradiance sampled along the reflection, the sun unshadowed, the exposure 1.
 
 const MAX_BONES: u32 = 256u;
-const MAX_POWER: f32 = 2048.0;
-const LIGHT_SATURATION: f32 = 0.35;
-const LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
 override decode_output: bool = false;
 
@@ -55,6 +56,8 @@ struct Frame {
 //   ret2: Glow_Color.rgb, Background
 //   ret3: Reticle_Alt_Color.rgb, technique (0 dynamic, 1 two-colour, 2 static, 3 ui3d)
 //   ret4: Glow_Alt_Color.rgb
+// lit: BO2's lit technique's material scales (zhbo_native::model::Lighting): specular,
+//   reflection, ambient, diffuse normal
 struct Material {
     params: vec4<f32>,
     camo: vec4<f32>,
@@ -66,11 +69,12 @@ struct Material {
     ret4: vec4<f32>,
     // The MMS screen's constants (zhbo_native::model::Sonar::constants order).
     sonar: array<vec4<f32>, 8>,
+    lit: vec4<f32>,
 }
 @group(1) @binding(3) var<uniform> material: Material;
 @group(1) @binding(4) var camo_map: texture_2d<f32>;
-// BO2's spec map colour (raw). Surfaces without one bind the 1x1 white texture and take the
-// packed maps' scalar level instead.
+// BO2's spec map colour (raw). Surfaces without one bind the 1x1 white texture and have no
+// highlight or reflection (material.spec.x is 0).
 @group(1) @binding(5) var spec_map: texture_2d<f32>;
 // The scene's device depth (resolved from the target's depth attachment; 1 is the sky).
 @group(2) @binding(0) var scene_z: texture_2d<f32>;
@@ -152,76 +156,75 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
         geo = -geo;
     }
     let debug_mode = frame.params.y;
+    let has_maps = material.params.z > 0.5;
 
-    // The normal map's tangent-space normal, framed by the surface's position/UV derivatives.
-    var n = geo;
-    if (material.params.z > 0.5 && !(debug_mode > 0.5 && debug_mode < 1.5)) {
-        let xy = maps.rg * 2.0 - 1.0;
-        let dp2perp = cross(dp2, geo);
-        let dp1perp = cross(geo, dp1);
-        let t = dp2perp * duv1.x + dp1perp * duv2.x;
-        let b = dp2perp * duv1.y + dp1perp * duv2.y;
-        let fr = max(dot(t, t), dot(b, b));
-        if (fr > 1e-20) {
-            let inv = inverseSqrt(fr);
-            let z = sqrt(max(0.0, 1.0 - dot(xy, xy)));
-            n = normalize(t * (xy.x * inv) + b * (xy.y * inv) + geo * z);
-        }
+    // BO2's tangent frame: N, a unit T in the surface (here dP/du from the position/UV
+    // derivatives, where BO2 reads the vertex's tangent) and B = sign * cross(N, T), the sign
+    // that of dP/dv (a mirrored UV island).
+    var t = vec3<f32>(0.0);
+    var b = vec3<f32>(0.0);
+    let det = duv1.x * duv2.y - duv2.x * duv1.y;
+    let inv_det = select(0.0, 1.0 / det, abs(det) > 1e-30);
+    let tu = (dp1 * duv2.y - dp2 * duv1.y) * inv_det;
+    let tv = (dp2 * duv1.x - dp1 * duv2.x) * inv_det;
+    let to = tu - geo * dot(geo, tu);
+    if (dot(to, to) > 1e-20 && dot(tv, tv) > 1e-20) {
+        t = normalize(to);
+        b = cross(geo, t) * select(-1.0, 1.0, dot(cross(geo, t), tv) >= 0.0);
     }
-    let gloss = select(0.0, maps.b, material.params.z > 0.5);
-    // Reflectance at normal incidence: BO2's spec map is a colour (`*_spc-rgb`), so a metal's
-    // highlight and reflection take its hue (gold: a flat dark colour map, a gold spec map). The
-    // raw value is squared as the scalar level always was; a grey map gives the same f0 as before.
-    var f0 = vec3<f32>(select(0.0, maps.a * maps.a, material.params.z > 0.5));
-    if (material.spec.x > 0.5) {
-        f0 = spec_color * spec_color;
+    // BO2's normal map: x, y = 4.01575 * texel - 2.01575, n = normalize(N + T x + B y) (no z
+    // reconstructed); the diffuse sees the bump times Diffuse_Normal_Height_Facing.
+    var bump = vec3<f32>(0.0);
+    if (has_maps && !(debug_mode > 0.5 && debug_mode < 1.5)) {
+        let xy = maps.rg * 4.01575 - 2.01575;
+        bump = t * xy.x + b * xy.y;
     }
-    let power = min(exp2(1.0 + gloss * 11.0), MAX_POWER);
-    let norm = (power + 8.0) / 8.0;
-    // Opaque surfaces carry ambient occlusion in the colour map's alpha; others carry coverage.
-    let ao = select(1.0, albedo.a, material.params.z > 0.5);
+    let n = normalize(geo + bump);
+    let nd = normalize(geo + bump * material.lit.w);
+
+    // No spec map, no highlight and no reflection (BO2's `c0`/`c0n0` techniques have neither).
+    let has_spec = material.spec.x > 0.5;
+    let gloss = select(0.0, maps.b, has_maps);
+    let f0 = spec_color * spec_color;
+    // The occlusion map's red (in an opaque colour map's alpha; others carry coverage there).
+    let ao = select(1.0, albedo.a, has_maps);
     let v = normalize(frame.eye.xyz - i.world);
 
-    let ambient = frame.ambient.rgb;
-    var direct = vec3<f32>(0.0);
-    var spec = vec3<f32>(0.0);
-    var sun = vec3<f32>(0.0);
     let count = u32(frame.params.x);
-    for (var li = 0u; li < 3u; li = li + 1u) {
-        if (li >= count) {
-            break;
+    var sun_l = vec3<f32>(0.0, 0.0, 1.0);
+    var sun = vec3<f32>(0.0);
+    if (count > 0u) {
+        let ld = frame.light_dir[0].xyz;
+        sun_l = select(vec3<f32>(0.0, 0.0, 1.0), normalize(ld), length(ld) > 1e-5);
+        sun = frame.light_color[0].rgb * frame.light_color[0].rgb;
+    }
+    // The light grid's stand-in towards the diffuse normal (the ambient, lights 1 and 2).
+    let grid = zh_irradiance(nd, count, 1u);
+
+    var spec = vec3<f32>(0.0);
+    var env = vec3<f32>(0.0);
+    if (has_spec) {
+        if (count > 0u) {
+            let h = normalize(sun_l + v);
+            let n_dot_h = clamp(dot(n, h), 0.0, 1.0);
+            let l_dot_h = clamp(dot(h, sun_l), 0.0, 1.0);
+            let n_dot_l = clamp(dot(n, sun_l), 0.0, 1.0);
+            let power = exp2(13.0 * gloss);
+            let d = select(0.0, exp2(log2(max(n_dot_h, 1e-30)) * power), n_dot_h > 0.0);
+            let k = clamp(gloss + 0.545, 0.0, 1.0);
+            let vis = n_dot_l / (l_dot_h * l_dot_h * k - k + 1.01);
+            let fresnel = f0 + (vec3<f32>(1.0) - f0) * exp2(-10.0 * l_dot_h);
+            spec = d * (power * 0.125 + 0.25) * vis * fresnel * sun * material.lit.x * ao;
         }
-        let ld = frame.light_dir[li].xyz;
-        let l = select(vec3<f32>(0.0, 0.0, 1.0), normalize(ld), length(ld) > 1e-5);
-        let raw = frame.light_color[li].rgb;
-        if (li == 0u) {
-            sun = raw;
-        }
-        // BO2 lights its weapons near neutral; Zero Hour's accent lights are strongly coloured.
-        let light = mix(vec3<f32>(dot(raw, LUMA)), raw, LIGHT_SATURATION);
-        let n_dot_l = max(0.0, dot(n, l));
-        let facing = clamp(dot(geo, l) * 4.0 + 1.0, 0.0, 1.0);
-        direct = direct + light * n_dot_l * facing;
-        let h = normalize(l + v);
-        let v_dot_h = max(0.0, dot(v, h));
-        let fresnel = f0 + (vec3<f32>(1.0) - f0) * (pow(1.0 - v_dot_h, 5.0) * gloss * gloss);
-        spec = spec + light * (pow(max(0.0, dot(n, h)), power) * norm * n_dot_l * facing * fresnel);
+        let n_dot_v = clamp(dot(n, v), 0.0, 1.0);
+        let r = n * (2.0 * dot(n, v)) - v;
+        let a = 1.04167 * gloss * min(exp2(-9.28 * n_dot_v), 0.475 * gloss) + 0.0182292 * gloss - 0.015625;
+        let env_fresnel = clamp(f0 * (0.25 * gloss + 0.75 - a) + vec3<f32>(a), vec3<f32>(0.0), vec3<f32>(1.0));
+        env = zh_irradiance(r, count, 0u) * env_fresnel * material.lit.y * ao;
     }
 
-    let r = reflect(-v, n);
-    let blur = 1.0 - gloss;
-    let up = smoothstep(-0.25 - blur * 0.5, 0.25 + blur * 0.5, r.z);
-    let ambient_level = dot(ambient, LUMA);
-    let sun_level = dot(sun, LUMA);
-    let sky = vec3<f32>(0.92, 0.97, 1.05) * (ambient_level * 1.4 + sun_level * 0.35);
-    let ground = vec3<f32>(1.0, 0.96, 0.9) * (ambient_level * 0.45 + sun_level * 0.08);
-    let horizon = exp(-r.z * r.z * (40.0 - blur * 36.0)) * (0.25 + 0.5 * gloss);
-    let env = mix(ground, sky, up) + sky * horizon;
-    let n_dot_v = max(0.0, dot(n, v));
-    let env_fresnel = f0 + (vec3<f32>(1.0) - f0) * (pow(1.0 - n_dot_v, 5.0) * gloss * gloss);
-
-    let diffuse_light = min(ambient * ao + direct, vec3<f32>(1.0));
-    var color = albedo.rgb * diffuse_light * (vec3<f32>(1.0) - f0) + spec + env * env_fresnel * ao;
+    let diffuse_light = clamp(dot(nd, sun_l), 0.0, 1.0) * sun + grid * (ao * material.lit.z);
+    var color = albedo.rgb * albedo.rgb * diffuse_light + spec + env;
     if (debug_mode > 1.5) {
         if (debug_mode < 2.5) {
             return vec4<f32>(n * 0.5 + 0.5, 1.0);
@@ -230,11 +233,28 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
         } else if (debug_mode < 4.5) {
             color = spec;
         } else {
-            color = env * env_fresnel * ao;
+            color = env;
         }
     }
-    let alpha = select(albedo.a, 1.0, material.params.z > 0.5);
-    return finish(color, alpha);
+    let alpha = select(albedo.a, 1.0, has_maps);
+    return finish(sqrt(max(color, vec3<f32>(0.0))), alpha);
+}
+
+// Zero Hour's irradiance towards `dir`, decoded as BO2 decodes colours (squared): the ambient
+// plus each light from `first` on, weighted by its cosine. From light 1 it is BO2's light grid's
+// stand-in (the sun is BO2's own term); from light 0 the reflection probe's.
+fn zh_irradiance(dir: vec3<f32>, count: u32, first: u32) -> vec3<f32> {
+    var e = frame.ambient.rgb * frame.ambient.rgb;
+    for (var li = first; li < 3u; li = li + 1u) {
+        if (li >= count) {
+            break;
+        }
+        let ld = frame.light_dir[li].xyz;
+        let l = select(vec3<f32>(0.0, 0.0, 1.0), normalize(ld), length(ld) > 1e-5);
+        let c = frame.light_color[li].rgb;
+        e = e + c * c * max(0.0, dot(dir, l));
+    }
+    return e;
 }
 
 // BO2's lens reticles, read from the DXBC of their techniques (`pimp_shader_sw4_3d_reticle_*`).

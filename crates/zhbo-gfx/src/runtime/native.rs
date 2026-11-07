@@ -16,8 +16,9 @@
 //! first, then blended ones in BO2's sort-key order. Each surface culls the faces its material's
 //! `cullFace` says to (R4); the pass keeps BO2's index order, whose front faces are clockwise in
 //! the framebuffer (the engine's content winds the other way — the W3D conversion swaps for that,
-//! `zhbo-assets` `character.rs`), so pipelines here use `FrontFace::Cw`. Shading is in display
-//! space, like the scene it joins (see `native.wgsl`).
+//! `zhbo-assets` `character.rs`), so pipelines here use `FrontFace::Cw`. Shading is BO2's lit
+//! technique in its gamma-2 space, landing in display space like the scene it joins (`native.wgsl`,
+//! `lit.rs`).
 //!
 //! Submits are validated (handles, view ids, palette size against the mesh's bones, finite
 //! matrices) and refused with a one-time log line; nothing in the frame path panics.
@@ -225,6 +226,29 @@ impl NativeReticle {
     }
 }
 
+/// BO2's lit technique's material scales (`zhbo_native::model::Lighting`; `lit.rs`): the
+/// highlight, the reflection, the ambient and how much of the normal map's bump the diffuse sees.
+/// All 1 is BO2's neutral.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NativeLighting {
+    pub specular: f32,
+    pub reflection: f32,
+    pub ambient: f32,
+    pub diffuse_normal: f32,
+}
+
+impl Default for NativeLighting {
+    fn default() -> NativeLighting {
+        NativeLighting { specular: 1.0, reflection: 1.0, ambient: 1.0, diffuse_normal: 1.0 }
+    }
+}
+
+impl NativeLighting {
+    fn values(&self) -> [f32; 4] {
+        [self.specular, self.reflection, self.ambient, self.diffuse_normal]
+    }
+}
+
 /// One surface of a mesh: an index range and how it draws.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NativeSurface {
@@ -238,8 +262,8 @@ pub struct NativeSurface {
     pub maps: u16,
     /// The chosen camo layer's texture handle, or `INVALID` for none.
     pub camo: u16,
-    /// BO2's specular colour map (raw, like `maps`), or `INVALID`: the highlight and reflection
-    /// then take `maps`' scalar specular level, uncoloured.
+    /// BO2's specular colour map (raw, like `maps`), or `INVALID`: no spec map, so no highlight
+    /// and no reflection (BO2's techniques without one have neither).
     pub specular: u16,
     /// The camo layer's UV transform: offset.xy, scale, gain. Ignored when `camo` is `INVALID`.
     pub camo_uv: [f32; 4],
@@ -254,6 +278,8 @@ pub struct NativeSurface {
     /// 0 none, 1 or 2 a decal's (the tritium dots on iron sights, a lens's coating) drawn that
     /// many steps towards the eye so it wins over the surface it lies on ([`polygon_offset_bias`]).
     pub polygon_offset: u8,
+    /// BO2's lit technique's scales for this material ([`NativeLighting`]).
+    pub lighting: NativeLighting,
 }
 
 /// Which depth a draw is tested against.
@@ -319,7 +345,7 @@ pub struct NativeDraw<'a> {
 
 /// The shader's `Material` uniform: params, camo UV, specular flags, the reticle's five constant
 /// blocks and the MMS screen's eight (sixteen `vec4<f32>`).
-const MATERIAL_BYTES: u64 = 256;
+const MATERIAL_BYTES: u64 = 272;
 
 /// Which fragment stage a surface draws with.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -628,8 +654,8 @@ pub(crate) fn polygon_offset_bias(level: u8, reversed: bool) -> wgpu::DepthBiasS
 
 impl Renderer {
     /// An RGBA8 texture for native surfaces, with a box-filtered mip chain. `srgb` samples it
-    /// decoded to linear; the native shader works in display space, so its maps are uploaded
-    /// without it. `INVALID` if the data is the wrong size.
+    /// decoded to linear; the native shader decodes BO2's way (gamma 2, squaring), so its maps
+    /// are uploaded without it. `INVALID` if the data is the wrong size.
     pub fn native_create_texture(&mut self, width: u32, height: u32, rgba: &[u8], srgb: bool) -> u16 {
         let max = self.device.limits().max_texture_dimension_2d;
         if width == 0 || height == 0 || width > max || height > max || rgba.len() != (width as usize) * (height as usize) * 4 {
@@ -715,6 +741,11 @@ impl Renderer {
                 self.report(format!("zhbo-gfx: native mesh surface {k}: non-finite sonar constants; skipped"));
                 continue;
             }
+            if !finite(&s.lighting.values()) {
+                // Log-or-skip, as a broken reticle: the rest of the mesh still draws.
+                self.report(format!("zhbo-gfx: native mesh surface {k}: non-finite lighting scales; skipped"));
+                continue;
+            }
             if s.reticle.is_some_and(|r| !r.finite()) {
                 // Log-or-skip: a reticle with a broken constant is left off, the mesh still draws.
                 self.report(format!("zhbo-gfx: native mesh surface {k}: non-finite reticle constants; skipped"));
@@ -784,7 +815,8 @@ impl Renderer {
                 // The display's block: the diamond's atlas rectangle, its size, present.
                 sonar[..6].copy_from_slice(&[d.diamond_uv[0], d.diamond_uv[1], d.diamond_uv[2], d.diamond_uv[3], d.diamond_size, 1.0]);
             }
-            let params: Vec<f32> = params.iter().chain(&reticle).chain(&sonar).copied().collect();
+            let lit = s.lighting.values();
+            let params: Vec<f32> = params.iter().chain(&reticle).chain(&sonar).chain(&lit).copied().collect();
             let material = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("native material"),
                 size: MATERIAL_BYTES,
