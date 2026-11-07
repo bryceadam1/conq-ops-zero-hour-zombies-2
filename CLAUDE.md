@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Read [AGENTS.md](AGENTS.md) first.** It holds the project's binding rules: the ground rules (no piracy, never launch/hook/connect to Black Ops II, Rust wherever possible, determinism, single data sources), the verification ladder, commit and journal discipline, and the read order for `docs/`. This file adds the commands and the big picture; it doesn't repeat those rules.
+**Read [AGENTS.md](AGENTS.md) first.** It holds the project's binding rules: the ground rules (no piracy, never launch/hook/connect to Black Ops II, Rust wherever possible, determinism, single data sources), the verification ladder, commit and journal discipline, the read order for `docs/`, and the **Lessons learned** on BO2 parity and lockstep multiplayer (read those before changing any system). This file adds the commands and the big picture; it doesn't repeat those rules.
 
 ## What this is
 

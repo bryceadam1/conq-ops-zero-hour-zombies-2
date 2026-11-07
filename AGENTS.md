@@ -101,6 +101,77 @@ SteamCMD steps.
 - Update the affected docs (CONTRACT, ARCHITECTURE, RENDERER, PLATFORMS, README) in the same
   commit as the change they describe.
 
+## Lessons learned
+
+Distilled from the bugs found in play. MODLOG has each case in full. Read this section before changing a
+system.
+
+### BO2 parity
+
+- **Assume an unported rule is a bug.** Nearly every bug players found was the mod not following one of
+  BO2's rules. Examples: a placeholder from the first core (hip-fire spread), an approximation (the knife's
+  facing cone, the grenade's invented lift), or BO2 data that was ignored (material polygon offset, the lit
+  shader). Treat these as defects to port:
+  - a numeric literal in logic that isn't from the tuning pack or the weapon table;
+  - a comment saying "placeholder", "stand-in", "approx", "for now" or "roughly";
+  - a branch on weapon class where BO2 reads a def field;
+  - a tuning key with no BO2 citation.
+- **Read BO2's code; don't trust memory or earlier notes.** Answer files, audits and an orchestrator's
+  recollection have all been wrong:
+  - BO2's server melee traces nine rays; the five-ray function is the client's impact effect.
+  - The `bg_fallDamage*` dvars are registered but never read; the constants are in PM_CrashLand.
+  - The view bob moves the eye, not the view angles.
+  - The Sensor Grenade does go off on a timer.
+
+  Re-read the function in t6mp (Ghidra, GSC or shader DXBC) before porting it, and cite it. Evidence beats
+  intuition, including the user's or the orchestrator's.
+- **Port the whole rule.** That includes:
+  - its data: the weapon field through the converter, the table and the conformance schema;
+  - its units: BO2 inches ↔ Zero Hour units via `ZH_PER_INCH`;
+  - its rounding: BO2 truncates damage stage by stage;
+  - its timing: in milliseconds or per second, not per 30 Hz frame;
+  - every case it touches across the roster, with a test that sweeps them all.
+- **Record deliberate breaks from BO2** in MODLOG and the affected doc, and don't "fix" them:
+  - a class pick for every new General;
+  - the General's toughness against Zero Hour weapons (`GeneralHeroToughness`, the heroes' health);
+  - no ragdoll;
+  - no scorestreaks;
+  - no mantling.
+- **A hidden engine object still has jobs.** Hiding the W3D body for BO2's native body also lost the walk
+  animation, the muzzle position for fire FX, click-picking, the decal shadow and the shroud rule. When the
+  native path replaces something the engine drew, list everything the engine did with it, and carry each
+  job over.
+- **Presentation must be right at any render rate.** Rendering follows the display, while logic runs at
+  30 Hz. Code that moves a fixed amount per draw ran about 4× fast at 120 Hz: tracers, recoil, treads, and
+  the autopilot sending inputs three times a frame. Advance by elapsed time, or once per logic frame
+  (`Common/ZhboRenderStep.h`).
+- **Version what the converter writes.** Any change to converted output needs a `hud::VERSION` bump, or old
+  archives misread silently. A record that grows needs its `zhbo_native` format version bumped too.
+
+### Multiplayer (lockstep)
+
+- **Every piece of sim state goes into `Sim::state_hash`** through the `state_hash!` macro, and the
+  perturbation test must cover it. A presentation-only buffer may stay out only with the reason written at
+  the fingerprint, as `Sim::blows` does.
+- **The sim never reads anything a client consumes or drains**, such as the event window a rendering client
+  empties. Keep per-seat state in the sim instead.
+- **The weapon table's `Role` split is the content CRC.** Sim fields go into it; Presentation fields must
+  never be read by sim-reachable code, and a source-scan test enforces that. Give every new field the right
+  `Role`.
+- **Mind the order of events within a step.** Hits are scored after every seat has stepped, so a victim's
+  record must survive his own seat's step. Deleting it early lost kills and assists whenever the victim's
+  seat stepped after the killer's. Engine-side damage reaches the sim through an ordered queue
+  (`enginedamage`).
+- **Logic must never depend on render state.** Click-picks use the sim's pose and the logic position;
+  render-only positions such as the drawn muzzle feed effects only.
+- **Read multiplayer test results carefully:**
+  - Quitting a network game self-destructs that player's General on every machine, in lockstep, so a run
+    stopped by its time limit looks like a sudden death or a desync. `mptest-mac.sh` compares state hashes
+    only up to the first "leaving the game" line, and fails a run that hit its time limit.
+  - Lethality changes break scripted autopilots. At BO2 health whoever fires first wins, so retune the
+    scripts in the same change.
+- **Shared globals make parallel tests flaky.** Use per-test-thread state, as the native body tests do.
+
 ## Planning documents (do not accumulate them)
 
 - A big cross-crate effort (a refactor, a port) may get a temporary plan or handoff doc in
