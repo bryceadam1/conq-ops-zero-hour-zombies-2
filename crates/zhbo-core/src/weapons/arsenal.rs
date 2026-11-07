@@ -136,9 +136,6 @@ impl OffhandUse {
     }
 }
 
-/// A second reload press within this many seconds sets off C4.
-pub const DETONATE_DOUBLE_TAP: f32 = 0.35;
-
 /// BO2 melee: a lunge up to this range (inches 64 plus the lunge), one hit on infantry.
 
 #[derive(Clone, Debug, PartialEq)]
@@ -771,24 +768,47 @@ impl Arsenal {
         }
     }
 
-    /// Give a magazine (Scavenger) to every gun, and one of each offhand up to what the class
-    /// carries (`_weapons.gsc:1804-1850`: stock + 1, capped at the loadout's
-    /// `primarygrenadecount`/`specialgrenadecount` — Danger Close's two lethals refill to two).
-    /// The guns are `getweaponslistprimaries()` (`_weapons.gsc:1795`): the weapon's own clip into
-    /// its own stock, never an alt mode's (an under-barrel launcher is in the alts list, which
-    /// only refills the named offhands), whichever mode is up. `c4_down`: a C4 of the player's is
-    /// in the world, so his C4 gets none (`satchel_charge_mp`'s `anyobjectsinworld` case).
+    /// A Scavenger pack picked up (`scavenger_think`, `_weapons.gsc:1791-1890`).
+    ///
+    /// * Every gun (`getweaponslistprimaries()`, `:1795`): `int( clip * scavenger_clip_multiplier )`
+    ///   more rounds in its stock, capped at its most (`:1863-1888`); the weapon's own clip into its
+    ///   own stock, never an alt mode's (an under-barrel launcher is in the alts list, which only
+    ///   refills the offhands it names), whichever mode is up.
+    /// * Each offhand the switch names (`:1816-1851`) gets one more, up to the loadout's count for
+    ///   the class's own item (`primarygrenadecount`/`specialgrenadecount`: Danger Close's two
+    ///   lethals refill to two). Not the Tactical Insertion (not in the switch); not the C4 while one
+    ///   of the player's is in the world (`c4_down`, `anyobjectsinworld`); a lethal item (statstable
+    ///   slot `primarygrenade`) not when the class gives no lethal (`grenadetypeprimarycount < 1`),
+    ///   and — the switch falls through — no item when the class holds a tactical but gives none
+    ///   of it (`grenadetypesecondarycount < 1`).
     pub fn scavenge(&mut self, c4_down: bool) {
+        let multiplier = self.tuning.scavenger_clip_multiplier;
         for w in &mut self.weapons {
             let (clip, max) = (w.main.clip, w.main.max_reserve);
+            let add = (f32::from(clip) * multiplier).max(0.0) as u16;
             let (_, reserve) = w.main_rounds_mut();
-            *reserve = reserve.saturating_add(clip).min(max);
+            *reserve = reserve.saturating_add(add).min(max);
         }
         let (lethal, tactical) = (self.class_count(true), self.class_count(false));
-        if !(c4_down && self.lethal.def.equipment_kind == crate::weapons::Kind::C4) {
-            self.lethal.count = (self.lethal.count + 1).min(lethal.max(self.lethal.count));
+        let tactical_held = !self.loadout.tactical.is_empty();
+        for is_lethal_slot in [true, false] {
+            let o = if is_lethal_slot { &self.lethal } else { &self.tactical };
+            let kind = o.def.equipment_kind;
+            let lethal_item = o.def.cac_slot == "primarygrenade";
+            let skip = o.def.id.is_empty()
+                || kind == crate::weapons::Kind::Insertion
+                || (kind == crate::weapons::Kind::C4 && c4_down)
+                || (lethal_item && lethal < 1)
+                || (tactical_held && tactical < 1);
+            if skip {
+                continue;
+            }
+            let max = if is_lethal_slot { lethal } else { tactical };
+            let o = if is_lethal_slot { &mut self.lethal } else { &mut self.tactical };
+            if o.count < max {
+                o.count += 1;
+            }
         }
-        self.tactical.count = (self.tactical.count + 1).min(tactical.max(self.tactical.count));
     }
 
     /// How many of an offhand the class gives (the count [`Arsenal::with_loadout`] starts it with):
@@ -883,7 +903,7 @@ impl Arsenal {
         // C4: a quick second press of reload sets it off (BO2's double tap).
         self.since_reload_press += dt;
         if pressed & buttons::RELOAD != 0 {
-            if self.since_reload_press < DETONATE_DOUBLE_TAP {
+            if self.since_reload_press < self.tuning.detonate_double_tap {
                 out.push(WeaponAction::Detonate);
             }
             self.since_reload_press = 0.0;

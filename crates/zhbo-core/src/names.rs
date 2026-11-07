@@ -79,6 +79,11 @@ pub fn projectile_model(vm: u8) -> String {
 pub fn drop_model(n: u16) -> String {
     format!("ZDR{n:03}_SKN")
 }
+/// BO2's Scavenger pack: the weapon `dropscavengeritem` drops (`_weapons.gsc:1934`), whose world
+/// model the converter turns into [`SCAVENGER_PACK_OBJECT`].
+pub const SCAVENGER_ITEM: &str = "scavenger_item_mp";
+/// The Zero Hour object a Scavenger pack lies as (`sim::scavenger`).
+pub const SCAVENGER_PACK_OBJECT: &str = "ZHBO_ScavengerPack";
 /// The Zero Hour object a dropped weapon of base weapon `base` lies as (`ZHBO_Drop_an94_mp`).
 pub fn drop_object(base: &str) -> String {
     format!("ZHBO_Drop_{base}")

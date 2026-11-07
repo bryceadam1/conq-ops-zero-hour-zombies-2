@@ -123,6 +123,8 @@ pub(crate) fn projectiles(
         out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), p.rig.hierarchy_file(&hierarchy));
         ini.push_str(&p.ini);
         d.projectile_object = p.object;
+        // The missile's box: its `projectileModel`'s bounds (t6mp `FUN_007825b0`).
+        d.projectile_bounds = projectile_bounds(pool, w);
         models.insert(id.clone(), name);
         made.push(id.as_str());
     }
@@ -168,8 +170,25 @@ pub(crate) fn drops(
             d.drop_object = zhbo_core::names::drop_object(base);
         }
     }
+    // The Scavenger pack (`zhbo_core::sim::scavenger`): `scavenger_item_mp`'s world model as it
+    // lies (an item at rest, upright), the object `names::SCAVENGER_PACK_OBJECT`.
+    let pack = bo2.iter().find(|w| w.name == zhbo_core::names::SCAVENGER_ITEM).and_then(|w| w.world_model.as_deref()).map(|m| find_model(pool, m));
+    let pack_note = match pack {
+        Some(Ok(model)) => {
+            let name = zhbo_core::names::drop_model(made.len() as u16);
+            let mut p = drop_prop(paks, out, &model, &name, zhbo_core::names::SCAVENGER_ITEM, &mut looks);
+            p.ini = p.ini.replacen(&format!("Object {}\n", zhbo_core::names::drop_object(zhbo_core::names::SCAVENGER_ITEM)), &format!("Object {}\n", zhbo_core::names::SCAVENGER_PACK_OBJECT), 1);
+            let hierarchy = name.replace("_SKN", "_SKL");
+            out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &hierarchy, &p.meshes));
+            out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), p.rig.hierarchy_file(&hierarchy));
+            ini.push_str(&p.ini);
+            format!(", the Scavenger pack ({})", model.name)
+        }
+        Some(Err(e)) => format!(", no Scavenger pack ({e})"),
+        None => format!(", no Scavenger pack ({} not in the pool)", zhbo_core::names::SCAVENGER_ITEM),
+    };
     out.insert("Data\\INI\\Object\\ZHBO_BO2_Drops.ini".into(), ini.into_bytes());
-    format!("dropped weapons {}", made.join(", "))
+    format!("dropped weapons {}{pack_note}", made.join(", "))
 }
 
 /// Whether `d` can lie on the ground: BO2 drops it and it can hold rounds.
@@ -270,12 +289,22 @@ fn ids_contains(ids: &[String], id: &str) -> bool {
 /// projectile object the one its base (`base_id`) was converted with — the crossbow with an optic,
 /// the under-barrel launcher of any combo (`gl_an94_mp~an94_mp+gl`).
 pub(crate) fn share_projectiles(defs: &mut [zhbo_core::weapons::WeaponDef]) {
-    let objects: BTreeMap<String, String> =
-        defs.iter().filter(|d| !d.projectile_object.is_empty()).map(|d| (d.id.clone(), d.projectile_object.clone())).collect();
+    let objects: BTreeMap<String, (String, [f32; 6])> =
+        defs.iter().filter(|d| !d.projectile_object.is_empty()).map(|d| (d.id.clone(), (d.projectile_object.clone(), d.projectile_bounds))).collect();
     for d in defs.iter_mut().filter(|d| d.projectile_object.is_empty()) {
-        if let Some(o) = objects.get(base_id(&d.id)) {
+        if let Some((o, b)) = objects.get(base_id(&d.id)) {
             d.projectile_object = o.clone();
+            d.projectile_bounds = *b;
         }
+    }
+}
+
+/// The bounds of `w`'s `projectileModel` (mins, maxs, inches; all 0 without one): what t6mp gives
+/// the missile entity it fires (`FUN_00607cb0` -> `FUN_007825b0`, the model's `mins`/`maxs`).
+pub(crate) fn projectile_bounds(pool: &[&Zone], w: &zhbo_formats::weapon::Weapon) -> [f32; 6] {
+    match w.projectile_model.as_deref().map(|m| find_model(pool, m)) {
+        Some(Ok(m)) => [m.mins[0], m.mins[1], m.mins[2], m.maxs[0], m.maxs[1], m.maxs[2]],
+        _ => [0.0; 6],
     }
 }
 

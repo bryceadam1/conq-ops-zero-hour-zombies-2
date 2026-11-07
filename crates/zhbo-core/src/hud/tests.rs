@@ -518,6 +518,52 @@ fn tab_shows_the_scoreboard_and_hides_the_hud() {
     assert!(!images.contains(&crate::lui::materials::image("hud_mp_vis_right_lower")), "the ammo area hides under the scoreboard");
 }
 
+/// Engineer's `specialty_showenemyequipment` (`_weaponobjects.gsc:2253-2300`): an enemy's
+/// Claymore far beyond the old 400-unit reach is outlined (its model's box, 12 edges); a
+/// teammate's never; without the specialty nothing. The specialty is the test, not the perk's name.
+#[test]
+fn engineer_sees_enemy_equipment_at_any_distance() {
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    let (mut sim, mut client) = fps_state();
+    client.view_eye = Vec3::new(0.0, 0.0, 10.0);
+    client.view_dir = Vec3::new(1.0, 0.0, 0.0);
+    client.last_hfov = 1.2;
+    let claymore: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { projectile_bounds: [-3.0, -6.0, 0.0, 3.0, 6.0, 8.0], ..crate::weapons::weapon("claymore_mp").clone() }));
+    sim.equipment.placed.push(crate::equipment::Placed::new(claymore, 1, 2, 60, Vec3::new(900.0, 0.0, 0.0), 0.0, None));
+    let piece = |flags: u32| ObjInfo { id: 60, flags: objflags::NO_COLLIDE | flags, pos: Vec3::new(900.0, 0.0, 0.0), ..soldier(60, 1, 900.0) };
+    let lines = |sim: &Sim, client: &Client, flags: u32| {
+        let rec = Recorder { has_art: true, objects: vec![piece(flags)], ..Default::default() };
+        let _prims = draw_hud(&rec, client, sim);
+        let n = rec.lines.borrow().len();
+        n
+    };
+    let base = lines(&sim, &client, objflags::ENEMY);
+    sim.players.iter_mut().flatten().next().unwrap().arsenal.loadout.perks.push(crate::weapons::Perk::ENGINEER);
+    assert!(sim.player(0).unwrap().arsenal.has_specialty(crate::weapons::Specialty::ShowEnemyEquipment));
+    assert_eq!(lines(&sim, &client, objflags::ENEMY), base + 12, "the enemy Claymore's box");
+    assert_eq!(lines(&sim, &client, objflags::ALLY), base, "never a teammate's");
+}
+
+/// A Shock Charge's zap hides the HUD (`setclientuivisibilityflag( "hud_visible", 0 )`,
+/// `_proximity_grenade.gsc:191`) until its exit shock: no ammo area, no minimap.
+#[test]
+fn a_shock_charge_zap_hides_the_hud() {
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    let (mut sim, client) = fps_state();
+    let ammo = crate::lui::materials::image("hud_mp_vis_right_lower");
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let _prims = draw_hud(&rec, &client, &sim);
+    assert!(rec.images.borrow().contains(&ammo), "the ammo area shows");
+    let charge = crate::weapons::weapon("concussion_grenade_mp");
+    let p = sim.players.iter_mut().flatten().next().unwrap();
+    p.taser = Some(crate::sim::shock::Taser::new(9, charge, Vec3::ZERO, &crate::tuning::get()));
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let _prims = draw_hud(&rec, &client, &sim);
+    assert!(!rec.images.borrow().contains(&ammo), "hidden while tazed");
+}
+
 /// The board lists the other player too (a two-player match): his name, his kills and deaths as
 /// this machine saw the sim's events, under the enemies' block; the local player's own row first.
 /// (Before, the board had one hard-coded "General" row.)

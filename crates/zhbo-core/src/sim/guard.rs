@@ -172,11 +172,15 @@ impl LogicHost for Guarded<'_> {
         self.host.destroy(id)
     }
     fn disable(&self, id: u32, kind: i32, seconds: f32) {
-        // A placed stun (the Shock Charge) skips a General with `proximityprotection`.
-        if kind == disable_kind::PARALYZED && !self.thrown && self.def.effect == Effect::Stun && self.guard(id).is_some_and(|g| g.proximity_protected) {
+        // The Shock Charge's zap skips a General with `proximityprotection`; the script tells the
+        // two stuns apart by the weapon (`onweapondamage`'s `switch ( sweapon )`,
+        // `_weapons.gsc:1356-1390`), so a charge going off in flight (a direct hit on a player)
+        // is still the charge's.
+        let charge = self.def.equipment_kind == crate::weapons::Kind::Shock;
+        if kind == disable_kind::PARALYZED && charge && self.def.effect == Effect::Stun && self.guard(id).is_some_and(|g| g.proximity_protected) {
             return;
         }
-        let mask = kind == disable_kind::PARALYZED && self.thrown && self.def.effect == Effect::Stun;
+        let mask = kind == disable_kind::PARALYZED && !charge && self.def.effect == Effect::Stun;
         let scale = if mask { self.guard(id).map_or(1.0, |g| g.stun) } else { 1.0 };
         // A first-person General is shellshocked by the sim instead: Zero Hour's paralysis would
         // freeze the player outright.
@@ -256,15 +260,17 @@ mod tests {
     }
 
     /// Tactical Mask cuts a thrown concussion's stun to x0.1 whoever threw it
-    /// (`_weapons.gsc:1375-1376`); placed equipment's stun answers to another perk.
+    /// (`_weapons.gsc:1375-1376`); the Shock Charge's stun answers to another perk (the script tells
+    /// them apart by the weapon, thrown or placed).
     #[test]
     fn the_tactical_mask_cuts_anothers_concussion() {
         let hits = std::cell::RefCell::new(Vec::new());
         let host = FakeHost::default();
         let guards = [Guard { general: 2, blast: 1.0, stun: 0.1, first_person: false, flash_protected: false, proximity_protected: false }];
         let conc = def(Effect::Stun);
+        let charge: &'static WeaponDef = Box::leak(Box::new(WeaponDef { equipment_kind: crate::weapons::Kind::Shock, ..conc.clone() }));
         Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits }.disable(2, disable_kind::PARALYZED, 4.0);
-        Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: false, owner: 1, at: None, hits: &hits }.disable(2, disable_kind::PARALYZED, 4.0);
+        Guarded { host: &host, guards: &guards, def: charge, stuck_to: None, thrown: true, owner: 1, at: None, hits: &hits }.disable(2, disable_kind::PARALYZED, 4.0);
         let secs: Vec<f32> = host.disabled.borrow().iter().map(|d| d.2).collect();
         assert!((secs[0] - 0.4).abs() < 1e-6 && secs[1] == 4.0, "{secs:?}");
     }
@@ -274,7 +280,8 @@ mod tests {
     /// it does. A thrown concussion still stuns him (that is `stunprotection`'s x0.1).
     #[test]
     fn the_tactical_mask_stops_a_shock_charge() {
-        let shock = def(Effect::Stun);
+        let shock: &'static WeaponDef = Box::leak(Box::new(WeaponDef { equipment_kind: crate::weapons::Kind::Shock, ..def(Effect::Stun).clone() }));
+        let concussion = def(Effect::Stun);
         for first_person in [false, true] {
             let hits = std::cell::RefCell::new(Vec::new());
             let host = FakeHost::default();
@@ -285,7 +292,9 @@ mod tests {
             let placed = Guarded { host: &host, guards: &guards, def: shock, stuck_to: None, thrown: false, owner: 1, at: None, hits: &hits };
             placed.disable(2, disable_kind::PARALYZED, 1.5);
             placed.disable(3, disable_kind::PARALYZED, 1.5);
-            Guarded { thrown: true, ..placed }.disable(2, disable_kind::PARALYZED, 4.0);
+            Guarded { thrown: true, def: concussion, ..placed }.disable(2, disable_kind::PARALYZED, 4.0);
+            // The charge going off in flight (a direct hit) is still the charge: the mask stops it.
+            Guarded { thrown: true, ..placed }.disable(2, disable_kind::PARALYZED, 1.5);
             let reached: Vec<u32> = if first_person { hits.borrow().iter().map(|h| h.victim).collect() } else { host.disabled.borrow().iter().map(|d| d.0).collect() };
             assert_eq!(reached, [3, 2], "first person {first_person}: only the unmasked General is zapped, the masked one still concussed");
         }

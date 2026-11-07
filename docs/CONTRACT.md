@@ -21,6 +21,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
 | A dropped weapon (BO2's `dropweaponfordeath` item): which drops, where it lies, its rounds, attachments and camo, the walk-over's ammo, the use key's swap, its expiry | zhbo-core (`Sim::drops`, `sim/drops.rs`, `weapons::pickup`; the tuning pack's `[Drops]`) | Its Zero Hour object (`ZHBO_Drop_<base>`, `WeaponDef::drop_object`: the base weapon's world model at the General's scale, inert and unclickable) is spawned, moved and destroyed by the sim through `LogicHost::spawn`/`set_pose`/`destroy`; it is drawn only, nothing reads it back. Zero Hour's own infantry drop nothing (their weapons are Zero Hour's, not BO2's). |
+| A Scavenger pack (BO2's `dropscavengerfordeath` item): which kill drops one, where it lies, who takes it and what it refills | zhbo-core (`Sim::packs`, `sim/scavenger.rs`, `weapons::Arsenal::scavenge`; the tuning pack's `[Drops]`) | Its Zero Hour object (`names::SCAVENGER_PACK_OBJECT`, `scavenger_item_mp`'s world model at the General's scale, inert and unclickable, converted with the dropped weapons) is spawned, moved and destroyed by the sim; drawn only. |
 | A smoke screen (BO2's smoke grenade): where, how long, how wide its sight blocker is | zhbo-core (`Sim::smokes`, `crate::smoke`, the tuning pack's `[Smoke]`) | Zero Hour's units and pathfinder ask the core's lock-free mirror (host patch 0024, "Smoke screens in Zero Hour's targeting and pathing"); the cloud is the converted BO2 effect, an `AREA_EFFECT` FXList played at the blast. |
 | Graphics detail (the static level, the particle cap, shadows, the dynamic LOD) | Zero Hour's `GameLODManager`, per machine | Presentation only and never a sim input: each machine picks its own level (host patch 0025 recommends High for hardware the 2002 presets cannot classify, CONFIG.md "Graphics detail"), and the dynamic level follows its own frame rate. Its two logic-side fields (`DebrisSkipMask`, `SlowDeathScale`) are pinned to no-ops by the data tests (`zhbo_assets::detail`). Not in the content CRC. |
 
@@ -172,8 +173,9 @@ replicated messages alone. The rules, and what enforces each:
   `step_frame` reports dead): a kill scores whichever of the two seats steps first. The lists, the counts and each seat's last Generals are hashed (the world part).
   The scoreboard's ASSISTS is that count; the client adds the points (`client::ASSIST_POINTS`,
   `mp/scoreinfo.csv`'s tdm column) to the SCORE column. A concussion, flashbang, EMP grenade or
-  Shock Charge that reached a first-person General (the sim's shock hits name the weapon and its
-  owner) is that attacker's last hit (`score::Tactical`, BO2's 1-damage tactical blast), and his
+  Shock Charge is that attacker's last hit (`score::Tactical`): the concussion's, flashbang's and
+  Shock Charge's own radius damage (their def's 1, t6mp `FUN_0060a480`) is recorded by its weapon,
+  and the EMP grenade, which deals none, by the shock hit it caused a first-person General; his
   assist is then `assist_concussion`/`_flash`/`_emp`/`_proximity` (50); a later plain hit clears it.
   The recording host takes damage-rules' `MeansOfDeath`.
 * **The local player's prediction is presentation.** The client (`client/predict.rs`) predicts its
@@ -1688,6 +1690,22 @@ art (from `mp_raid`), BO2's unlit surfaces drawn self-lit (`Looks::unlit`), and 
 `SpreadRates` key (`fHipSpreadTurnAdd`, `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`; a table
 converted before it reads no turn add and unscaled stance decay, losing the SMGs' crouched 4×
 decay). `EventKind::Shot`'s `spread` is Rust-internal, no ABI.
+
+**Pending for the next bump (perks-equipment).** Archive `hud::VERSION` 89 → 90 needed: the weapon
+table gains `ProjectileBounds` (the `projectileModel`'s mins and maxs, inches: the missile's box and a
+placed piece's bullet box; 174 fields; a table converted before it parses with all 0, and projectiles
+and equipment keep the old stand-in volumes), `ZHBO_BO2_Drops.ini` gains the Scavenger pack's object
+(`ZHBO_ScavengerPack`, `scavenger_item_mp`'s world model, as a `ZDR###` model), the sprite
+`ZHBO_BO2_ScavengerPickup` (`hud_scavenger_pickup`) and six sound events (`ZHBO_BO2_LStepNpc`,
+`ZHBO_BO2_LSprintStepNpc`, `ZHBO_BO2_QStepNpc`, `ZHBO_BO2_QSprintStepNpc`, `ZHBO_BO2_ScavengerPickup`,
+`ZHBO_BO2_ScavengerPickupNpc`). An archive at 89 is kept by the launcher: the pack has no object (it
+still works, unseen), the new steps and pickup sounds are silent and the icon draws nothing. The tuning
+pack (the content CRC's tuning part) loses `EquipmentArmTime` and gains `bettyactivationdelay`,
+`scr_proximityGrenadeActivationTime`, `scr_proximityGrenadeDOTDamageAmount`,
+`cg_sonarAttachmentCounterMaxSpeed`, `cg_sonarAttachmentCounterColorMultiplier`, `hackertoollockonfov`,
+`equipmenthackertoolradius`, `vehiclehackertoolradius`, `TargetCircleHalfWidth`,
+`scavenger_clip_multiplier` and `DetonateDoubleTap`. The sim state gains `Sim::packs` (world part)
+and `PlayerSim::taser` (seat part), both hashed. No ABI struct, function or table moves.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

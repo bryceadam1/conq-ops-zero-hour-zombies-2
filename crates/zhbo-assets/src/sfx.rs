@@ -97,8 +97,20 @@ pub const SFX: &[Sfx] = &[
     // third-person aliases (`_footsteps.csc`, `firstperson = 0`), positional for everyone.
     Sfx { event: "ZHBO_BO2_StepNpc", from: From::World, layers: &["fly_step_run_npc_grass"], kind: Kind::World, limit: 4 },
     Sfx { event: "ZHBO_BO2_SprintStepNpc", from: From::World, layers: &["fly_step_sprint_npc_grass"], kind: Kind::World, limit: 4 },
+    // The loud and quiet third-person footstep tables (t6mp `FUN_005031c0`: `default_3rd_person_loud`
+    // and `default_3rd_person_quiet`, picked per step by `FUN_004cb480`): an enemy's steps for a
+    // listener with Awareness, and a Dead Silence player's steps (`zhbo_core::sounds::RemoteSteps`).
+    // The tables' entries are these aliases (their SND hashes, read from `mp_raid`).
+    Sfx { event: "ZHBO_BO2_LStepNpc", from: From::World, layers: &["fly_lstep_run_npc_grass"], kind: Kind::World, limit: 4 },
+    Sfx { event: "ZHBO_BO2_LSprintStepNpc", from: From::World, layers: &["fly_lstep_sprint_npc_grass"], kind: Kind::World, limit: 4 },
+    Sfx { event: "ZHBO_BO2_QStepNpc", from: From::World, layers: &["fly_qstep_run_npc_grass"], kind: Kind::World, limit: 4 },
+    Sfx { event: "ZHBO_BO2_QSprintStepNpc", from: From::World, layers: &["fly_qstep_sprint_npc_grass"], kind: Kind::World, limit: 4 },
     // ... and their landings (`_footsteps.csc` `playerland`, `fly_land_npc_<surface>`).
     Sfx { event: "ZHBO_BO2_LandNpc", from: From::World, layers: &["fly_land_npc_grass"], kind: Kind::World, limit: 4 },
+    // A Scavenger pack taken (`scavenger_think`, `_weapons.gsc:1797-1798`): the taker's own sound
+    // and everyone else's at him.
+    Sfx { event: "ZHBO_BO2_ScavengerPickup", from: From::World, layers: &["fly_equipment_pickup_plr"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_ScavengerPickupNpc", from: From::World, layers: &["fly_equipment_pickup_npc"], kind: Kind::World, limit: 2 },
     // Hold breath: `clientscripts/mp/_audio.csc` plays `<teamclientprefix>_sinper_*` (`vox_gen` by
     // default) on the engine's `playerbreath*sound` notifies (`FUN_0052e3d0`).
     Sfx { event: "ZHBO_BO2_BreathIn", from: From::Voice, layers: &["vox_gen_sinper_hold"], kind: Kind::Player, limit: 1 },

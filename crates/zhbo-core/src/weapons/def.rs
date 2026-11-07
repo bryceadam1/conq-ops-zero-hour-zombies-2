@@ -428,6 +428,11 @@ pub struct WeaponDef {
     /// Zero Hour FXList for the first-person shell eject on the last round.
     pub view_last_shot_shell_fx: String,
     pub projectile_object: String,
+    /// The bounds of its `projectileModel` (mins x, y, z then maxs, inches, the model's own
+    /// frame): what a grenade or a missile collides by and what bullets hit once it is placed —
+    /// t6mp gives the missile entity its model's bounds (`FUN_00607cb0` -> `FUN_007825b0`). All 0:
+    /// no projectile model, or a table converted before the field.
+    pub projectile_bounds: [f32; 6],
     pub fire_sound: String,
     /// The empty magazine's click in BO2's vocabulary (`emptyFireSoundPlayer`), as a converted event.
     pub empty_fire_sound: String,
@@ -1083,6 +1088,7 @@ impl Default for WeaponDef {
             view_shell_fx: String::new(),
             view_last_shot_shell_fx: String::new(),
             projectile_object: String::new(),
+            projectile_bounds: [0.0; 6],
             fire_sound: String::new(),
             empty_fire_sound: String::new(),
             left_fire_sound: String::new(),
@@ -1195,6 +1201,20 @@ pub const MELEE_RANGE: f32 = inches(55.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// Its projectile model's box in Zero Hour units, as BO2's entity bounds (axis-aligned, not
+    /// turned by its yaw: an entity's `absmin`/`absmax` are its origin plus `mins`/`maxs`): the
+    /// box's centre off the origin and its half extents. `None` without a projectile model.
+    pub fn projectile_box(&self) -> Option<(crate::math::Vec3, crate::math::Vec3)> {
+        let b = self.projectile_bounds;
+        if b.iter().all(|v| *v == 0.0) {
+            return None;
+        }
+        let i = crate::units::inches(1.0);
+        let centre = crate::math::Vec3::new(b[0] + b[3], b[1] + b[4], b[2] + b[5]) * (0.5 * i);
+        let half = crate::math::Vec3::new(b[3] - b[0], b[4] - b[1], b[5] - b[2]) * (0.5 * i);
+        Some((centre, half))
+    }
+
     /// The third-person weapon's index: [`WeaponDef::world_weapon`], else the viewmodel's.
     pub fn world_index(&self) -> i32 {
         if self.world_weapon >= 0 {

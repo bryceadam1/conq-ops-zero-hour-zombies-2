@@ -43,7 +43,7 @@ pub mod state;
 mod tests;
 
 use center::*;
-pub use center::{reticle_color_rgb, HINT_TIME};
+pub use center::{reticle_color_rgb, HINT_TIME, SCAVENGER_ICON_FADE};
 use damage::*;
 use map::*;
 use panels::*;
@@ -96,7 +96,6 @@ pub fn render(prims: &[Prim], host: &dyn ClientHost) {
 pub(crate) const WHITE: u32 = 0xF2FF_FFFF;
 pub(crate) const DIM: u32 = 0xA0FF_FFFF;
 pub(crate) const RED: u32 = 0xF0E8_3A2E;
-pub(crate) const AMBER: u32 = 0xF0F2_B233;
 /// BO2's player arrow and ready-streak gold.
 pub(crate) const GOLD: u32 = 0xFFF2_C230;
 /// Panel fills and outlines.
@@ -285,8 +284,13 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     // Using the field computer, the tablet is up (zhbo_core::viewmodel): no crosshair.
     let tablet_up = matches!(p.mode, Mode::FieldComputer { .. });
     let map_open = client.hud.map_open;
+    // A Shock Charge's zap hides his HUD until its exit shock (`setclientuivisibilityflag(
+    // "hud_visible", 0 )`, `_proximity_grenade.gsc:191-207`; `sim::shock::Taser`).
+    let tazed = p.taser.is_some_and(|z| z.hides_hud());
     // BO2 hides its HUD under the scoreboard (`BIT_SCOREBOARD_OPEN` in every panel's visibility).
-    if client.hud.scoreboard_open {
+    if tazed {
+        host.ghost(0, Vec3::ZERO, 0.0, false);
+    } else if client.hud.scoreboard_open {
         scoreboard::draw(&l, prims, &scoreboard_blocks(host, client, team_color(host, p), local_player));
         host.ghost(0, Vec3::ZERO, 0.0, false);
     } else {
@@ -300,6 +304,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             // to the player; the spectator's own prompts are the dead-spectate panel's).
             if !spectating {
                 draw_hitmarker(prims, w, h, client);
+                center::draw_scavenger_icon(prims, w, h, client);
                 draw_score_popup(&l, prims, client);
                 draw_hint(&l, prims, client);
                 pickup::draw(&l, prims, sim, p, crate::input::key_name(client.cfg.bindings.field_computer));

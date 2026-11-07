@@ -763,6 +763,13 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ProjectileObject", "The thrown/projectiled Zero Hour object.", FieldKind::Str,
         |d: &WeaponDef| d.projectile_object.clone(),
         |d: &mut WeaponDef, v: Values| { d.projectile_object = v.text.into(); Ok(()) }),
+    field!("ProjectileBounds", "The `projectileModel`'s bounds, inches: mins x y z, maxs x y z (`FUN_007825b0`; the missile's and the placed piece's collision box).", FieldKind::Nums(6),
+        |d: &WeaponDef| d.projectile_bounds.map(|v| v.to_string()).join(" "),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(6)?;
+            d.projectile_bounds = [v.num(0), v.num(1), v.num(2), v.num(3), v.num(4), v.num(5)];
+            Ok(())
+        }),
     field!(present "FireSound", "The shot's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.fire_sound = v.text.into(); Ok(()) }),
@@ -1357,7 +1364,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 173);
+        assert_eq!(WEAPON_FIELDS.len(), 174);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

@@ -76,6 +76,8 @@ pub const SPRITES: &[Sprite] = &[
     // Minimap: your arrow, the dot for everyone else (tinted with their team colour), the compass.
     mat("ZHBO_BO2_PlayerArrow", "compassping_player", 32),
     mat("ZHBO_BO2_PlayerBracket", "compassping_player_bracket", 128),
+    // The Scavenger pickup icon (`scavenger_hud_create`, `_weapons.gsc:1892-1912`).
+    mat("ZHBO_BO2_ScavengerPickup", "hud_scavenger_pickup", 64),
     mat("ZHBO_BO2_Dot", "compassping_enemy", 16),
     mat("ZHBO_BO2_Compass", "hud_horizontal_compass_minimap", 512),
     // Bottom-left team panel: frame, its fill, and the emblem plate with its light.

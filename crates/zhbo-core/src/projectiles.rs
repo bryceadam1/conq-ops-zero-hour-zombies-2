@@ -37,7 +37,9 @@ impl Flight {
         Flight { gravity: inches(t.bg_gravity), bounce_up: t.projectile_bounce, bounce_along: t.projectile_bounce_along, rest_speed: t.projectile_rest_speed }
     }
 }
-/// How close a flying projectile must pass an object to hit it.
+/// How close a flying projectile must pass an object to hit it when its def carries no projectile
+/// model bounds (a table converted before `ProjectileBounds`, or a def without a model): the
+/// mod's old stand-in, kept for such tables only.
 const HIT_RADIUS: f32 = 2.5;
 /// Zero Hour FX for a blast when neither the impact table nor the weapon names one (an archive
 /// without the converted table, or a mod-only def).
@@ -120,14 +122,19 @@ impl Projectile {
 
     /// Advance one logic frame with no shields about (see [`Projectile::step_shielded`]).
     pub fn step(&mut self, host: &dyn LogicHost) -> Option<Outcome> {
-        self.step_shielded(host, &[])
+        self.step_shielded(host, &[], &[])
     }
 
     /// Advance one logic frame. Returns `Some` when it is finished (went off or hit). An enemy's
     /// Assault Shield in the way stops it (`_globallogic_player.gsc:840`: location `riotshield`):
     /// an explosive goes off on it (its impact damage is the script's 0, its splash the blast's,
     /// which the shield protects against), anything else falls dead.
-    pub fn step_shielded(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer]) -> Option<Outcome> {
+    ///
+    /// `players` are the seats' Generals (BO2's players): a Shock Charge that strikes an enemy one
+    /// in flight goes off at once (`watchproximitygrenadehitplayer`, `_proximity_grenade.gsc:127-
+    /// 145`: on `grenade_bounce` off a player not of the owner's team and not off a shield,
+    /// `proximitydetonate`), after the strike's impact damage (t6mp `FUN_00608c10`).
+    pub fn step_shielded(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer], players: &[u32]) -> Option<Outcome> {
         let dt = LOGIC_DT;
         self.age += dt;
         self.bounced = None;
@@ -223,6 +230,9 @@ impl Projectile {
                 // bounces (t6mp `FUN_00608c10`): a Semtex stuck to a player, a frag or
                 // flashbang off his head.
                 self.strike(host, &o, dud);
+                if self.def.equipment_kind == crate::weapons::Kind::Shock && players.contains(&o.id) {
+                    return Some(self.go_off(host, None, shields));
+                }
                 if self.def.sticky {
                     self.stuck_to = Some(o.id);
                 } else {
@@ -299,7 +309,7 @@ impl Projectile {
             .into_iter()
             .filter(|o| o.id != self.owner && o.id != self.object && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
             .filter_map(|o| {
-                let solid = struck_solid(&o);
+                let solid = struck_solid(&o, self.def);
                 let t = crate::hitscan::ray_vs_target(from, dir, len.max(1e-6), &solid)?;
                 Some((o, if len > 1e-6 { t / len } else { 0.0 }))
             })
@@ -423,21 +433,30 @@ impl Projectile {
     }
 }
 
-/// The solid a flying projectile strikes `o` by: a soldier's thin cylinder (1.5 units: the
-/// projectile meets the body, not Zero Hour's click-sized infantry cylinder), anything else its
-/// Zero Hour geometry ([`crate::hitscan::solid`]: a box of its two radii, a cylinder, a sphere);
-/// each grown by half the projectile's [`HIT_RADIUS`], and a unit above and below.
-fn struck_solid(o: &ObjInfo) -> crate::hitscan::Target {
+/// The solid a flying projectile of `def` strikes `o` by. BO2 traces the missile's box — its
+/// `projectileModel`'s bounds (t6mp `FUN_00607cb0` -> `FUN_007825b0`), axis-aligned, offset from
+/// its origin — against each entity's bounds: a player's box (15" either side of his origin, the
+/// movement radius, and his height) and anything else's own. Here the object's solid (a soldier
+/// as BO2's player box, anything else its Zero Hour geometry, [`crate::hitscan::solid`]) is moved
+/// by the box's offset and grown by its half extents (horizontally by the larger, as the shapes
+/// are round or turned), so the projectile's origin meets it where the two boxes touch. A def
+/// without bounds keeps the old stand-in: half of [`HIT_RADIUS`] all round.
+fn struck_solid(o: &ObjInfo, def: &WeaponDef) -> crate::hitscan::Target {
     use crate::hitscan::{Shape, Target};
-    let r = HIT_RADIUS * 0.5;
+    let (centre, half) = def.projectile_box().unwrap_or((Vec3::ZERO, Vec3::new(HIT_RADIUS * 0.5, HIT_RADIUS * 0.5, 1.0)));
+    let r = half.x.max(half.y);
     let base = crate::hitscan::solid(o);
-    let low = Vec3::new(o.pos.x, o.pos.y, o.pos.z - 1.0);
+    let low = Vec3::new(o.pos.x - centre.x, o.pos.y - centre.y, o.pos.z - centre.z - half.z);
+    let grow = 2.0 * half.z;
     let shape = match base.shape {
-        _ if o.has(objflags::INFANTRY) => Shape::Cylinder { radius: 1.5 + r, height: o.height.max(2.0) + 2.0 },
-        Shape::Box { half_x, half_y, height, yaw } => Shape::Box { half_x: half_x + r, half_y: half_y + r, height: height + 2.0, yaw },
-        Shape::Cylinder { radius, height } => Shape::Cylinder { radius: radius + r, height: height + 2.0 },
+        _ if o.has(objflags::INFANTRY) => {
+            let player = crate::movement::MoveTuning::default().radius;
+            Shape::Box { half_x: player + r, half_y: player + r, height: o.height.max(2.0) + grow, yaw: 0.0 }
+        }
+        Shape::Box { half_x, half_y, height, yaw } => Shape::Box { half_x: half_x + r, half_y: half_y + r, height: height + grow, yaw },
+        Shape::Cylinder { radius, height } => Shape::Cylinder { radius: radius + r, height: height + grow },
         // The sphere stands on the position (centred a radius up): grown, it stands `r` lower.
-        Shape::Sphere { radius } => return Target { pos: Vec3::new(o.pos.x, o.pos.y, o.pos.z - r), shape: Shape::Sphere { radius: radius + r }, ..base },
+        Shape::Sphere { radius } => return Target { pos: Vec3::new(o.pos.x - centre.x, o.pos.y - centre.y, o.pos.z - centre.z - r), shape: Shape::Sphere { radius: radius + r }, ..base },
         other => other,
     };
     Target { pos: low, shape, ..base }
@@ -622,10 +641,12 @@ pub fn blast(host: &dyn LogicHost, def: &'static WeaponDef, owner: u32, at: Vec3
                 }
                 if !own {
                     host.disable(o.id, disable_kind::PARALYZED, secs);
-                    // The Shock Charge also hurts.
+                    // Its radius damage too: t6mp's explode think runs the radius damage for any def
+                    // whose `iExplosionInnerDamage` is not 0 (`FUN_0060a480` -> `FUN_005f2130`; the
+                    // Shock Charge's 1 over 200"). Its zap's ticks are the sim's (`shock::Taser`).
                     let how = crate::damage::splash(d);
                     let amount = d.explosion_damage_at(dist) * crate::damage::scale_on(&tuning, &d.id, how, o) * BO2_TO_ZH_DAMAGE;
-                    if amount > 0.0 && d.explosion_inner_damage > 10.0 {
+                    if amount > 0.0 {
                         kill |= host.damage(owner, o.id, amount, crate::damage::Blow::from_to(how, d, at, o.pos));
                     }
                     hit_enemy = true;
@@ -706,6 +727,30 @@ mod tests {
     use super::*;
     use crate::sim::tests::{general, soldier, FakeHost};
     use crate::weapons::weapon;
+
+    /// The missile's box is its `projectileModel`'s bounds (t6mp `FUN_00607cb0` -> `FUN_007825b0`)
+    /// and a soldier's is BO2's player box (15" either side): a grenade passing 17" beside him
+    /// strikes him when its model reaches 3" out, and misses with a 1" model; a def without bounds
+    /// keeps the old stand-in.
+    #[test]
+    fn a_projectile_strikes_by_its_models_box_against_the_players() {
+        let o = soldier(7, 1, 0.0);
+        let at = |d: f32| Vec3::new(o.pos.x - 50.0, o.pos.y + inches(d), o.pos.z + inches(30.0));
+        let hits = |bounds: [f32; 6], side: f32| {
+            let def = WeaponDef { projectile_bounds: bounds, ..Default::default() };
+            let t = struck_solid(&o, &def);
+            crate::hitscan::ray_vs_target(at(side), Vec3::new(1.0, 0.0, 0.0), 100.0, &t).is_some()
+        };
+        assert!(hits([-3.0, -3.0, -1.0, 3.0, 3.0, 1.0], 17.0), "15 + 3 reaches 17");
+        assert!(!hits([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0], 17.0), "15 + 1 does not");
+        assert!(hits([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0], 15.5));
+        // An off-centre model is offset with it: 18" off on -y, a box reaching 4" towards +y
+        // touches him, one reaching 4" further out does not.
+        assert!(hits([-1.0, 0.0, -1.0, 1.0, 4.0, 1.0], -18.0) && !hits([-1.0, -4.0, -1.0, 1.0, 0.0, 1.0], -18.0));
+        // No bounds: the old stand-in (half of 2.5 units all round).
+        let r = HIT_RADIUS * 0.5 / inches(1.0);
+        assert!(hits([0.0; 6], 15.0 + r - 0.5) && !hits([0.0; 6], 15.0 + r + 0.5));
+    }
 
     /// A frag thrown into a tank's hull strikes it once (its `iDamage`), however long it lies
     /// against the hull before its fuse: in game one struck an Overlord on six frames running,

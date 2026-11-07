@@ -135,6 +135,7 @@ impl Sim {
             shields: self.shields.clone(),
             deployed: self.deployed.clone(),
             drops: self.drops.clone(),
+            packs: self.packs.clone(),
             kills: self.kills.clone(),
             blows: self.blows.clone(),
             combat_seen: 0,

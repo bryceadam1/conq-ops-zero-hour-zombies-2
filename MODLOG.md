@@ -12199,7 +12199,10 @@ him, and `shock::emp_hits` skips `immuneemp`. Tests: `the_tactical_mask_stops_a_
 `hard_wired_ignores_the_emp_grenade`. The other specialties with no reader are scorestreak, radar
 and UI ones the mod has no counterpart for (counter-UAV, air support, sentries, the MMS/thermal and
 target-finder immunities on another General, Ghost's `gpsjammer`, Awareness's `loudenemies`);
-listed in the report, not changed.
+listed in the report, not changed. [Corrected in round 8 (perks-equipment): that was wrong for three
+of them. The mod has the MMS scanner and the Target Finder (`sim::optics`) and plays other players'
+footsteps, so Cold Blooded's `immunemms`/`immunerangefinder`/`noname` and Awareness's
+`loudenemies` had systems to act on; they are ported there (the round-8 entry at the end).]
 
 ## Bug sweep 4: the long run's lone round no longer shoots the next General on arrival (2026-11-03, branch `v1/bug-sweep-4`)
 
@@ -13752,3 +13755,114 @@ machine (load 17), saw Zero Hour end the match at frame 2,673 with no sim kill l
 General gone from 500 hp in one frame, then the joiner's on the joiner only) and the hashes
 parting on that last frame alone — the engine's teardown, not a sim divergence. The long runs were
 then dropped by the round's testing-scope change; the integrator's ladder reruns them.
+
+## Round 8 perks-equipment: BO2's perk bits, the Scavenger pack, arming, the Shock Charge, hit volumes (2026-11-06, branch `v1/perks-equipment`)
+
+From the BO2-rules audit (`~/.opencode/plan/bo2-audit/`: sim-gameplay F11, F12, F12b, F15;
+mechanical-scan F9, F10, F14, F15, F17). Every rule re-read in t6mp (Ghidra, decompiles under
+`~/.opencode/plan/perks-equipment/ghidra/`) or the MP GSC before porting.
+
+**The perk sweep.** Every `specialty_*` bit the statstable's perk rows grant (bonus cards grant
+none; in this install only FMJ's attachment grants bits through the data) against its readers:
+* Cold Blooded. t6mp tests the *target's* bits through `FUN_004e6f40` (client `n`'s perk word):
+  `immunemms` (0x21) in the MMS's character pass `FUN_004e7b40` — the character fades by
+  `cg_sonarAttachmentCounterMaxSpeed` (0.2, not 2.2) and his visibility is multiplied by
+  `cg_sonarAttachmentCounterColorMultiplier` (0.02); `immunerangefinder` (0x23) in the target
+  finder's display `FUN_00526780` — no diamond; `noname` (0x2a) in its spotting `FUN_00528ec0` — no
+  spot (the reticle keeps its colour; also the aimed name, which the mod does not draw).
+  `sim::optics` takes the other Generals' class specialties (`Perks`). `immunenvthermal` (0x22,
+  `FUN_004e7940`) needs a thermal view the mod does not have; `nokillstreakreticle` has no
+  killstreaks. `nomotionsensor` is read only by `_sensor_grenade.gsc` `checkfortracking`, which feeds
+  `isplayertracked` — the challenges alone (`_challenges.gsc:396-398`); the engine's sensor scan
+  `FUN_004bc570` tests no perk. So it has nothing to act on here.
+* Awareness (`loudenemies`, 0x26): `FUN_004c1170` (`BG_HasPerk( ps, 0x26 )` and the walker on
+  another team) sets the footstep event's loud bit; the step player `FUN_004cb480` picks the table:
+  `default_3rd_person_loud` for a loud enemy, `default_3rd_person_quiet` for a `quieter` walker,
+  `default_3rd_person` for a quiet walker the listener hears loud (`FUN_005031c0` loads the five
+  `footsteptable` assets). The tables' entries are SND hashes (seed 0x1505, ×0x1003f): read from
+  `mp_raid` they are `fly_lstep_*_npc_<surface>`, `fly_qstep_*` and `fly_step_*` (script
+  `~/.opencode/plan/perks-equipment/scripts/fst.py`). The converter adds the loud and quiet run and
+  sprint events; `sounds::step_table` picks. The mod's Dead Silence used to make *no* footsteps; BO2
+  plays the quiet table (its aliases are near-silent, 200-1000" falloff), and the jump and landing
+  are the client script's (`_footsteps.csc` `playerjump`/`playerland`), which build one alias
+  whatever `quiet` and `islouder` say — so they now play for a Dead Silence player too. Not ported:
+  `FUN_004e5980`'s sound context 7 `cod_mpl_combat_awareness` (a mix snapshot; the mod's mixer has
+  none).
+* Engineer (`showenemyequipment`): GSC only (`resetreconmodelvisibility`,
+  `_weaponobjects.gsc:2253-2300`, `_riotshield.gsc:160-190`; the supply-drop cases need
+  killstreaks): every enemy weapon object with a recon model (Betty, C4, Claymore, Sensor, Tactical
+  Insertion, Shock Charge, Trophy) and every enemy deployed shield, visible to him through walls at
+  any distance. The HUD drew amber diamonds within 400 units keyed on the perk's *name*; it now tests
+  the specialty, has no reach limit and outlines each piece by its model's box (the new bounds) in
+  red. BO2 draws the `_detect` model in its `sw4_3d_detectable` material; that pass is not ported
+  (presentation stand-in, said in the report).
+* Fast Hands' `pin_back` acts on grenade throwback, which the mod does not have (sim-gameplay F9);
+  Lightweight's `fallheight` on fall damage (F7); Dexterity's mantle/ladder bits, Blind Eye,
+  Hardline, Ghost, Hard Wired's counter-UAV: no system (README's deliberate differences).
+
+**The Scavenger pack** (`sim::scavenger`). BO2 drops `scavenger_item_mp` at the victim
+(`dropscavengerfordeath`, `_weapons.gsc:1919-1940`, called before the weapon drop at
+`_globallogic_player.gsc:1911-1914`): outside the grace period, not for a grenade/explosive/splash
+means, when the attacker is another player with Scavenger — a team kill too (only `attacker !=
+self`). It is an item (`LaunchItem` `FUN_005fab50`, tossed by `Drop_Item` `FUN_005fae60`) with no
+timer of its own: it goes when taken or when BO2's item cleanup (`FUN_005f9230`, called by every
+`LaunchItem`) frees it, so packs and dropped weapons now share `g_maxDroppedWeapons`. A first-person
+General with Scavenger whose box touches it takes it (`scavenger_think`, `:1791-1890`); one without
+walks over it. The kill-time refill is gone; the kills reach the rule through the step's kill
+witness (`drops::Killing`: killer, means, place, facing), so every path (bullets, melee, projectile
+strikes) is covered at once and the round-5 means rule holds. The refill is the script's: a
+magazine (`int( clip * scavenger_clip_multiplier )`) per gun, one more of each offhand the switch
+names up to the class count — not the Tactical Insertion (absent from the switch), not the C4 while
+one is down, the lethal not when the class gives none, and (the switch falls through) nothing when
+the class holds a tactical but gives none. The pickup plays `fly_equipment_pickup_plr`/`_npc` and
+shows `hud_scavenger_pickup` (48 × 24 virtual, 16 below the centre, fading over 2.5 s). The toss's
+random push comes from a stream seeded by the frame and the victim (no seat's stream moves). The
+engine's touch filter (only Scavenger players pick it up) is inferred from the script refilling
+whoever it is notified about; the engine routine reading the script string was not located (its id
+is read through the string table).
+
+**Arming** (`equipment::EquipTuning::activation_delay`). `proximityweaponobjectdetonation`
+(`_weaponobjects.gsc:1497-1500`): `waittillnotmoving` (a placed piece is always at rest: it is made
+where its throw came to rest or stuck), then the watcher's `activationdelay` — Betty 0.1
+(`_bouncingbetty.gsc:27, 48`), Shock Charge 0.1 (`_proximity_grenade.gsc:28, 76`), Claymore none.
+The audit's Trophy 0.1 (`_trophy_system.gsc:45`) is set on a *use* watcher and never read:
+`trophyactive` runs from its spawn. `EquipmentArmTime` (1 s for everything) is gone.
+
+**The Shock Charge.** `damageplayerinradius` (`_proximity_grenade.gsc:159-207`): the shellshock,
+four `MOD_GAS` ticks of `scr_proximityGrenadeDOTDamageAmount` (1) every 0.15 s from the owner, the
+HUD hidden (`hud_visible 0`) until the exit shock 0.85 s after the last tick or his death — now
+`shock::Taser` (hashed) and the HUD's hide. Its own radius damage is the def's 1 over 200"
+(`scr_proximityGrenadeDamageRadius` 200 is the def's `explosionRadius`; t6mp's explode think runs the
+radius damage for any def whose inner damage is not 0, `FUN_0060a480`); the uncited `> 10` gate that
+kept it harmless is gone, from the sim and from the splash oracle, which had copied it — so the
+concussion's and flashbang's own 1 now land too (BO2's tactical hit markers). That damage is
+recorded for the assists by its weapon (`score::Tactical` from the blow's weapon), so the
+shock-hit stand-in (`score_shock`'s 1) is kept only for the EMP grenade, which deals none. A charge
+striking an enemy player in flight goes off at once (`watchproximitygrenadehitplayer`, `:127-145`),
+after the strike's impact damage. The guard and the shellshock tell the charge from the concussion
+by the weapon (`onweapondamage`'s switch), not by thrown-or-placed.
+
+**Small constants.** The Black Hat's 16° cone (`HACK_COS` 0.96) is BO2's `target_isincircle`
+(`FUN_00646b70` → `FUN_00646890`): the target's origin projected on a 640×480 virtual screen at
+`hackertoollockonfov` 65 within `equipmenthackertoolradius` 60 px (about 6.8°) or
+`vehiclehackertoolradius` 80 (9°). The point tested is a weapon object's origin (the script passes
+offset 0 and equipment is no `target_set` target); BO2 tests a `target_set` vehicle at its
+registered offset, so a Zero Hour drone (no registration) is tested at its body's centre. The first
+`--equipment` run, testing the drone's origin on the ground, failed the hack: 45 units ahead it sat
+12° under a level aim, outside the 9° circle. The hit volumes: t6mp gives a missile entity its
+`projectileModel`'s bounds (`FUN_00607cb0` → `FUN_007825b0`), axis-aligned; the weapon table's new
+`ProjectileBounds` carries them (converted and in the conformance schema, `projectile_bounds`),
+equipment is shot by that box and a projectile strikes a soldier as BO2's 15" player box grown by
+it (anything else by its Zero Hour geometry, grown alike). The old 8" sphere and 2.5-unit radius
+stay only for a table converted before the field. The C4 double-tap window (0.35 s) is in the
+tuning pack as `DetonateDoubleTap`, the mod's value: the engine raises `doubletap_detonate`
+(script string id stored at `0x024076e2` by `FUN_00678440`) but the timer reads it through the
+string table and was not found. Not touched (other items' areas): melee's 0.3 s floor, the
+melee-vs-shield aim point, `vehicledamagescalar`/`ClassChangeGracePeriod`, the sound mixer gaps.
+
+Verified: `cargo test --workspace` and clippy clean; the real install's affected tests 8/8 (the
+roster lockstep gate, props, sfx, HUD sprites, perk rows); conformance weapons 0 cells (the new
+`projectile_bounds` column equal to BO2 on its 631 rows), cac 0 + 4 BO2-only, unchanged. In game
+(private dist, fresh archive): `--drops` 10/10, default 18/18, `--mp` 26/26 (hashes agree on all
+2,913 common frames), `--equipment` 12/12 after the drone point fix above (the legs before it ran
+on the first build; the fix changes only the drone's lock test).

@@ -167,6 +167,7 @@ impl Sim {
             tracer_count: 0,
             charge: None,
             shock: Default::default(),
+            taser: None,
             combat: false,
             spawned: false,
         }

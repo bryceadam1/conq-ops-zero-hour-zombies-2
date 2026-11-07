@@ -129,6 +129,24 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
     }
 }
 
+/// The Scavenger icon's fade (`scavenger_think`: alpha 1, `fadeovertime( 2.5 )` to 0,
+/// `_weapons.gsc:1799-1801`).
+pub const SCAVENGER_ICON_FADE: f32 = 2.5;
+
+/// The Scavenger pickup icon (`scavenger_hud_create`, `_weapons.gsc:1892-1912`): 48 x 24 virtual
+/// (640x480) pixels, centred across, its top 16 below the middle, fading out over
+/// [`SCAVENGER_ICON_FADE`].
+pub(super) fn draw_scavenger_icon(prims: &mut Vec<Prim>, w: f32, h: f32, client: &Client) {
+    let t = client.hud.scavenger_icon;
+    if t <= 0.0 {
+        return;
+    }
+    let k = h / 480.0;
+    let (iw, ih) = (48.0 * k, 24.0 * k);
+    let alpha = (t / SCAVENGER_ICON_FADE).min(1.0);
+    prims.push(Prim::Image { name: super::sprites::SCAVENGER_PICKUP.to_string(), x: w * 0.5 - iw * 0.5, y: h * 0.5 + 16.0 * k, w: iw, h: ih, argb: argb((1.0, 1.0, 1.0), alpha), fallback: Vec::new() });
+}
+
 /// The hit marker: `t` counts down from [`HITMARKER_FADE`].
 pub(super) fn draw_hitmarker(prims: &mut Vec<Prim>, w: f32, h: f32, client: &Client) {
     let t = client.hud.hitmarker;

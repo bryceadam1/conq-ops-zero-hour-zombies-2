@@ -251,12 +251,13 @@ fn near(got: f32, want: f32) -> bool {
     (got - want).abs() <= 0.01 + want.abs() * 1e-3
 }
 
-/// Whether the def's radius hurts (a stun hurts only when it carries real damage: the Shock
-/// Charge, [`crate::projectiles::blast`]).
+/// Whether the def's radius hurts: a stun does whenever it carries radius damage (t6mp's explode
+/// think runs the radius damage for any def whose `iExplosionInnerDamage` is not 0, `FUN_0060a480`:
+/// the concussion's, the flashbang's and the Shock Charge's 1; [`crate::projectiles::blast`]).
 fn hurts(def: &WeaponDef) -> bool {
     match def.effect {
         Effect::Explode => true,
-        Effect::Stun => def.explosion_inner_damage > 10.0,
+        Effect::Stun => def.explosion_inner_damage != 0.0,
         _ => false,
     }
 }

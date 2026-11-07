@@ -145,6 +145,8 @@ impl Client {
                     self.cues.play_at(cue, at);
                 }
             }
+            // `scavenger_think`: `player playsound( "fly_equipment_pickup_npc" )`, heard at him.
+            EventKind::ScavengerPickedUp { at } => self.cues.play_at(sounds::SCAVENGER_PICKUP_NPC, at),
             EventKind::WeaponDropped { .. } => {}
             // His alone, or heard through `remote` (the swing, the knife's hit, the pin, his reload's
             // notetracks, his voice: the third-person versions). The C4 trigger is his `*Player`
@@ -430,6 +432,11 @@ impl Client {
                     if let Some(cue) = sounds::some(def.ammo_pickup_sound.as_str()) {
                         self.cues.play(cue);
                     }
+                }
+                // `scavenger_think`: `playlocalsound( "fly_equipment_pickup_plr" )` and the icon.
+                EventKind::ScavengerPickedUp { .. } => {
+                    self.cues.play(sounds::SCAVENGER_PICKUP);
+                    self.hud.scavenger_icon = crate::hud::SCAVENGER_ICON_FADE;
                 }
                 EventKind::WeaponDropped { .. } => {}
                 EventKind::DestroyedEquipment => {}

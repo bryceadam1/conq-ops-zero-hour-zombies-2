@@ -16,9 +16,13 @@ impl Sim {
         };
         let tool = p.arsenal.hacking_def();
         let eye = p.body.eye();
-        let dir = dir_from_angles(p.yaw, p.pitch);
-        // Equipment first, then the nearest drone in the aim cone.
-        let target = match self.equipment.aimed_at(host, p.general, eye, dir) {
+        let tn = &self.equipment.tuning;
+        // Equipment first, then the nearest drone in its lock circle (`target_isincircle` with a
+        // vehicle's radius). The point tested: a weapon object's origin (the script passes offset
+        // 0 and equipment is no `target_set` target); a vehicle BO2 registers with `target_set`
+        // is tested at its registered offset instead (`FUN_00646890`'s target-list branch) — for
+        // a Zero Hour drone, which has none, its body's centre.
+        let target = match self.equipment.aimed_at(host, p.general, eye, p.yaw, p.pitch) {
             Some(i) => Some((self.equipment.placed[i].object, self.equipment.tuning.hack_lock_equipment)),
             None => {
                 let mut objs = Vec::new();
@@ -26,9 +30,8 @@ impl Sim {
                 objs.into_iter()
                     .filter(|o| o.has(objflags::DRONE) && o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && o.origin_within(eye, self.equipment.tuning.hack_range))
                     .filter_map(|o| {
-                        let to = o.pos + Vec3::new(0.0, 0.0, o.height * 0.5) - eye;
-                        let d = to.length();
-                        (d > 1e-3 && to.dot(dir) / d >= HACK_COS).then_some((o.id, d))
+                        let at = o.pos + Vec3::new(0.0, 0.0, o.height * 0.5);
+                        crate::equipment::in_lock_circle(eye, p.yaw, p.pitch, at, tn.hack_radius_vehicle, tn).map(|_| (o.id, (at - eye).length()))
                     })
                     .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
                     .map(|(id, _)| (id, self.equipment.tuning.hack_lock_drone))

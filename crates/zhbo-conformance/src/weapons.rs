@@ -199,6 +199,7 @@ pub fn schema() -> Schema {
         .col("projectile_speed_up", "damage", inch, "iProjectileSpeedUp")
         .col("projectile_impact_explode", "damage", Kind::Bool, "bProjImpactExplode")
         .col("projectile_model", "damage", Kind::Text, "projectileModel").asset()
+        .col("projectile_bounds", "damage", Kind::Floats(F32_EPS), "projectileModel's mins x,y,z then maxs x,y,z: the missile's box (FUN_00607cb0 -> FUN_007825b0)")
         .col("impact_type", "damage", Kind::Text, "ImpactType");
 
     // Spread.

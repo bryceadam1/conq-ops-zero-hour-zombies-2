@@ -21,18 +21,39 @@ use crate::units::{inches, LOGIC_DT};
 use crate::weapons::WeaponDef;
 
 
-/// How big equipment is to bullets.
+/// How big equipment is to bullets when its def carries no projectile model bounds (a table
+/// converted before `ProjectileBounds`): the mod's old stand-in, kept for such tables only.
 pub const HIT_RADIUS: f32 = inches(8.0);
-/// Black Hat: the aim cone (cosine) for equipment and Zero Hour drones. BO2 tests the target's
-/// lock circle on screen (`target_isincircle`, `_hacker_tool.gsc:416`, FOV 65); a cone of about
-/// 16 degrees stands in for it.
-pub const HACK_COS: f32 = 0.96;
+
+/// BO2's `target_isincircle( target, player, fov, radius, 0 )` (t6mp `FUN_00646b70` ->
+/// `FUN_00646890`), the Black Hat's lock test (`iswithinhackertoolreticle`, `_hacker_tool.gsc:414-
+/// 417`): the target's origin `at` in the view from `eye` at (`yaw`, `pitch`), projected on BO2's
+/// 640x480 virtual screen — `x = half_width * right / (forward * tan(fov / 2))`, `y` the same scale
+/// (`240 / 0.75`) — is in front of the eye and within `radius` virtual pixels of the centre. Returns
+/// how far from the centre it is (pixels) when it is in.
+pub fn in_lock_circle(eye: Vec3, yaw: f32, pitch: f32, at: Vec3, radius: f32, t: &EquipTuning) -> Option<f32> {
+    let half = std::f32::consts::FRAC_PI_2;
+    let forward = crate::math::dir_from_angles(yaw, pitch);
+    let right = crate::math::dir_from_angles(yaw - half, 0.0);
+    let up = crate::math::dir_from_angles(yaw, pitch + half);
+    let to = at - eye;
+    let ahead = to.dot(forward);
+    if ahead <= 0.0 {
+        return None;
+    }
+    let x = t.lock_scale * to.dot(right) / ahead;
+    let y = t.lock_scale * to.dot(up) / ahead;
+    let r2 = x * x + y * y;
+    (r2 < radius * radius).then(|| r2.sqrt())
+}
 
 /// The equipment numbers from the tuning pack (`crate::tuning`), in Zero Hour units and seconds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EquipTuning {
-    /// Seconds after it is down before a piece does anything.
-    pub arm_time: f32,
+    /// Seconds after it comes to rest before a proximity piece lays its trigger (its watcher's
+    /// `activationdelay`): the Betty's and the Shock Charge's ([`EquipTuning::activation_delay`]).
+    pub betty_activation: f32,
+    pub shock_activation: f32,
     /// Claymore: trigger radius, front cone (cosine), least distance in front, trip-to-blast delay.
     pub claymore_range: f32,
     pub claymore_cos: f32,
@@ -60,12 +81,19 @@ pub struct EquipTuning {
     pub hack_lock_equipment: f32,
     pub hack_lock_drone: f32,
     pub hack_lock_start: f32,
+    /// Black Hat: the lock circles' radii, BO2's virtual pixels (equipment's, a vehicle's), and
+    /// the projection's scale `TargetCircleHalfWidth / tan(hackertoollockonfov / 2)`
+    /// ([`in_lock_circle`]).
+    pub hack_radius_equipment: f32,
+    pub hack_radius_vehicle: f32,
+    pub lock_scale: f32,
 }
 
 impl EquipTuning {
     pub fn from_tuning(t: &crate::tuning::Tuning) -> Self {
         EquipTuning {
-            arm_time: t.equipment_arm_time,
+            betty_activation: t.betty_activation_delay,
+            shock_activation: t.proximity_grenade_activation_time,
             claymore_range: inches(t.scr_weaponobject_radius),
             claymore_cos: crate::math::det::cos(t.scr_weaponobject_coneangle.to_radians()),
             claymore_min_dist: inches(t.scr_weaponobject_mindist),
@@ -84,6 +112,24 @@ impl EquipTuning {
             hack_lock_equipment: t.equipment_hacker_tool_time_ms / 1000.0,
             hack_lock_drone: t.vehicle_hacker_tool_time_ms / 1000.0,
             hack_lock_start: t.hacker_tool_lock_start,
+            hack_radius_equipment: t.equipment_hacker_tool_radius,
+            hack_radius_vehicle: t.vehicle_hacker_tool_radius,
+            lock_scale: t.target_circle_half_width / crate::math::det::tan((t.hacker_tool_lock_on_fov * 0.5).to_radians()).max(1e-6),
+        }
+    }
+
+    /// How long after it comes to rest a piece of `kind` starts working. A proximity watcher waits
+    /// for it to stop (`waittillnotmoving`; a [`Placed`] piece is always at rest: it is made where
+    /// its throw came to rest or stuck) and then its `activationdelay`, if it has one
+    /// (`proximityweaponobjectdetonation`, `_weaponobjects.gsc:1497-1500`): the Betty
+    /// (`_bouncingbetty.gsc:27, 48`) and the Shock Charge (`_proximity_grenade.gsc:28, 76`); the
+    /// Claymore's watcher defines none. The Trophy System's use watcher starts `trophyactive` from
+    /// its spawn (`_trophy_system.gsc:63, 111`), its `activationdelay` unread. Nothing else waits.
+    pub fn activation_delay(&self, kind: Kind) -> f32 {
+        match kind {
+            Kind::Betty => self.betty_activation,
+            Kind::Shock => self.shock_activation,
+            _ => 0.0,
         }
     }
 
@@ -240,8 +286,10 @@ impl Placed {
         }
     }
 
+    /// Whether it works yet: [`EquipTuning::activation_delay`] after it came to rest (its age is
+    /// summed frame by frame: within a ten-thousandth of the delay is at it).
     pub fn is_armed(&self, t: &EquipTuning) -> bool {
-        self.age >= t.arm_time
+        self.age >= t.activation_delay(self.kind) - 1e-4
     }
 
     /// Whether `o` (as seen from this equipment) is an enemy that sets it off.
@@ -262,8 +310,13 @@ impl Placed {
         self.object != 0 && host.object(self.object, general).is_some_and(|o| o.has(objflags::ENEMY))
     }
 
+    /// What bullets hit it by: BO2's entity bounds, its projectile model's box (t6mp
+    /// `FUN_007825b0`), axis-aligned at its origin ([`WeaponDef::projectile_box`]).
     pub fn target(&self) -> Target {
-        Target { id: self.object, pos: self.pos, shape: Shape::Sphere { radius: HIT_RADIUS }, head_fraction: 0.0 }
+        match self.def.projectile_box() {
+            Some((c, h)) => Target { id: self.object, pos: self.pos + Vec3::new(c.x, c.y, c.z - h.z), shape: Shape::Box { half_x: h.x, half_y: h.y, height: 2.0 * h.z, yaw: 0.0 }, head_fraction: 0.0 },
+            None => Target { id: self.object, pos: self.pos, shape: Shape::Sphere { radius: HIT_RADIUS }, head_fraction: 0.0 },
+        }
     }
 
     fn remove(&mut self, host: &dyn LogicHost) {
@@ -539,16 +592,18 @@ impl Equipment {
         }
     }
 
-    /// The enemy equipment `general` is aiming at from `eye` along `dir` (Black Hat), by index.
-    pub fn aimed_at(&self, host: &dyn LogicHost, general: u32, eye: Vec3, dir: Vec3) -> Option<usize> {
+    /// The enemy equipment `general` is aiming at from `eye` at (`yaw`, `pitch`) (Black Hat), by
+    /// index: within its reach and its lock circle ([`in_lock_circle`], equipment's radius), the
+    /// nearest.
+    pub fn aimed_at(&self, host: &dyn LogicHost, general: u32, eye: Vec3, yaw: f32, pitch: f32) -> Option<usize> {
+        let t = &self.tuning;
         self.placed
             .iter()
             .enumerate()
             .filter(|(_, p)| p.object != 0 && p.hostile_to(host, general))
             .filter_map(|(i, p)| {
-                let to = p.pos - eye;
-                let d = to.length();
-                (d <= self.tuning.hack_range && d > 1e-3 && to.dot(dir) / d >= HACK_COS).then_some((i, d))
+                let d = (p.pos - eye).length();
+                (d <= t.hack_range && in_lock_circle(eye, yaw, pitch, p.pos, t.hack_radius_equipment, t).is_some()).then_some((i, d))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(i, _)| i)
@@ -841,6 +896,78 @@ mod tests {
         let left = eq.placed[0].triggered.expect("tripped");
         assert!((left - (t.shock_grace + t.delay_explosive)).abs() < 1e-4, "{left}");
         assert_eq!(t.delay_explosive, 0.9);
+    }
+
+    /// Arming is BO2's per item (`proximityweaponobjectdetonation`, `_weaponobjects.gsc:1497-1500`):
+    /// a piece is at rest when it is placed, then its watcher's `activationdelay` — the Claymore
+    /// none (it trips on its first frame), the Betty and the Shock Charge 0.1 s; the Trophy System
+    /// works from its spawn. The flat 1 s stand-in left them all dead for a second.
+    #[test]
+    fn each_item_arms_after_its_own_activation_delay() {
+        let t = EquipTuning::default();
+        assert_eq!((t.activation_delay(Kind::Claymore), t.activation_delay(Kind::Trophy), t.activation_delay(Kind::C4)), (0.0, 0.0, 0.0));
+        assert_eq!((t.activation_delay(Kind::Betty), t.activation_delay(Kind::Shock)), (0.1, 0.1));
+        for (id, effect, at) in [("claymore_mp", Effect::Explode, 15.0), ("bouncingbetty_mp", Effect::Explode, 15.0), ("proximity_grenade_mp", Effect::Stun, 5.0)] {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            host.add(soldier(7, 1, at));
+            let mut eq = Equipment::default();
+            eq.add(Placed::new(def(id, effect), 0, 1, 0, Vec3::ZERO, 0.0, None));
+            let delay = t.activation_delay(eq.placed[0].kind);
+            // The first frame it is armed on: its age reaches the delay.
+            let armed_at = ((delay / LOGIC_DT) - 1e-3).ceil().max(1.0) as usize;
+            let mut events = Vec::new();
+            step_n(&mut eq, &host, armed_at - 1, &mut events);
+            assert!(eq.placed[0].triggered.is_none(), "{id}: not armed before {delay} s");
+            step_n(&mut eq, &host, 1, &mut events);
+            assert!(eq.placed[0].triggered.is_some(), "{id}: armed and tripped on frame {armed_at}");
+        }
+        // The Trophy System shoots down an enemy projectile on its first frame down.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(general(2, 1));
+        let mut eq = Equipment::default();
+        eq.add(Placed::new(def("trophy_system_mp", Effect::None), 0, 1, 0, Vec3::ZERO, 0.0, None));
+        let frag: &'static WeaponDef = Box::leak(Box::new(WeaponDef { id: "frag_grenade_mp".into(), fuse_time: 3.0, ..Default::default() }));
+        let mut projectiles = vec![(1, crate::projectiles::Projectile::launch(frag, 2, Vec3::new(20.0, 0.0, 5.0), Vec3::new(-1.0, 0.0, 0.0), 3.0, &host, 0.0))];
+        let mut events = Vec::new();
+        eq.step(&host, &mut projectiles, &|_| false, &mut events);
+        assert!(projectiles.is_empty() && matches!(events.as_slice(), [EquipEvent::Intercepted { .. }]), "{events:?}");
+    }
+
+    /// Bullets hit a piece by BO2's entity bounds, its projectile model's box (`FUN_007825b0`),
+    /// axis-aligned at its origin; a def without bounds keeps the old 8" sphere.
+    #[test]
+    fn bullets_hit_equipment_by_its_models_box() {
+        let boxed: &'static WeaponDef = Box::leak(Box::new(WeaponDef { projectile_bounds: [-6.0, -2.0, 0.0, 6.0, 2.0, 10.0], ..def("claymore_mp", Effect::Explode).clone() }));
+        let p = Placed::new(boxed, 0, 1, 50, Vec3::ZERO, 1.0, None);
+        let shot = |y: f32, z: f32| ray_vs_target(Vec3::new(-50.0, inches(y), inches(z)), Vec3::new(1.0, 0.0, 0.0), 100.0, &p.target()).is_some();
+        assert!(shot(1.5, 5.0) && !shot(2.5, 5.0), "2 inches either side");
+        assert!(shot(0.0, 9.5) && !shot(0.0, 10.5), "10 inches tall");
+        let old = Placed::new(def("claymore_mp", Effect::Explode), 0, 1, 50, Vec3::ZERO, 0.0, None);
+        assert_eq!(old.target().shape, Shape::Sphere { radius: HIT_RADIUS });
+    }
+
+    /// The Black Hat's lock is BO2's `target_isincircle` (t6mp `FUN_00646890`): the origin on the
+    /// 640x480 virtual screen at FOV 65 within 60 pixels for equipment, 80 for a vehicle — about
+    /// 6.8 and 9.0 degrees off the view, not the 16-degree cone that stood in for it; behind the
+    /// eye never.
+    #[test]
+    fn the_black_hat_locks_inside_bo2s_screen_circle() {
+        let t = EquipTuning::default();
+        let eye = Vec3::new(0.0, 0.0, 10.0);
+        let at = |deg: f32, up: f32| eye + Vec3::new(100.0 * deg.to_radians().cos(), 100.0 * deg.to_radians().sin(), up);
+        // 60 px of 320 at tan(32.5 deg): atan(0.1875 * tan 32.5) = 6.82 degrees.
+        let edge = (60.0 / 320.0 * 32.5f32.to_radians().tan()).atan().to_degrees();
+        assert!((edge - 6.82).abs() < 0.01, "{edge}");
+        assert!(in_lock_circle(eye, 0.0, 0.0, at(edge - 0.05, 0.0), t.hack_radius_equipment, &t).is_some());
+        assert!(in_lock_circle(eye, 0.0, 0.0, at(edge + 0.05, 0.0), t.hack_radius_equipment, &t).is_none());
+        assert!(in_lock_circle(eye, 0.0, 0.0, at(8.5, 0.0), t.hack_radius_vehicle, &t).is_some(), "a vehicle's wider circle");
+        // The same circle up and down (y uses 240 / 0.75: the scale of x).
+        let up = 100.0 * (edge - 0.05).to_radians().tan();
+        assert!(in_lock_circle(eye, 0.0, 0.0, at(0.0, up), t.hack_radius_equipment, &t).is_some());
+        assert!(in_lock_circle(eye, 0.0, 0.0, at(0.0, 100.0 * 7.0f32.to_radians().tan()), t.hack_radius_equipment, &t).is_none());
+        assert!(in_lock_circle(eye, std::f32::consts::PI, 0.0, at(0.0, 0.0), 1e6, &t).is_none(), "behind");
     }
 
     #[test]

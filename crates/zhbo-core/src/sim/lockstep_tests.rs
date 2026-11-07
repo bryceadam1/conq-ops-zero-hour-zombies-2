@@ -407,6 +407,7 @@ fn populated_sim() -> Sim {
     let shock: &'static crate::shellshock::ShockDef = Box::leak(Box::new(crate::shellshock::ShockDef { name: "concussion_grenade".into(), ..Default::default() }));
     p.shock.active = Some(crate::shellshock::Active { def: shock, duration: 2.0, left: 1.5, serial: 3 });
     p.shock.queued = Some((0.5, "flashbang", 1.0));
+    p.taser = Some(shock::Taser { owner: 101, def: def("concussion_grenade_mp"), at: Vec3::new(1.0, 1.0, 0.0), ticks_left: 2, next: 0.1, hud: 1.0 });
     p.body.sprint_started = Some(1.5);
     p.body.stance_lerp = Some((1.0, 0.5, 1.0, 0.25));
     p.arsenal.offhand = Some(crate::weapons::OffhandUse::Throwing { lethal: true, t: 0.25, fired: false });
@@ -434,6 +435,7 @@ fn populated_sim() -> Sim {
     let options = crate::weapons::WeaponOptions { camo: "camo_gold".into(), reticle: "reticle_3".into(), reticle_color: "reticle_color_2".into() };
     let weapon = crate::weapons::Carried { def: def("an94_mp"), clip: 20, stock: 60, alt_clip: 1, alt_stock: 2, options: options.clone() };
     sim.drops.push(drops::Dropped { weapon, pos: Vec3::new(7.0, 8.0, 1.0), vel: Vec3::new(1.0, 2.0, -3.0), resting: false, yaw: 0.5, expires: Some(1800), owner: 100, owner_until: 40, object: 903 });
+    sim.packs.push(scavenger::Pack { pos: Vec3::new(3.0, 4.0, 1.0), vel: Vec3::new(1.0, 0.0, -2.0), resting: false, yaw: 0.25, object: 904 });
     sim.kills.push(drops::Kill { victim: 101, friendly: true });
     // A picked-up weapon wears its own options.
     sim.players[0].as_mut().unwrap().arsenal.weapons[1].options = Some(options);
@@ -446,7 +448,7 @@ fn populated_sim() -> Sim {
 /// Change the `n`-th leaf of the hashed state (the parts [`Sim::fingerprint`] streams).
 fn perturb_state(sim: &mut Sim, n: &mut usize) -> bool {
     use crate::statehash::StateHash;
-    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
+    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.packs.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
 }
 
 /// Sensitivity: every leaf of the state (every scalar, string and definition of every player

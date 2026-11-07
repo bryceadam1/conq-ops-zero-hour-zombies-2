@@ -281,6 +281,7 @@ impl<'a> Expected<'a> {
             .float("projectile_speed_up", d.projectile_speed_up() as f64)
             .bool("projectile_impact_explode", d.projectile_impact_explode())
             .opt_text("projectile_model", d.projectile_model())
+            .floats("projectile_bounds", &d.projectile_model().and_then(|m| self.install.model(&m)).map_or_else(Vec::new, |m| fls(&[m.mins[0], m.mins[1], m.mins[2], m.maxs[0], m.maxs[1], m.maxs[2]])))
             .text("impact_type", enum_name(cols::IMPACT_TYPE, d.impact_type()));
 
         // Spread.
