@@ -499,6 +499,7 @@ mod tests {
         ("ViewSprint", &["view_pos"]),
         ("ViewRates", &["view_pos"]),
         ("ViewAds", &["view_pos"]),
+        ("SprintCycleScale", &["view_pos"]),
         ("CamoList", &["camo"]),
         ("CamoMaterial", &["camo_material"]),
         ("OverlayMaterialLowRes", &["overlay_material_low_res"]),

@@ -1021,7 +1021,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "ViewAds", "Aimed pitch offset and bob factor (`fAdsAimPitch`, `fAdsBobFactor`).", FieldKind::Nums(2),
         |d: &WeaponDef| nums(&[d.view_pos.ads_aim_pitch, d.view_pos.ads_bob_factor]),
         |d: &mut WeaponDef, v: Values| { v.need(2)?; (d.view_pos.ads_aim_pitch, d.view_pos.ads_bob_factor) = (v.num(0), v.num(1)); Ok(()) }),
-    field!("SprintCycleScale", "The bob cycle's rate while sprinting (`fSprintCycleScale`, `FUN_008c1d00`).", FieldKind::Nums(1),
+    field!(present "SprintCycleScale", "The bob cycle's rate while sprinting (`fSprintCycleScale`, `FUN_008c1d00`).", FieldKind::Nums(1),
         |d: &WeaponDef| nums(&[d.view_pos.sprint_cycle_scale]),
         |d: &mut WeaponDef, v: Values| { v.need(1)?; d.view_pos.sprint_cycle_scale = v.num(0); Ok(()) }),
     field!("Reticle", "Crosshair: centre and side size, min offset, side position, ADS in/out fade fractions, keep when aimed, colour change.", FieldKind::Nums(8),
