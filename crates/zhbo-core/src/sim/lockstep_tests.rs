@@ -408,7 +408,8 @@ fn populated_sim() -> Sim {
     p.shock.active = Some(crate::shellshock::Active { def: shock, duration: 2.0, left: 1.5, serial: 3 });
     p.shock.queued = Some((0.5, "flashbang", 1.0));
     p.body.sprint_started = Some(1.5);
-    p.body.stance_lerp = Some((1.0, 0.5, 1.0, 0.25));
+    p.body.view_lerp = Some(crate::movement::ViewLerp { start: 1.0, target: crate::movement::Stance::Crouch, down: true });
+    p.body.jump_time = Some(0.5);
     p.arsenal.offhand = Some(crate::weapons::OffhandUse::Throwing { lethal: true, t: 0.25, fired: false });
     let hand = crate::weapons::Hand { ammo: 5, cooldown: 0.1, reload: Some(crate::weapons::Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true, quick: false }), burst_left: 2, string: 3, recoil_acc: 0.5, since_shot: 1.0, rechamber_pending: true, rechamber_shots: 1, rechamber: Some(0.25), reload_owed: true };
     let w = &mut p.arsenal.weapons[0];

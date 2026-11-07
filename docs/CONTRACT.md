@@ -1409,7 +1409,13 @@ popup stay.
 The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 `Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
-computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
+computer's raise time) and for BO2's engine numbers: movement (with t6mp's Pmove constants: the
+per-stance ground and air acceleration, friction's stop below 1 in/s, the walkable normal 0.7, the
+jump's landing slowdown `jump_slowdownEnable`/`JumpLand*`/`JumpSlowdown*`/`JumpRepeatTime`, the
+landing's fall damage `bg_fallDamageMin/MaxHeight` and `FallDamageFullScale`, its hard landing
+`HardLand*` and view dip `LandDip*`, prone turning `bg_prone_yawcap`/`ProneSwing*`, the aimed walk's
+`AdsWalkScale`, the stand-crouch eye time `StanceCrouchTime`; `movement`, `movement::land`,
+`movement::stance`, each key citing its constant), the `perk_*` multipliers, damage
 flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, the aim spread scale's dvars and engine constants (`bg_aimSpreadMoveSpeedThreshold`, `jump_spreadAdd`, `adsZeroSpread`, `bg_ads`, `AimSpread*`; `weapons::aim_spread`), `bulletrange` (how far a non-spread round is traced), the optic displays'
 `cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), the dropped weapons (`[Drops]`: `g_maxDroppedWeapons`, `player_useRadius`, the use list's facing scale, `_weapons.gsc`'s 60 s `deletepickupafterawhile`, the item's owner second and `Drop_Item`'s toss, its touch box and the player box's height; `sim::drops`), the smoke screen's time and sight blocker (`[Smoke]`: `_smokegrenade.gsc`'s `spawntimedfx` time and `blocksight` radii, t6mp's always-seen distance; `smoke::Params`), the melee reach and the knife's lunge (`player_meleeRange`, `player_meleeCharge*`, `[Melee]`; the lunge distance and times are the weapon def's `meleeChargeRange`/`iMeleeChargeTime`/`iMeleeChargeDelay`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
@@ -1688,6 +1694,23 @@ art (from `mp_raid`), BO2's unlit surfaces drawn self-lit (`Looks::unlit`), and 
 `SpreadRates` key (`fHipSpreadTurnAdd`, `fHipSpreadDuckedDecay`, `fHipSpreadProneDecay`; a table
 converted before it reads no turn add and unscaled stance decay, losing the SMGs' crouched 4×
 decay). `EventKind::Shot`'s `spread` is Rust-internal, no ABI.
+
+**Pending for the next bump** (round 8, `v1/movement-rules`; no ABI struct, field or function
+moves): the weapon table's `Move` key's second number (and an attachment's ADS walk) is now BO2's
+own `adsMoveSpeedScale` (the def's if above 0, else 1; an attachment's replacing it), no longer the
+converter's made-up 0.35 base times it: the sim multiplies by the tuning pack's `AdsWalkScale` (0.4,
+`FUN_008c4110`). A table converted before this walks aimed at 0.4 × 0.35 of the right speed, so the
+archive must be rebuilt with the bump (`hud::VERSION`); the conformance column
+`ads_move_speed_scale` now reads the stored value directly. The tuning pack (the content CRC's
+tuning part) gains the movement keys above. The sim's state (the lockstep hash) gains the body's
+`view_height`, `view_lerp` (replacing `stance_lerp`), `pm_time`, `jumping`, `jump_origin_z`,
+`jump_time`, `hard_landing`, `land_change`, `land_time` and `prone_yaw`, and the arsenal's `sights`
+(BO2's `PMF_SIGHT_AIMING`); the viewmodel motion's `land`/`airborne` become `land_seen`/`since_land`.
+The camera's eye is now `Body::view_eye` (the landing dip, `FUN_0051f760`), the sim's shots still
+fire from `Body::eye`. The client caps its own yaw while prone (`movement::cap_prone_yaw`) and the sim
+caps the yaw it is sent (`movement::prone_view_yaw`), so the input stream needs no new field. A
+landing's fall damage is the General's own `LogicHost::damage` blow (`MOD_FALLING`, the
+`[MeansOfDeath]` table's `FALLING`), reported by the scoring host like any other.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

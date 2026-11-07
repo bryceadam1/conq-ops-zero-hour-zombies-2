@@ -9,8 +9,20 @@
 //! (x2 with `longersprint`), recharges second for second once it ends, and starts only with more
 //! than a second in the meter.
 //!
+//! The walk is t6mp's Pmove (`FUN_008c7af0` PM_WalkMove, `FUN_008c7810` PM_AirMove): friction
+//! (`FUN_008bfea0`) and acceleration (`FUN_008c0100`, per stance on the ground) as the engine runs
+//! them, the walkable slope its trace's (`FUN_006b7d40`), the jump, its landing slowdown and the
+//! fall damage in [`land`], the eye's stance legs, the stance speed blend and prone turning in
+//! [`stance`].
+//!
 //! The world is queried through [`World`], which the engine glue implements with
 //! `TheTerrainLogic` and the partition manager, and which tests implement with a fake.
+
+pub mod land;
+pub mod stance;
+
+pub use land::{LandTuning, Landing};
+pub use stance::{cap_prone_yaw, prone_view_yaw, ViewLerp};
 
 use crate::input::{buttons, FpsInput};
 use crate::math::{basis_xy, Vec3};
@@ -32,14 +44,21 @@ pub struct MoveTuning {
     pub prone_up_time: f32,
     pub back_scale: f32,
     pub strafe_scale: f32,
-    pub ground_accel: f32,
+    /// Ground acceleration standing, crouched and prone, and in the air (`FUN_008c7af0`,
+    /// `FUN_008c7810`).
+    pub accel_stand: f32,
+    pub accel_crouch: f32,
+    pub accel_prone: f32,
     pub air_accel: f32,
     pub friction: f32,
+    /// Below this ground speed friction stops the player dead (Zero Hour units/s).
+    pub friction_min_speed: f32,
     pub stop_speed: f32,
     pub gravity: f32,
     pub jump_height: f32,
     pub step_height: f32,
-    /// Maximum climbable terrain rise per unit of horizontal distance.
+    /// The steepest walkable ground as rise per unit of horizontal distance: BO2's walkable
+    /// normal (`MinWalkNormal`, z >= 0.7) as a gradient, `sqrt(1 / n^2 - 1)`.
     pub max_slope: f32,
     pub radius: f32,
     /// Base sprint length, seconds (before the weapon's scale and the perk).
@@ -55,8 +74,20 @@ pub struct MoveTuning {
     pub stand_eye: f32,
     pub crouch_eye: f32,
     pub prone_eye: f32,
-    /// Seconds to blend the eye between stances.
-    pub stance_blend_time: f32,
+    /// The stances' view heights, inches (BO2's 60 / 40 / 11), and Zero Hour units per inch of
+    /// them (the General's drawn scale: the eye stays on his body's eye line).
+    pub view_stand: f32,
+    pub view_crouch: f32,
+    pub view_prone: f32,
+    pub eye_scale: f32,
+    /// Seconds the eye takes between standing and crouched (`FUN_008c1040`).
+    pub crouch_time: f32,
+    /// The jump and the landing ([`land`]).
+    pub land: LandTuning,
+    /// Prone turning, radians and radians/s ([`stance::prone_view_yaw`]).
+    pub prone_yaw_cap: f32,
+    pub prone_swing_speed: f32,
+    pub prone_swing_margin: f32,
 }
 
 impl MoveTuning {
@@ -73,25 +104,36 @@ impl MoveTuning {
             prone_up_time: t.stance_prone_up_time,
             back_scale: t.player_back_speed_scale,
             strafe_scale: t.player_strafe_speed_scale,
-            // The mod's acceleration (BO2's `PM_Accelerate` rates were not part of G2).
-            ground_accel: 9.0,
-            air_accel: 1.0,
+            accel_stand: t.accel_stand,
+            accel_crouch: t.accel_crouch,
+            accel_prone: t.accel_prone,
+            air_accel: t.accel_air,
             friction: t.friction,
+            friction_min_speed: inches(t.friction_min_speed),
             stop_speed: inches(t.stopspeed),
             gravity: inches(t.bg_gravity),
             jump_height: inches(t.jump_height),
             step_height: inches(t.jump_step_size),
-            max_slope: 1.4, // ~55 degrees; ZH cliffs are flagged separately by World::is_walkable
+            // ZH cliffs are flagged separately by World::is_walkable.
+            max_slope: (1.0 / (t.min_walk_normal * t.min_walk_normal) - 1.0).max(0.0).sqrt(),
             radius: inches(15.0),
             sprint_time: t.player_sprint_time,
             sprint_forward_min: t.player_sprint_forward_minimum / 127.0,
             sprint_restart_min: t.sprint_restart_minimum,
             sprint_max: t.sprint_max,
             sprint_recharge_pause: t.player_sprint_recharge_pause,
-            stand_eye: inches(t.player_standing_view_height) * crate::units::GENERAL_SCALE,
-            crouch_eye: inches(t.view_height_crouch) * crate::units::GENERAL_SCALE,
-            prone_eye: inches(t.view_height_prone) * crate::units::GENERAL_SCALE,
-            stance_blend_time: 0.2,
+            stand_eye: crate::units::drawn_inches(t.player_standing_view_height),
+            crouch_eye: crate::units::drawn_inches(t.view_height_crouch),
+            prone_eye: crate::units::drawn_inches(t.view_height_prone),
+            view_stand: t.player_standing_view_height,
+            view_crouch: t.view_height_crouch,
+            view_prone: t.view_height_prone,
+            eye_scale: crate::units::DRAWN_ZH_PER_INCH,
+            crouch_time: t.stance_crouch_time,
+            land: LandTuning::from_tuning(t),
+            prone_yaw_cap: t.bg_prone_yawcap.to_radians(),
+            prone_swing_speed: t.prone_swing_speed.to_radians(),
+            prone_swing_margin: t.prone_swing_margin.to_radians(),
         }
     }
 
@@ -149,8 +191,12 @@ pub struct Body {
     pub vel: Vec3,
     pub on_ground: bool,
     pub stance: Stance,
-    /// Current eye height, blending toward the stance target.
+    /// Current eye height (Zero Hour units): the view height at the General's drawn scale.
     pub eye_height: f32,
+    /// BO2's view height (`ps+0x208`, inches), going to the stance's one leg at a time.
+    pub view_height: f32,
+    /// The eye's leg under way ([`stance`]): the stance speed blend reads it too.
+    pub view_lerp: Option<ViewLerp>,
     pub sprinting: bool,
     /// The body's own clock, seconds (the sprint meter and the stance blend read it).
     pub time: f32,
@@ -162,14 +208,28 @@ pub struct Body {
     pub sprint_exhausted: bool,
     /// The sprint button must be released before the next sprint.
     pub sprint_button_up: bool,
-    /// The stance's speed-scale blend: (start time, from, to, duration).
-    pub stance_lerp: Option<(f32, f32, f32, f32)>,
+    /// BO2's movement timer (`ps->pm_time`, ms): a landing's slowdown runs on it.
+    pub pm_time: f32,
+    /// The jumping flag (`PMF_JUMPING`, `0x4000`), the take-off height (Zero Hour units,
+    /// `ps+0xc4`) and the last jump's time (the body's clock, `ps+0xc0`).
+    pub jumping: bool,
+    pub jump_origin_z: f32,
+    pub jump_time: Option<f32>,
+    /// A hurting landing's slowdown (`PMF_TIME_HARDLANDING`, `0x80`) runs while `pm_time` does.
+    pub hard_landing: bool,
+    /// The last landing's view dip (BO2's `landChange`, inches, negative down) and when it was
+    /// (the body's clock). The camera and the gun sink by it ([`Body::view_dip`]).
+    pub land_change: f32,
+    pub land_time: f32,
+    /// The prone body's yaw (`ps+0x464`, radians): the view stays within `bg_prone_yawcap` of it.
+    pub prone_yaw: f32,
     held_last: u32,
 }
 
 crate::statehash::state_hash!(struct Body {
-    pos, vel, on_ground, stance, eye_height, sprinting, time, sprint_started, sprint_ended, sprint_start_max,
-    sprint_exhausted, sprint_button_up, stance_lerp, held_last,
+    pos, vel, on_ground, stance, eye_height, view_height, view_lerp, sprinting, time, sprint_started, sprint_ended,
+    sprint_start_max, sprint_exhausted, sprint_button_up, pm_time, jumping, jump_origin_z, jump_time, hard_landing,
+    land_change, land_time, prone_yaw, held_last,
 });
 
 impl Body {
@@ -180,6 +240,8 @@ impl Body {
             on_ground: true,
             stance: Stance::Stand,
             eye_height: tuning.stand_eye,
+            view_height: tuning.view_stand,
+            view_lerp: None,
             sprinting: false,
             time: 0.0,
             sprint_started: None,
@@ -187,9 +249,42 @@ impl Body {
             sprint_start_max: tuning.sprint_time,
             sprint_exhausted: false,
             sprint_button_up: false,
-            stance_lerp: None,
+            pm_time: 0.0,
+            jumping: false,
+            jump_origin_z: 0.0,
+            jump_time: None,
+            hard_landing: false,
+            land_change: 0.0,
+            land_time: 0.0,
+            prone_yaw: 0.0,
             held_last: 0,
         }
+    }
+
+    /// Seconds since the last landing that dipped the view.
+    pub fn since_land(&self) -> f32 {
+        self.time - self.land_time
+    }
+
+    /// The camera's landing dip now (BO2 inches, negative down; `FUN_0051f760`).
+    pub fn view_dip(&self, t: &LandTuning) -> f32 {
+        if self.land_change == 0.0 {
+            return 0.0;
+        }
+        t.view_dip(self.land_change, self.since_land() * 1000.0)
+    }
+
+    /// Where the camera is: the eye, sunk by the landing dip (at the General's drawn scale) but
+    /// never closer than `LandDipViewFloor` to the feet (`FUN_0051f760`). The sim's eye (shots,
+    /// sight) is [`Body::eye`], undipped, as BO2's playerstate eye is.
+    pub fn view_eye(&self, t: &MoveTuning) -> Vec3 {
+        let dip = self.view_dip(&t.land);
+        if dip == 0.0 {
+            return self.eye();
+        }
+        let floor = t.land.dip_floor * t.eye_scale;
+        let z = (self.eye_height + dip * t.eye_scale).max(floor.min(self.eye_height));
+        self.pos + Vec3::new(0.0, 0.0, z)
     }
 
     /// Seconds of sprint in the meter now, of `max` (`FUN_008bfaa0`): while sprinting, what the
@@ -229,6 +324,8 @@ pub struct MoveModifiers {
     pub sprint_time_scale: f32,
     /// The player has `movefaster` (Lightweight).
     pub move_faster: bool,
+    /// The player has `fallheight` (Lightweight): landings never hurt.
+    pub fall_height: bool,
     /// A melee lunge in progress ([`Charge`]): it replaces the walk this frame.
     pub charge: Option<Charge>,
 }
@@ -260,10 +357,12 @@ impl Charge {
 
 impl Default for MoveModifiers {
     fn default() -> Self {
-        Self { speed_scale: 1.0, block_sprint: false, sprint_time_scale: 1.0, move_faster: false, charge: None }
+        Self { speed_scale: 1.0, block_sprint: false, sprint_time_scale: 1.0, move_faster: false, fall_height: false, charge: None }
     }
 }
 
+/// One frame of movement. Returns the landing when the feet touched down this frame
+/// ([`land::crash_land`]): its fall damage is the caller's to deal (`MOD_FALLING`).
 pub fn step(
     body: &mut Body,
     input: &FpsInput,
@@ -271,10 +370,11 @@ pub fn step(
     tuning: &MoveTuning,
     world: &dyn World,
     dt: f32,
-) {
+) -> Option<Landing> {
     let pressed = input.pressed | (input.held & !body.held_last);
     body.held_last = input.held;
     body.time += dt;
+    land::drop_timers(body, dt);
 
     let (fwd_axis, right_axis) = input.move_axes();
     // BO2 stands a crouched or prone player up only by starting a sprint, and the sprint start
@@ -282,7 +382,13 @@ pub fn step(
     // of `player_sprintForwardMinimum` — so the sprint/hold-breath key while aimed (the Hybrid's
     // sight swap, hold breath) leaves the stance alone.
     let sprint_could_start = fwd_axis >= tuning.sprint_forward_min && !mods.block_sprint;
-    update_stance(body, input.held, pressed, sprint_could_start, tuning);
+    let before = body.stance;
+    change_stance(body, input.held, pressed, sprint_could_start);
+    if body.stance == Stance::Prone && before != Stance::Prone {
+        // He lies down facing where he looks.
+        body.prone_yaw = input.yaw;
+    }
+    stance::adjust_view_height(body, tuning);
 
     update_sprint(body, input.held, fwd_axis, mods, tuning);
 
@@ -297,64 +403,63 @@ pub fn step(
         wish = wish * (1.0 / wish_len);
     }
     let wish_dir = wish.normalized_or_zero();
-    let mut max_speed = tuning.run_speed(mods.move_faster) * mods.speed_scale * stance_scale(body, tuning);
+    let mut max_speed = tuning.run_speed(mods.move_faster) * mods.speed_scale * stance::speed_scale(body, tuning);
     if body.sprinting {
         max_speed *= tuning.sprint_scale;
     }
     let wish_speed = max_speed * wish.length_xy().min(1.0);
 
+    // Where an airborne frame started (`pml.previous_origin`/`previous_velocity`): the landing
+    // solves the fall from it.
+    let mut fall_from = None;
     if let Some(c) = mods.charge.filter(|_| body.on_ground) {
         // The lunge owns the horizontal velocity (no walk, no jump) while it runs.
         let v = c.velocity(body.pos);
         body.vel = Vec3::new(v.x, v.y, body.vel.z);
     } else if body.on_ground {
-        apply_friction(body, tuning, dt);
-        accelerate(body, wish_dir, wish_speed, tuning.ground_accel, dt);
-        if pressed & buttons::JUMP != 0 {
+        // PM_WalkMove (`FUN_008c7af0`): a jump's landing slows first, then the jump check, then
+        // friction and the ground acceleration (the jump frame is an air move instead).
+        if body.jumping {
+            land::apply_slowdown(body, &tuning.land, tuning.step_height);
+        }
+        let jump = if pressed & buttons::JUMP != 0 {
             match body.stance {
-                Stance::Stand => {
-                    body.vel.z = (2.0 * tuning.gravity * tuning.jump_height).sqrt();
-                    body.on_ground = false;
-                }
+                Stance::Stand => land::try_jump(body, tuning),
                 // BO2: jump from crouch/prone stands you up instead.
-                Stance::Crouch | Stance::Prone => body.stance = Stance::Stand,
+                Stance::Crouch | Stance::Prone => {
+                    body.stance = Stance::Stand;
+                    None
+                }
             }
+        } else {
+            None
+        };
+        if let Some(vz) = jump {
+            body.vel.z = vz;
+            body.on_ground = false;
+            fall_from = Some((body.pos.z, body.vel.z));
+            accelerate(body, wish_dir, wish_speed, tuning.air_accel, tuning, dt);
+            body.vel.z -= tuning.gravity * dt;
+        } else {
+            apply_friction(body, tuning, dt);
+            let accel = match body.stance {
+                Stance::Stand => tuning.accel_stand,
+                Stance::Crouch => tuning.accel_crouch,
+                Stance::Prone => tuning.accel_prone,
+            } * if body.hard_landing { tuning.land.hard_accel } else { 1.0 };
+            accelerate(body, wish_dir, wish_speed, accel, tuning, dt);
         }
     } else {
-        accelerate(body, wish_dir, wish_speed, tuning.air_accel, dt);
+        fall_from = Some((body.pos.z, body.vel.z));
+        accelerate(body, wish_dir, wish_speed, tuning.air_accel, tuning, dt);
         body.vel.z -= tuning.gravity * dt;
     }
 
     move_horizontally(body, tuning, world, dt);
-    move_vertically(body, tuning, world, dt);
-    blend_eye(body, tuning, dt);
-}
-
-/// The stance's speed scale (`FUN_008c3e00` PM_CmdScaleForStance): crouch and prone scale the
-/// speed, and going prone or getting up from it blends the scale (crouched <-> prone).
-fn stance_scale(body: &Body, t: &MoveTuning) -> f32 {
-    if let Some((start, from, to, dur)) = body.stance_lerp {
-        let f = ((body.time - start) / dur.max(1e-3)).clamp(0.0, 1.0);
-        if f < 1.0 {
-            return from + (to - from) * f;
-        }
-    }
-    match body.stance {
-        Stance::Stand => 1.0,
-        Stance::Crouch => t.crouch_scale,
-        Stance::Prone => t.prone_scale,
-    }
-}
-
-fn update_stance(body: &mut Body, held: u32, pressed: u32, sprint_could_start: bool, t: &MoveTuning) {
-    let before = body.stance;
-    change_stance(body, held, pressed, sprint_could_start);
-    if body.stance != before {
-        body.stance_lerp = match (before, body.stance) {
-            (_, Stance::Prone) => Some((body.time, t.crouch_scale, t.prone_scale, t.prone_down_time)),
-            (Stance::Prone, _) => Some((body.time, t.prone_scale, t.crouch_scale, t.prone_up_time)),
-            _ => None,
-        };
+    let landed = move_vertically(body, fall_from.map(|f| f.1), tuning, world, dt);
+    match fall_from {
+        Some((z0, vz0)) if landed => land::crash_land(body, z0, vz0, mods.fall_height, tuning),
+        _ => None,
     }
 }
 
@@ -405,27 +510,31 @@ fn update_sprint(body: &mut Body, held: u32, fwd_axis: f32, mods: MoveModifiers,
     }
 }
 
+/// PM_Friction on the ground (`FUN_008bfea0`): the control speed `max(speed, stopspeed)`, scaled by
+/// a hard landing or the jump slowdown ([`land::friction_scale`]), times `friction` comes off the
+/// speed each second; under `FrictionMinSpeed` the player stops.
 fn apply_friction(body: &mut Body, t: &MoveTuning, dt: f32) {
     let speed = body.vel.length_xy();
-    if speed < 1e-4 {
-        body.vel.x = 0.0;
-        body.vel.y = 0.0;
+    if speed < t.friction_min_speed {
+        body.vel = Vec3::ZERO;
         return;
     }
-    let control = speed.max(t.stop_speed);
+    let control = speed.max(t.stop_speed) * land::friction_scale(body, &t.land);
     let drop = control * t.friction * dt;
     let scale = ((speed - drop) / speed).max(0.0);
     body.vel.x *= scale;
     body.vel.y *= scale;
 }
 
-fn accelerate(body: &mut Body, wish_dir: Vec3, wish_speed: f32, accel: f32, dt: f32) {
+/// PM_Accelerate (`FUN_008c0100`): toward the wish speed along the wish direction, by
+/// `accel x max(wish speed, stopspeed)` a second at most.
+fn accelerate(body: &mut Body, wish_dir: Vec3, wish_speed: f32, accel: f32, t: &MoveTuning, dt: f32) {
     let current = body.vel.x * wish_dir.x + body.vel.y * wish_dir.y;
     let add = wish_speed - current;
     if add <= 0.0 {
         return;
     }
-    let amount = (accel * wish_speed * dt).min(add);
+    let amount = (accel * wish_speed.max(t.stop_speed) * dt).min(add);
     body.vel.x += wish_dir.x * amount;
     body.vel.y += wish_dir.y * amount;
 }
@@ -435,8 +544,21 @@ fn can_stand_at(body: &Body, t: &MoveTuning, world: &dyn World, x: f32, y: f32, 
         return false;
     }
     let rise = world.ground_height(x, y) - body.pos.z;
-    // Airborne players can clear anything below their feet; grounded ones obey step/slope limits.
-    rise <= t.step_height.max(dist * t.max_slope) || (!body.on_ground && rise <= 0.0)
+    // Airborne players can clear anything below their feet; grounded ones obey step/slope limits,
+    // and walk up only ground BO2's trace calls walkable (`FUN_006b7d40`: normal z >= 0.7).
+    if !body.on_ground && rise <= 0.0 {
+        return true;
+    }
+    rise <= t.step_height.max(dist * t.max_slope) && (rise <= 0.0 || ground_gradient(world, x, y) <= t.max_slope)
+}
+
+/// The ground's steepest rise per unit of horizontal distance at a point: the terrain's facet
+/// slope, from its heights a unit either side.
+fn ground_gradient(world: &dyn World, x: f32, y: f32) -> f32 {
+    const D: f32 = 1.0;
+    let gx = (world.ground_height(x + D, y) - world.ground_height(x - D, y)) / (2.0 * D);
+    let gy = (world.ground_height(x, y + D) - world.ground_height(x, y - D)) / (2.0 * D);
+    (gx * gx + gy * gy).sqrt()
 }
 
 fn move_horizontally(body: &mut Body, t: &MoveTuning, world: &dyn World, dt: f32) {
@@ -565,7 +687,11 @@ fn clamp_to_extent(body: &mut Body, t: &MoveTuning, world: &dyn World) {
     }
 }
 
-fn move_vertically(body: &mut Body, t: &MoveTuning, world: &dyn World, dt: f32) {
+/// The vertical move; true when the feet touched down this frame. An airborne frame that started
+/// going up at `vz0` moves by the mean of it and the velocity after gravity, as the engine's slide
+/// move does (`PM_StepSlideMove` with gravity): exact under constant gravity, so the jump peaks at
+/// `jump_height` and a fall lands at its true speed.
+fn move_vertically(body: &mut Body, vz0: Option<f32>, t: &MoveTuning, world: &dyn World, dt: f32) -> bool {
     let ground = world.ground_height(body.pos.x, body.pos.y);
     if body.on_ground {
         // Follow terrain down slopes; walk off ledges higher than a step.
@@ -576,27 +702,16 @@ fn move_vertically(body: &mut Body, t: &MoveTuning, world: &dyn World, dt: f32) 
             body.pos.z = ground;
             body.vel.z = 0.0;
         }
+        return false;
     }
-    if !body.on_ground {
-        body.pos.z += body.vel.z * dt;
-        if body.pos.z <= ground {
-            body.pos.z = ground;
-            body.vel.z = 0.0;
-            body.on_ground = true;
-        }
+    body.pos.z += vz0.map_or(body.vel.z, |v0| (v0 + body.vel.z) * 0.5) * dt;
+    if body.pos.z <= ground {
+        body.pos.z = ground;
+        body.vel.z = 0.0;
+        body.on_ground = true;
+        return true;
     }
-}
-
-fn blend_eye(body: &mut Body, t: &MoveTuning, dt: f32) {
-    let target = match body.stance {
-        Stance::Stand => t.stand_eye,
-        Stance::Crouch => t.crouch_eye,
-        Stance::Prone => t.prone_eye,
-    };
-    let rate = (t.stand_eye - t.prone_eye) / t.stance_blend_time.max(1e-3);
-    let d = target - body.eye_height;
-    let max = rate * dt;
-    body.eye_height += d.clamp(-max, max);
+    false
 }
 
 #[cfg(test)]
@@ -756,15 +871,17 @@ pub(crate) mod tests {
     fn going_prone_blends_the_speed_scale_down_over_600_ms() {
         let t = MoveTuning::default();
         let mut b = Body::new(Vec3::ZERO, &t);
+        b.stance = Stance::Crouch;
+        b.view_height = t.view_crouch;
         let world = FlatWorld::default();
         let mut i = forward();
         i.pressed = buttons::PRONE;
         i.held = buttons::PRONE;
         step(&mut b, &i, MoveModifiers::default(), &t, &world, LOGIC_DT);
         assert_eq!(b.stance, Stance::Prone);
-        let mid = stance_scale(&Body { time: b.time + 0.3, ..b.clone() }, &t);
+        let mid = stance::speed_scale(&Body { time: b.time + 0.3, ..b.clone() }, &t);
         assert!((mid - (t.crouch_scale + t.prone_scale) * 0.5).abs() < 0.02, "half-way at 300 ms: {mid}");
-        let end = stance_scale(&Body { time: b.time + 0.7, ..b.clone() }, &t);
+        let end = stance::speed_scale(&Body { time: b.time + 0.7, ..b.clone() }, &t);
         assert_eq!(end, t.prone_scale);
     }
 
@@ -844,5 +961,156 @@ pub(crate) mod tests {
         run(&mut b, forward(), &world, 2.0);
         assert!((b.horizontal_speed() - t.walk_speed * t.crouch_scale).abs() < 0.5);
         assert!((b.eye_height - t.crouch_eye).abs() < 1e-3);
+    }
+
+    /// Runs a fall from `inches` above flat ground until the feet land; the landing.
+    fn fall(inches_up: f32, mods: MoveModifiers) -> (Body, Landing) {
+        let t = MoveTuning::default();
+        let mut b = Body::new(Vec3::new(0.0, 0.0, inches(inches_up)), &t);
+        b.on_ground = false;
+        let world = FlatWorld::default();
+        for _ in 0..600 {
+            if let Some(l) = step(&mut b, &FpsInput::default(), mods, &t, &world, LOGIC_DT) {
+                return (b, l);
+            }
+        }
+        panic!("never landed");
+    }
+
+    #[test]
+    fn a_fall_hurts_on_bo2s_curve_and_lightweight_spares_it() {
+        // FUN_008c0b20: the fall height is the landing speed's v^2/2g, solved from the frame's
+        // start: the drop itself, whatever the frame rate.
+        let (_, l) = fall(214.0, MoveModifiers::default());
+        assert!((l.height - 214.0).abs() < 2.0, "fall height {}", l.height);
+        assert!((49..=51).contains(&l.damage), "50% at 214 inches: {}", l.damage);
+        let (b, l) = fall(120.0, MoveModifiers::default());
+        assert_eq!(l.damage, 0, "below bg_fallDamageMinHeight");
+        assert!(!b.hard_landing);
+        assert_eq!(fall(400.0, MoveModifiers::default()).1.damage, 100);
+        let (b, l) = fall(214.0, MoveModifiers { fall_height: true, ..Default::default() });
+        assert_eq!(l.damage, 0, "fallheight: no fall damage");
+        assert!(!b.hard_landing, "and no hard landing");
+        // A hurting landing runs the hard-landing timer (35 ms per percent + 500, at most 2000)
+        // and dips by the damage's height (24 at 50%).
+        let (b, l) = fall(150.0, MoveModifiers::default());
+        assert!(b.hard_landing && b.pm_time == 500.0 + 35.0 * f32::from(l.damage), "{} at {}%", b.pm_time, l.damage);
+        let (b, _) = fall(214.0, MoveModifiers::default());
+        assert!(b.hard_landing && b.pm_time == 2000.0, "{}", b.pm_time);
+        assert_eq!(b.land_change, -24.0);
+    }
+
+    #[test]
+    fn a_jump_landing_slows_the_run_and_eases_back_over_1800_ms() {
+        let t = MoveTuning::default();
+        let world = FlatWorld::default();
+        let mut b = Body::new(Vec3::ZERO, &t);
+        run(&mut b, forward(), &world, 1.5);
+        let full = b.horizontal_speed();
+        let jump = FpsInput { pressed: buttons::JUMP, held: buttons::JUMP, ..forward() };
+        step(&mut b, &jump, MoveModifiers::default(), &t, &world, LOGIC_DT);
+        let mut landed = None;
+        for _ in 0..60 {
+            if step(&mut b, &forward(), MoveModifiers::default(), &t, &world, LOGIC_DT).is_some() {
+                landed = Some(b.horizontal_speed());
+                break;
+            }
+        }
+        let at_land = landed.expect("landed");
+        assert!((at_land / full - t.land.soft_scale).abs() < 0.03, "the landing's 0.67: {at_land} of {full}");
+        assert_eq!(b.land_change, -8.0, "a 39-inch fall dips 8");
+        step(&mut b, &forward(), MoveModifiers::default(), &t, &world, LOGIC_DT);
+        assert!(b.jumping && (b.pm_time - t.land.land_ms).abs() < 1.0, "the slowdown timer starts: {}", b.pm_time);
+        assert!(b.horizontal_speed() < full * 0.5, "0.67 x 0.65 and 2.5x friction: {}", b.horizontal_speed());
+        run(&mut b, forward(), &world, 0.6);
+        let mid = b.horizontal_speed();
+        assert!(mid < full * 0.95, "still slowed 0.6 s on: {mid} of {full}");
+        run(&mut b, forward(), &world, 1.5);
+        assert!(!b.jumping && b.pm_time == 0.0, "the timer ran out and the flag went");
+        assert!((b.horizontal_speed() - full).abs() < 0.03 * full);
+    }
+
+    #[test]
+    fn jumping_again_at_once_is_lower_and_the_slowdown_can_be_turned_off() {
+        let peak_of_second = |slowdown: bool| {
+            let mut t = MoveTuning::default();
+            t.land.slowdown = slowdown;
+            let world = FlatWorld::default();
+            let mut b = Body::new(Vec3::ZERO, &t);
+            let jump = FpsInput { pressed: buttons::JUMP, held: buttons::JUMP, ..Default::default() };
+            step(&mut b, &jump, MoveModifiers::default(), &t, &world, LOGIC_DT);
+            while step(&mut b, &FpsInput::default(), MoveModifiers::default(), &t, &world, LOGIC_DT).is_none() {}
+            step(&mut b, &jump, MoveModifiers::default(), &t, &world, LOGIC_DT);
+            let mut peak: f32 = 0.0;
+            for _ in 0..60 {
+                step(&mut b, &FpsInput::default(), MoveModifiers::default(), &t, &world, LOGIC_DT);
+                peak = peak.max(b.pos.z);
+            }
+            (peak, t)
+        };
+        let (low, t) = peak_of_second(true);
+        // FUN_008b5000: the height is divided by the slowdown's 2.5 right after a landing.
+        assert!((low - t.jump_height / t.land.slowdown_max).abs() < 0.2 * t.jump_height / t.land.slowdown_max, "{low}");
+        let (full, t) = peak_of_second(false);
+        assert!((full - t.jump_height).abs() < 0.15 * t.jump_height, "{full}");
+        // FUN_008b52f0: no second jump within 500 ms of the last.
+        let mut b = Body::new(Vec3::ZERO, &t);
+        assert!(land::try_jump(&mut b, &t).is_some());
+        b.time += 0.4;
+        assert!(land::try_jump(&mut b, &t).is_none());
+        b.time += 0.2;
+        assert!(land::try_jump(&mut b, &t).is_some());
+    }
+
+    #[test]
+    fn bo2s_walkable_normal_bounds_the_climbable_slope() {
+        let t = MoveTuning::default();
+        // n_z >= 0.7: a gradient of at most sqrt(1/0.49 - 1) = 1.02 (45.6 degrees).
+        assert!((t.max_slope - 1.0202).abs() < 1e-3, "{}", t.max_slope);
+        let climbs = |grade: fn(f32, f32) -> f32| {
+            let world = FlatWorld { height: grade, ..Default::default() };
+            let mut b = Body::new(Vec3::ZERO, &t);
+            run(&mut b, forward(), &world, 2.0);
+            b.pos.x > 20.0
+        };
+        assert!(climbs(|x, _| x.max(0.0) * 0.9), "0.9 (42 degrees) is walkable");
+        assert!(!climbs(|x, _| x.max(0.0) * 1.2), "1.2 (50 degrees) is not, though each sub-step is under a step");
+    }
+
+    #[test]
+    fn ground_acceleration_is_per_stance_and_floored_at_stopspeed() {
+        // FUN_008c7af0: 9 standing, 12 crouched, 19 prone; FUN_008c0100 accelerates by
+        // accel x max(wish speed, stopspeed): prone's slow wish speed is reached in a frame or two.
+        let t = MoveTuning::default();
+        let world = FlatWorld::default();
+        let mut b = Body::new(Vec3::ZERO, &t);
+        b.stance = Stance::Prone;
+        b.view_height = t.view_prone;
+        step(&mut b, &forward(), MoveModifiers::default(), &t, &world, LOGIC_DT);
+        let wish = t.walk_speed * t.prone_scale;
+        assert!((b.horizontal_speed() - wish).abs() < 1e-3, "{} vs {wish}", b.horizontal_speed());
+        let mut s = Body::new(Vec3::ZERO, &t);
+        step(&mut s, &forward(), MoveModifiers::default(), &t, &world, LOGIC_DT);
+        let first = t.accel_stand * t.walk_speed * LOGIC_DT;
+        assert!((s.horizontal_speed() - first).abs() < 1e-3, "{}", s.horizontal_speed());
+    }
+
+    #[test]
+    fn the_camera_dips_by_land_change_and_stays_above_the_feet() {
+        // FUN_0051f760: the whole landChange over 150 ms, back by 450; never under 8 inches.
+        let t = MoveTuning::default();
+        let mut b = Body::new(Vec3::ZERO, &t);
+        b.land_change = -8.0;
+        b.land_time = 0.0;
+        b.time = 0.15;
+        assert!((b.view_eye(&t).z - (t.view_stand - 8.0) * t.eye_scale).abs() < 1e-4);
+        assert_eq!(b.eye().z, t.stand_eye, "the sim's eye is not dipped");
+        b.time = 0.5;
+        assert_eq!(b.view_eye(&t), b.eye());
+        b.view_height = t.view_prone;
+        b.eye_height = t.prone_eye;
+        b.land_change = -24.0;
+        b.time = 0.15;
+        assert!((b.view_eye(&t).z - t.land.dip_floor * t.eye_scale).abs() < 1e-4, "held at the floor");
     }
 }

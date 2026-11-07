@@ -12,7 +12,7 @@
 //! `crate::penetration`), the grip's recoil reduction (its ADS recoil reduction
 //! fields), the tactical knife's quicker melee, and the target finder marking enemies while aiming.
 
-use crate::weapons::{FireMode, Penetrate, Specialties, Sway, WeaponDef, ADS_MOVE_BASE};
+use crate::weapons::{FireMode, Penetrate, Specialties, Sway, WeaponDef};
 
 /// BO2's attachment points (`eAttachmentPoint`). The point says where the art mounts; it does not
 /// decide which attachments go together — the compatibility lists do ([`compatible`]).
@@ -279,7 +279,7 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         // `adsMoveSpeedScale` differs from `defaultattachment`'s replaces the weapon's, and
         // nothing clamps it (`FUN_008ed080`; G14 §4). The converter keeps only such values.
         if a.ads_move_scale != 0.0 {
-            d.ads_move_scale = ADS_MOVE_BASE * a.ads_move_scale;
+            d.ads_move_scale = a.ads_move_scale;
         }
         for s in d.hip_spread.iter_mut() {
             s.0 *= scale(a.hip_spread_min_scale);
@@ -654,28 +654,28 @@ mod tests {
     /// attachment that keeps `defaultattachment`'s value (stored as 0) leaves the weapon's own.
     #[test]
     fn ads_move_scale_is_replaced_by_the_attachment_that_sets_one() {
-        let smg = WeaponDef { ads_move_scale: ADS_MOVE_BASE * 2.0, ..Default::default() };
+        let smg = WeaponDef { ads_move_scale: 2.0, ..Default::default() };
         let stalker = AttachmentDef { id: "stalker_smg".into(), short: "stalker".into(), ads_move_scale: 2.55, point: 5, ..Default::default() };
         let dualclip = AttachmentDef { id: "dualclip".into(), short: "dualclip".into(), point: 3, ..Default::default() };
         let d = apply(&smg, &[&stalker]);
-        assert!((d.ads_move_scale - ADS_MOVE_BASE * 2.55).abs() < 1e-6, "{}", d.ads_move_scale);
+        assert!((d.ads_move_scale - 2.55).abs() < 1e-6, "{}", d.ads_move_scale);
         // Order does not matter for one setter: dualclip sorts before stalker and keeps nothing.
         let d = apply_paired(&smg, &[&stalker, &dualclip]);
-        assert!((d.ads_move_scale - ADS_MOVE_BASE * 2.55).abs() < 1e-6, "{}", d.ads_move_scale);
+        assert!((d.ads_move_scale - 2.55).abs() < 1e-6, "{}", d.ads_move_scale);
         // No setter: the weapon's own value, untouched.
         let d = apply(&smg, &[&dualclip]);
-        assert!((d.ads_move_scale - ADS_MOVE_BASE * 2.0).abs() < 1e-6, "{}", d.ads_move_scale);
+        assert!((d.ads_move_scale - 2.0).abs() < 1e-6, "{}", d.ads_move_scale);
     }
 
     /// With two setters the last in BO2's canonical order (ascending `eAttachment`, which is the
     /// short names' alphabetical order) wins, and nothing clamps a value past a full walk.
     #[test]
     fn ads_move_scale_last_setter_wins_without_a_clamp() {
-        let base = WeaponDef { ads_move_scale: ADS_MOVE_BASE, ..Default::default() };
+        let base = WeaponDef { ads_move_scale: 1.0, ..Default::default() };
         let a = AttachmentDef { id: "acog".into(), short: "acog".into(), ads_move_scale: 1.5, point: point::OPTIC, ..Default::default() };
         let z = AttachmentDef { id: "vzoom".into(), short: "vzoom".into(), ads_move_scale: 3.0, point: 2, ..Default::default() };
         let d = apply_paired(&base, &[&z, &a]);
-        assert!((d.ads_move_scale - ADS_MOVE_BASE * 3.0).abs() < 1e-6, "{}", d.ads_move_scale);
+        assert!((d.ads_move_scale - 3.0).abs() < 1e-6, "{}", d.ads_move_scale);
         assert!(d.ads_move_scale > 1.0, "no clamp: {}", d.ads_move_scale);
     }
 

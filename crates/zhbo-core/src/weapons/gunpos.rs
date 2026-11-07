@@ -31,6 +31,26 @@ use crate::math::det;
 use crate::tuning::Tuning;
 use std::f32::consts::PI;
 
+/// BO2's `eAttachment` rangefinder (the target finder): `FUN_00530990` tests the weapon for it.
+pub const RANGEFINDER_KIND: u8 = 0x13;
+
+/// The gun's landing dip, inches up (`FUN_00530990`): `landChange x k` down over 150 ms and back
+/// over the next 300 (the camera's own dip, `FUN_0051f760`, carries it the rest of the way), `k`
+/// = `LandDipGunScale`, blended to `LandDipGunAdsScale` by the ADS fraction with a target finder.
+pub fn land_dip(i: &GunInput, t: &Tuning) -> f32 {
+    let ms = i.since_land * 1000.0;
+    let (down, up) = (t.land_dip_down_time, t.land_dip_up_time);
+    if i.land_change == 0.0 || ms < 0.0 || ms >= down + up {
+        return 0.0;
+    }
+    let k = if i.ads > 0.0 && i.target_finder { (1.0 - i.ads) * t.land_dip_gun_scale + i.ads * t.land_dip_gun_ads_scale } else { t.land_dip_gun_scale };
+    if ms < down {
+        i.land_change * k * ms / down
+    } else {
+        i.land_change * k * (down + up - ms) / up
+    }
+}
+
 /// What the client knows this frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GunInput {
@@ -53,9 +73,13 @@ pub struct GunInput {
     /// View pitch and yaw (degrees, **BO2's convention**: pitch positive looking down, yaw positive
     /// turning left), for sway.
     pub view: (f32, f32),
-    /// The last landing: signed fall delta (inches) and seconds since.
+    /// The last landing: BO2's `landChange` (the landing event's dip, inches, negative down) and
+    /// seconds since.
     pub land_change: f32,
     pub since_land: f32,
+    /// The weapon carries a target finder (`eAttachment` rangefinder): aimed, its landing dip
+    /// eases to `LandDipGunAdsScale` (`FUN_00530990`'s `FUN_008eb270(weapon, 0x13)`).
+    pub target_finder: bool,
     /// The idle sway's clock and eased stance factor (the sim's `idle_sway::IdleSway`).
     pub idle_time: f32,
     pub idle_stance: f32,
@@ -153,13 +177,7 @@ impl GunPos {
         let mut offset = [self.cur_ofs[0] * fade, self.cur_ofs[1] * fade, self.cur_ofs[2] * fade];
         // Wide fields of view pull the gun back up to 2 inches (FUN_00530ba0).
         offset[0] -= 2.0 * ((i.fov - t.cg_fov) * 0.05).clamp(0.0, 1.0) * (1.0 - ads);
-        // The landing dip (FUN_00530990): down over 150 ms, back over the next 300.
-        let ms = i.since_land * 1000.0;
-        if ms <= 149.0 {
-            offset[2] += i.land_change * 0.25 * ms / 150.0;
-        } else if ms < 450.0 {
-            offset[2] += i.land_change * 0.25 * (450.0 - ms) / 300.0;
-        }
+        offset[2] += land_dip(i, t);
 
         // ---- Bob, sway and kick angles.
         let bob = bob_angles(def, i, t);
@@ -304,6 +322,12 @@ mod tests {
         let land = GunInput { fov: 65.0, land_change: -20.0, since_land: 0.075, ..Default::default() };
         let dip = g.step(&d, &land, &t, 0.016).offset[2];
         assert!((dip + 2.5).abs() < 0.05, "-20 x 0.25 x 75/150: {dip}");
+        // FUN_00530990: back over 300 ms, gone at 450; aimed with a target finder k eases to 0.02.
+        assert!((land_dip(&GunInput { land_change: -20.0, since_land: 0.3, ..land }, &t) + 2.5).abs() < 1e-4);
+        assert_eq!(land_dip(&GunInput { since_land: 0.45, ..land }, &t), 0.0);
+        let finder = GunInput { ads: 1.0, target_finder: true, since_land: 0.15, ..land };
+        assert!((land_dip(&finder, &t) + 20.0 * 0.02).abs() < 1e-5);
+        assert!((land_dip(&GunInput { target_finder: false, ..finder }, &t) + 5.0).abs() < 1e-5);
     }
 
     #[test]

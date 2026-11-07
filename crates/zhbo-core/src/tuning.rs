@@ -79,6 +79,53 @@ tuning! {
     friction: "friction" = 5.5, "Ground friction (G2).";
     stopspeed: "stopspeed" = 100.0, "Friction's stop speed, inches/s (G2).";
     jump_step_size: "jump_stepSize" = 18.0, "Step-up height, inches (G2).";
+    stance_crouch_time: "StanceCrouchTime" = 0.2, "Seconds the eye takes between standing and crouched, either way (`FUN_008c1040`: 200 ms for a stand target and for a crouch target going down; the prone legs are `StanceProneDownTime`/`StanceProneUpTime`, 600/400).";
+    // Pmove's walk (t6mp `FUN_008c7af0` PM_WalkMove, `FUN_008c7810` PM_AirMove, `FUN_008c0100`
+    // PM_Accelerate, `FUN_008bfea0` PM_Friction, `FUN_006b7d40` the trace's walkable test).
+    accel_stand: "PlayerAccelStand" = 9.0, "Ground acceleration standing (`0x00bd245c`, `FUN_008c7af0`).";
+    accel_crouch: "PlayerAccelCrouch" = 12.0, "Ground acceleration crouched (`0x00b128e0`, `FUN_008c7af0`).";
+    accel_prone: "PlayerAccelProne" = 19.0, "Ground acceleration prone (`0x00bd2454`, `FUN_008c7af0`).";
+    accel_air: "PlayerAccelAir" = 1.0, "Air acceleration (`FUN_008c7810` passes 1.0, `0x00b0c268`). Both accelerations scale `max(wish speed, stopspeed)` (`FUN_008c0100`).";
+    friction_min_speed: "FrictionMinSpeed" = 1.0, "Below this ground speed, inches/s, friction stops the player dead (`FUN_008bfea0`, `0x00b0c268`).";
+    min_walk_normal: "MinWalkNormal" = 0.7, "The steepest ground a player walks up: its normal's z at least this (`FUN_006b7d40` sets the trace's walkable flag from `0x00b10df0`), about 45.6 degrees.";
+    // The jump's landing (`jump_slowdownEnable`, registered in `FUN_008b4c20`).
+    jump_slowdown_enable: "jump_slowdownEnable" = 1.0, "1: a jump's landing slows the player and the next jump is lower (dvar default; read by `FUN_008b4e40`, `FUN_008b4f00`, `FUN_008b5000`).";
+    jump_land_scale: "JumpLandScale" = 0.65, "A jump's landing scales the velocity by this (`FUN_008b4e40`, `0x00b17c50`) and starts the slowdown timer at `JumpLandTime`.";
+    jump_land_time: "JumpLandTime" = 1800.0, "The slowdown timer a jump's landing starts, ms (`FUN_008b4e40`: `pm_time = 0x708`).";
+    jump_land_high_scale: "JumpLandHighScale" = 0.5, "Landing at or above the take-off plus `jump_stepSize`: the velocity scale instead (`FUN_008b4e40`, `0x00c733cc`).";
+    jump_land_high_time: "JumpLandHighTime" = 1200.0, "And the timer, ms (`FUN_008b4e40`: `pm_time = 0x4b0`).";
+    jump_slowdown_max: "JumpSlowdownMax" = 2.5, "The slowdown factor with more than `JumpSlowdownRampTime` on the timer: friction's control is multiplied by it, the next jump's height divided (`FUN_008b4f00`/`FUN_008b5000`, `0x00c735bc`).";
+    jump_slowdown_ramp: "JumpSlowdownRamp" = 1.5, "Below that, the factor is `1 + pm_time x this / JumpSlowdownRampTime` (`0x00c73400`).";
+    jump_slowdown_ramp_time: "JumpSlowdownRampTime" = 1700.0, "ms (`0x00bc836c` = 1/1700; the flat part is `pm_time > 0x6a3`).";
+    jump_repeat_time: "JumpRepeatTime" = 500.0, "A jump needs this many ms since the last one (`FUN_008b52f0`: `499 < time - ps->jumpTime`).";
+    // The landing (`FUN_008c0b20` PM_CrashLand; the server's fall damage `FUN_005d2a30`).
+    fall_damage_min_height: "bg_fallDamageMinHeight" = 128.0, "Fall height, inches, above which a landing hurts: t6mp's PM_CrashLand reads the constant `0x00c735a8` (`FUN_008bb890`), the dvar's default (registered in `FUN_008b7bb0`, read nowhere). The fall height is the landing speed's `v^2 / 2g`.";
+    fall_damage_max_height: "bg_fallDamageMaxHeight" = 300.0, "Fall height, inches, from which a landing does 100% (`0x00c7357c`, `FUN_008bb880`); between them `trunc((h - min) / (max - min) x 100)`.";
+    fall_damage_full_scale: "FallDamageFullScale" = 1.1, "A 100% fall deals this share of max health (`FUN_005d2a30`, `0x00c73508`); less, `damage% / 100` of it, `MOD_FALLING`.";
+    land_scale: "LandScale" = 0.67, "A landing from higher than `LandDipMinHeight` that does not hurt (or kills) scales the velocity by this (`FUN_008c0b20`, `0x00bd2640`).";
+    hard_land_time_base: "HardLandTimeBase" = 500.0, "A hurting landing's slowdown timer: this plus `HardLandTimePerDamage` per damage percent, ms (`FUN_008c0b20`: `damage x 0x23 + 500`).";
+    hard_land_time_per_damage: "HardLandTimePerDamage" = 35.0, "ms per damage percent (`0x23`).";
+    hard_land_time_max: "HardLandTimeMax" = 2000.0, "The timer's cap, ms (`0x7d1` and 2000 in `FUN_008c0b20`).";
+    hard_land_scale: "HardLandScale" = 0.5, "A hurting landing's velocity scale at the base time (`0x00c733cc`) ...";
+    hard_land_scale_drop: "HardLandScaleDrop" = 0.3, "... less this per second of timer past the base (`(t - 500) x 0.001 x 0x00c7356c`) ...";
+    hard_land_min_scale: "HardLandMinScale" = 0.2, "... and this from a 1500 ms timer on (`0x00b0e1dc`; `t > 0x5db`).";
+    hard_land_friction_scale: "HardLandFrictionScale" = 0.3, "While a hurting landing's timer runs, friction's control is scaled by this (`FUN_008bfea0`, `0x00c7356c`) ...";
+    hard_land_accel_scale: "HardLandAccelScale" = 0.25, "... and the ground acceleration (`FUN_008c7af0`, `0x00c73440`).";
+    land_dip_min_height: "LandDipMinHeight" = 12.0, "Fall height, inches, past which a landing dips the view (`FUN_008c0b20`/`FUN_004c1590`, `0x00b128e0`) ...";
+    land_dip_height_step: "LandDipHeightStep" = 26.0, "... by `LandDipUnit` inches, plus one per this many inches of fall past it (`0x00b136a0` = 1/26) ...";
+    land_dip_unit: "LandDipUnit" = 4.0, "... (`(int)(((h - 12) / 26 + 1) x 4)`, `0x00b11208`) ...";
+    land_dip_max: "LandDipMax" = 24.0, "... at most this many inches (`0x18`): the event's `landChange`. A hurting landing's comes from its damage turned back into a height (`FUN_004c1590`).";
+    land_dip_down_time: "LandDipDownTime" = 150.0, "ms the view takes to sink by `landChange` after a landing (`FUN_0051f760`, `0x00b16818`) ...";
+    land_dip_up_time: "LandDipUpTime" = 300.0, "... and to come back (`0x00b265b0` = 1/300, to 450 ms).";
+    land_dip_gun_scale: "LandDipGunScale" = 0.25, "The gun sinks this share of `landChange` more (`FUN_00530990`, `0x00c73440`) ...";
+    land_dip_gun_ads_scale: "LandDipGunAdsScale" = 0.02, "... blended to this while aimed with a target finder (`eAttachment` rangefinder, `FUN_008eb270(weapon, 0x13)`; `0x00b151ac`).";
+    land_dip_view_floor: "LandDipViewFloor" = 8.0, "The dipped view stays this many inches above the feet (`FUN_0051f760`, `0x00c73538`).";
+    // Prone turning (`FUN_008c29a0`, `FUN_008c2720`).
+    bg_prone_yawcap: "bg_prone_yawcap" = 45.0, "Degrees the view may turn from the prone body (dvar default; `FUN_008c2720` clamps the view to it).";
+    prone_swing_speed: "ProneSwingSpeed" = 55.0, "Degrees per second the prone body turns after the view (`FUN_008c29a0`: `msec x 0x00b0d424 x 0.001`) ...";
+    prone_swing_margin: "ProneSwingMargin" = 5.0, "... while the view is more than `bg_prone_yawcap` less this from it, or the player moves (`0x00bd2474`).";
+    // Aiming down the sights while walking (`FUN_008c4110` PM_CmdScale_Walk).
+    ads_walk_scale: "AdsWalkScale" = 0.4, "While aiming (`PMF_WALKING`, set by `FUN_008c5310` when the aim button is down and the sights are wanted, not prone, not reloading; prone, once the ADS fraction is above 0) the speed is scaled by this (`0x00b0cfa0`) and by the weapon's `adsMoveSpeedScale` instead of its `moveSpeedScale`.";
     // ---- The bullet (Bullet_Fire, FUN_005d0c20) --------------------------------------------------
     bulletrange: "bulletrange" = 8192.0, "How far a non-spread weapon's round is traced, inches (`bulletrange`, registered in `FUN_006e86b0`, default `0x00b12d08` = 8192, max 65536; read by `Bullet_Fire` `FUN_005d0c20`). Spread classes use their damage curve's last range.";
     antilag_max_rewind: "AntilagMaxRewind" = 400.0, "The furthest back a shot is resolved against the targets as its shooter saw them, milliseconds (t6mp's antilag rewind `FUN_0066b6e0`: `if (400 < now - t) t = now - 400`; `sim::antilag`).";

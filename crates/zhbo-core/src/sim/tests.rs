@@ -231,8 +231,8 @@ fn take_control_suspends_ai_and_moves_general() {
 #[test]
 fn an_aimed_stalker_smg_walks_at_the_attachments_ads_speed() {
     use crate::attachments::{apply, AttachmentDef};
-    use crate::weapons::{Class, WeaponDef, WeaponState, ADS_MOVE_BASE};
-    let smg = WeaponDef { id: "smg_mp".into(), class: Class::Smg, ads_move_scale: ADS_MOVE_BASE * 2.0, ads_in_time: 0.2, ..Default::default() };
+    use crate::weapons::{Class, WeaponDef, WeaponState};
+    let smg = WeaponDef { id: "smg_mp".into(), class: Class::Smg, ads_move_scale: 2.0, ads_in_time: 0.2, ..Default::default() };
     let stalker = AttachmentDef { id: "stalker_smg".into(), short: "stalker".into(), ads_move_scale: 2.55, point: 5, ..Default::default() };
     let with_stalker = apply(&smg, &[&stalker]);
     let aimed_walk = |def: WeaponDef| {
@@ -2330,4 +2330,38 @@ fn the_knife_lunges_past_its_reach_and_strikes() {
     assert_eq!(dealt, 0.0, "no charge range: out of reach");
     assert!(x.abs() < 0.5, "and no lunge: x {x}");
     assert_eq!(crate::weapons::MELEE_RANGE, crate::units::inches(crate::tuning::Tuning::default().player_melee_range), "the reach is the tuning pack's player_meleeRange");
+}
+
+/// BO2's fall damage (`FUN_008c0b20` → `FUN_005d2a30`): a landing from 214 inches deals 50% of
+/// max health as `MOD_FALLING`, the General's own blow; a lethal one is reported like any death.
+#[test]
+fn a_fall_deals_its_share_of_max_health_as_mod_falling() {
+    let fall = |inches_up: f32| {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        spawn(&mut sim, &host, 0, 1);
+        wait_until_ready(&mut sim, &host);
+        let p = sim.players[0].as_mut().unwrap();
+        p.body.pos.z = crate::units::inches(inches_up);
+        p.body.on_ground = false;
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
+        (host, sim)
+    };
+    let (host, _) = fall(214.0);
+    let blows: Vec<_> = host.damage_how.borrow().iter().filter(|(v, how)| *v == 1 && *how == crate::damage::MeansOfDeath::Falling).cloned().collect();
+    assert_eq!(blows.len(), 1, "one landing, one blow");
+    let (shooter, victim, amount) = *host.damage_log.borrow().last().unwrap();
+    assert_eq!((shooter, victim), (1, 1), "his own blow (BO2's has no attacker)");
+    let max = general(1, 0).max_health;
+    assert!((amount - max * 0.5).abs() <= max * 0.011, "50% of {max}: {amount}");
+    // Below bg_fallDamageMinHeight: nothing.
+    let (host, _) = fall(100.0);
+    assert!(host.damage_log.borrow().is_empty());
+    // 100%: max health x FallDamageFullScale.
+    let (host, sim) = fall(400.0);
+    let (_, _, amount) = *host.damage_log.borrow().last().unwrap();
+    assert_eq!(amount, (max * crate::tuning::Tuning::default().fall_damage_full_scale).trunc());
+    // It kills, and the death is reported (on the ground: BO2's normal death, `FUN_005effe0`).
+    assert!(events(&sim).contains(&EventKind::KilledBy { dmg: crate::death::DmgType::Normal, dir: Vec3::ZERO }), "{:?}", events(&sim));
 }

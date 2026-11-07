@@ -1099,7 +1099,8 @@ impl Client {
                 let ticks = inp.logic_frame.wrapping_sub(self.seen_frame).clamp(1, 8);
                 self.seen_frame = inp.logic_frame;
                 self.since_logic = (self.since_logic + dt - LOGIC_DT * ticks as f32).clamp(0.0, LOGIC_DT);
-                let eye = p.body.eye();
+                // The camera: the eye with its landing dip (`FUN_0051f760`).
+                let eye = p.body.view_eye(&sim.tuning);
                 self.eye_prev = if ticks > 1 { eye - (eye - self.eye_curr) * (1.0 / ticks as f32) } else { self.eye_curr };
                 self.eye_curr = eye;
                 self.kick_prev = self.kick_curr;
@@ -1256,6 +1257,12 @@ impl Client {
                         let cap = |d: f32, max_deg_s: f32| if max_deg_s.is_finite() { d.clamp(-(max_deg_s.to_radians() * dt), max_deg_s.to_radians() * dt) } else { d };
                         self.yaw = wrap_angle(self.yaw + cap(-inp.mouse_dx * sens, look.max_yaw_speed));
                         self.pitch = (self.pitch + cap(-inp.mouse_dy * sens * inv, look.max_pitch_speed)).clamp(-MAX_PITCH, MAX_PITCH);
+                        // Prone, the view stays within `bg_prone_yawcap` of the body
+                        // (`FUN_008c2720`; the sim caps the yaw it is sent the same way).
+                        let body = if predicting { self.predict.view().map_or(&p.body, |v| &v.body) } else { &p.body };
+                        if body.stance == crate::movement::Stance::Prone {
+                            self.yaw = crate::movement::cap_prone_yaw(body.prone_yaw, self.yaw, sim.tuning.prone_yaw_cap);
+                        }
                     }
                     // This frame's input goes out first: the prediction steps it at once. A
                     // spectator sends nothing.
@@ -1276,7 +1283,7 @@ impl Client {
                     // The view kick moves the camera with the aim (BO2 adds it to the view angles):
                     // the sim's, interpolated across the logic frame like the eye; predicted, the
                     // prediction's last two frames at its render clock.
-                    let (eye, kick) = match (predicted.is_some(), self.predict.eye(), self.predict.view_prev()) {
+                    let (eye, kick) = match (predicted.is_some(), self.predict.eye(&sim.tuning), self.predict.view_prev()) {
                         (true, Some(e), Some(prev)) => {
                             let a = self.predict.alpha();
                             let ((py, pp), (ny, np)) = (prev.aim_offset(), p.aim_offset());

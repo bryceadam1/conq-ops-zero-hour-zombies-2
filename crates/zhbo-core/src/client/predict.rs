@@ -193,11 +193,12 @@ impl Predictor {
         (self.phase / LOGIC_DT).clamp(0.0, 1.0)
     }
 
-    /// The eye this rendered frame: between the last two predicted frames at the render clock, plus
-    /// what is left of a reconciliation's error.
-    pub fn eye(&self) -> Option<Vec3> {
-        let now = self.now.as_ref()?.body.eye();
-        let prev = self.prev.as_ref().map_or(now, |p| p.body.eye());
+    /// The eye this rendered frame: between the last two predicted frames' cameras (the eye with
+    /// its landing dip, `Body::view_eye`) at the render clock, plus what is left of a
+    /// reconciliation's error.
+    pub fn eye(&self, t: &crate::movement::MoveTuning) -> Option<Vec3> {
+        let now = self.now.as_ref()?.body.view_eye(t);
+        let prev = self.prev.as_ref().map_or(now, |p| p.body.view_eye(t));
         Some(prev.lerp(now, self.alpha()) + self.correction)
     }
 
