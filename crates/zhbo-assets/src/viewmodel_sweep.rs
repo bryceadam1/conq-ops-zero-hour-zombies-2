@@ -465,7 +465,7 @@ mod tests {
     /// hip offset would move the harness away from the game. The old ">200 px at hip" criterion
     /// asked the pose to do something it does not do; this asserts the mount in model space instead.
     /// One row per item is printed: id, slot, clip name, fwd/left/up and ndc_y. Cycle:
-    /// `~/.opencode/plan/equipment-hip-pose/` (§3.1).
+    /// `~/.conquerops/plan/equipment-hip-pose/` (§3.1).
     #[test]
     #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
     fn the_equipment_palm_is_outside_the_hip_frame() {
@@ -535,7 +535,7 @@ mod tests {
     /// faceplant as an offset and a collapse as an absolute). The game plays `HOLD_FIRE` while an
     /// off-hand item is held and `FIRE` while it is thrown, never `IDLE`
     /// (`zhbo_core::viewmodel`, `OffhandUse`), so the sweep's `IDLE` half is not the clip the game
-    /// shows. Cycle: `~/.opencode/plan/equipment-subbone-tracks/`.
+    /// shows. Cycle: `~/.conquerops/plan/equipment-subbone-tracks/`.
     #[test]
     #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
     fn equipment_subbone_tracks_are_bo2s_authored_parking() {

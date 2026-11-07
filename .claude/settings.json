@@ -1,0 +1,8 @@
+{
+  "enabledPlugins": {
+    "universal-modder@universal-modder": true
+  },
+  "permissions": {
+    "allow": ["Bash(find:*)", "Bash(grep:*)", "Bash(sed -n:*)", "Bash(ls:*)"]
+  }
+}

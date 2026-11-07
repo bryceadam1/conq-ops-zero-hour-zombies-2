@@ -498,7 +498,7 @@ mod tests {
     }
 
     /// The MMS screen's constants, from the install's `mc/mtl_t6_attach_optic_mms_display` values
-    /// (`~/.opencode/plan/lens-reticle/probe-mms-rf.txt`); a missing one draws nothing.
+    /// (`~/.conquerops/plan/lens-reticle/probe-mms-rf.txt`); a missing one draws nothing.
     #[test]
     fn the_sonar_screen_reads_its_shaders_constants() {
         let c = |n: &str, v: f32| xmodel::Constant { name_hash: xmodel::sampler_hash(n), value: [v, 0.0, 0.0, 1.0] };

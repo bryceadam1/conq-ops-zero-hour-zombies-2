@@ -14693,3 +14693,20 @@ scripted scene kills a General with a Scavenger class (`cap-scav`, against rebel
 the rule says). Next round's items from the briefs stand: the Engineer's `_detect` model outlines,
 the C4 double-tap timer, Awareness's sound-mix snapshot, hold-breath's walk slowdown. Friendly units
 still let a grenade by (only friendly structures stop it).
+
+## Tooling: Claude Code only; the plan directory moves (2026-11-07)
+
+opencode, Kilo Code and GitHub Copilot are retired from this project; Claude Code is the only agent tool.
+- **Repo:** `.opencode/` (its `bo2-reference` skill duplicated `.claude/skills/bo2-reference`; its
+  `parity-cycle` skill named another tool's subagent model) and `.kilo/` are gone, along with their
+  `.gitignore` lines.
+- **Kilo worktrees:** the kilo worktree's uncommitted renderer tests were saved as commit `f081613` on its
+  branch `therapeutic-show` (not merged).
+- **Shared Claude Code files:** `.claude/settings.json` and `.claude/skills/` are now committed; only
+  `.claude/worktrees/` and `.claude/settings.local.json` stay ignored. The round workflow from these
+  sessions (briefs, game lock, user-file backups, test scope per role, integrator duties) is the
+  `agent-round` skill. `CLAUDE.md` gives the commands and the big picture and defers to AGENTS.md.
+- **Plan directory:** the agents' plan directory moved from `~/.opencode/plan/` to `~/.conquerops/plan/`,
+  game lock included. Earlier entries in this journal that cite `~/.opencode/plan/<item>/` mean the same
+  folder under `~/.conquerops/plan/`. The briefs and scripts inside it were rewritten, as were the three
+  source comments that cite it.

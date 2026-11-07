@@ -8,9 +8,8 @@
 *.sabl
 *.ipak
 *.dmp
-.claude/
-.opencode/
-.vscode/.kilo/
+# Claude Code: settings.json and skills/ are shared; local settings and agent worktrees are not.
+.claude/worktrees/
+.claude/settings.local.json
 
 .vscode/
-.kilo/
