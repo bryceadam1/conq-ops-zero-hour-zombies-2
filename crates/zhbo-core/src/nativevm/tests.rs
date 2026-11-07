@@ -767,6 +767,18 @@ fn a_clip_still_on_its_way_holds_the_last_pose_not_the_bind_pose() {
 }
 
 #[test]
+fn the_log_names_a_composed_viewmodel_by_its_manifest() {
+    let f = fixture();
+    with_state(|s| {
+        *s = ffi::State::default();
+        settle(s, &f);
+        // The form the autotests read (`native viewmodel: ZV<vm><F> composed`), not the archive path.
+        assert!(s.log.iter().any(|m| m.starts_with("native viewmodel: ZV07U composed: ")), "{:?}", s.log);
+    });
+    assert_eq!(super::ffi::manifest_name_for_tests(zhbo_native::TABLET_VM, 'U'), "ZVTABU");
+}
+
+#[test]
 fn loads_through_requests_then_poses_and_aims() {
     let f = fixture();
     with_state(|s| {

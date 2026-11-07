@@ -135,7 +135,7 @@ impl State {
         // say so instead of asking the archive for a manifest no converter writes.
         if !(inp.faction as u8).is_ascii_uppercase() || inp.faction > 0x7f {
             self.failed.insert(vmkey);
-            self.log_once(format!("{}: faction {:#x} is not a faction letter (the bridge passes the General's side)", zhbo_native::viewmodel_path(vm, '?'), inp.faction));
+            self.log_once(format!("{}: faction {:#x} is not a faction letter (the bridge passes the General's side)", manifest_name(vm, '?'), inp.faction));
             return NOT_NATIVE;
         }
         if self.loaded.as_ref().is_none_or(|l| l.key != key) {
@@ -150,7 +150,7 @@ impl State {
                 }
                 Ok(None) => return LOADING,
                 Ok(Some(l)) => {
-                    self.log_once(format!("{} composed: {} bones, {} vertices, {} surfaces", zhbo_native::viewmodel_path(l.key.0, l.key.1 as char), l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
+                    self.log_once(format!("{} composed: {} bones, {} vertices, {} surfaces", manifest_name(l.key.0, l.key.1 as char), l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
                     // A new viewmodel starts the layer fresh: no direction history from the last gun.
                     self.ads_prev = inp.ads;
                     self.ads_down = false;                    if camo_key != 0 && l.camo.is_none() {
@@ -263,6 +263,19 @@ impl State {
         #[cfg(not(feature = "renderer"))]
         NOT_NATIVE
     }
+}
+
+/// The manifest's name for the log, `ZV<vm><F>` (`ZV7368U`) or the tools' `ZVTAB<F>`/`ZVHAM<F>`:
+/// the archive path without its folder and extension, the form the autotests read
+/// (`native viewmodel: ZV<3+ digits><U/C/G> composed`).
+fn manifest_name(vm: i32, faction: char) -> String {
+    let path = zhbo_native::viewmodel_path(vm, faction);
+    path.trim_start_matches(zhbo_native::DIR).trim_end_matches(".zbv").to_string()
+}
+
+#[cfg(test)]
+pub(crate) fn manifest_name_for_tests(vm: i32, faction: char) -> String {
+    manifest_name(vm, faction)
 }
 
 pub(crate) fn request(inp: &ZhboNativeIn) -> Request {
