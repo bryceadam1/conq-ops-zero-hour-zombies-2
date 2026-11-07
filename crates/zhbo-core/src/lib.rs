@@ -36,6 +36,7 @@ pub mod classrepair;
 pub mod classui;
 pub mod classwire;
 pub mod client;
+pub mod command;
 pub mod config;
 pub mod content;
 pub mod cover;

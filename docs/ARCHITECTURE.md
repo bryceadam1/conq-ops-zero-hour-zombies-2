@@ -121,6 +121,11 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   bar's class buttons, `classrepair.rs` BO2's loadout repair for classes read back from the
   profile (`profile.rs`), `classwire.rs` a custom class's pick payload (catalog tokens),
   `menu.rs` the shell menu.
+- `command/`: first-person commands (docs/COMMANDS.md), presentation-side: `ast.rs` (the command
+  AST), `vocab.rs` (the match's word lists and the verb table with each verb's argument slots,
+  `Vocabulary::problems`), `parse.rs` and `print.rs` (canonical text to the AST and back; the
+  parser keeps every complete parse, so ambiguity is an error, and records what it expected where
+  it stopped).
 - `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
   frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness,
   `events.rs`: the sim's events as the local player hears and sees them, and `predict.rs`: the

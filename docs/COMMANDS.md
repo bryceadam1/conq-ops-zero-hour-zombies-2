@@ -1,7 +1,9 @@
 # First-person commands
 
-How the General commands his army without leaving first person. **Status: design (2026-11-07).
-Nothing here is built yet.** The decisions below were agreed with the user. Section 13 lists what
+How the General commands his army without leaving first person.
+
+**Status (2026-11-07):** step 1 of the build order is built: the AST, the vocabulary, and the
+parser and printer, in `crates/zhbo-core/src/command/`. The rest is design. The decisions below were agreed with the user. Section 13 lists what
 is still open.
 
 ## 1. Goal and constraints
@@ -88,73 +90,91 @@ canonical text. Looser input is turned into canonical text first. Synonyms and a
 handled by the normaliser ("Synonyms and aliases" below), which the typed entry and the voice path
 share. Action-first word order and filler words are the translation layer's job (section 11).
 
-### Grammar (draft)
+### Grammar
 
-`"x"` is a fixed word, `<x>` is a word list built at run time (section 5), `[x]` is optional,
-`{x}` repeats.
+This is the grammar `crates/zhbo-core/src/command/parse.rs` implements. `"x"` is a fixed word,
+`<x>` is a word list built at run time (section 5), `[x]` is optional, `{x}` repeats.
 
 ```
 command     = [selection] order {"then" order}
 
 order       = verb-phrase
-            | "name" "them" <new-name>              ; save the selection as a team name
+            | "name" "them" new-name                ; save the selection as a team name
             | "make" "them" "group" digit           ; engine control group (MSG_CREATE_TEAMn)
 
 selection   = group {"and" group} ["except" group {"and" group}]
-group       = [quantity] [superlative] {adjective} base {filter}
+group       = query                                 ; never says whose: always the player's own
             | "group" digit                         ; engine control group
             | <team-name>                           ; "alpha team"
             | "them"                                ; the last resolved selection
             | "that"                                ; the object under the crosshair
 
-quantity    = "all" | "the" | number | "half" "the"
+query       = [determiner] [superlative] {adjective} [relation] noun {filter}
+determiner  = "the" [number] | number | "half" "the"
+            | "my" [number] | "half" "my"           ; targets only: "my" is the relation too
 superlative = "nearest" | "farthest" | "northernmost" | "southernmost" | "easternmost"
             | "westernmost" | "weakest" | "healthiest"
 adjective   = "idle" | "damaged" | "veteran" | "elite" | "heroic" | "garrisoned" | "loaded"
-base        = <unit-type> | <unit-class> | "units"
-filter      = "near" location
+relation    = "enemy" | "allied" | "neutral" | "civilian"     ; targets only
+noun        = <unit-type> | <unit-class> | "unit" | "units"
+filter      = "near" point                           ; that point has no filters of its own
             | "in" "the" region "group"              ; cluster (section 6)
             | "in" "my" "group"                      ; the cluster the General is in
 
-verb-phrase = <verb>                                 ; "stop", "guard", "evacuate", "sell"
-            | <verb> location                        ; "move to", "attack-move to", "guard"
-            | <verb> object-ref                      ; "attack", "enter", "capture", "repair"
-            | <verb> [count] <buildable> [placement] ; "build", "upgrade"
-            | "act" "on" object-ref                  ; whatever a right-click would do
-            | "set" "rally" "point" location
-            | "use" <power> [("at" location) | ("on" object-ref)]
-            | "purchase" <science>                   ; Generals' promotions (no selection)
-            | "place" "beacon" location
+verb-phrase = <verb> [thing] [target]                ; as the verb's entry says (section 7)
+thing       = <buildable> | number <buildable-plural>          ; "build", counted
+            | <upgrade> | <power> | <science>        ; "upgrade", "use", "purchase"
+target      = [prep] point ["facing" direction]      ; prep: the verb's ("to", "at", "on")
+            | offset point ["facing" direction]      ; no prep before an offset
+            | "there" ["facing" direction]           ; no prep before "there"
 
-placement   = location ["facing" direction]
-location    = [offset] point
 offset      = "near" | direction "of" | "behind" | "in" "front" "of"
-point       = "me" | "there"                         ; there = crosshair hit on the ground
-            | object-ref | <place-name>
-object-ref  = [relation] [quantity] [superlative] {adjective} <object-type> {filter}
-            | "that"
-relation    = "my" | "enemy" | "allied" | "neutral" | "civilian"
+point       = "me" | "there" | "that" | <place-name> | query
 direction   = "north" | "south" | "east" | "west" | "northeast" | "northwest"
             | "southeast" | "southwest"
 region      = "northern" | "southern" | "eastern" | "western" | "northeastern"
             | "northwestern" | "southeastern" | "southwestern" | "central"
-count       = number                                 ; "build 3 crusader tanks"
+number      = digits, no leading zero                ; counts are 2 or more
+new-name    = word {word}                            ; up to "then" or the end
 ```
 
-Notes on the grammar:
+Each verb's entry (`command/vocab.rs` `VerbDef`) gives its words, its preposition, whether it
+names a thing (from which list, with or without a count), and its target slot: an object, a point
+or either, required or optional, and whether `facing` may follow. An object-only slot takes `me`,
+`that` or a query, with no offset. In a point slot, a named object stands for its position.
 
-- **Selection first, always, in canonical form.** "Build a power plant with the north dozer" is
-  the translator's or normaliser's input. Its canonical form is
+Spelling rules, so that every command has exactly one spelling:
+
+- **Selection first, always.** "Build a power plant with the north dozer" is input for the
+  translator or the normaliser. Its canonical form is
   `the northernmost dozer build power plant ...`.
-- **The selection ends at the first verb.** Run-time names must never be the same as a verb or
-  fixed word. A gate test checks this for every name in the install's data (section 12).
-- **Singular and plural come from the noun.** `the ranger` is one, `rangers` is all,
-  `3 rangers` is three. Each name has a singular and a plural form (section 5).
-- **`then` chains orders for the same selection** using the engine's queued orders (shift-click,
+- **The selection ends at the first verb.** Run-time names must never equal a verb or a fixed
+  word, or contain `then`. `Vocabulary::problems` checks this, and a gate will run it over the
+  install's data (section 12). The parser keeps every complete parse, so any remaining ambiguity
+  is an error, never a silent guess.
+- **Quantity comes from the determiner and the noun's number:**
+  - A bare plural means all (`rangers`). `all` is accepted input only, which the normaliser drops.
+  - `the` takes a singular: `the ranger`.
+  - A number takes a plural, and is 2 or more: `3 rangers`. One is spelled `the`.
+  - `half the` takes a plural.
+- **A superlative needs `the` or `my`:** `the nearest ranger`, `the 3 nearest rangers`,
+  `my nearest war factory`. A bare number takes no `the` (`3 rangers`), and `the` with a number
+  needs a superlative.
+- **Whose.** A selection never says whose. A target may say `my` (in the determiner's place:
+  `my war factory`, `my 2 war factories`, `half my war factories`) or a relation word after the
+  adjectives (`the nearest damaged enemy tank`). Saying neither means anyone's.
+- **Mass nouns** (the same word for singular and plural, like `infantry` or `aircraft`) are
+  singular only after `the` or with a superlative. `my infantry` means all of them.
+- **Adjectives** come in the fixed order above, each at most once.
+- **Filters** come in the order above, each at most once. The point after `near` has no filters,
+  so a trailing filter always belongs to the noun before `near`:
+  `rangers near the war factory in the northern group` is the rangers in the northern group.
+- **Prepositions.** A verb's preposition is left out before `there` and before an offset, which
+  is a preposition itself: `move there`, `move north of the bridge`, `build power plant near my
+  war factory`. Otherwise it is spoken: `move to the bridge`.
+- **`then` chains orders for the same selection**, using the engine's queued orders (shift-click,
   `MSG_ADD_WAYPOINT`). There are no conditionals.
 - **"here" means "me".** The normaliser rewrites it, and canonical text prints `me`.
-- **"there" drops the preposition.** A verb's preposition (`to`, `at`, `on`) is left out before
-  `there`, as in English: `move there`, `attack-move there`, `use carpet bomb there`.
 
 ### Examples
 
@@ -352,7 +372,7 @@ asks the engine to choose, as a right-click does. `go to <object>` is only a syn
 never the right-click: when someone says "go to the oil derrick", they mean move there. An
 Engineer capturing the derrick instead would be a surprise.
 
-| Verb (draft wording) | ActionManager query | Message |
+| Verb | ActionManager query | Message |
 |---|---|---|
 | `move to` | — | `MSG_DO_MOVETO` |
 | `force move to` | — | `MSG_DO_FORCEMOVETO` |
@@ -364,14 +384,14 @@ Engineer capturing the derrick instead would be a surprise.
 | `resume building` | `canResumeConstructionOf` | `MSG_RESUME_CONSTRUCTION` |
 | `get repaired at`, `get healed at` | `canGetRepairedAt`, `canGetHealedAt` | `MSG_GET_REPAIRED`, `MSG_GET_HEALED` |
 | `dock at`, `deliver supplies to` | `canDockAt`, `canTransferSuppliesAt` | `MSG_DOCK` |
-| `hijack`, `convert to car bomb` | `canHijackVehicle`, `canConvertObjectToCarBomb` | `MSG_ENTER`, `MSG_CONVERT_TO_CARBOMB` |
+| `hijack`, `car-bomb` | `canHijackVehicle`, `canConvertObjectToCarBomb` | `MSG_ENTER`, `MSG_CONVERT_TO_CARBOMB` |
 | `snipe` | `canSnipeVehicle` | `MSG_SNIPE_VEHICLE` |
-| `hack`, `steal cash from`, `disable` | `canDisableVehicleViaHacking`, `canDisableBuildingViaHacking`, `canStealCashViaHacking` | `MSG_DISABLEVEHICLE_HACK`, `MSG_DISABLEBUILDING_HACK`, `MSG_STEALCASH_HACK` |
-| `sabotage`, `cut power to`, `bribe`, `make defector`, `pick up` | `canSabotageBuilding`, `canCutBuildingPower`, `canBribeUnit`, `canMakeObjectDefector`, `canPickUpPrisoner` | per the engine's mapping in `CommandXlat` |
+| `disable` (vehicle or building), `steal cash from` | `canDisableVehicleViaHacking`, `canDisableBuildingViaHacking`, `canStealCashViaHacking` | `MSG_DISABLEVEHICLE_HACK`, `MSG_DISABLEBUILDING_HACK`, `MSG_STEALCASH_HACK` |
+| `sabotage`, `cut power to`, `bribe`, `convert` (make defector), `pick up` | `canSabotageBuilding`, `canCutBuildingPower`, `canBribeUnit`, `canMakeObjectDefector`, `canPickUpPrisoner` | per the engine's mapping in `CommandXlat` |
 | `salvage` | — | `MSG_DO_SALVAGE` |
 
-The exact wording is still a draft. The rule is fixed: one verb per `can*` query, and the message
-emitted is whatever `CommandXlat` emits for that case.
+The wording is the fixed verb table in `command/vocab.rs` (`fixed_verbs`). The rule is fixed: one
+verb per `can*` query, and the message emitted is whatever `CommandXlat` emits for that case.
 
 ### Orders bound to hotkeys, and player-level orders
 
@@ -514,9 +534,10 @@ Voice runs entirely on the player's machine.
 ## 13. Build order and open questions
 
 **Build order:**
-1. AST, grammar, parser and printer, the round-trip test, and typed entry with base sets and
-   superlatives only.
-2. The world-query services, emitting messages, and move, attack-move, stop and attack.
+1. **Built.** AST, grammar, parser and printer, the round-trip test. The parser covers the whole
+   grammar, so the AST is stable for the later steps.
+2. The world-query services, the resolver for base sets and superlatives, emitting messages, move,
+   attack-move, stop and attack, and the typed entry.
 3. Actions from command-set data and the context verbs, with the coverage gate.
 4. The scroll-wheel menu over valid completions.
 5. Adjectives, filters, clusters, place names, team names and synonyms.
@@ -526,6 +547,5 @@ Voice runs entirely on the player's machine.
 - Which key opens the command mode, and whether it's held or toggled.
 - How a distance is spoken: coarse words only (`near`, `north of`), or numbers too, and in what
   unit.
-- The exact wording of the context verbs in section 7.
 - Whether the General's own field-computer orders (CONTRACT.md "The General under RTS control")
   get command forms. That is the exception in constraint 1, so the current answer is no.

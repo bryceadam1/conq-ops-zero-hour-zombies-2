@@ -14731,3 +14731,25 @@ by a scroll-wheel menu, typed entry and later on-device voice.
   profile), rewritten by one normaliser that the typed entry, voice and training data share.
   `go to` is a synonym of `move to`, never the right-click. The right-click verb is `act on`, because
   "go to the oil derrick" must not have an Engineer capture it.
+
+## First-person commands, step 1: the canonical language (2026-11-07)
+
+`crates/zhbo-core/src/command/` (`ast`, `vocab`, `parse`, `print`, `tests`): the command AST, the
+match vocabulary with the fixed verb table, and the parser and printer for the whole grammar of
+docs/COMMANDS.md section 4. Presentation-side only; nothing in the sim or the ABI changed.
+- **Spellings settled while building**, so each command has exactly one: a bare plural means all
+  (`all` is accepted input only); `the` takes a singular and `1` is spelled `the`; counts are 2 or
+  more; a superlative needs `the` or `my` (`the 3 nearest rangers`, `3 rangers`); a selection never
+  says whose, and a target's `my` takes the determiner's place; mass nouns are singular only after
+  `the` or with a superlative; adjectives and filters in a fixed order; a `near` filter's point has
+  no filters (otherwise `rangers near the war factory in the northern group` had two readings); a
+  verb's preposition is dropped before `there` and before an offset (`move north of the bridge`).
+- **Verb wording:** `car-bomb` (canConvertObjectToCarBomb), `convert` (canMakeObjectDefector),
+  `disable` for both hacking disables, `act on` for the right-click.
+- **The parser keeps every complete parse**, so a text with two readings is an error, not a silent
+  guess, and it records the furthest word reached and what it expected there (the error message
+  now, valid completions later). A first version offered `there` after a spoken preposition in
+  that list; the point parser now leaves it out there.
+- **Verification:** `cargo test -p zhbo-core command::` 10/10, including 4,000 random commands that
+  print and parse back to the same AST; `cargo test --workspace` (ZHBO_BO2_DIR unset) all pass;
+  `cargo clippy -p zhbo-core --all-targets` clean.
