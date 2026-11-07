@@ -525,6 +525,10 @@ impl Arsenal {
         }
         self.throwback = Some(def);
         self.start_offhand_use(true, out);
+        // Fast Hands' `pin_back`: what is left is bumped up to `perk_grenadeTossBackTimer`
+        // (t6mp `FUN_005d2140`: `grenadeTimeLeft = max(left, timer)` with specialty 0x2e, else
+        // the grenade's own time left).
+        let fuse_left = if self.has_specialty(crate::weapons::specialty::Specialty::PinBack) { fuse_left.max(self.tuning.perk_grenade_toss_back_timer) } else { fuse_left };
         self.cooked = (def.fuse_time - fuse_left).max(0.0);
         true
     }

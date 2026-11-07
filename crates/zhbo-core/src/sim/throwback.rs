@@ -152,14 +152,22 @@ mod tests {
         assert_eq!(sim.throwback_target(&host, &p), None, "an ally's");
     }
 
+    /// Without Fast Hands (whose `pin_back` bumps the fuse, [`fast_hands_resets_a_thrown_back_fuse`]).
+    fn no_fast_hands(sim: &mut Sim) {
+        let a = &mut sim.players[0].as_mut().unwrap().arsenal;
+        a.loadout.perks.retain(|&p| Some(p) != crate::weapons::Perk::by_id("FastHands"));
+        assert!(!a.has_specialty(crate::weapons::specialty::Specialty::PinBack));
+    }
+
     /// Picking it up keeps the cooked fuse: thrown back at once (no button held), it leaves his
     /// hand as his, with what was left less the time in his hand; the slot keeps its count. Held
     /// past its fuse (the lethal button down), it goes off in his hand.
     #[test]
     fn a_picked_up_grenade_keeps_its_fuse() {
         let (host, mut sim) = duel();
+        no_fast_hands(&mut sim);
         let def = frag();
-        lay(&mut sim, &host, def, 2, Vec3::new(inches(40.0), 0.0, 0.0), 1.5);
+        lay(&mut sim, &host, def, 2, Vec3::new(inches(40.0), 0.0, 0.0), 2.4);
         let count = sim.player(0).unwrap().arsenal.lethal.count;
         let use_key = FpsInput { held: buttons::FIELD_COMPUTER, pressed: buttons::FIELD_COMPUTER, ..Default::default() };
         crate::sim::tests::run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
@@ -175,16 +183,17 @@ mod tests {
         let (_, g) = &sim.projectiles[0];
         assert_eq!(g.owner, 1, "thrown back as his");
         let held = frames as f32 * LOGIC_DT;
-        assert!(g.fuse < 1.5 - held + 0.1 && g.fuse > 0.0, "the fuse ran on in his hand: {} after {held}s", g.fuse);
+        assert!(g.fuse < 2.4 - held + 0.1 && g.fuse > 0.0, "the fuse ran on in his hand: {} after {held}s", g.fuse);
         assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, count, "the slot keeps its count");
         // Cooked off in hand: picked up with almost nothing left and held.
         let (host, mut sim) = duel();
+        no_fast_hands(&mut sim);
         lay(&mut sim, &host, def, 2, Vec3::new(inches(40.0), 0.0, 0.0), 0.2);
         crate::sim::tests::run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
         crate::sim::tests::run(&mut sim, &host, 0, 1, use_key, 1);
         let hold = FpsInput { held: buttons::LETHAL, ..Default::default() };
         let mut cooked = false;
-        for _ in 0..30 {
+        for _ in 0..90 {
             crate::sim::tests::run(&mut sim, &host, 0, 1, hold, 1);
             // Gone off at his own eye: he takes his own blast.
             if host.damage_log.borrow().iter().any(|d| d.1 == 1) {
@@ -193,5 +202,30 @@ mod tests {
             }
         }
         assert!(cooked, "it went off in his hand");
+    }
+
+    /// Fast Hands (`pin_back`) bumps a picked-up grenade's fuse to `perk_grenadeTossBackTimer`
+    /// (t6mp `FUN_005d2140`): picked up with 0.2 s left, it is thrown back with about 2.5 s.
+    #[test]
+    fn fast_hands_resets_a_thrown_back_fuse() {
+        let (host, mut sim) = duel();
+        let def = frag();
+        let p = sim.players[0].as_mut().unwrap();
+        p.arsenal.loadout.perks.push(crate::weapons::Perk::by_id("FastHands").expect("Fast Hands"));
+        assert!(p.arsenal.has_specialty(crate::weapons::specialty::Specialty::PinBack));
+        lay(&mut sim, &host, def, 2, Vec3::new(inches(40.0), 0.0, 0.0), 0.2);
+        let use_key = FpsInput { held: buttons::FIELD_COMPUTER, pressed: buttons::FIELD_COMPUTER, ..Default::default() };
+        crate::sim::tests::run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+        crate::sim::tests::run(&mut sim, &host, 0, 1, use_key, 1);
+        assert!(sim.projectiles.is_empty(), "picked up");
+        let mut frames = 0;
+        while sim.projectiles.is_empty() && frames < 200 {
+            crate::sim::tests::run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+            frames += 1;
+        }
+        assert!(host.damage_log.borrow().iter().all(|d| d.1 != 1), "it did not go off in his hand");
+        let (_, g) = &sim.projectiles[0];
+        let want = (crate::tuning::get().perk_grenade_toss_back_timer).min(def.fuse_time) - frames as f32 * LOGIC_DT;
+        assert!((g.fuse - want).abs() < 0.1, "bumped to the perk's timer: {} want {want}", g.fuse);
     }
 }

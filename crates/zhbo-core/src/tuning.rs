@@ -140,6 +140,7 @@ tuning! {
     perk_weap_rate_multiplier: "perk_weapRateMultiplier" = 0.75, "`rof`: fire/rechamber states (G1, G3).";
     perk_weap_ads_multiplier: "perk_weapAdsMultiplier" = 0.5, "`fastads`: the ADS rate is divided by it (G1, G3).";
     perk_weap_toss_multiplier: "perk_weapTossMultiplier" = 0.5, "`fasttoss`: grenade states (G1, G3).";
+    perk_grenade_toss_back_timer: "perk_grenadeTossBackTimer" = 2.5, "`pin_back` (Fast Hands): a grenade picked up to throw back has at least this many seconds left (2500 ms; t6mp `FUN_005d2140` tests specialty 0x2e and bumps `grenadeTimeLeft` to `perk_grenadeTossBackTimer`).";
     perk_weap_equipment_use_multiplier: "perk_weapEquipmentUseMultiplier" = 0.6, "`fastequipmentuse`: equipment states (G1, G3).";
     perk_weap_melee_multiplier: "perk_weapMeleeMultiplier" = 0.5, "`fastmeleerecovery`: melee state (G1, G3).";
     perk_weap_spread_multiplier: "perk_weapSpreadMultiplier" = 0.65, "`bulletaccuracy`: hip spread min and max (G1, G6).";
