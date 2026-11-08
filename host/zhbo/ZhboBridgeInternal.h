@@ -92,6 +92,7 @@ struct ZhboConfig
 	Bool autopilot_flicker = FALSE;	  // =flicker: no enemies, a still scene for the flicker diff
 	Bool autopilot_drops = FALSE;	  // =drops: a General killed where he stands, the next one swaps for his rifle
 	Bool autopilot_hipfire = FALSE;	  // =hipfire: hip fire at the ground ahead with no enemy about (nothing hurts him)
+	Bool autopilot_command = FALSE;	  // =command: typed first-person commands to his Rangers (docs/COMMANDS.md)
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
@@ -190,6 +191,10 @@ void cbSoundGain(const char *event, const ZhboVec3 *at, float gain);
 void cbSoundLoop(const char *event, float gain);
 int32_t cbPlayerName(int32_t player, char *out, int32_t cap);
 int32_t cbImageQuad(const char *name, const float *corners, uint32_t argb);
+// ZhboCommand.cpp: the first-person command services (docs/COMMANDS.md).
+int32_t cbCommandObjects(int32_t player, ZhboCmdObject *out, int32_t cap);
+int32_t cbTemplateName(uint32_t tmpl, char *out, int32_t cap);
+void cbIssueOrder(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count);
 void cbClip(float x, float y, float w, float h);
 int32_t cbRadar(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *youPx);
 int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);
@@ -315,6 +320,12 @@ struct Autopilot
 	Coord3D smokeMoverGoal;
 	Real smokeMoverClosest;
 	Bool smokeMoverDone, smokeThrough, smokeCleared;
+	// ZHBO_AUTOPILOT=command (commandAutopilotFrame): his three Rangers behind him, the enemy rebel
+	// ahead, when an attack order was sent (cbIssueOrder) and what has been logged.
+	ObjectID commandRangers[3];
+	ObjectID commandRebel;
+	UnsignedInt commandAttackOrdered;
+	Bool commandArrived, commandAttacked;
 	// ZHBO_AUTOPILOT=splash (splashAutopilotFrame): the scene's objects (the struck target first)
 	// and their health last logged.
 	ObjectID splashIds[8];
@@ -339,6 +350,9 @@ void autopilotSpawn();
 void rtsAutopilotWave(UnsignedInt frame);
 /// ZHBO_AUTOPILOT=smoke: the scene around the General's smoke screen (in the logic step).
 void smokeAutopilotFrame(UnsignedInt frame);
+void commandAutopilotFrame(UnsignedInt frame);
+// The command run: an attack order went out (cbIssueOrder tells the scene).
+void autopilotCommandAttackOrdered();
 /// cbSmoke's report to the smoke scene: a screen stands this frame.
 void autopilotSmokeSeen(const Coord3D &at, Real radius);
 void trackGeneralBuilds(UnsignedInt frame);

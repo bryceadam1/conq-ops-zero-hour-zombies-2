@@ -12,7 +12,7 @@ namespace zhbo_platform
 
 	// Fill the 256-bit platform-neutral key-down set (bit i = key i of the Rust core's `Key`
 	// enum, A..Z, Key1..Key9, Key0, Escape, Space, Tab, Shift, Control, MouseLeft, MouseRight, Up,
-	// Down, Left, Right, Enter, Backspace). The bridge maps native scancodes or virtual keys
+	// Down, Left, Right, Enter, Backspace, Minus). The bridge maps native scancodes or virtual keys
 	// straight to these bits. The order must match `crates/zhbo-core/src/input.rs`'s `Key` enum
 	// exactly (the bridge's `keyNames` table and its static_assert guard the count).
 	void readKeys(uint64_t keys[4]);
@@ -28,7 +28,8 @@ namespace zhbo_platform
 			MouseLeft, MouseRight,
 			Up, Down, Left, Right, Enter, Backspace,
 			Key7, Key8, Key9, Key0,
-			COUNT = Key0 + 1,
+			Minus,
+			COUNT = Minus + 1,
 		};
 		inline void setDown(uint64_t bits[4], Key key, bool down)
 		{

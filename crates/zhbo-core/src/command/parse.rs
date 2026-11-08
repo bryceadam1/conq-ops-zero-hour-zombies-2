@@ -26,6 +26,9 @@ use super::ast::*;
 use super::print::drops_prep;
 use super::vocab::{is_word, Noun, TargetSlot, ThingList, VerbDef, Vocabulary};
 
+/// How many expected words a message names.
+const SHOWN_EXPECTED: usize = 6;
+
 /// Why a text is not a command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError {
@@ -50,8 +53,14 @@ impl fmt::Display for ParseError {
             Some(w) => write!(f, "didn't expect '{w}'")?,
             None => write!(f, "the command is unfinished")?,
         }
+        // A short list for the echo line and the log; the whole list stays in `expected` (the
+        // completions read it).
         if !self.expected.is_empty() {
-            write!(f, "; expected {}", self.expected.join(", "))?;
+            let shown = &self.expected[..self.expected.len().min(SHOWN_EXPECTED)];
+            write!(f, "; expected {}", shown.join(", "))?;
+            if self.expected.len() > shown.len() {
+                write!(f, " and {} more", self.expected.len() - shown.len())?;
+            }
         }
         Ok(())
     }

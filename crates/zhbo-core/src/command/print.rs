@@ -12,6 +12,27 @@ pub fn print(cmd: &Command, vocab: &Vocabulary) -> String {
     p.words.join(" ")
 }
 
+/// One selection group's canonical text (`idle rangers`, `group 3`), for messages.
+pub fn print_group(g: &Group, vocab: &Vocabulary) -> String {
+    let mut p = Printer { vocab, words: Vec::new() };
+    p.groups(std::slice::from_ref(g));
+    p.words.join(" ")
+}
+
+/// A point's canonical text (`the nearest enemy war factory`), for messages.
+pub fn print_point(pt: &Point, vocab: &Vocabulary) -> String {
+    let mut p = Printer { vocab, words: Vec::new() };
+    p.point(pt);
+    p.words.join(" ")
+}
+
+/// One order's canonical text, for messages.
+pub fn print_order(order: &Order, vocab: &Vocabulary) -> String {
+    let mut p = Printer { vocab, words: Vec::new() };
+    p.order(order);
+    p.words.join(" ")
+}
+
 struct Printer<'a> {
     vocab: &'a Vocabulary,
     words: Vec<String>,

@@ -1281,6 +1281,41 @@ machine's units decide alike and Zero Hour's own CRC stays consistent; nothing n
 engine side. `ZhboLogicApi.smoke` stays the per-frame notice (the bridge logs it; the smoke autotest
 reads it). The three free functions are ABI 31 (see "Versioning").
 
+## First-person commands (docs/COMMANDS.md)
+
+The General orders his army from first person with typed lines in the canonical command language.
+Everything here is presentation-side: a line is resolved on the issuing client, and only the
+overhead view's own messages reach the sim, replicated like any player's clicks. Nothing is added
+to `Sim::state_hash` and no new sim message exists.
+
+* **Typing.** In first person (classed, no class screen, field computer or spectating), Enter opens
+  the line (`command::session::Session::keys`). While it is up the client sends no movement or
+  look, the map and scoreboard keys do nothing, and `ZhboClientOut.menu_open` is set so the bridge
+  eats Escape (Escape cancels the line). The keys still down as it closes are swallowed
+  (`prev_held = u32::MAX`). `Key::Minus` (bit 49) types the hyphen of `attack-move`.
+* **Running.** `zhbo_client_frame` runs a submitted line after the client frame, with the client
+  host at hand: `command::session::run` takes a `command_objects` snapshot, builds the vocabulary
+  from `template_name`, parses, resolves (`command::resolve`) and sends each order with
+  `issue_order`. It logs `command: '<line>' -> <n> units: <canonical text>, <k> order(s)` or
+  `command: '<line>' refused: <why>`; the HUD echoes the same.
+* **`ZhboClientApi.command_objects(player, out, cap)`** lists `ZhboCmdObject` records (44 bytes) for
+  everything the player's overhead view would let them click: `Object::isSelectable`, alive, not
+  contained; the player's own always; others' only when the player's shroud status is clear or
+  partly clear, or fogged with a ghost object (a building seen before). Flags (`ZHBO_CMD_*`):
+  KindOf classes, `SELECT_ALL` (Zero Hour's select-all rule from `CommandXlat`'s
+  `MSG_META_SELECT_ALL`), `SELECTABLE` (own), `GHOST`, `IDLE`, `LOADED`, `GENERAL`; the General
+  never carries `SELECTABLE` or `SELECT_ALL`. `relation` is `ZHBO_REL_*` from the asking player's
+  side (`CIVILIAN`: an owner whose side is `Civilian`). `groups` has bit N for hotkey squad N.
+* **`ZhboClientApi.template_name(tmpl, out, cap)`**: `ThingTemplate::getDisplayName` as UTF-8.
+* **`ZhboClientApi.issue_order(order, ids, count)`**: `ZhboCmdOrder` (28 bytes). The bridge keeps
+  the ids the local player controls (never the General), selects their drawables locally, sends
+  `MSG_CREATE_SELECTED_GROUP` (new group, the ids), then the order: `ZHBO_ORDER_MOVE`
+  (`MSG_DO_MOVETO`, or `MSG_ADD_WAYPOINT` when `queued`), `FORCE_MOVE`, `ATTACK_MOVE`, `STOP`,
+  `ATTACK` (`MSG_DO_ATTACK_OBJECT`), `FORCE_ATTACK`, `FORCE_ATTACK_GROUND`, `GUARD_POSITION` and
+  `GUARD_OBJECT` (with `GUARDMODE_NORMAL`), or `MAKE_GROUP` (`MSG_CREATE_TEAM<arg>` with the ids,
+  no selection message). The arguments are those `GameLogicDispatch` reads. It logs
+  `command order: <kind> to <n> object(s), target <id> at (<x>, <y>)`.
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,
@@ -1803,6 +1838,21 @@ the perks' and equipment keys (`bettyactivationdelay`, `scr_proximityGrenade*`, 
 `TargetCircleHalfWidth`, `scavenger_clip_multiplier`, `DetonateDoubleTap`,
 `perk_grenadeTossBackTimer`; `EquipmentArmTime` is gone), and `[Health]` (`playerMaxHealth`,
 `GeneralHeroToughness`); `tuning.ini` lists every key.
+
+### Pending for the next bump
+
+Appended since ABI 36 and not yet folded into a version (the next integration bumps
+`ZHBO_ABI_VERSION` and moves these into a numbered entry above):
+
+* `ZhboClientApi.command_objects`, `template_name` and `issue_order` after `image_quad`
+  (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 17 → 20), with the structs `ZhboCmdObject` (44
+  bytes) and `ZhboCmdOrder` (28 bytes), asserted on both sides (see "First-person commands").
+* `Key::Minus` at bit 49 of the key set (`ZhboPlatform.h`'s `keys::Key`, the bridge's key-name
+  table, SDL's `SDL_SCANCODE_MINUS`, Windows' `VK_OEM_MINUS`). The `KeySet` size is unchanged.
+* The tuning pack's `[Commands]` keys `CommandNearRadius` and `CommandOffsetDistance` (the content
+  CRC's tuning part moves with them).
+* Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)
+  and the object flag `ZHBO_OBJ_GENERAL` (bit 13).
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 

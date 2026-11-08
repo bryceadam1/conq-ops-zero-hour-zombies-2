@@ -148,6 +148,12 @@ pub struct Autopilot {
     /// a held string, then a running string, at the ground ahead; the bridge logs each shot's place
     /// in its cone (`ffi`'s `hip shot` lines).
     pub hipfire: bool,
+    /// The command run ([`Autopilot::command_input`], `ZHBO_AUTOPILOT=command`): the General picks
+    /// his class and submits [`COMMAND_LINES`] to the command line; the bridge's scene (his Rangers
+    /// behind him, an enemy rebel ahead) logs what they do.
+    pub command: bool,
+    /// The command run's next line.
+    pub(crate) command_step: usize,
     /// The drops run: where the nearest dropped weapon is from the eye (yaw, pitch, the distance
     /// across the ground), set by the client from the sim, and when the use key was pressed.
     pub(crate) drop_aim: Option<(f32, f32, f32)>,
@@ -240,12 +246,25 @@ pub struct Scripted {
     /// Turn the view to these angles (yaw, pitch radians) this frame: the multiplayer run aims at
     /// the other General. The look is local; the angles travel in the input message as always.
     pub look: Option<(f32, f32)>,
+    /// Submit this command line this frame (the command run, [`Autopilot::command_input`]): the
+    /// line goes to the command session as if typed and confirmed with Enter.
+    pub command: Option<&'static str>,
 }
+
+/// The command run's lines, each with the first-person second it is submitted at: the Rangers come
+/// to the General, the nearest of them attacks the enemy rebel ahead, a misspelt line is refused,
+/// and an order with no selection goes to the last one (`them`).
+pub const COMMAND_LINES: [(f32, &str); 4] = [
+    (2.0, "rangers move to me"),
+    (14.0, "the nearest ranger attack the nearest enemy rebel"),
+    (18.0, "rangres stop"),
+    (20.0, "stop"),
+];
 
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, flicker: self.flicker, hipfire: self.hipfire, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
+        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, flicker: self.flicker, hipfire: self.hipfire, command: self.command, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
     }
 
     /// What it does at time `t`.
@@ -258,6 +277,9 @@ impl Autopilot {
         }
         if self.smoke {
             return self.smoke_input(b);
+        }
+        if self.command {
+            return self.command_input();
         }
         if self.splash {
             return self.splash_input(b);
@@ -773,6 +795,22 @@ impl Autopilot {
             keys.set_down(b.field_computer, true);
         }
         Scripted { keys, dy, class_pick: pick, ..Default::default() }
+    }
+
+    /// `ZHBO_AUTOPILOT=command`: pick the class, then submit each of [`COMMAND_LINES`] at its time,
+    /// once (a step counter, so a render hitch or several render frames per logic tick never
+    /// submit a line twice or skip one). The bridge's scene logs the orders' effects.
+    pub fn command_input(&mut self) -> Scripted {
+        let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
+        let mut command = None;
+        if let Some(&(at, line)) = COMMAND_LINES.get(self.command_step) {
+            if self.t >= at {
+                self.command_step += 1;
+                self.log.push(format!("autopilot: command line {}: '{line}'", self.command_step));
+                command = Some(line);
+            }
+        }
+        Scripted { class_pick: pick, command, ..Default::default() }
     }
 
     /// The smoke-screen run: pick the seeded class (its tactical the smoke grenade), throw it ahead,

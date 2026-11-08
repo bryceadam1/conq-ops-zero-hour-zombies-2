@@ -229,6 +229,7 @@ void readConfig()
 	s_config.autopilot_flicker = s_config.autopilot_enabled && strcmp(autopilot, "flicker") == 0;
 	s_config.autopilot_drops = s_config.autopilot_enabled && strcmp(autopilot, "drops") == 0;
 	s_config.autopilot_hipfire = s_config.autopilot_enabled && strcmp(autopilot, "hipfire") == 0;
+	s_config.autopilot_command = s_config.autopilot_enabled && strcmp(autopilot, "command") == 0;
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
 	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
@@ -448,6 +449,9 @@ void Zhbo_Init()
 		.sound_loop = cbSoundLoop,
 		.player_name = cbPlayerName,
 		.image_quad = cbImageQuad,
+		.command_objects = cbCommandObjects,
+		.template_name = cbTemplateName,
+		.issue_order = cbIssueOrder,
 	};
 	zhbo_init(&logicApi, &clientApi);
 
@@ -696,6 +700,8 @@ void Zhbo_LogicStep(UnsignedInt frame)
 		rtsAutopilotWave(frame);
 	if (s_config.autopilot_smoke && s_autopilot.spawned)
 		smokeAutopilotFrame(frame);
+	if (s_config.autopilot_command && s_autopilot.spawned)
+		commandAutopilotFrame(frame);
 	rtsWeapons(frame);
 	trackGeneralBuilds(frame);
 	trackIdleGenerals();
@@ -825,7 +831,7 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 			"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q",
 			"R", "S", "T", "U", "V", "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "6", "ESC",
 			"SPACE", "TAB", "SHIFT", "CTRL", "LMB", "RMB", "UP", "DOWN", "LEFT", "RIGHT", "ENTER",
-			"BACKSPACE", "7", "8", "9", "0",
+			"BACKSPACE", "7", "8", "9", "0", "-",
 		};
 		static_assert(sizeof(keyNames) / sizeof(keyNames[0]) == (int)zhbo_platform::keys::Key::COUNT, "key vocabulary must match");
 		char held[96];

@@ -27,6 +27,7 @@ use crate::sim::{Mode, PlayerSim, Sim};
 
 pub mod ammo;
 pub mod center;
+pub mod command;
 pub mod damage;
 pub mod digit;
 pub mod feedback;
@@ -276,6 +277,10 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
 
     draw_low_health(prims, w, h, st.low_health.alpha(st.clock));
     draw_shellshock(prims, w, h, p.shock.screen());
+    // The command line and its echo (a spectator types nothing).
+    if !spectating {
+        command::draw(prims, w, h, s, &client.command);
+    }
     // Under the scope overlay (BO2's reticle zoom, in this frame's zoom direction) BO2 hides the
     // damage indicators (`FUN_004adda0`), and the scoped bit hides the minimap and the compass
     // strip ([`crate::weapons::scope::scoped`]). Both switch at once, without a fade. The ammo

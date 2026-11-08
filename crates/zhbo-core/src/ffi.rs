@@ -195,7 +195,7 @@ pub const ABI_VERSION: u32 = 36;
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
 pub const LOGIC_API_FIELDS: u64 = 24;
-pub const CLIENT_API_FIELDS: u64 = 17;
+pub const CLIENT_API_FIELDS: u64 = 20;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -223,7 +223,33 @@ const _: () = {
     assert!(crate::classicons::BUTTONS == 15);
     assert!(size_of::<LogicApi>() == (LOGIC_API_FIELDS as usize) * size_of::<usize>());
     assert!(size_of::<ClientApi>() == (CLIENT_API_FIELDS as usize) * size_of::<usize>());
+    // ZhboCmdObject and ZhboCmdOrder (the command services, pending the next ABI bump).
+    assert!(size_of::<crate::command::world::CmdObject>() == 44);
+    assert!(size_of::<crate::command::world::CmdOrder>() == 28);
 };
+
+/// The engine services a first-person command runs against: the client host's object list, names
+/// and orders, and the logic's terrain (read only).
+struct CommandEngine<'a> {
+    client: &'a CClientHost,
+    logic: &'a CLogicHost,
+    player: i32,
+}
+
+impl crate::command::session::Host for CommandEngine<'_> {
+    fn objects(&self) -> Vec<crate::command::world::CmdObject> {
+        self.client.command_objects(self.player)
+    }
+    fn template_name(&self, tmpl: u32) -> Option<String> {
+        self.client.template_name(tmpl)
+    }
+    fn issue(&self, order: &crate::command::world::CmdOrder, ids: &[u32]) {
+        self.client.issue_order(order, ids);
+    }
+    fn ground_height(&self, x: f32, y: f32) -> f32 {
+        crate::host::LogicHost::ground_height(self.logic, x, y)
+    }
+}
 
 /// Load the gameplay tuning pack (`data/ConquerOps/tuning.ini`); the sim's default values hold
 /// until this runs.
@@ -494,12 +520,12 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         crate::config::Autopilot::Manual => {
             state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
         }
-        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire } => {
+        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command } => {
             #[cfg(feature = "autopilot")]
             {
-                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, ..Default::default() });
+                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command, ..Default::default() });
             }
-            let _ = (equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire);
+            let _ = (equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
         crate::config::Autopilot::Multiplayer => {
@@ -1368,6 +1394,27 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         }
         for (event, gain) in s.client.cues.loops.drain(..) {
             s.client_host.sound_loop(event, gain);
+        }
+        // A command line submitted this frame (docs/COMMANDS.md): resolved against the engine now
+        // and sent as the overhead view's orders. Presentation-side: only the orders' messages
+        // reach the sim, replicated like any player's.
+        if let Some(line) = s.client.command.take_submitted() {
+            let player = inp.local_player;
+            let viewer = s.sim.player(player).map(|p| crate::command::session::Viewer {
+                general: p.general,
+                feet: p.body.pos,
+                yaw: s.client.yaw,
+                eye: s.client.view_eye,
+                dir: s.client.view_dir,
+            });
+            let log = match viewer {
+                Some(viewer) => {
+                    let engine = CommandEngine { client: &s.client_host, logic: &s.logic, player };
+                    crate::command::session::run(&mut s.client.command, &line, &engine, viewer, &crate::tuning::get())
+                }
+                None => format!("command: '{line}' refused: no General"),
+            };
+            crate::host::LogicHost::log(&s.logic, &log);
         }
         // The seat this frame presented: the local player's, or the General a spectator follows.
         let viewed = s.client.viewed;

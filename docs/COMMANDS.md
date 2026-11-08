@@ -2,9 +2,11 @@
 
 How the General commands his army without leaving first person.
 
-**Status (2026-11-07):** step 1 of the build order is built: the AST, the vocabulary, and the
-parser and printer, in `crates/zhbo-core/src/command/`. The rest is design. The decisions below were agreed with the user. Section 13 lists what
-is still open.
+**Status (2026-11-07):** steps 1 and 2 of the build order are built (section 13): the language,
+and the typed command line in first person with the resolver and the engine services behind it
+(`crates/zhbo-core/src/command/`, `host/zhbo/ZhboCommand.cpp`, CONTRACT.md "First-person
+commands"). The rest is design. The decisions below were agreed with the user. Section 13 lists
+what is still open.
 
 ## 1. Goal and constraints
 
@@ -68,9 +70,11 @@ choice has these consequences:
    - visible objects;
    - the player's ghost objects: buildings seen before and now in fog.
 
-   A building seen once can be selected or targeted while fogged, and a building destroyed while
-   fogged still shows as its ghost, as it does overhead. Units in fog or shroud cannot be
-   resolved.
+   A building seen once can be selected or targeted while fogged. The bridge counts an object as
+   a ghost when the player's shroud status for it is fogged and it holds a ghost object. Units in
+   fog or shroud cannot be resolved. A building destroyed while fogged still shows as its ghost
+   overhead, but it has no object left to give an order, so the resolver cannot name it: an
+   accepted gap, since an order at it would do nothing either.
 2. **Own units only.** A selection only ever contains the player's own objects. Allied, neutral
    and enemy objects can be targets and places, never selections.
 3. **Map place names.** If a map defines named areas (trigger polygons or named waypoints), they
@@ -305,7 +309,7 @@ None is written by hand.
 | List | Source |
 |---|---|
 | `<unit-type>`, `<object-type>`, `<buildable>` | Each thing template's display name from the localized string table, lowercased, with hotkey markers stripped. Plurals use English rules plus an override table in the mod's INI data. |
-| `<unit-class>` | KindOf flags: `INFANTRY` → infantry, `VEHICLE` → vehicles, `AIRCRAFT` → aircraft, `STRUCTURE` → buildings, `DOZER` → dozers, `HARVESTER` → supply trucks. The words live in the mod's INI data. |
+| `<unit-class>` | Grammar words tied to the bridge's KindOf flags (`command/world.rs` `CLASSES`): `INFANTRY` → infantry, `VEHICLE` → vehicles, `AIRCRAFT` → aircraft, `STRUCTURE` → buildings, `DOZER` → builders, `HARVESTER` → harvesters. `builders` and `harvesters` rather than `dozers` and `supply trucks`, because those are display names (the USA's Dozer, the Supply Truck); a type name equal to a class word wins over it, and the synonyms table maps `dozers` and `supply trucks` to the classes. |
 | `"units"` | Exactly what Zero Hour's select-all key selects (the engine's own rule, to be cited in code once read). |
 | `<verb>` | Section 7: command-button labels plus the context verbs. |
 | `<power>`, `<science>` | Special-power and science display names. |
@@ -431,12 +435,16 @@ verb per `can*` query, and the message emitted is whatever `CommandXlat` emits f
   While a command is being built, the units it would select are outlined in the world, and the
   canonical text so far is shown. The menu is how players learn the language they will later
   speak.
-- **Typed entry.** A text line using the engine's text input, with valid-completion suggestions.
-  It's the power-user path and is what the headless tests drive.
+- **Typed entry (built).** In first person, Enter opens a line at the lower left, where BO2 puts
+  chat. Letters, digits, space and `-` type, Backspace deletes, Enter submits and Escape cancels.
+  While the line is up it holds the keyboard: no movement, look, map or scoreboard, and Escape does
+  not open Zero Hour's menu. It reads the platform key set (`Key`), not the engine's text input,
+  like the class screen's name field. Valid-completion suggestions come with step 4.
 - **Voice.** Section 11.
 
-Every command is echoed after parsing, in a short form ("12 rangers → attack-move → north
-ridge"), so a misparse is visible before or as it runs.
+Every command is echoed after it runs, under the line: the count and the canonical text
+("3 units: rangers move to me") in green, or the line and why it was refused in red, fading out
+after five seconds. The echo is English for now; it moves into the string table with the menu.
 
 ## 9. Errors and confirmation
 
@@ -536,15 +544,27 @@ Voice runs entirely on the player's machine.
 **Build order:**
 1. **Built.** AST, grammar, parser and printer, the round-trip test. The parser covers the whole
    grammar, so the AST is stable for the later steps.
-2. The world-query services, the resolver for base sets and superlatives, emitting messages, move,
-   attack-move, stop and attack, and the typed entry.
+2. **Built.** The engine services (`command_objects`, `template_name`, `issue_order`), the world
+   snapshot and vocabulary, the resolver, and the typed entry with its echo, plus the `--command`
+   autotest leg. The resolver covers:
+   - selections: types, class words, `units`, adjectives, `near`, superlatives and quantities,
+     `and`/`except`, control groups, team names, `them`, `that`; with no selection, the last one;
+   - targets: `me`, `there` and `that` from the crosshair, object queries (a fogged building's
+     ghost included), offsets;
+   - orders: move, force move, attack-move, stop, attack, force attack (object or ground), guard
+     (object, point, or where they stand), `name them`, `make them group`; `then` queues moves
+     only (Zero Hour queues waypoints, not other orders).
+
+   Left for later steps, each refused with a message saying so: cluster filters (`in the … group`,
+   `in my group`), place names, and every other verb.
 3. Actions from command-set data and the context verbs, with the coverage gate.
 4. The scroll-wheel menu over valid completions.
 5. Adjectives, filters, clusters, place names, team names and synonyms.
 6. Voice: the sampler and dataset, the model prototypes, constrained decoding.
 
 **Open questions:**
-- Which key opens the command mode, and whether it's held or toggled.
+- Which key opens the scroll-wheel menu, and whether it's held or toggled (the typed line opens
+  with Enter).
 - How a distance is spoken: coarse words only (`near`, `north of`), or numbers too, and in what
   unit.
 - Whether the General's own field-computer orders (CONTRACT.md "The General under RTS control")

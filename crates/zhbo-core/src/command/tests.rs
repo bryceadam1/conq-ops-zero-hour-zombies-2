@@ -224,7 +224,10 @@ fn errors_say_where_and_what_was_expected() {
 
     let e = parse("rangres stop", &v).unwrap_err();
     assert_eq!(e.at, 0);
-    assert!(e.to_string().starts_with("didn't expect 'rangres'"), "{e}");
+    assert!(e.expected.len() > 6);
+    let msg = e.to_string();
+    assert!(msg.starts_with("didn't expect 'rangres'; expected "), "{msg}");
+    assert!(msg.ends_with(&format!(" and {} more", e.expected.len() - 6)), "only six are named: {msg}");
 }
 
 #[test]

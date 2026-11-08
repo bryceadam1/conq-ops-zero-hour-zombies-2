@@ -61,6 +61,7 @@ namespace zhbo_platform
 		setDown(bits, Key::Right, state[SDL_SCANCODE_RIGHT]);
 		setDown(bits, Key::Enter, state[SDL_SCANCODE_RETURN]);
 		setDown(bits, Key::Backspace, state[SDL_SCANCODE_BACKSPACE]);
+		setDown(bits, Key::Minus, state[SDL_SCANCODE_MINUS]);
 		const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
 		setDown(bits, Key::MouseLeft, (buttons & SDL_BUTTON_LMASK) != 0);
 		setDown(bits, Key::MouseRight, (buttons & SDL_BUTTON_RMASK) != 0);
@@ -177,6 +178,7 @@ namespace zhbo_platform
 		setDown(bits, Key::Right, (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0);
 		setDown(bits, Key::Enter, (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
 		setDown(bits, Key::Backspace, (GetAsyncKeyState(VK_BACK) & 0x8000) != 0);
+		setDown(bits, Key::Minus, (GetAsyncKeyState(VK_OEM_MINUS) & 0x8000) != 0);
 		setDown(bits, Key::MouseLeft, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
 		setDown(bits, Key::MouseRight, (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
 	}

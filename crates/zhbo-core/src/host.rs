@@ -238,6 +238,18 @@ pub trait ClientHost {
     fn player_name(&self, _player: i32) -> Option<String> {
         None
     }
+    /// The objects `player` could click overhead (ABI: `ClientApi::command_objects`). A host
+    /// without it has none.
+    fn command_objects(&self, _player: i32) -> Vec<crate::command::world::CmdObject> {
+        Vec::new()
+    }
+    /// A thing template's display name (ABI: `ClientApi::template_name`).
+    fn template_name(&self, _tmpl: u32) -> Option<String> {
+        None
+    }
+    /// Send an order to objects as the overhead view would (ABI: `ClientApi::issue_order`). A host
+    /// without it sends nothing.
+    fn issue_order(&self, _order: &crate::command::world::CmdOrder, _ids: &[u32]) {}
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -304,6 +316,16 @@ pub struct ClientApi {
     /// A MappedImage on a quad (`corners`: 8 floats, the image's top-left, top-right,
     /// bottom-right and bottom-left), 0 when missing or unsupported (host patch 0033).
     pub image_quad: Option<extern "C" fn(name: *const c_char, corners: *const f32, argb: u32) -> i32>,
+    /// Every object `player`'s overhead view would let them click (docs/COMMANDS.md section 3):
+    /// their own live objects, others' visible ones, and the ghosts of buildings seen before and
+    /// now in fog; returns how many were written (at most `cap`). Pending the next ABI bump.
+    pub command_objects: Option<extern "C" fn(player: i32, out: *mut crate::command::world::CmdObject, cap: i32) -> i32>,
+    /// A thing template's display name as UTF-8 into `out` (at most `cap` bytes, NUL-terminated);
+    /// returns its length, 0 for none. Pending the next ABI bump.
+    pub template_name: Option<extern "C" fn(tmpl: u32, out: *mut c_char, cap: i32) -> i32>,
+    /// Send `order` to the `count` objects at `ids` as the overhead view would: the selection as
+    /// `MSG_CREATE_SELECTED_GROUP`, then the order's message. Pending the next ABI bump.
+    pub issue_order: Option<extern "C" fn(order: *const crate::command::world::CmdOrder, ids: *const u32, count: i32)>,
 }
 
 fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
@@ -558,6 +580,30 @@ impl ClientHost for CClientHost {
         let n = f(player, buf.as_mut_ptr() as *mut c_char, buf.len() as i32);
         let n = usize::try_from(n).ok().filter(|&n| n > 0)?.min(buf.len() - 1);
         Some(String::from_utf8_lossy(&buf[..n]).into_owned())
+    }
+
+    fn command_objects(&self, player: i32) -> Vec<crate::command::world::CmdObject> {
+        let Some(f) = self.0.command_objects else { return Vec::new() };
+        // A whole match's objects: the cap is the most a 2,000-unit game reaches with room over.
+        const CAP: usize = 4096;
+        let mut out = vec![crate::command::world::CmdObject::default(); CAP];
+        let n = f(player, out.as_mut_ptr(), CAP as i32).clamp(0, CAP as i32) as usize;
+        out.truncate(n);
+        out
+    }
+
+    fn template_name(&self, tmpl: u32) -> Option<String> {
+        let f = self.0.template_name?;
+        let mut buf = [0u8; 128];
+        let n = f(tmpl, buf.as_mut_ptr() as *mut c_char, buf.len() as i32);
+        let n = usize::try_from(n).ok().filter(|&n| n > 0)?.min(buf.len() - 1);
+        Some(String::from_utf8_lossy(&buf[..n]).into_owned())
+    }
+
+    fn issue_order(&self, order: &crate::command::world::CmdOrder, ids: &[u32]) {
+        if let Some(f) = self.0.issue_order {
+            f(order, ids.as_ptr(), ids.len() as i32);
+        }
     }
 }
 

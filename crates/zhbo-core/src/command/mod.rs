@@ -10,16 +10,25 @@
 //! * [`vocab`]: the match's word lists and the verbs with the arguments each takes.
 //! * [`parse`] and [`print`]: canonical text to the AST and back. Each AST has one spelling, and
 //!   `parse(print(ast)) == ast`.
+//! * [`world`]: the ABI records of the client services and the snapshot a command resolves against.
+//! * [`resolve`]: a command to object ids and engine orders.
+//! * [`session`]: the first-person command line (typing, submitting, the echo) and running a
+//!   submitted line against the engine.
 
 pub mod ast;
 pub mod parse;
 pub mod print;
+pub mod resolve;
+pub mod session;
 pub mod vocab;
+pub mod world;
 
 pub use ast::Command;
 pub use parse::{parse, ParseError};
 pub use print::print;
 pub use vocab::{Noun, TargetSlot, ThingList, VerbDef, Vocabulary};
 
+#[cfg(test)]
+mod resolve_tests;
 #[cfg(test)]
 mod tests;

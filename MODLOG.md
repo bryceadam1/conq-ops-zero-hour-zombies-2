@@ -14753,3 +14753,39 @@ docs/COMMANDS.md section 4. Presentation-side only; nothing in the sim or the AB
 - **Verification:** `cargo test -p zhbo-core command::` 10/10, including 4,000 random commands that
   print and parse back to the same AST; `cargo test --workspace` (ZHBO_BO2_DIR unset) all pass;
   `cargo clippy -p zhbo-core --all-targets` clean.
+
+## First-person commands, step 2: the typed command line in game (2026-11-07)
+
+The General can now order his army from first person: Enter opens a command line, the line is
+parsed, resolved against the world and sent as the overhead view's own orders, and an echo line
+says what was done or why not (docs/COMMANDS.md, CONTRACT.md "First-person commands").
+- **Presentation only.** A submitted line runs after the client frame (`command::session::run`,
+  called from `zhbo_client_frame`); only `MSG_CREATE_SELECTED_GROUP` and the order's message reach
+  the sim, replicated like any click. Nothing new in `state_hash`; `command/` joins the libm gate's
+  presentation list (`math::tests::the_sim_calls_no_platform_libm` flagged `resolve.rs`'s `cos`).
+- **Engine services** (ABI, pending the next bump): `ZhboClientApi.command_objects`,
+  `template_name`, `issue_order`, with `ZhboCmdObject` (44 bytes) and `ZhboCmdOrder` (28), in
+  `host/zhbo/ZhboCommand.cpp`. The object list is what the overhead view lets the player click:
+  own objects, others' in sight, and buildings seen before (fogged with a ghost object). `units`
+  is Zero Hour's select-all rule, read from `CommandXlat`'s `MSG_META_SELECT_ALL` and InGameUI's
+  `kindOfUnitSelection`. Each order's arguments are the ones `GameLogicDispatch` reads. North is +y,
+  the radar's top (`W3DRadar::radarToPixel` inverts y).
+- **Decisions while building:** class words are grammar words tied to KindOf flags, and `builders`
+  and `harvesters` replace the design's `dozers` and `supply trucks`, which are display names (a
+  type name equal to a class word wins over it). `then` queues moves only, because Zero Hour queues
+  waypoints and nothing else. `behind`/`in front of` use the General's facing for `me` and the line
+  from him to the object otherwise. A building destroyed while fogged has no object to order at,
+  so the resolver cannot name its ghost (recorded as a gap in the doc). `Key::Minus` (bit 49) types
+  the hyphen of `attack-move`. The refusal names at most six expected words.
+- **Gotcha:** a heredoc whose body holds another `<<'EOF'` ends at the inner terminator. Editing
+  the autotest script that way cut a Python edit short; zsh rejected the whole command at parse
+  time, so nothing ran. Edits that carry heredocs go in a script file.
+- **Verification:** `cargo test --workspace` (ZHBO_BO2_DIR unset) all pass, with the command tests
+  (`command::tests`, `command::resolve_tests`, `hud::command::tests`); clippy clean for the workspace
+  with `--all-targets` and zhbo-core with `--features harness,renderer`. `cargo xtask build` into a
+  plan dist (archive seeded, unchanged). `scripts/autotest-mac.sh --command` 11/11: the three
+  Rangers came within 59 of the General 15.2 s after the spawn; Ranger 229 attacked the rebel one
+  frame after the attack order (none before it); `rangres stop` was refused; `stop` with no
+  selection went to the last one, and the Ranger stopped short of the rebel. The capture at frame
+  600 shows the green echo at the lower left. No `--mp` leg: the sim and the engine's logic are
+  unchanged (the orders are the overhead view's own messages).

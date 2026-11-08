@@ -55,6 +55,11 @@
 #                                      smoke grenade; a Ranger and a rebel stand either side of it in
 #                                      range and must not fight through it, and must once it clears;
 #                                      a neutral Ranger ordered straight across it must walk round it
+#   scripts/autotest-mac.sh --command  first-person commands (docs/COMMANDS.md): three of his Rangers
+#                                      stand behind the General and an enemy rebel far ahead; typed
+#                                      lines bring the Rangers to him, send the nearest at the rebel
+#                                      (and nobody fights before that order), refuse a misspelt line,
+#                                      and give an order with no selection to the last one
 #   scripts/autotest-mac.sh --detail   the graphics detail Zero Hour picks (host patch 0025): four starts
 #                                      with Options.ini set up as a new player (none), a player whose
 #                                      file holds the old detector's Low, one who chose Low and one who
@@ -106,6 +111,7 @@ mode=autopilot
 [[ "${1:-}" == "--detail" ]] && mode=detail
 [[ "${1:-}" == "--flicker" ]] && mode=flicker
 [[ "${1:-}" == "--hipfire" ]] && mode=hipfire
+[[ "${1:-}" == "--command" ]] && mode=command
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -812,6 +818,52 @@ EOF
         printf '%-34s FAIL\n' "move order went round it"; ok=1
     fi
     grep -E "smoke" "$l" | head -40
+    echo "screenshots and log: $out"
+    exit $ok
+fi
+
+if [[ "$mode" == "command" ]]; then
+    # The core's command run (client/autopilot.rs COMMAND_LINES) submits typed lines; the bridge's
+    # scene (ZhboAutopilot.cpp commandAutopilotFrame) logs what the Rangers do; the core logs each
+    # line's outcome and the bridge each order it sends (ZhboCommand.cpp).
+    profile="$userdata/ConquerOps.profile"
+    rm -f "$profile"
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+Command Test
+primary=an94_mp;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
+    export ZHBO_AUTOPILOT=command GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-45} GGC_BGFX_SCREENSHOT_INTERVAL=${GGC_BGFX_SCREENSHOT_INTERVAL:-150}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    l="$out/ConquerOps.log"
+    check() { # name, pattern
+        if grep -qE "$2" "$l"; then printf '%-34s PASS\n' "$1"; else printf '%-34s FAIL\n' "$1"; ok=1; fi
+    }
+    check "scene placed" "autopilot: command scene: Rangers [0-9]+, [0-9]+, [0-9]+ 150 behind the General, rebel [1-9][0-9]*"
+    check "move line resolved" "command: 'rangers move to me' -> 3 units: rangers move to me, 1 order"
+    check "  ...order sent" "command order: move to 3 object\(s\)"
+    check "  ...the Rangers came" "autopilot: command scene: the Rangers came to the General"
+    check "attack line resolved" "command: 'the nearest ranger attack the nearest enemy rebel' -> 1 unit"
+    check "  ...order sent" "command order: attack to 1 object\(s\), target [1-9]"
+    check "  ...a Ranger attacks the rebel" "autopilot: command scene: Ranger [0-9]+ attacks rebel [0-9]+ \(attack order sent: yes\)"
+    if grep -q "attack order sent: no" "$l"; then
+        printf '%-34s FAIL\n' "  ...nobody fought before it"; ok=1
+    else
+        printf '%-34s PASS\n' "  ...nobody fought before it"
+    fi
+    check "misspelt line refused" "command: 'rangres stop' refused: didn't expect 'rangres'"
+    check "no selection: the last one" "command: 'stop' -> 1 unit: stop, 1 order"
+    check "  ...order sent" "command order: stop to 1 object\(s\)"
+    grep -E "command" "$l" | head -40
     echo "screenshots and log: $out"
     exit $ok
 fi

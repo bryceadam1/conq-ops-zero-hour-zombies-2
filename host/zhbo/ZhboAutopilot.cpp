@@ -629,7 +629,7 @@ void autopilotSpawn()
 	// scene places its own units around the screen once it stands; the flicker scene stays still; the
 	// hip-fire run wants nobody shooting him (a hurt opens BO2's spread scale).
 	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash && !s_config.autopilot_drops &&
-		!s_config.autopilot_flicker && !s_config.autopilot_hipfire)
+		!s_config.autopilot_flicker && !s_config.autopilot_hipfire && !s_config.autopilot_command)
 	{
 		for (Int i = -1; i <= 1; ++i)
 		{
@@ -660,6 +660,29 @@ void autopilotSpawn()
 	}
 	if (enemy && s_config.autopilot_splash)
 		splashScene(pos, yaw, enemy->getDefaultTeam());
+	// ZHBO_AUTOPILOT=command: three of his Rangers 150 behind him, spread across his line, and one
+	// enemy rebel 320 ahead: inside the General's shroud clearing (500), so in sight, and far past a
+	// Ranger's range from him, so nobody fights before the attack order.
+	if (s_config.autopilot_command)
+	{
+		for (Int i = 0; i < 3; ++i)
+		{
+			Coord3D r;
+			r.set(pos.x - c * 150.0f - s * 30.0f * (i - 1), pos.y - s * 150.0f + c * 30.0f * (i - 1), 0.0f);
+			Object *ranger = spawnAt("AmericaInfantryRanger", local->getDefaultTeam(), r, yaw);
+			s_autopilot.commandRangers[i] = ranger ? ranger->getID() : INVALID_ID;
+		}
+		Object *rebel = nullptr;
+		if (enemy)
+		{
+			Coord3D e;
+			e.set(pos.x + c * 320.0f, pos.y + s * 320.0f, 0.0f);
+			rebel = spawnAt("GLAInfantryRebel", enemy->getDefaultTeam(), e, yaw + PI);
+		}
+		s_autopilot.commandRebel = rebel ? rebel->getID() : INVALID_ID;
+		logf("autopilot: command scene: Rangers %u, %u, %u 150 behind the General, rebel %u 320 ahead", (unsigned)s_autopilot.commandRangers[0],
+			(unsigned)s_autopilot.commandRangers[1], (unsigned)s_autopilot.commandRangers[2], (unsigned)s_autopilot.commandRebel);
+	}
 	logf("autopilot: spawned General %u at (%.0f, %.0f), enemies: %s", (unsigned)s_autopilot.general, pos.x, pos.y,
 		enemy ? "3 GLA rebels" : "none (no enemy player)");
 	s_autopilot.spawnFrame = TheGameLogic->getFrame();
@@ -786,6 +809,51 @@ void smokeAutopilotFrame(UnsignedInt frame)
 				gx * gx + gy * gy < 15.0f * 15.0f ? "arrived" : "had not arrived before it cleared", a.smokeMoverClosest, a.smokeRadius);
 		}
 	}
+}
+
+void autopilotCommandAttackOrdered()
+{
+	if (s_autopilot.commandAttackOrdered == 0)
+		s_autopilot.commandAttackOrdered = TheGameLogic->getFrame();
+}
+
+// ZHBO_AUTOPILOT=command: what the typed orders did. Every two seconds each Ranger's distance from
+// the General; once, when all three stand within 60 of him (the move came through); once, when a
+// Ranger attacks the rebel, and whether an attack order had gone out by then.
+void commandAutopilotFrame(UnsignedInt frame)
+{
+	Autopilot &a = s_autopilot;
+	Object *general = TheGameLogic->findObjectByID(a.general);
+	if (!general)
+		return;
+	const Coord3D *g = general->getPosition();
+	Real farthest = 0.0f;
+	Int alive = 0;
+	for (ObjectID id : a.commandRangers)
+	{
+		Object *ranger = TheGameLogic->findObjectByID(id);
+		if (!ranger || ranger->isEffectivelyDead())
+			continue;
+		++alive;
+		const Real dx = ranger->getPosition()->x - g->x, dy = ranger->getPosition()->y - g->y;
+		farthest = std::max(farthest, sqrtf(dx * dx + dy * dy));
+		AIUpdateInterface *ai = ranger->getAI();
+		Object *victim = ai ? ai->getCurrentVictim() : nullptr;
+		if (!a.commandAttacked && victim && victim->getID() == a.commandRebel)
+		{
+			a.commandAttacked = TRUE;
+			logf("autopilot: command scene: Ranger %u attacks rebel %u (attack order sent: %s)", (unsigned)id, (unsigned)a.commandRebel,
+				a.commandAttackOrdered ? "yes" : "no");
+		}
+	}
+	if (!a.commandArrived && alive == 3 && farthest < 60.0f)
+	{
+		a.commandArrived = TRUE;
+		logf("autopilot: command scene: the Rangers came to the General (all within %.0f, %.1f s after the spawn)", farthest,
+			(frame - a.spawnFrame) / (Real)LOGICFRAMES_PER_SECOND);
+	}
+	if ((frame - a.spawnFrame) % (2 * LOGICFRAMES_PER_SECOND) == 0)
+		logf("autopilot: command scene: %d Rangers, the farthest %.0f from the General", (int)alive, farthest);
 }
 
 void rtsAutopilotWave(UnsignedInt frame)

@@ -593,6 +593,9 @@ pub struct Client {
     /// The local player's prediction over his inputs in flight (`predict`): what first person is
     /// drawn from while the engine's logic is available to it ([`Client::frame_with`]).
     pub predict: predict::Predictor,
+    /// The first-person command line (docs/COMMANDS.md; `crate::command::session`): its typing and
+    /// echo here, the submitted line run by the FFI layer after the frame.
+    pub command: crate::command::session::Session,
     /// Some while this machine only watches ([`ClientIn::spectating`]): who it follows.
     pub spectator: Option<spectate::Spectator>,
     /// The seat whose view this frame presented: the local player's own, or the General the
@@ -659,6 +662,7 @@ impl Client {
             menu_prev: crate::classui::MenuPrev::default(),
             tracers: tracers::ViewTracers::default(),
             predict: predict::Predictor::default(),
+            command: crate::command::session::Session::default(),
             spectator: None,
             viewed: -1,
             aim_prev: (0.0, 0.0),
@@ -1049,6 +1053,9 @@ impl Client {
         scripted.mouse_dy = script.dy;
         scripted.wheel = script.wheel;
         scripted.class_pick_force = script.pick_force;
+        if let Some(line) = script.command {
+            self.command.submit(line);
+        }
         scripted.input_allowed = 1;
         if let Some((yaw, pitch)) = script.look {
             self.yaw = wrap_angle(yaw);
@@ -1157,6 +1164,7 @@ impl Client {
         // an overhead General looks level.
         crate::nativebody::ffi::publish_aim(sim.players.iter().flatten().filter(|p| p.is_first_person()).map(|p| (p.general, -p.pitch.to_degrees(), p.arsenal.current().def.is_shield())));
         self.tick_hud(dt);
+        self.command.tick(dt);
         // What first person shows: the prediction (last frame's, until this frame's below), else
         // the sim's record.
         let shown = self.predict.view().cloned().or_else(|| player.clone());
@@ -1265,11 +1273,17 @@ impl Client {
                     // The class screen takes the cursor and freezes the view behind it.
                     // A declined spawn holds the view still too, until the sim hands him back.
                     let menu = self.class_pick_wanted(unclassed) || self.declining(unclassed);
+                    // The command line (Enter): while it is up it holds the keyboard, as the class
+                    // screen does; the keys still down as it closes are swallowed.
+                    let typing = self.command.keys(&inp.keys, allowed && !in_fc && !menu && !spectating && !unclassed);
+                    if std::mem::take(&mut self.command.swallow) {
+                        self.prev_held = u32::MAX;
+                    }
                     if spectating {
                         // Following: his aim, as the sim stepped it, smoothed between logic
                         // frames. The spectator's own mouse never turns the view.
                         self.follow_aim(alpha);
-                    } else if allowed && !in_fc && !menu {
+                    } else if allowed && !in_fc && !menu && !typing {
                         let zoom = hfov / base_fov;
                         // A shellshock's look control (`crate::shellshock`, t6mp `FUN_005109f0`):
                         // the sensitivity scaled and the turn rate capped, both fading back.
@@ -1289,7 +1303,7 @@ impl Client {
                     // This frame's input goes out first: the prediction steps it at once. A
                     // spectator sends nothing.
                     if !spectating {
-                        self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed, sim.frame);
+                        self.build_input(inp, &mut out, allowed && !in_fc && !typing, p.hammer.is_some(), unclassed, sim.frame);
                     }
                     let predicted = match (predicting, host) {
                         (true, Some(host)) => {
@@ -1338,8 +1352,8 @@ impl Client {
                     out.capture_mouse = (allowed && !menu && !spectating) as i32;
                     self.view_eye = out.eye;
                     self.view_dir = out.dir;
-                    self.hud.map_open = allowed && !in_fc && !menu && !spectating && inp.keys.is_down(self.cfg.bindings.map);
-                    self.hud.scoreboard_open = allowed && !menu && !spectating && inp.keys.is_down(self.cfg.bindings.scoreboard);
+                    self.hud.map_open = allowed && !in_fc && !menu && !spectating && !typing && inp.keys.is_down(self.cfg.bindings.map);
+                    self.hud.scoreboard_open = allowed && !menu && !spectating && !typing && inp.keys.is_down(self.cfg.bindings.scoreboard);
                     let events = std::mem::take(&mut self.vm_events);
                     // The viewmodel's motion reads the def's gun-position numbers (G4) and the
                     // sim's own stance/speed/aim; the view's `cg_fov` is G4's wide-FOV reference.
@@ -1418,7 +1432,11 @@ impl Client {
         // it. Both follow the same latch so the HUD and the bridge can never disagree.
         let was_open = self.class_pick_open;
         self.class_pick_open = self.class_pick_wanted(unclassed);
-        out.menu_open = self.class_pick_open as i32;
+        // The command line is closed out of first person, and holds Escape while up.
+        if !matches!(self.view, ViewMode::Fps) {
+            self.command.open = false;
+        }
+        out.menu_open = (self.class_pick_open || self.command.open) as i32;
         // The frame's impacts (consume_events and the prediction filled them above): the
         // presented seat's own, then other players' into the slots left.
         out.hits = self.hits;

@@ -164,6 +164,8 @@ pub enum Key {
     Key8,
     Key9,
     Key0,
+    /// The `-` key: the command line types the hyphen in `attack-move` (docs/COMMANDS.md).
+    Minus,
 }
 
 /// The mouse buttons' bits in `ClientIn::mouse_buttons` (the bridge fills them from the engine's
@@ -182,7 +184,7 @@ impl Key {
         Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Key6, Key::Escape,
         Key::Space, Key::Tab, Key::Shift, Key::Control, Key::MouseLeft, Key::MouseRight,
         Key::Up, Key::Down, Key::Left, Key::Right, Key::Enter, Key::Backspace,
-        Key::Key7, Key::Key8, Key::Key9, Key::Key0,
+        Key::Key7, Key::Key8, Key::Key9, Key::Key0, Key::Minus,
     ];
 
     /// The bit in a `ClientIn::keys` word for this key.
@@ -268,6 +270,7 @@ pub fn key_name(k: Key) -> &'static str {
         Key::Key8 => "8",
         Key::Key9 => "9",
         Key::Key0 => "0",
+        Key::Minus => "-",
     }
 }
 
@@ -299,10 +302,10 @@ mod key_tests {
     fn the_key_walk_covers_the_enum_in_order() {
         // The C++ host's enum and `keyNames` mirror this list; a missing or reordered entry
         // would shift every bit in the ABI.
-        assert_eq!(Key::ALL.len(), Key::Key0 as usize + 1);
+        assert_eq!(Key::ALL.len(), Key::Minus as usize + 1);
         for (i, k) in Key::ALL.iter().enumerate() {
             assert_eq!(*k as usize, i, "Key::ALL[{i}] is {k:?}");
         }
-        assert_eq!(Key::ALL.len(), 49);
+        assert_eq!(Key::ALL.len(), 50);
     }
 }

@@ -17,7 +17,7 @@
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
 #define ZHBO_LOGIC_API_FIELDS 24u
-#define ZHBO_CLIENT_API_FIELDS 17u
+#define ZHBO_CLIENT_API_FIELDS 20u
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,6 +90,67 @@ typedef struct ZhboFpsInput
 	float yaw;
 	float pitch;
 } ZhboFpsInput;
+
+/* First-person commands (docs/COMMANDS.md; zhbo_core::command::world). Pending the next ABI bump. */
+/* ZhboCmdObject.flags */
+enum
+{
+	ZHBO_CMD_STRUCTURE  = 1u << 0,
+	ZHBO_CMD_INFANTRY   = 1u << 1,
+	ZHBO_CMD_VEHICLE    = 1u << 2,
+	ZHBO_CMD_AIRCRAFT   = 1u << 3,
+	ZHBO_CMD_DOZER      = 1u << 4,
+	ZHBO_CMD_HARVESTER  = 1u << 5,
+	ZHBO_CMD_SELECT_ALL = 1u << 6,  /* what Zero Hour's select-all key selects (never the General) */
+	ZHBO_CMD_SELECTABLE = 1u << 7,  /* the player's own, selectable, not contained (never the General) */
+	ZHBO_CMD_GHOST      = 1u << 8,  /* a building seen before and now in fog */
+	ZHBO_CMD_IDLE       = 1u << 9,
+	ZHBO_CMD_LOADED     = 1u << 10, /* has passengers or a garrison */
+	ZHBO_CMD_GENERAL    = 1u << 11,
+};
+/* ZhboCmdObject.relation, from the asking player's side */
+enum
+{
+	ZHBO_REL_OWN = 0,
+	ZHBO_REL_ALLY = 1,
+	ZHBO_REL_ENEMY = 2,
+	ZHBO_REL_NEUTRAL = 3,
+	ZHBO_REL_CIVILIAN = 4,
+};
+/* ZhboCmdOrder.kind: the message the bridge sends after MSG_CREATE_SELECTED_GROUP */
+enum
+{
+	ZHBO_ORDER_MOVE = 1,                /* MSG_DO_MOVETO pos (queued: MSG_ADD_WAYPOINT) */
+	ZHBO_ORDER_FORCE_MOVE = 2,          /* MSG_DO_FORCEMOVETO pos */
+	ZHBO_ORDER_ATTACK_MOVE = 3,         /* MSG_DO_ATTACKMOVETO pos */
+	ZHBO_ORDER_STOP = 4,                /* MSG_DO_STOP */
+	ZHBO_ORDER_ATTACK = 5,              /* MSG_DO_ATTACK_OBJECT target */
+	ZHBO_ORDER_FORCE_ATTACK = 6,        /* MSG_DO_FORCE_ATTACK_OBJECT target */
+	ZHBO_ORDER_FORCE_ATTACK_GROUND = 7, /* MSG_DO_FORCE_ATTACK_GROUND pos */
+	ZHBO_ORDER_GUARD_POSITION = 8,      /* MSG_DO_GUARD_POSITION pos, GUARDMODE_NORMAL */
+	ZHBO_ORDER_GUARD_OBJECT = 9,        /* MSG_DO_GUARD_OBJECT target, GUARDMODE_NORMAL */
+	ZHBO_ORDER_MAKE_GROUP = 10,         /* MSG_CREATE_TEAM<arg> */
+};
+typedef struct ZhboCmdObject
+{
+	uint32_t id;
+	uint32_t tmpl; /* ThingTemplate::getTemplateID */
+	uint32_t flags; /* ZHBO_CMD_* */
+	int32_t relation; /* ZHBO_REL_* */
+	ZhboVec3 pos;
+	float health; /* fraction of its maximum */
+	float radius; /* bounding sphere */
+	int32_t veterancy; /* 0 regular .. 3 heroic */
+	uint32_t groups; /* control groups it is in: bit N for group N */
+} ZhboCmdObject;
+typedef struct ZhboCmdOrder
+{
+	int32_t kind; /* ZHBO_ORDER_* */
+	uint32_t target;
+	ZhboVec3 pos;
+	int32_t queued;
+	int32_t arg;
+} ZhboCmdOrder;
 
 /* zhbo_core::building::BuildOption. status: ZHBO_BUILD_*. */
 typedef struct ZhboBuildOption
@@ -239,6 +300,13 @@ typedef struct ZhboClientApi
 	   display cannot (host patch 0033's Display::drawImageQuad): BO2's turned damage indicators,
 	   crosshair pieces and grenade pointer. Appended (pending the next ABI bump). */
 	int32_t (*image_quad)(const char *name, const float *corners, uint32_t argb);
+	/* First-person commands (docs/COMMANDS.md), pending the next ABI bump: every object `player`'s
+	   overhead view would let them click (own live objects, others' visible ones, ghosts of
+	   buildings seen before), at most cap, returning the count; a template's display name as UTF-8
+	   (returns its length, 0 for none); an order sent to ids as the overhead view would. */
+	int32_t (*command_objects)(int32_t player, ZhboCmdObject *out, int32_t cap);
+	int32_t (*template_name)(uint32_t tmpl, char *out, int32_t cap);
+	void (*issue_order)(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count);
 } ZhboClientApi;
 
 /* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit
@@ -772,6 +840,8 @@ static_assert(sizeof(ZhboRtsIcons) == 240, "ZhboRtsIcons layout must match sim/r
 static_assert(sizeof(ZhboClassButton) == 756, "ZhboClassButton layout must match ffi.rs");
 static_assert(sizeof(ZhboClientApi) == ZHBO_CLIENT_API_FIELDS * sizeof(void *), "ZhboClientApi layout must match host.rs");
 static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");
+static_assert(sizeof(ZhboCmdObject) == 44, "ZhboCmdObject layout must match command/world.rs");
+static_assert(sizeof(ZhboCmdOrder) == 28, "ZhboCmdOrder layout must match command/world.rs");
 static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");
 static_assert(sizeof(ZhboNativeLight) == 24, "ZhboNativeLight layout must match nativevm/ffi.rs");
 static_assert(sizeof(ZhboNativeIn) == 168, "ZhboNativeIn layout must match nativevm/ffi.rs");
