@@ -4,12 +4,12 @@
     venv/bin/python tools/voice/train/train_t5.py --data tools/voice --out ~/.conquerops/voice/flan-t5-small
 
 Reads `train.tsv` / `dev.tsv` / `test.tsv` (`input<TAB>label<TAB>id`, built by `voice_corpus
-assemble`; the id names the row's vocabulary in `vocab.tsv`) and, if present, `heard.tsv` (spoken
+assemble`; the id names the row's vocabulary in `vocab.tsv`) and every `heard*.tsv` (spoken
 training inputs as Whisper and the snapper heard them, from the `voice_heard` example),
 fine-tunes `--model` (google/flan-t5-small by default), checks exact match on dev after each epoch
 with greedy decoding (no grammar mask: the mask only helps, so this is the floor), keeps the best
-epoch, and writes it as safetensors with its tokenizer and `words.txt` (the ordinary words, for the
-voice snapper), plus `eval.txt` (dev and test exact match,
+epoch, and writes it as safetensors (stored in f16) with its tokenizer and `words.txt` (the ordinary
+words, for the voice snapper), plus `eval.txt` (dev and test exact match,
 decode speed, and a sample of the errors). The model is the player's to download at install; it
 never ships in the repo.
 """
@@ -89,7 +89,7 @@ def main():
     data = Path(args.data)
     train, dev, test = read(data / "train.tsv"), read(data / "dev.tsv"), read(data / "test.tsv")
     # Training inputs as the game hears them (`voice_heard`): Whisper's transcripts, snapped.
-    heard = read(data / "heard.tsv") if (data / "heard.tsv").exists() else []
+    heard = [row for path in sorted(data.glob("heard*.tsv")) for row in read(path)]
     train += heard
     print(f"{len(train)} train ({len(heard)} heard), {len(dev)} dev, {len(test)} test rows on {device}", flush=True)
 
@@ -155,6 +155,11 @@ def main():
         cpu.generate(**src, max_new_tokens=args.max_len, num_beams=1, do_sample=False)
     lines.append(f"one command at a time on the CPU: {(time.time() - start) / 50 * 1000:.0f} ms each (50 test inputs)")
     (out / "eval.txt").write_text("\n".join(lines) + "\n")
+    # The weights as players download them: f16, half the size. The runtime reads them into f32,
+    # and on the held-out set the answers are the same to the last row (voice_eval, 300 rows).
+    from safetensors.torch import load_file, save_file
+    weights = load_file(out / "model.safetensors")
+    save_file({k: v.to(torch.float16).contiguous() for k, v in weights.items()}, out / "model.safetensors", metadata={"format": "pt"})
     print("\n".join(lines[:3] + lines[-1:]), flush=True)
 
 

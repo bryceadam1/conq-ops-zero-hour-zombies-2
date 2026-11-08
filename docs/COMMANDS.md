@@ -2,10 +2,11 @@
 
 How the General commands his army without leaving first person.
 
-**Status (2026-11-07):** steps 1 to 5 of the build order are built (section 13): the language,
+**Status (2026-11-08):** all six steps of the build order are built (section 13): the language,
 the typed command line and the command menu in first person, the resolver, the command buttons and right-click verbs,
-and the coverage gates (`crates/zhbo-core/src/command/`, `host/zhbo/ZhboCommand.cpp`,
-CONTRACT.md "First-person commands"). The rest is design. The decisions below were agreed with the user. Section 13 lists
+the coverage gates (`crates/zhbo-core/src/command/`, `host/zhbo/ZhboCommand.cpp`,
+CONTRACT.md "First-person commands"), and voice: push-to-talk through Whisper, the snapper and the
+fine-tuned translator (`crates/zhbo-voice`, section 11). The decisions below were agreed with the user. Section 13 lists
 what is still open.
 
 ## 1. Goal and constraints
@@ -576,6 +577,10 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
     an unknown word is respelt when its distance per letter of the span's *unknown* words is at
     most 0.34 (dividing by the whole span let a short word vanish beside a long name). An unknown
     hyphenated word (`a-8-korselvases`) is read as its parts.
+  - **Whisper's loop.** Whisper can write a phrase again and again past what was said
+    (`attack move to the bridge` nine times). The decoder stops at ten tokens a second of audio,
+    and a run of three words or more said again straight after itself is kept once
+    (`hear::unrepeat`).
   - Measured (`voice_listen`, base.en): names heard whole 0.58 prompted, 0.90 snapped; the
     command's meaning right 0.48 and 0.63.
 - **Translation: flan-t5-small first** (77M parameters, Apache-2.0), fine-tuned on the training
@@ -614,9 +619,9 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   1. **The abstain production** with its not-found slot (section 9).
   2. **A confidence check.** The command's log-probability and the probability mass the mask
      removed along the way. Too much removed means the model "wanted" something invalid, so the
-     command asks for confirmation instead of running. Measured: the largest share removed at one
-     step averages 0.002 on right answers and 0.28 on wrong ones; asking above 0.1 asks on 0.4% of
-     right answers and catches a third of the wrong ones.
+     command asks for confirmation instead of running. Measured (the released model, `voice_eval`):
+     the largest share removed at one step averages 0.012 on right answers and 0.24 on wrong ones;
+     asking above 0.1 asks on 1.8% of right answers and catches a quarter of the wrong ones.
   3. **Fine-tuning on the canonical language**, so the mask is a safety net, not the main
      mechanism.
 - **The game's side (built).** `conquerops-voice` is its own process beside the game (the
@@ -664,27 +669,48 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      exclusion or sequence, 7,848 were filler-only), 8,241 noisy copies; 28,054 training rows,
      1,507 dev, 1,469 test. The normaliser alone already reads 6,722 of the kept phrasings back
      to their label; the model's job is the rest.
+  6. **Control characters** drop a paraphrase: a script in two pass-1 batches left `\x00one\x00`
+     placeholders in 296 of them.
+  7. **English names.** A third of the commands are copied again with every invented word
+     renamed into an English one (`sample::Renaming`: `korgor tower` → `granite tower`), in
+     every split, under a vocabulary `<id>e` (`vocab_renamed.tsv`). A match's names are English
+     words; a model that only saw invented ones learned to read English in a name's place as noise
+     (below). The word list holds none of Zero Hour's names, the grammar's words or the synonym
+     table's (`english_name_words_collide_with_nothing`). The build now: 38,249 training rows,
+     2,091 dev, 2,046 test, 875 commands renamed.
+  8. **As Whisper hears them** (`voice_heard`): training inputs spoken by `say` in 14 voices the
+     tests never use, at drawn speaking rates, through Whisper, its prompt and the snapper, into
+     `heard*.tsv`, which the training script adds. A row stays only if the transcript still has
+     every name of its label: where Whisper lost a name, the row taught the model to make one up.
+     4,541 rows kept of 6,842 (a third of them English-named).
 
-- **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set,
-  six epochs on Apple's GPU (MPS) at about 250 s each, keeping the best epoch on a dev sample (the
-  third: later epochs fit the training set closer and the dev sample less). The weights go to
-  `~/.conquerops/voice/flan-t5-small/`, never into the repo. Gotcha: transformers saves T5's own
+- **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
+  the heard rows, six epochs on Apple's GPU (MPS) at about 370 s each, keeping the best epoch on a
+  dev sample (the fifth). The weights, stored in f16 (half the download; the same answers to the
+  last row), go to `~/.conquerops/voice/commands-t5-small/`, never into the repo; players get them
+  from this project's GitHub release `voice-commands-v1`. Gotcha: transformers saves T5's own
   `lm_head` while the config still says the embeddings are tied, and candle trusting the config
   decodes nonsense; the script writes `tie_word_embeddings = false` and the loader goes by the
   weights.
-- **Results** (`cargo run --release -p zhbo-voice --example voice_eval -- <model dir> tools/voice`,
-  1,469 held-out rows, greedy, one command at a time on the CPU):
+- **Results**, the released model. Typed text (`voice_eval`, 2,046 held-out rows, greedy, one
+  command at a time on the CPU):
 
   | | exact match | same meaning | ms per command |
   |---|---|---|---|
-  | unconstrained | 0.946 | 0.958 (1.2% not a command) | 125 |
-  | constrained | 0.948 | 0.959 (none stuck) | 137 |
+  | unconstrained | 0.951 | 0.959 (1.5% not a command) | 122 |
+  | constrained | 0.959 | 0.967 (none stuck) | 138 |
 
-  "Same meaning" counts `a and b` as `b and a`. With the guard at 0.1: 95.9% run right, 1.7% ask
-  first, 2.7% run wrong. The remaining errors: an invented selection on a command with an implied
+  Spoken (`voice_listen`, 300 held-out commands in 8 voices, base.en, prompted and snapped): the
+  meaning right 0.757, against 0.713 for the first model (trained on text alone). Over a match's
+  kind of names (`voice_match`, 16 commands about Rangers, Humvees and a War Factory): 13 right,
+  against 13 for the first model and 2 for a model trained on unfiltered heard rows without
+  English names, which read `rangers` as noise and answered `group 2 move to me`. The synthetic
+  test cannot show that: its names are all invented, so `voice_match` is part of choosing a
+  model. "Same meaning" counts `a and b` as `b and a`. The remaining errors: an invented selection on a command with an implied
   one (`force move to tordorosts` read as `tordorosts force move to tordorosts`), a group dropped
-  from a long union, and near-synonyms (`at` against `near`). Next: the abstain production, and
-  flan-t5-base or the 0.5B decoder-only model if real speech falls short.
+  from a long union, near-synonyms (`at` against `near`; `go back to` read as `resume building`),
+  and `the barracks` against `barracks`. Next: the abstain production, and flan-t5-base or the
+  0.5B decoder-only model if real speech falls short.
 
   Training uses **placeholder names** in place of real unit and place names, so the model learns
   to copy names instead of memorising Zero Hour's roster. That generalises to mods and other
@@ -740,9 +766,11 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
 5. **Built.** Adjectives, `near`, groups (clusters), place names, team names, and the synonym and
    alias tables with the normaliser, the player's own file included.
 6. Voice. **Built:** the sampler and dataset, the fine-tuned flan-t5-small, the candle
-   translator and constrained decoder (`crates/zhbo-voice`) with its evaluation. Left: Whisper and
-   the launcher's download, the microphone in game, the abstain production and the confidence
-   guard's tuning key.
+   translator and constrained decoder, Whisper with the snapper, the voice process with the
+   microphone, push-to-talk, the confidence act and its tuning keys, and the launcher's download
+   (`crates/zhbo-voice`, `command::voice`, the launcher's `voice`), with the `--command` leg's
+   spoken line. Left: the abstain production, real recorded speech in the evaluation, and the
+   Windows and Linux microphone checks.
 
 **Open questions:**
 - Whether the menu should outline the units its command would select (the engine's local

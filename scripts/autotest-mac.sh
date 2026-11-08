@@ -850,7 +850,7 @@ EOF
     models="${ZHBO_VOICE_MODELS:-$HOME/.conquerops/voice}"
     mkdir -p "$dist/voice"
     [[ -e "$dist/voice/whisper-base.en" ]] || ln -s "$models/whisper-base.en" "$dist/voice/whisper-base.en"
-    [[ -e "$dist/voice/commands-t5-small" ]] || ln -s "$models/flan-t5-small" "$dist/voice/commands-t5-small"
+    [[ -e "$dist/voice/commands-t5-small" ]] || ln -s "$models/commands-t5-small" "$dist/voice/commands-t5-small"
     say -v Samantha --data-format=LEF32@16000 -o "$out/voice.wav" "Rangers, come over to me."
     export ZHBO_AUTOPILOT_VOICE="$out/voice.wav"
     export ZHBO_AUTOPILOT=command GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-60} GGC_BGFX_SCREENSHOT_INTERVAL=${GGC_BGFX_SCREENSHOT_INTERVAL:-150}

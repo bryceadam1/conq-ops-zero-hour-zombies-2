@@ -14998,3 +14998,42 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - the translator's release assets (`voice-commands-v1`), published once the model is
     retrained;
   - that retraining, on Whisper's transcripts (`voice_heard`).
+
+## First-person commands, step 6: the translator retrained for what players say (2026-11-08)
+
+- **The released model** (`~/.conquerops/voice/commands-t5-small`; the manifest's `[Translator]`)
+  was trained on the voice set with a third of the commands renamed into English names, plus
+  Whisper's transcripts of spoken training inputs that kept every name. It is stored in f16: half
+  the download, the same answers to the last row (`voice_eval`, 300 rows).
+- **Gotcha: invented names taught the model that English is noise.** Retraining with Whisper's
+  transcripts alone (r1) raised the spoken score on the test set (0.630 to 0.693). But over a
+  match's kind of names, `voice_match` (Rangers, Humvees, a War Factory) got 2 of 16 against the
+  first model's 13: `rangers, come over to me` became `group 2 move to me`. Every name in the
+  training set is an invented syllable word, and the heard rows where Whisper had garbled a name
+  put English-looking words in a name's place with a name in the label. The model learned to
+  replace English there.
+- **The fix:**
+  - `sample::Renaming` copies a third of the commands with English names, held by a collision
+    test against the grammar, the synonym table and Zero Hour's names.
+  - `voice_heard` keeps only rows whose transcript has every name of the label.
+
+  Now 13 of 16, confidently (most masked shares near 0).
+- **Gotcha: the synthetic test cannot judge names.** Its names are all invented, so a model can
+  score well there and fail on English ones. `voice_match` is now part of choosing a model.
+- **Gotcha: Whisper loops.** `rangers and missile defenders, attack move to the bridge` came back
+  nine times. The decoder now stops at ten tokens a second of audio, and `hear::unrepeat` keeps a
+  run said straight after itself once.
+- **Data hygiene:** 296 pass-1 paraphrases held `\x00one\x00` placeholders left by an agent's
+  script. `assemble` drops any paraphrase with control characters.
+- **Results:**
+
+  | | spoken, same meaning (300) | typed, same meaning (2,046) | `voice_match` |
+  |---|---|---|---|
+  | first model | 0.713 | | 13/16 |
+  | r2 (renamed, all heard rows) | 0.753 | | 13/16, asks often |
+  | released (r3) | 0.757 | 0.967 | 13/16 |
+
+  At `CommandVoiceGuard` 0.1 the released model asks on 1.8% of right answers and a quarter of
+  wrong ones.
+- **In game,** the `--command` leg with the released model and the loop guard: every check PASS.
+  The spoken line ran as `rangers move to me` (mask 0.02).

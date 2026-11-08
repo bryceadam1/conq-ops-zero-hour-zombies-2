@@ -24,6 +24,10 @@ pub const SAMPLE_RATE: usize = whisper::SAMPLE_RATE;
 pub const WINDOW_SILENCE: usize = 300;
 /// The longest transcription, in tokens (a command is a sentence).
 const MAX_TOKENS: usize = 96;
+/// Tokens a second of speech may come to, at most: fast speech is about four words a second, a
+/// word a token or two. Whisper can loop, writing a phrase again and again past what was said;
+/// the audio's length bounds it.
+const TOKENS_PER_SECOND: f32 = 10.0;
 
 /// One utterance as heard.
 #[derive(Clone, Debug, PartialEq)]
@@ -117,7 +121,8 @@ impl Listener {
         tokens.extend_from_slice(&self.start);
         let first = tokens.len();
         let (mut sum, mut no_speech) = (0f32, 0f32);
-        for step in 0..MAX_TOKENS {
+        let budget = ((pcm.len() as f32 / SAMPLE_RATE as f32) * TOKENS_PER_SECOND) as usize + 8;
+        for step in 0..MAX_TOKENS.min(budget) {
             // The cache holds what came before: the whole start first, then one token a step.
             let feed = if step == 0 { &tokens[..] } else { &tokens[tokens.len() - 1..] };
             let logits = self.model.decode(feed, &features)?;
@@ -138,10 +143,48 @@ impl Listener {
             tokens.push(next);
         }
         let said = &tokens[first..];
-        let text = self.tokenizer.decode(said, true)?.trim().to_string();
+        let text = unrepeat(self.tokenizer.decode(said, true)?.trim());
         let decode_seconds = clock.elapsed().as_secs_f32() - encode_seconds;
         Ok(Heard { text, mean_log_prob: sum / (said.len() + 1) as f32, no_speech, encode_seconds, decode_seconds })
     }
+}
+
+/// `text` with a run of words said again straight after itself kept once: Whisper's loop
+/// (`attack-move to the bridge, attack-move to the bridge, …`). Only runs of three words or more,
+/// so a repeated word (`garrison, garrison`) is left as said.
+pub fn unrepeat(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let norm = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        out.push(words[i]);
+        i += 1;
+        // After each word, drop as many straight repeats of the run that ends here as follow.
+        'runs: for len in (3..=out.len()).rev() {
+            let run: Vec<String> = out[out.len() - len..].iter().map(|w| norm(w)).collect();
+            let mut skipped = false;
+            while i + len <= words.len() && words[i..i + len].iter().map(|w| norm(w)).eq(run.iter().cloned()) {
+                i += len;
+                skipped = true;
+            }
+            if skipped {
+                break 'runs;
+            }
+        }
+    }
+    // A loop cut off mid-way leaves the run's start again at the end: drop it.
+    let n = out.len();
+    'tail: for len in (3..=n / 2).rev() {
+        let tail: Vec<String> = out[n - len..].iter().map(|w| norm(w)).collect();
+        for run in len + 1..=n - len {
+            if out[n - len - run..n - len].iter().take(len).map(|w| norm(w)).eq(tail.iter().cloned()) {
+                out.truncate(n - len);
+                break 'tail;
+            }
+        }
+    }
+    out.join(" ")
 }
 
 /// A transcription as the translator was trained to read it: lower case, words, commas and
@@ -197,6 +240,15 @@ pub fn mel_filters(sample_rate: usize, n_fft: usize, n_mels: usize) -> Vec<f32> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loop_is_kept_once() {
+        let looped = "rangers and missile defenders, attack move to the bridge rangers and missile defenders, attack move to the bridge rangers and missile defenders, attack move to";
+        assert_eq!(unrepeat(looped), "rangers and missile defenders, attack move to the bridge");
+        assert_eq!(unrepeat("go to the bridge go to the bridge go to the bridge"), "go to the bridge");
+        assert_eq!(unrepeat("garrison, garrison units near there"), "garrison, garrison units near there");
+        assert_eq!(unrepeat("the 3 weakest builders"), "the 3 weakest builders");
+    }
 
     #[test]
     fn a_transcription_is_tidied_for_the_translator() {

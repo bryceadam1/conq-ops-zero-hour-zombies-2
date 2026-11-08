@@ -217,7 +217,9 @@ Voice commands (docs/COMMANDS.md section 11), on candle:
 - the `conquerops-voice` binary: the game's voice process (microphone through `cpal`, a line
   protocol over pipes), staged beside the game by `cargo xtask build`;
 - examples: `voice_eval` (the translator on the held-out set), `voice_listen` (spoken commands
-  end to end, macOS `say`), `voice_heard` (training rows as Whisper hears them).
+  end to end, macOS `say`), `voice_match` (spoken commands over a match's kind of English names),
+  `voice_heard` (training rows as Whisper hears them), `voice_trace` (one translation step by
+  step).
 
 The game side is `zhbo-core`'s `command::voice` (the link to the process, presentation only).
 The launcher's `voice` module downloads the models listed in `data/ConquerOps/voice.ini`.

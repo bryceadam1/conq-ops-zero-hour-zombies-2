@@ -2,4 +2,5 @@
 train.tsv
 dev.tsv
 test.tsv
-heard.tsv
+heard*.tsv
+vocab_renamed.tsv

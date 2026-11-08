@@ -24,6 +24,101 @@ const MODE_NOUNS: [&str; 3] = ["rounds", "mode", "shells"];
 const WEAPON_NOUNS: [&str; 3] = ["cannon", "missile", "mortar"];
 const TEAM_NOUNS: [&str; 3] = ["team", "squad", "wing"];
 
+/// English words a renamed vocabulary's names are made of (`granite tower`, `wardens`): a match's
+/// names are English (`Ranger`, `War Factory`), and a model that only ever saw invented words in
+/// a name's place reads an English one as noise. None is one of Zero Hour's names, a word of the
+/// grammar or of the synonym table (`english_name_words_collide_with_nothing`).
+const ENGLISH_NAME_WORDS: [&str; 158] = [
+    "falcon", "hawk", "kestrel", "osprey", "condor", "heron", "raven", "crow", "magpie", "sparrow", "harrier", "buzzard", "vulture",
+    "owl", "wolf", "jackal", "coyote", "badger", "wolverine", "lynx", "cougar", "puma", "jaguar", "leopard", "bobcat", "bear",
+    "bison", "buffalo", "mustang", "stallion", "bronco", "ram", "boar", "rhino", "moose", "elk", "stag", "viper", "cobra", "adder",
+    "python", "mamba", "gecko", "iguana", "hornet", "wasp", "mantis", "beetle", "locust", "spider", "tarantula", "termite",
+    "piranha", "barracuda", "marlin", "shark", "orca", "granite", "basalt", "flint", "slate", "marble", "quartz", "onyx", "jade",
+    "garnet", "topaz", "opal", "amber", "cobalt", "copper", "bronze", "nickel", "zinc", "titan", "atlas", "orion", "sirius",
+    "vega", "nova", "comet", "meteor", "quasar", "pulsar", "nebula", "zenith", "apex", "summit", "glacier", "tundra", "canyon",
+    "mesa", "bayou", "harbor", "ember", "cinder", "blaze", "frost", "sleet", "thunder", "lightning", "tempest", "cyclone",
+    "typhoon", "monsoon", "gale", "squall", "sabre", "cutlass", "rapier", "halberd", "lance", "pike", "javelin", "trident",
+    "mace", "flail", "glaive", "longbow", "crossbow", "ballista", "catapult", "trebuchet", "warden", "marshal", "templar",
+    "vanguard", "warlord", "sheriff", "guardian", "centurion", "legion", "phalanx", "cohort", "brigand", "outlaw", "nomad",
+    "drifter", "bandit", "corsair", "buccaneer", "privateer", "musket", "howitzer", "bastion", "citadel", "redoubt", "rampart",
+    "pioneer", "voyager", "mariner", "falconer", "lancer", "hussar", "dragoon", "grenadier", "fusilier", "sapper",
+];
+
+/// A renaming of a vocabulary's invented words into English ones, each to its own word, applied
+/// alike to the vocabulary, a command and a paraphrase (whose names are verbatim).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Renaming(Vec<(String, String)>);
+
+impl Renaming {
+    /// A fresh renaming of every invented word in `vocab`'s names.
+    pub fn english(rng: &mut Rng, vocab: &Vocabulary) -> Renaming {
+        let mut words: Vec<String> = Vec::new();
+        let names = vocab.types.iter().map(|n| &n.singular).chain(vocab.places.iter()).chain(&vocab.teams).chain(&vocab.upgrades).chain(&vocab.powers).chain(&vocab.sciences).chain(&vocab.modes).chain(&vocab.weapons);
+        for name in names {
+            for w in name.split(' ') {
+                if is_invented(w) && !words.iter().any(|x| x == w) {
+                    words.push(w.to_string());
+                }
+            }
+        }
+        let mut pool: Vec<&str> = ENGLISH_NAME_WORDS.to_vec();
+        Renaming(
+            words
+                .into_iter()
+                .filter_map(|w| {
+                    (!pool.is_empty()).then(|| {
+                        let e = pool.swap_remove(below(rng, pool.len()));
+                        (w, e.to_string())
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// `text` with each invented word renamed: as itself, its plural, or its possessive, with any
+    /// punctuation around it (a paraphrase's `korgors,`) kept.
+    pub fn text(&self, text: &str) -> String {
+        let one = |w: &str| -> String {
+            for (from, to) in &self.0 {
+                if w == from {
+                    return to.clone();
+                }
+                if w == plural(from) {
+                    return plural(to);
+                }
+                if w == format!("{from}'s") {
+                    return format!("{to}'s");
+                }
+            }
+            w.to_string()
+        };
+        text.split(' ')
+            .map(|t| {
+                let start = t.find(|c: char| c.is_alphanumeric()).unwrap_or(t.len());
+                let end = t.rfind(|c: char| c.is_alphanumeric() || c == '\'').map_or(start, |i| i + 1).max(start);
+                format!("{}{}{}", &t[..start], one(&t[start..end]), &t[end..])
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// `vocab` with every name renamed.
+    pub fn vocabulary(&self, vocab: &Vocabulary) -> Vocabulary {
+        let list = |l: &[String]| l.iter().map(|n| self.text(n)).collect::<Vec<_>>();
+        Vocabulary {
+            types: vocab.types.iter().map(|n| Noun::new(&self.text(&n.singular), &self.text(&n.plural))).collect(),
+            places: list(&vocab.places),
+            teams: list(&vocab.teams),
+            upgrades: list(&vocab.upgrades),
+            powers: list(&vocab.powers),
+            sciences: list(&vocab.sciences),
+            modes: list(&vocab.modes),
+            weapons: list(&vocab.weapons),
+            ..vocab.clone()
+        }
+    }
+}
+
 fn pick<T: Copy>(rng: &mut Rng, items: &[T]) -> T {
     items[rng.next_u32() as usize % items.len()]
 }
@@ -347,6 +442,53 @@ pub fn names_in(text: &str, vocab: &Vocabulary) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::command::{parse, print};
+
+    /// Zero Hour's names' words (units, structures, Generals), which no renamed name may use.
+    const ZERO_HOUR_WORDS: [&str; 52] = [
+        "ranger", "crusader", "humvee", "paladin", "overlord", "comanche", "raptor", "aurora", "dragon", "scorpion", "marauder",
+        "avenger", "chinook", "battlemaster", "inferno", "helix", "spectre", "tomahawk", "ambulance", "dozer", "rebel", "hijacker",
+        "saboteur", "hacker", "lotus", "jarmen", "kell", "burton", "pathfinder", "technical", "toxin", "quad", "gattling", "stinger",
+        "palace", "firebase", "nuke", "nuclear", "scud", "tunnel", "propaganda", "barracks", "airfield", "minigunner", "sentry",
+        "colonel", "nationalist", "microwave", "laser", "listening", "demo", "carpet",
+    ];
+
+    #[test]
+    fn english_name_words_collide_with_nothing() {
+        let tables = super::super::normal::Tables::parse(&[super::super::normal::SHIPPED]);
+        let mut taken: Vec<String> = super::super::vocab::fixed_words().iter().map(|w| w.to_string()).collect();
+        taken.extend(fixed_verbs().iter().flat_map(|v| v.words.split(' ').map(str::to_string).collect::<Vec<_>>()));
+        taken.extend(tables.words.iter().flat_map(|(k, r)| k.iter().cloned().chain(r.iter().flat_map(|x| x.split(' ').map(str::to_string)))));
+        taken.extend(tables.aliases.iter().flat_map(|(a, m)| a.split(' ').chain(m.iter().flat_map(|x| x.split(' '))).map(str::to_string).collect::<Vec<_>>()));
+        taken.extend(CLASSES.iter().flat_map(|(s, p, _)| [s.to_string(), p.to_string()]));
+        for w in ENGLISH_NAME_WORDS {
+            assert!(!taken.iter().any(|t| t == w), "{w} is a word of the grammar or the synonym table");
+            assert!(!ZERO_HOUR_WORDS.iter().any(|z| w.contains(z)), "{w} is one of Zero Hour's names");
+            assert!(!is_invented(w), "{w} reads as invented");
+        }
+        let unique: std::collections::BTreeSet<&str> = ENGLISH_NAME_WORDS.iter().copied().collect();
+        assert_eq!(unique.len(), ENGLISH_NAME_WORDS.len());
+    }
+
+    #[test]
+    fn a_renamed_vocabulary_reads_its_renamed_commands() {
+        let mut rng = Rng::new(11);
+        for i in 0..300 {
+            let v = invented_vocabulary(&mut rng);
+            let r = Renaming::english(&mut rng, &v);
+            let e = r.vocabulary(&v);
+            assert!(e.problems().is_empty(), "#{i}: {:?}", e.problems());
+            let mut s = Sampler { rng: Rng::new(rng.next_u32()), vocab: &v };
+            let text = print(&s.command(), &v);
+            let renamed = r.text(&text);
+            let back = parse(&renamed, &e).unwrap_or_else(|err| panic!("#{i}: '{renamed}' (from '{text}'): {err}"));
+            assert_eq!(print(&back, &e), renamed);
+            assert!(e.types.iter().all(|n| !n.singular.split(' ').any(is_invented)), "#{i}: {:?}", e.types);
+            if let Some(n) = v.types.first() {
+                let said = format!("uh, {}, go there.", n.plural);
+                assert_eq!(r.text(&said), format!("uh, {}, go there.", e.types[0].plural));
+            }
+        }
+    }
 
     #[test]
     fn invented_words_are_told_from_ordinary_ones() {

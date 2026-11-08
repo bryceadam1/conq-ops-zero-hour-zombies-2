@@ -8,9 +8,14 @@ use std::process::Command;
 
 use zhbo_core::command::{parse, Vocabulary};
 
-/// Every vocabulary in `<data dir>/vocab.tsv`, by id.
+/// Every vocabulary in `<data dir>/vocab.tsv`, and the English-renamed ones in
+/// `vocab_renamed.tsv` (`voice_corpus assemble`), by id.
 pub fn vocabularies(data: &Path) -> std::io::Result<BTreeMap<String, Vocabulary>> {
-    Ok(std::fs::read_to_string(data.join("vocab.tsv"))?.lines().filter_map(vocab).collect())
+    let mut all: BTreeMap<String, Vocabulary> = std::fs::read_to_string(data.join("vocab.tsv"))?.lines().filter_map(vocab).collect();
+    if let Ok(renamed) = std::fs::read_to_string(data.join("vocab_renamed.tsv")) {
+        all.extend(renamed.lines().filter_map(vocab));
+    }
+    Ok(all)
 }
 
 /// `<data dir>/test.tsv`'s rows: input, label, vocabulary id.

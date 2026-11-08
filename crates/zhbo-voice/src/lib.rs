@@ -45,6 +45,15 @@ pub struct Translation {
     pub stuck: bool,
 }
 
+/// One decoding step, for tracing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Step {
+    pub wanted: u32,
+    pub wanted_p: f32,
+    pub took: u32,
+    pub took_p: f32,
+}
+
 pub struct Translator {
     model: t5::T5ForConditionalGeneration,
     tokenizer: Tokenizer,
@@ -78,6 +87,12 @@ impl Translator {
 
     /// Translate `heard` greedily; under the grammar's mask over `vocab` when given.
     pub fn translate(&mut self, heard: &str, vocab: Option<&Vocabulary>) -> Result<Translation, Error> {
+        self.translate_traced(heard, vocab, &mut |_| {})
+    }
+
+    /// [`Translator::translate`], with each step reported to `trace`: the model's own choice and
+    /// its probability, and the token taken.
+    pub fn translate_traced(&mut self, heard: &str, vocab: Option<&Vocabulary>, trace: &mut dyn FnMut(Step)) -> Result<Translation, Error> {
         let input = self.tokenizer.encode(format!("{PREFIX}{heard}"), true)?;
         let ids = Tensor::new(input.get_ids(), &self.device)?.unsqueeze(0)?;
         self.model.clear_kv_cache();
@@ -108,6 +123,8 @@ impl Translator {
                     argmax(&probs, Some(&allowed))
                 }
             };
+            let wanted = argmax(&probs, None);
+            trace(Step { wanted, wanted_p: probs[wanted as usize], took: next, took_p: probs.get(next as usize).copied().unwrap_or(0.0) });
             log_prob += probs.get(next as usize).copied().unwrap_or(1e-12).max(1e-12).ln();
             if next == self.eos {
                 break;

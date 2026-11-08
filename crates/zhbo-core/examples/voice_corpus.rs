@@ -14,14 +14,16 @@
 //! counts, group numbers and compass words kept; an exclusion and a sequence still said), adds a
 //! speech-recognition-noisy copy of some (homophones, dropped and filler words; never the names),
 //! and writes `train.tsv`, `dev.tsv` and `test.tsv` (`input`, canonical label, id) split by command, the
-//! canonical lines themselves among the training inputs, and `stats.txt`.
+//! canonical lines themselves among the training inputs, a third of the commands copied with English
+//! names (`sample::Renaming`; their vocabularies, `<id>e`, in `vocab_renamed.tsv`), `words.txt` (the
+//! ordinary words, for the voice snapper) and `stats.txt`.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
 use zhbo_core::command::normal::{self, Tables};
-use zhbo_core::command::sample::{invented_vocabulary, names_in, Sampler};
+use zhbo_core::command::sample::{invented_vocabulary, names_in, Renaming, Sampler};
 use zhbo_core::command::{parse, print};
 use zhbo_core::weapons::rng::Rng;
 
@@ -201,6 +203,10 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
                 unknown += 1;
                 continue;
             };
+            if para.chars().any(char::is_control) {
+                *dropped.entry("control characters in it".into()).or_default() += 1;
+                continue;
+            }
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             let kept = pairs.entry(id.trim().to_string()).or_default();
             if trivial(label, para) && kept.iter().any(|k| trivial(label, k)) {
@@ -215,6 +221,13 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
     }
     // How many the normaliser alone already reads back to the label (the model's job is the rest).
     let tables = Tables::parse(&[normal::SHIPPED]);
+    let vocabs: BTreeMap<String, zhbo_core::command::Vocabulary> = fs::read_to_string(dir.join("vocab.tsv"))
+        .map_err(|e| format!("vocab.tsv: {e}"))?
+        .lines()
+        .filter_map(|l| l.split_once('\t').and_then(|(id, rest)| Some((id.to_string(), zhbo_core::command::Vocabulary::from_line(rest)?))))
+        .collect();
+    let mut renamed_vocabs: Vec<String> = Vec::new();
+    let mut renamed_rows = 0usize;
     let mut rng = Rng::new(seed);
     let (mut train, mut dev, mut test) = (Vec::new(), Vec::new(), Vec::new());
     let mut kept = 0usize;
@@ -232,6 +245,7 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
             out.push(format!("{label}\t{label}\t{id}"));
         }
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let first = out.len().saturating_sub(usize::from(h < 90));
         for para in pairs.get(id).into_iter().flatten() {
             kept += 1;
             let words = normal::words(para).join(" ");
@@ -244,6 +258,26 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
                 out.push(format!("{}\t{label}\t{id}", noisy(&mut rng, para, &names)));
             }
         }
+        // A third of the commands again with English names (`Renaming`): a match's names are
+        // English words, and only invented ones teach the model to read English in a name's place
+        // as noise. Each such command's rows are copied under the renamed vocabulary `<id>e`.
+        if rng.next_u32() % 100 < 35 {
+            let Some(v) = vocabs.get(id) else { continue };
+            let r = Renaming::english(&mut rng, v);
+            let e = r.vocabulary(v);
+            let label_e = r.text(label);
+            if !e.problems().is_empty() || parse(&label_e, &e).map(|c| print(&c, &e)).ok().as_deref() != Some(label_e.as_str()) {
+                continue;
+            }
+            let line = e.to_line();
+            renamed_vocabs.push(format!("{id}e\t{}", line.rsplit_once('\t').map_or(line.as_str(), |(names, _)| names)));
+            let copies: Vec<String> = out[first..]
+                .iter()
+                .filter_map(|row| row.split_once('\t').map(|(input, _)| format!("{}\t{label_e}\t{id}e", r.text(input))))
+                .collect();
+            renamed_rows += copies.len();
+            out.extend(copies);
+        }
     }
     for (name, rows) in [("train.tsv", &train), ("dev.tsv", &dev), ("test.tsv", &test)] {
         fs::write(dir.join(name), rows.join("\n") + "\n").map_err(|e| e.to_string())?;
@@ -254,6 +288,10 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
     for row in &train {
         let mut f = row.split('\t');
         let (Some(input), Some(_), Some(id)) = (f.next(), f.next(), f.next()) else { continue };
+        // The renamed copies' names are English words: not ordinary ones.
+        if id.ends_with('e') {
+            continue;
+        }
         let name_words: Vec<&str> = labels.get(id).map(|(_, n)| n.iter().flat_map(|n| n.split_whitespace()).collect()).unwrap_or_default();
         for w in normal::words(input) {
             if !name_words.contains(&w.as_str()) && !zhbo_core::command::sample::is_invented(&w) {
@@ -263,9 +301,11 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
     }
     let ordinary: Vec<&str> = counts.iter().filter(|(_, &n)| n >= 2).map(|(w, _)| w.as_str()).collect();
     fs::write(dir.join("words.txt"), ordinary.join("\n") + "\n").map_err(|e| e.to_string())?;
+    fs::write(dir.join("vocab_renamed.tsv"), renamed_vocabs.join("\n") + "\n").map_err(|e| e.to_string())?;
     let mut stats = format!(
-        "canonical commands: {}\nparaphrases read: {read} (unknown ids: {unknown})\nkept: {kept}\nnoisy copies: {noisy_count}\nread back by the normaliser alone: {normalised}\nrows: train {}, dev {}, test {}\nordinary words: {}\ndropped:\n",
+        "canonical commands: {}\nparaphrases read: {read} (unknown ids: {unknown})\nkept: {kept}\nnoisy copies: {noisy_count}\nread back by the normaliser alone: {normalised}\nrenamed with English names: {} commands, {renamed_rows} rows\nrows: train {}, dev {}, test {}\nordinary words: {}\ndropped:\n",
         labels.len(),
+        renamed_vocabs.len(),
         train.len(),
         dev.len(),
         test.len(),
