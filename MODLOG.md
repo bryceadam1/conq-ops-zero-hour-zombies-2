@@ -14950,3 +14950,51 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   the wrong function in `client/mod.rs`).
 - Not built yet: Whisper and the launcher's download, the microphone in game, the abstain
   production, the guard's tuning key.
+
+## First-person commands, step 6: Whisper, snapping, the voice process and the download (2026-11-08)
+
+- **Built:**
+  - `zhbo_voice::hear`: Whisper base.en, prompted with the match's names, on our own port of the
+    network (`zhbo_voice::whisper`).
+  - `zhbo_voice::snap`: respells what Whisper heard into the match's words.
+  - `pipeline` and `audio`, and the `conquerops-voice` process (`cpal` microphone, a line
+    protocol over pipes), staged beside the game by `cargo xtask build`.
+  - zhbo-core's `command::voice`: the link, push-to-talk on T, and the confidence act, with
+    `CommandVoiceGuard` 0.1 and `CommandVoiceSilence` 0.6.
+  - The launcher's `voice` module: `data/ConquerOps/voice.ini`, a background `--fetch-voice`
+    using curl, checked by size and SHA-256.
+  - `Vocabulary::to_line`/`from_line`, one format for `vocab.tsv` and the process.
+  - The `--command` leg's spoken line (`ZHBO_AUTOPILOT_VOICE`).
+  - Examples: `voice_listen` (spoken commands end to end through macOS `say`) and `voice_heard`
+    (training rows as Whisper hears them).
+- **Gotcha: candle's Whisper re-reads the prompt every step.** It caches only the
+  cross-attention. With a hundred-token prompt, decoding took 1.1 s of the 1.5 s. Our port caches
+  the self-attention: 0.4 s, with the same transcriptions.
+- **The encoder's window.** Whisper's encoder always takes 30 s. Feeding it the audio plus 3 s of
+  silence (whisper.cpp's `audio_ctx` idea) cut it from 380 to 95 ms with nothing lost (40 spoken
+  rows, then 120). faster-whisper and whisper.cpp were considered; neither is Rust, and these two
+  changes were where the time went.
+- **Gotcha: the snapper must explain unknown words, not drop them.** Normalising the sound-weighted
+  distance by the whole span let `pelostquin factories play` become `pelostquin factories`. It now
+  divides by the letters of the span's unknown words.
+- **The ordinary words** come from the training inputs, minus names and minus anything the
+  sampler could have invented (`sample::is_invented`; a new team's name is in no list): 585 words.
+- **Results** (`voice_listen`, 120 spoken test commands, 8 voices, CPU):
+
+  | | names heard whole | same meaning | time |
+  |---|---|---|---|
+  | base.en, unprompted | 0.23 | 0.35 | 285 ms |
+  | prompted | 0.58 | 0.48 | 351 ms |
+  | snapped | 0.90 | 0.63 | |
+  | small.en, snapped | 0.91 | 0.69 | 940 ms |
+
+  base.en was chosen for time and size.
+- **In game** (`--command`, every check PASS): the process was ready about 5 s in. The spoken
+  "Rangers, come over to me." was heard as `rangers, come over to me`, ran as
+  `rangers move to me` (mask 0.02) on three Rangers, 13 logic frames after the file was sent.
+- **The fetch,** run for real from a scratch folder: Whisper's three files (290 MB) in 10 s,
+  hashes checked.
+- **Pending:**
+  - the translator's release assets (`voice-commands-v1`), published once the model is
+    retrained;
+  - that retraining, on Whisper's transcripts (`voice_heard`).

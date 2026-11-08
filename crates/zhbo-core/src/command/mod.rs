@@ -29,6 +29,7 @@ pub mod print;
 pub mod resolve;
 pub mod sample;
 pub mod session;
+pub mod voice;
 pub mod vocab;
 pub mod world;
 

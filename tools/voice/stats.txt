@@ -4,6 +4,7 @@ kept: 20643
 noisy copies: 8241
 read back by the normaliser alone: 6722
 rows: train 28054, dev 1507, test 1469
+ordinary words: 585
 dropped:
   lost the exclusion: 18
   lost the name: 287

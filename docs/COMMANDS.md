@@ -543,12 +543,41 @@ like every other gameplay number.
 Voice runs entirely on the player's machine. **Decided (2026-11-07):** Whisper for recognition,
 downloaded by the launcher at install, never bundled (it is MIT-licensed, code and weights);
 flan-t5-small as the first translation model; candle as the runtime. **Built:** the training set,
-the fine-tuning script, the translator and the constrained decoder (`crates/zhbo-voice`), measured
-below. Not built yet: Whisper, the launcher's download, and the microphone in game.
+the fine-tuning script, the translator and the constrained decoder, Whisper with the snapper, the
+`conquerops-voice` process with the microphone, push-to-talk in game, and the launcher's download
+(`crates/zhbo-voice`, `zhbo-launcher`'s `voice`), measured below.
 
-- **Speech recognition.** Whisper, prompt-biased each match with the run-time vocabulary (unit,
-  place and team names), so proper nouns are heard correctly ("oil derrick", not "oil Derek"). The
-  launcher downloads its weights at install, beside the converted archive.
+- **Speech recognition (built, `zhbo_voice::hear`).** Whisper base.en, prompted each utterance
+  with the match's names (`hear::prompt`, Whisper's "previous text"), so proper nouns come out
+  spelled as the vocabulary spells them.
+  - **The model.** base.en over small.en: after snapping both hear about 90% of names whole, but
+    small.en takes 940 ms against 351 ms on the CPU and 925 MB against 279 MB (`voice_listen`,
+    120 spoken commands). tiny.en heard too little.
+  - **Speed, our own network (`zhbo_voice::whisper`).** candle's Whisper caches only the
+    cross-attention, so with a prompt of a hundred-odd names every step re-read the whole
+    sequence: 1.1 s of decoding. Our port of the network over the same weights caches the
+    self-attention too (the prompt is read once): 0.4 s, the same transcriptions. The encoder
+    sees the audio plus 3 s of silence instead of Whisper's full 30 s window
+    (`hear::WINDOW_SILENCE`, whisper.cpp's `audio_ctx` idea): 380 ms down to 95 ms, with nothing
+    lost in what was heard. The faster-whisper and whisper.cpp ports were considered: neither is
+    Rust, and the two changes above were where our time went.
+  - **The filterbank** is computed (librosa's Slaney mel, as OpenAI ships it precomputed) and
+    matches transformers' to the last bit (`the_mel_filters_are_whispers`).
+- **Snapping (built, `zhbo_voice::snap`).** Whisper writes what a name sounds like (`velgal team`
+  for `belcal team`, `enami`, `play spican` for `place beacon`), and the translator, which copies
+  names, then guesses. The snapper respells each word it does not know into the nearest-sounding
+  phrase it does: the match's names (a place's too without its `the`), the grammar's words and
+  verbs, the synonym table's phrases and aliases.
+  - Known: those phrases' words, numbers, and the **ordinary words**, every word of the training
+    inputs outside names that the sampler could not have invented (`sample::is_invented`), seen
+    twice: `words.txt`, written by `voice_corpus assemble` and shipped with the translator.
+  - The distance weighs sounds: a letter for one in the same class (b/p/v/f; c/k/g/s/…; d/t; m/n;
+    l/r), or a vowel, `h` or `w` put in or left out, costs half. A span of up to four words around
+    an unknown word is respelt when its distance per letter of the span's *unknown* words is at
+    most 0.34 (dividing by the whole span let a short word vanish beside a long name). An unknown
+    hyphenated word (`a-8-korselvases`) is read as its parts.
+  - Measured (`voice_listen`, base.en): names heard whole 0.58 prompted, 0.90 snapped; the
+    command's meaning right 0.48 and 0.63.
 - **Translation: flan-t5-small first** (77M parameters, Apache-2.0), fine-tuned on the training
   set; flan-t5-base (250M) is the step up if it falls short, and a decoder-only model of about
   0.5B (Qwen-class) the comparison to run on the same data. Why this order:
@@ -590,6 +619,28 @@ below. Not built yet: Whisper, the launcher's download, and the microphone in ga
      right answers and catches a third of the wrong ones.
   3. **Fine-tuning on the canonical language**, so the mask is a safety net, not the main
      mechanism.
+- **The game's side (built).** `conquerops-voice` is its own process beside the game (the
+  models' memory and threads, and any crash, stay out of the engine; candle stays out of its
+  build). The game starts it the first time the General is in first person and talks to it over
+  pipes, one tab-separated line per message (the protocol is in the binary's docs): `vocab`
+  (`Vocabulary::to_line`, sent when it changed), `listen`/`stop` around the push-to-talk key,
+  `hear-file` for the autotest; back come `ready`/`unavailable` and
+  `heard <masked> <stuck> <no speech> <transcript> <command>`.
+  - **Push-to-talk:** hold T (`Bindings::voice`) in first person; never while the line or the
+    menu is up. The echo says "Listening...".
+  - **What happens to it** (`command::voice::act`): a command whose largest masked share is at
+    most `CommandVoiceGuard` (0.1) runs as if typed; above it, it waits in the command line for
+    Enter (Escape drops it); nothing runs when Whisper's no-speech probability is above
+    `CommandVoiceSilence` (0.6, OpenAI's `no_speech_threshold`) or the mask left nothing.
+  - Presentation only: what comes back is a line the session resolves like a typed one, and
+    only the orders' messages reach the sim.
+- **The download (built, `zhbo-launcher` `voice`).** `data/ConquerOps/voice.ini` lists each
+  model's folder and files with their URLs, sizes and SHA-256s: Whisper pinned to a Hugging Face
+  commit, the translator as this project's GitHub release assets. At launch, if a file is
+  missing, the launcher starts itself again with `--fetch-voice` in the background and starts the
+  game; the fetch uses the system's `curl` into `<name>.part`, checks size and hash, and renames,
+  so a file under its own name is whole. Without the models the game plays as before and the
+  push-to-talk key says voice is off.
 - **Training data (built, `tools/voice/`):**
   1. **The sampler** (`command::sample`) draws canonical commands, each over its own invented
      vocabulary (made-up unit, place, team and power names; the real class words), weighted toward

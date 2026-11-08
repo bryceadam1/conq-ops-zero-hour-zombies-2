@@ -15,6 +15,7 @@ environment mid-game.
 | `ZHBO_AUTOPILOT` | The in-game test harness. `manual`: the scene spawns but input stays with the player or a test driver. Any other non-empty value: scripted input drives the General; `equipment` adds the Black Hat / Trophy System scene, `build` scripts first-person construction, `classpick` runs the in-match class screen (Escape declines the first spawn, the next take-control picks the profile's seeded custom by its row key, a third forces the screen open and Escapes it; then the General is killed and the next one taken, who meets the screen again, opened on that class, and re-picks it with Enter: every General is picked for), `showcase` films the General (see the bridge's showcase variables below), `smoke` throws the seeded class's smoke grenade and tests Zero Hour's units against its screen (the bridge's `smokeAutopilotFrame`: a Ranger and a rebel across it, a neutral Ranger ordered through it), `drops` kills the first General past the grace period and has the next re-pick the class his screen opens on, walk onto his dropped rifle and swap for it (the bridge's `dropsAutopilotFrame`, `client/autopilot.rs` `drops_input`), `command` submits typed first-person commands (`client/autopilot.rs` `COMMAND_LINES`) to three Rangers the bridge stands behind the General, with an enemy rebel ahead (`commandAutopilotFrame`; docs/COMMANDS.md). `mp` is the two-instance multiplayer run (`scripts/mptest-mac.sh`): nothing is spawned; each machine orders its own General from its Command Center, walks him to a meeting point between the bases, takes control and fights the other player's General through the replicated messages only (`client/autopilot.rs` `mp_input`, the bridge's `mpAutopilotFrame`). Like `ZHBO_LOADOUT` it is folded into the content CRC, so every machine of a game must set it the same. |
 | `ZHBO_AUTOPILOT_ROLE` | The `mp` run's part: `target` fires a short burst and is the one meant to die and come back; anything else (the default) is the shooter, who fires the long aimed burst. It only scripts the local player's own input, so the two machines may (and do) differ. |
 | `ZHBO_AUTOPILOT_ROUNDS` | The `mp` run's length: how many first-person lives each player plays (default 1, the short run). More is the long run (`scripts/mptest-mac.sh` with `ZHBO_MPTEST_ROUNDS`, TESTING.md "Multiplayer in game"): a declined first spawn, rounds with tacticals, a mid-life class change, and the joiner leaving in his last life. Script only, read by the core and the bridge. |
+| `ZHBO_AUTOPILOT_VOICE` | A WAV file the `command` run hands the voice process at 44 s as if it were the microphone (`client/autopilot.rs` `voice_due`, the `hear-file` message; docs/COMMANDS.md section 11). Set by `scripts/autotest-mac.sh --command`. Script only, presentation only. |
 | `ZHBO_STATE_HASH_LOG` | `1`: log `Sim::fingerprint` after every logic step (`state hash: frame N <hash> world <hash> seats <seat>:<hash> …`, the parts the CRC frame line prints), so the logs of the machines in one network game can be compared frame by frame (the `mp` test does; on two real machines, set it on both and compare the lines). A log only, never a sim input. |
 
 ## The bridge (`host/zhbo/ZhboBridge.cpp`, parsed in `readConfig` at `Zhbo_Init`)
@@ -49,6 +50,18 @@ environment mid-game.
 | `ZHBO_GLUE_DIR` | Set by `cargo xtask build` for the engine build: where the bridge glue sources are copied. |
 | `ZHBO_CONVERT_ALL_WEAPONS` | Set by the converter's user: convert every BO2 player weapon, not just the loadout's kit. |
 | `ZHBO_CONVERT_ALL_COMBOS` | Set to `0` to skip the legal Create-a-Class combination sweep and build only the base set; on by default, so a locally built archive covers every legal combination (the archive stamp records the flag). |
+## Voice models (`data/ConquerOps/voice.ini`)
+
+The voice commands' models (docs/COMMANDS.md section 11), downloaded by the launcher at install,
+never shipped: a `[section]` per model with `Dir = <folder>` and lines
+`File = <name> | <URL> | <size> | <SHA-256>`. They land in `voice/<folder>/` beside the launcher,
+where `conquerops-voice` (staged beside the game by `cargo xtask build`) reads them. `conquerops
+--fetch-voice` downloads whatever is missing (the launcher starts it in the background by itself;
+`voice/fetch.log` says what happened); `conquerops --check` counts the missing files. The voice
+process's tuning is in `tuning.ini`'s `[Commands]`: `CommandVoiceGuard` (the confidence check) and
+`CommandVoiceSilence` (Whisper's no-speech threshold). The push-to-talk key is T
+(`Bindings::voice`).
+
 ## The engine's test switches (host patch 0022; release builds, off unless set)
 
 | Variable | Meaning |

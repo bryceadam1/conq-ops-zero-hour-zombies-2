@@ -4,10 +4,12 @@
     venv/bin/python tools/voice/train/train_t5.py --data tools/voice --out ~/.conquerops/voice/flan-t5-small
 
 Reads `train.tsv` / `dev.tsv` / `test.tsv` (`input<TAB>label<TAB>id`, built by `voice_corpus
-assemble`; the id names the row's vocabulary in `vocab.tsv`),
+assemble`; the id names the row's vocabulary in `vocab.tsv`) and, if present, `heard.tsv` (spoken
+training inputs as Whisper and the snapper heard them, from the `voice_heard` example),
 fine-tunes `--model` (google/flan-t5-small by default), checks exact match on dev after each epoch
 with greedy decoding (no grammar mask: the mask only helps, so this is the floor), keeps the best
-epoch, and writes it as safetensors with its tokenizer, plus `eval.txt` (dev and test exact match,
+epoch, and writes it as safetensors with its tokenizer and `words.txt` (the ordinary words, for the
+voice snapper), plus `eval.txt` (dev and test exact match,
 decode speed, and a sample of the errors). The model is the player's to download at install; it
 never ships in the repo.
 """
@@ -86,7 +88,10 @@ def main():
     device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
     data = Path(args.data)
     train, dev, test = read(data / "train.tsv"), read(data / "dev.tsv"), read(data / "test.tsv")
-    print(f"{len(train)} train, {len(dev)} dev, {len(test)} test rows on {device}", flush=True)
+    # Training inputs as the game hears them (`voice_heard`): Whisper's transcripts, snapped.
+    heard = read(data / "heard.tsv") if (data / "heard.tsv").exists() else []
+    train += heard
+    print(f"{len(train)} train ({len(heard)} heard), {len(dev)} dev, {len(test)} test rows on {device}", flush=True)
 
     tok = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model).to(device)
@@ -130,6 +135,8 @@ def main():
             model.config.tie_word_embeddings = False
             model.save_pretrained(out, safe_serialization=True)
             tok.save_pretrained(out)
+            # The ordinary words go with the model: the snapper leaves them as heard.
+            (out / "words.txt").write_bytes((data / "words.txt").read_bytes())
             print(f"  kept epoch {epoch}", flush=True)
 
     model = AutoModelForSeq2SeqLM.from_pretrained(out).to(device)

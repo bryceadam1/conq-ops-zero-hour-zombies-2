@@ -511,3 +511,15 @@ fn completions_stay_quick_over_a_large_vocabulary() {
     // A refresh runs once per pick, not per frame; even unoptimised it stays well under a second.
     assert!(took.as_secs_f32() < 1.0, "{took:?}");
 }
+
+#[test]
+fn a_vocabulary_goes_through_its_line_unchanged() {
+    let v = vocab();
+    assert_eq!(Vocabulary::from_line(&v.to_line()), Some(v.clone()));
+    // The training set's lines have no class list: all the grammar's classes.
+    let line = v.to_line();
+    let (names, _) = line.rsplit_once('\t').unwrap();
+    let back = Vocabulary::from_line(names).unwrap();
+    assert_eq!(back.classes.len(), super::world::CLASSES.len());
+    assert_eq!(back.types, v.types);
+}

@@ -155,6 +155,10 @@ pub struct Autopilot {
     /// The command run's next line, and its next menu pick.
     pub(crate) command_step: usize,
     pub(crate) menu_step: usize,
+    /// The command run's spoken line: a WAV file for the voice process (`ZHBO_AUTOPILOT_VOICE`),
+    /// and whether it went.
+    pub voice_file: Option<String>,
+    pub(crate) voice_sent: bool,
     /// The drops run: where the nearest dropped weapon is from the eye (yaw, pitch, the distance
     /// across the ground), set by the client from the sim, and when the use key was pressed.
     pub(crate) drop_aim: Option<(f32, f32, f32)>,
@@ -268,6 +272,9 @@ pub const MENU_PICKS: [(f32, &str); 5] = [(32.0, MENU_OPEN), (33.0, "rangers"), 
 /// How long a pick may wait to be offered before the run gives up on it and logs the options.
 pub const MENU_PATIENCE: f32 = 3.0;
 
+/// When the command run speaks its WAV file (after the typed lines; sent once voice is ready).
+pub const VOICE_AT: f32 = 44.0;
+
 pub const COMMAND_LINES: [(f32, &str); 10] = [
     (2.0, "rangers move to me"),
     (14.0, "the nearest ranger attack the nearest enemy rebel"),
@@ -284,7 +291,23 @@ pub const COMMAND_LINES: [(f32, &str); 10] = [
 impl Autopilot {
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
-        Autopilot { equipment: self.equipment, build: self.build, classpick: self.classpick, scope: self.scope, smoke: self.smoke, splash: self.splash, drops: self.drops, flicker: self.flicker, hipfire: self.hipfire, command: self.command, mp: self.mp, mp_shooter: self.mp_shooter, mp_rounds: self.mp_rounds, ..Default::default() }
+        Autopilot {
+            equipment: self.equipment,
+            build: self.build,
+            classpick: self.classpick,
+            scope: self.scope,
+            smoke: self.smoke,
+            splash: self.splash,
+            drops: self.drops,
+            flicker: self.flicker,
+            hipfire: self.hipfire,
+            command: self.command,
+            voice_file: self.voice_file.clone(),
+            mp: self.mp,
+            mp_shooter: self.mp_shooter,
+            mp_rounds: self.mp_rounds,
+            ..Default::default()
+        }
     }
 
     /// What it does at time `t`.
@@ -832,6 +855,18 @@ impl Autopilot {
         }
         let menu_pick = MENU_PICKS.get(self.menu_step).filter(|(at, _)| self.t >= *at).map(|&(_, p)| p);
         Scripted { class_pick: pick, command, menu_pick, ..Default::default() }
+    }
+
+    /// The command run's WAV file, once, when it is time (the caller asks only while voice is
+    /// ready, so a slow start only delays it).
+    pub fn voice_due(&mut self) -> Option<String> {
+        if !self.command || self.voice_sent || self.t < VOICE_AT {
+            return None;
+        }
+        let file = self.voice_file.clone()?;
+        self.voice_sent = true;
+        self.log.push(format!("autopilot: voice file sent: {file}"));
+        Some(file)
     }
 
     /// The client's answer to this frame's [`Scripted::menu_pick`]: whether the menu offered it

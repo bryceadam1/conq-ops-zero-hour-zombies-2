@@ -204,6 +204,53 @@ pub fn fixed_words() -> Vec<&'static str> {
 }
 
 impl Vocabulary {
+    /// The names as one line, for the voice decoder in its own process (docs/COMMANDS.md section
+    /// 11) and the training set's `vocab.tsv`: the types (`singular>plural`), then the places,
+    /// teams, upgrades, powers, sciences, weapon modes and weapons, each `|`-separated, tab between
+    /// lists, and last the class words (`singular>plural`), which a match narrows. The verbs are
+    /// always the grammar's own.
+    pub fn to_line(&self) -> String {
+        let nouns = |list: &[Noun]| list.iter().map(|n| format!("{}>{}", n.singular, n.plural)).collect::<Vec<_>>().join("|");
+        [
+            nouns(&self.types),
+            self.places.join("|"),
+            self.teams.join("|"),
+            self.upgrades.join("|"),
+            self.powers.join("|"),
+            self.sciences.join("|"),
+            self.modes.join("|"),
+            self.weapons.join("|"),
+            nouns(&self.classes),
+        ]
+        .join("\t")
+    }
+
+    /// A vocabulary from [`Vocabulary::to_line`]'s line. Without the class list (the training
+    /// set's lines), all the grammar's classes.
+    pub fn from_line(line: &str) -> Option<Vocabulary> {
+        let f: Vec<&str> = line.split('\t').collect();
+        if f.len() < 8 {
+            return None;
+        }
+        let list = |s: &str| s.split('|').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
+        let nouns = |s: &str| s.split('|').filter_map(|t| t.split_once('>')).map(|(s, p)| Noun::new(s, p)).collect::<Vec<_>>();
+        Some(Vocabulary {
+            types: nouns(f[0]),
+            places: list(f[1]),
+            teams: list(f[2]),
+            upgrades: list(f[3]),
+            powers: list(f[4]),
+            sciences: list(f[5]),
+            modes: list(f[6]),
+            weapons: list(f[7]),
+            classes: match f.get(8) {
+                Some(c) => nouns(c),
+                None => super::world::CLASSES.iter().map(|(s, p, _)| Noun::new(s, p)).collect(),
+            },
+            ..Vocabulary::default()
+        })
+    }
+
     pub fn verb(&self, words: &str) -> Option<&VerbDef> {
         self.verbs.iter().find(|v| v.words == words)
     }

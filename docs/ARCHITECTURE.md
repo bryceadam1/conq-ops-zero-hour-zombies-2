@@ -203,16 +203,24 @@ editor's offer).
 
 ### `crates/zhbo-launcher`
 `ConquerOps.exe` / `conquerops`: requirement check, BO2 art conversion on first launch,
-starting the game. Depends on `zhbo-requirements` and `zhbo-assets`.
+starting the game, and the voice models' background download (`voice`, `--fetch-voice`). Depends
+on `zhbo-requirements` and `zhbo-assets`.
 
 ### `crates/zhbo-voice`
-Voice commands (docs/COMMANDS.md section 11): `Translator` loads the fine-tuned T5 the launcher
-downloads (`model.safetensors`, `config.json`, `tokenizer.json`) on candle and decodes greedily;
-`constrain::Mask` turns the grammar's word-level completions (`command::parse::completions_with`)
-into a token trie, so only the match's valid commands can come out, and reports how much
-probability the mask removed (the confidence check). `examples/voice_eval.rs` measures a model
-against the held-out set. Presentation only: what it produces is a typed command line, which the
-session resolves like the keyboard's. Not linked into the game yet.
+Voice commands (docs/COMMANDS.md section 11), on candle:
+- `hear`: Whisper prompted with the match's names, over `whisper`, our port of the network with
+  the decoder's self-attention cached and the encoder's window cut to the audio;
+- `snap`: respells what Whisper heard into the match's words;
+- `Translator` and `constrain::Mask`: the fine-tuned T5 under the grammar's mask (the grammar's
+  word-level completions as token tries), reporting the probability the mask removed;
+- `pipeline` runs the three; `audio` brings sound to 16 kHz mono;
+- the `conquerops-voice` binary: the game's voice process (microphone through `cpal`, a line
+  protocol over pipes), staged beside the game by `cargo xtask build`;
+- examples: `voice_eval` (the translator on the held-out set), `voice_listen` (spoken commands
+  end to end, macOS `say`), `voice_heard` (training rows as Whisper hears them).
+
+The game side is `zhbo-core`'s `command::voice` (the link to the process, presentation only).
+The launcher's `voice` module downloads the models listed in `data/ConquerOps/voice.ini`.
 
 ## The host bridge (C++)
 
@@ -268,7 +276,8 @@ calls into Rust internals. Name literals shared across the boundary are generate
    expected side must not share the mod's rules).
 4. `zhbo-launcher` may depend on `zhbo-requirements` and `zhbo-assets`.
    `zhbo-voice` may depend on `zhbo-core` only, without its default features; the core never
-   depends on it (the model and its runtime stay out of the static library until voice is wired).
+   depends on it: the game reaches it as a separate process (`command::voice`), so the models and
+   their runtime stay out of the static library.
 5. Engine code (`host/GeneralsGameCode`) is never modified; changes go through
    `host/patches/*.patch`. The bridge (`host/zhbo/*.cpp`) is the only engine-side mod code
    and it owns the ABI in `host/zhbo/zhbo_core.h`.

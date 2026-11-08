@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 zhbo-requirements = { path = "../zhbo-requirements" }
 zhbo-assets = { path = "../zhbo-assets" }
+sha2 = "0.10"

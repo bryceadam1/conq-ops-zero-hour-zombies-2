@@ -42,6 +42,8 @@ pub struct Bindings {
     pub hammer: Key,
     /// The first-person command menu (docs/COMMANDS.md section 8).
     pub command_menu: Key,
+    /// Held to speak a command (docs/COMMANDS.md section 11).
+    pub voice: Key,
 }
 
 impl Default for Bindings {
@@ -69,6 +71,7 @@ impl Default for Bindings {
             alt_mode: Key::Key3,
             hammer: Key::B,
             command_menu: Key::Z,
+            voice: Key::T,
         }
     }
 }
@@ -1295,6 +1298,7 @@ impl Client {
                     // buttons; movement and look stay.
                     let pointing = self.command.menu_input(&inp.keys, inp.wheel, free, self.cfg.bindings.command_menu);
                     let typing = self.command.keys(&inp.keys, free && self.command.menu.is_none() && !pointing);
+                    self.command.voice_input(&inp.keys, free && !typing && !pointing, self.cfg.bindings.voice);
                     if std::mem::take(&mut self.command.swallow) {
                         self.prev_held = u32::MAX;
                     }

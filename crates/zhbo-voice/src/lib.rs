@@ -5,8 +5,17 @@
 //!   `tools/voice/train/train_t5.py` writes them; the launcher downloads them at install) and
 //!   decodes greedily, optionally under the grammar's mask ([`constrain`]).
 //! * [`constrain`] turns the grammar's word-level completions into a token mask.
+//! * [`hear`] is the speech recogniser in front of it: Whisper, prompted with the match's names.
+//! * [`snap`] respells what Whisper heard into the match's words before the translator reads it.
+//! * [`pipeline`] runs the three in turn; [`audio`] brings a microphone's or a file's sound to
+//!   Whisper's 16 kHz mono. The `conquerops-voice` binary is the game's process for all of it.
 
+pub mod audio;
 pub mod constrain;
+pub mod hear;
+pub mod pipeline;
+pub mod snap;
+mod whisper;
 
 use std::path::Path;
 

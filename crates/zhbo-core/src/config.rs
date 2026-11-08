@@ -62,6 +62,10 @@ pub struct Config {
     /// (`state hash: frame N <hash> world <hash> seats <seat>:<hash> …` in `ConquerOps.log`: `Sim::fingerprint` and its parts), so two machines' logs of one network game
     /// can be compared frame by frame. A log only; never a sim input.
     pub state_hash_log: bool,
+    /// `ZHBO_AUTOPILOT_VOICE`: a WAV file the command autopilot hands the voice process as if it
+    /// were the microphone (`client::Autopilot::voice_due`, docs/COMMANDS.md section 11). Script
+    /// only; presentation only.
+    pub autopilot_voice: Option<String>,
 }
 
 impl Config {
@@ -75,6 +79,7 @@ impl Config {
             mp_role: MpRole::Shooter,
             mp_rounds: 1,
             state_hash_log: false,
+            autopilot_voice: None,
         }
     }
 
@@ -86,6 +91,7 @@ impl Config {
             mp_role: mp_role(env("ZHBO_AUTOPILOT_ROLE")),
             mp_rounds: env("ZHBO_AUTOPILOT_ROUNDS").and_then(|v| v.trim().parse().ok()).filter(|&n| n >= 1).unwrap_or(1),
             state_hash_log: flag(env("ZHBO_STATE_HASH_LOG")),
+            autopilot_voice: env("ZHBO_AUTOPILOT_VOICE").filter(|v| !v.trim().is_empty()).map(str::to_string),
             ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT"))
         }
     }
@@ -165,7 +171,7 @@ pub fn init(config: Config) {
 /// once locked the defaults in, so `init` silently dropped every variable it parsed.
 pub fn get() -> &'static Config {
     static DEFAULT: Config =
-        Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0, mp_role: MpRole::Shooter, mp_rounds: 1, state_hash_log: false };
+        Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0, mp_role: MpRole::Shooter, mp_rounds: 1, state_hash_log: false, autopilot_voice: None };
     CONFIG.get().unwrap_or(&DEFAULT)
 }
 

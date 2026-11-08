@@ -42,6 +42,27 @@ fn word(rng: &mut Rng) -> String {
     (0..n).map(|_| pick(rng, &SYLLABLES)).collect()
 }
 
+/// Whether `w` is a word the sampler could have invented (two or three of its syllables), as a
+/// plural or possessive too: never an ordinary word, whatever the paraphrases did with it.
+pub fn is_invented(w: &str) -> bool {
+    let splits = |s: &str| -> bool {
+        // The syllables' count along each prefix of `s`, by dynamic programming.
+        let mut counts: Vec<Vec<usize>> = vec![Vec::new(); s.len() + 1];
+        counts[0].push(0);
+        for i in 0..s.len() {
+            let here = counts[i].clone();
+            for syl in SYLLABLES {
+                if s[i..].starts_with(syl) {
+                    counts[i + syl.len()].extend(here.iter().map(|n| n + 1));
+                }
+            }
+        }
+        counts[s.len()].iter().any(|n| (2..=3).contains(n))
+    };
+    let w = w.strip_suffix("'s").unwrap_or(w);
+    splits(w) || w.strip_suffix("es").is_some_and(splits) || w.strip_suffix('s').is_some_and(splits)
+}
+
 /// `n` distinct names from `make`.
 fn names(rng: &mut Rng, n: usize, make: &mut dyn FnMut(&mut Rng) -> String) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -326,6 +347,16 @@ pub fn names_in(text: &str, vocab: &Vocabulary) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::command::{parse, print};
+
+    #[test]
+    fn invented_words_are_told_from_ordinary_ones() {
+        for w in ["korgor", "nixveldor", "moxzar", "fenpels", "torhal's", "tandorvases", "wrenravfen"] {
+            assert!(is_invented(w), "{w}");
+        }
+        for w in ["tower", "kor", "korgorvelbra", "near", "garrison", "salvage", "tortoise"] {
+            assert!(!is_invented(w), "{w}");
+        }
+    }
 
     #[test]
     fn invented_vocabularies_have_no_problems_and_no_zero_hour_names() {

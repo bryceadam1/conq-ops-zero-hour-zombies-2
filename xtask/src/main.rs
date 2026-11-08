@@ -516,6 +516,9 @@ fn build(opts: &Opts) -> Result<PathBuf> {
         launcher.args(["--target", t]);
     }
     run_cmd(&mut launcher)?;
+    // The voice commands' process (docs/COMMANDS.md section 11): its own executable beside the
+    // game, built for the build machine (64-bit on Windows too; it is not loaded into the game).
+    run_cmd(cargo().current_dir(&root).args(["build", "--release", "-p", "zhbo-voice", "--bin", "conquerops-voice"]))?;
     let core_lib = match core_target {
         Some(t) => rust_target_dir().join(t),
         None => rust_target_dir(),
@@ -642,6 +645,8 @@ fn build(opts: &Opts) -> Result<PathBuf> {
 
     let (from, to) = tc.launcher_file();
     fs::copy(launcher_dir.join(from), dist.join(to)).map_err(|e| format!("copy launcher: {e}"))?;
+    let voice = if cfg!(windows) { "conquerops-voice.exe" } else { "conquerops-voice" };
+    fs::copy(rust_target_dir().join("release").join(voice), dist.join(voice)).map_err(|e| format!("copy {voice}: {e}"))?;
     pack(&dist)?;
     eprintln!("Conquer Ops staged in {}", dist.display());
     Ok(dist)

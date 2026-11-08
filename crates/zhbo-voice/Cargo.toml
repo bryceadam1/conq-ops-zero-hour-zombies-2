@@ -1,9 +1,13 @@
 [package]
 name = "zhbo-voice"
-description = "Voice commands: the fine-tuned translator from speech to the canonical command language, with the grammar-constrained decoder (docs/COMMANDS.md section 11)."
+description = "Voice commands: Whisper, the snapper and the fine-tuned translator to the canonical command language with its grammar-constrained decoder, and the game's conquerops-voice process (docs/COMMANDS.md section 11)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[[bin]]
+name = "conquerops-voice"
+path = "src/bin/conquerops-voice.rs"
 
 [features]
 # Apple's GPU through candle's Metal backend (the model runs on the CPU without it).
@@ -16,3 +20,5 @@ candle-nn = "0.11.1"
 candle-transformers = "0.11.1"
 tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
 serde_json = "1"
+# The microphone, for the conquerops-voice process.
+cpal = "0.18"

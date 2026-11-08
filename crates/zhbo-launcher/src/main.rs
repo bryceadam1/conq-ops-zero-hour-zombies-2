@@ -9,6 +9,8 @@
 //!    Windows release's data files (on macOS/Linux, the Windows depots fetched through SteamCMD).
 //!    Nothing is written into either game's folder.
 //!
+//! 4. Fetches the voice models in the background if they are missing (`voice`, `--fetch-voice`).
+//!
 //! `--check` prints what was found and how the game would be started, without starting it.
 //! Other arguments are passed to the game, e.g. `-win -xres 1280 -yres 720`.
 
@@ -17,11 +19,20 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+mod voice;
+
 /// The game executable staged next to the launcher by `cargo xtask build`.
 const GAME_EXE: &str = if cfg!(windows) { "generalszh.exe" } else { "generalszh" };
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--fetch-voice") {
+        let here = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from));
+        return match here.map(|h| voice::fetch(&h)) {
+            Some(Ok(())) => ExitCode::SUCCESS,
+            _ => ExitCode::FAILURE,
+        };
+    }
     let check_only = args.iter().any(|a| a == "--check");
     let game_args: Vec<String> = args.into_iter().filter(|a| a != "--check").collect();
     match launch(&game_args, check_only) {
@@ -68,6 +79,12 @@ fn launch(game_args: &[String], check_only: bool) -> Result<(), String> {
         return Err(format!("ConquerOps.big is missing from {}", here.display()));
     }
     prepare_bo2_art(&here, &bo2.path);
+    if check_only {
+        let files = voice::files(voice::MANIFEST)?;
+        println!("Voice models:   {} of {} files missing", voice::missing(&here, &files).len(), files.len());
+    } else {
+        voice::ensure(&here);
+    }
 
     let mut mod_dir = here.to_string_lossy().into_owned();
     if !mod_dir.ends_with(std::path::MAIN_SEPARATOR) {

@@ -70,12 +70,11 @@ fn sample(dir: &Path, count: usize, batches: usize, seed: u32) -> Result<(), Str
     Ok(())
 }
 
-/// A vocabulary as one `vocab.tsv` line after its id: the types (`singular>plural`), then the
-/// places, teams, upgrades, powers, sciences, weapon modes and weapons, each `|`-separated, tab
-/// between lists (the class words are the grammar's own).
+/// A vocabulary as one `vocab.tsv` line after its id: `Vocabulary::to_line` without the class
+/// list (an invented vocabulary has all the grammar's classes).
 fn vocab_line(v: &zhbo_core::command::Vocabulary) -> String {
-    let types: Vec<String> = v.types.iter().map(|n| format!("{}>{}", n.singular, n.plural)).collect();
-    [types.join("|"), v.places.join("|"), v.teams.join("|"), v.upgrades.join("|"), v.powers.join("|"), v.sciences.join("|"), v.modes.join("|"), v.weapons.join("|")].join("\t")
+    let line = v.to_line();
+    line.rsplit_once('\t').map_or(line.clone(), |(names, _)| names.to_string())
 }
 
 /// The number words a count may be said as.
@@ -249,12 +248,28 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
     for (name, rows) in [("train.tsv", &train), ("dev.tsv", &dev), ("test.tsv", &test)] {
         fs::write(dir.join(name), rows.join("\n") + "\n").map_err(|e| e.to_string())?;
     }
+    // The ordinary words: every word of the training inputs outside the row's own names and not
+    // one the sampler could have invented (a new team's name is in no list), seen at least twice. The voice snapper never respells these into a name (docs/COMMANDS.md section 11).
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for row in &train {
+        let mut f = row.split('\t');
+        let (Some(input), Some(_), Some(id)) = (f.next(), f.next(), f.next()) else { continue };
+        let name_words: Vec<&str> = labels.get(id).map(|(_, n)| n.iter().flat_map(|n| n.split_whitespace()).collect()).unwrap_or_default();
+        for w in normal::words(input) {
+            if !name_words.contains(&w.as_str()) && !zhbo_core::command::sample::is_invented(&w) {
+                *counts.entry(w).or_default() += 1;
+            }
+        }
+    }
+    let ordinary: Vec<&str> = counts.iter().filter(|(_, &n)| n >= 2).map(|(w, _)| w.as_str()).collect();
+    fs::write(dir.join("words.txt"), ordinary.join("\n") + "\n").map_err(|e| e.to_string())?;
     let mut stats = format!(
-        "canonical commands: {}\nparaphrases read: {read} (unknown ids: {unknown})\nkept: {kept}\nnoisy copies: {noisy_count}\nread back by the normaliser alone: {normalised}\nrows: train {}, dev {}, test {}\ndropped:\n",
+        "canonical commands: {}\nparaphrases read: {read} (unknown ids: {unknown})\nkept: {kept}\nnoisy copies: {noisy_count}\nread back by the normaliser alone: {normalised}\nrows: train {}, dev {}, test {}\nordinary words: {}\ndropped:\n",
         labels.len(),
         train.len(),
         dev.len(),
-        test.len()
+        test.len(),
+        ordinary.len()
     );
     for (why, n) in &dropped {
         stats.push_str(&format!("  {why}: {n}\n"));

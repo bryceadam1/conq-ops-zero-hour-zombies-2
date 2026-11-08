@@ -63,8 +63,11 @@
 #                                      Barracks queues two Rangers and cancels one, his dozer lays out
 #                                      a Barracks near him, and the Rangers take a right-click on open
 #                                      ground; the command menu builds `rangers guard me` from its own
-#                                      completions and runs it; last, a line in synonyms and one naming
-#                                      the General's group
+#                                      completions and runs it; then a line in synonyms and one naming
+#                                      the General's group; last, a spoken line (`say` into a WAV the
+#                                      voice process hears as if from the microphone; the models from
+#                                      ZHBO_VOICE_MODELS, default ~/.conquerops/voice, linked into the
+#                                      dist's voice/ unless it has them)
 #   scripts/autotest-mac.sh --detail   the graphics detail Zero Hour picks (host patch 0025): four starts
 #                                      with Options.ini set up as a new player (none), a player whose
 #                                      file holds the old detector's Low, one who chose Low and one who
@@ -842,7 +845,15 @@ Command Test
 primary=an94_mp;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
 end
 EOF
-    export ZHBO_AUTOPILOT=command GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-55} GGC_BGFX_SCREENSHOT_INTERVAL=${GGC_BGFX_SCREENSHOT_INTERVAL:-150}
+    # The spoken line (docs/COMMANDS.md section 11): the voice models beside the dist's voice
+    # process, and the line as a WAV file.
+    models="${ZHBO_VOICE_MODELS:-$HOME/.conquerops/voice}"
+    mkdir -p "$dist/voice"
+    [[ -e "$dist/voice/whisper-base.en" ]] || ln -s "$models/whisper-base.en" "$dist/voice/whisper-base.en"
+    [[ -e "$dist/voice/commands-t5-small" ]] || ln -s "$models/flan-t5-small" "$dist/voice/commands-t5-small"
+    say -v Samantha --data-format=LEF32@16000 -o "$out/voice.wav" "Rangers, come over to me."
+    export ZHBO_AUTOPILOT_VOICE="$out/voice.wav"
+    export ZHBO_AUTOPILOT=command GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-60} GGC_BGFX_SCREENSHOT_INTERVAL=${GGC_BGFX_SCREENSHOT_INTERVAL:-150}
     "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
     wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
     for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
@@ -887,7 +898,15 @@ EOF
     check "synonyms: canonical reading ran" "command: 'Everyone, follow me!' -> [0-9]+ units: units guard me, 1 order\(s\)"
     check "my group: resolved" "command: 'rangers in my group stop' -> [0-9]+ units?: rangers in my group stop, 1 order\(s\)"
     check "the map's places logged" "commands: the map's places: "
-    grep -E "command" "$l" | head -60
+    check "voice: the process ready" "voice: ready"
+    check "voice: the spoken line ran" "voice: heard '.*', running 'rangers move to me'"
+    # Typed first (three Rangers), then spoken (three, or four once the queued one is out).
+    if [[ $(grep -cE "command: 'rangers move to me' -> [0-9]+ units" "$l") -ge 2 ]]; then
+        printf '%-34s PASS\n' "  ...and resolved"
+    else
+        printf '%-34s FAIL\n' "  ...and resolved"; ok=1
+    fi
+    grep -E "command|voice" "$l" | head -70
     echo "screenshots and log: $out"
     exit $ok
 fi

@@ -21,6 +21,9 @@ struct State {
     /// The shell create-a-class screen (`zhbo_menu_*`): `Some` while its window is up. Local UI
     /// only — it never touches the sim (docs/CONTRACT.md's menu ABI).
     menu: Option<crate::menu::MenuState>,
+    /// The voice commands' process (docs/COMMANDS.md section 11), started the first time the
+    /// General is in first person. Presentation only.
+    voice: Option<crate::command::voice::Voice>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -535,6 +538,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         sim: Sim::with_tuning(&crate::tuning::get()),
         client: Client::default(),
         menu: None,
+        voice: None,
     };
     use crate::host::LogicHost;
     state.logic.log(&format!("zhbo-core {} initialised (ABI {ABI_VERSION})", env!("CARGO_PKG_VERSION")));
@@ -548,7 +552,20 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command } => {
             #[cfg(feature = "autopilot")]
             {
-                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command, ..Default::default() });
+                state.client.autopilot = Some(crate::client::Autopilot {
+                    equipment,
+                    build,
+                    classpick,
+                    scope,
+                    smoke,
+                    splash,
+                    drops,
+                    flicker,
+                    hipfire,
+                    command,
+                    voice_file: config.autopilot_voice.clone(),
+                    ..Default::default()
+                });
             }
             let _ = (equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
@@ -1427,6 +1444,58 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         if s.client.command.menu.as_ref().is_some_and(|m| m.dirty) {
             let engine = CommandEngine { client: &s.client_host, logic: &s.logic, player: inp.local_player };
             crate::command::session::refresh_menu(&mut s.client.command, &engine);
+        }
+        // Voice commands (docs/COMMANDS.md section 11): the push-to-talk key records, and what was
+        // heard comes back as a line, run here like a typed one (or put in the line to confirm).
+        if s.voice.is_none() && matches!(s.client.view, crate::client::ViewMode::Fps) {
+            s.voice = Some(crate::command::voice::Voice::beside_game());
+        }
+        if let Some(voice) = s.voice.as_mut() {
+            use crate::command::voice::{act, apply, Reply, State as VoiceState};
+            let mut log: Vec<String> = Vec::new();
+            match s.client.command.take_voice_edge() {
+                Some(true) => match &voice.state {
+                    VoiceState::Ready => {
+                        let engine = CommandEngine { client: &s.client_host, logic: &s.logic, player: inp.local_player };
+                        let vocab = crate::command::session::vocabulary(&s.client.command, &engine);
+                        voice.listen(&vocab.to_line());
+                        s.client.command.echo = Some(crate::command::session::Echo { text: "Listening...".into(), ok: true, age: 0.0 });
+                    }
+                    VoiceState::Starting => s.client.command.echo = Some(crate::command::session::Echo { text: "Voice is still loading".into(), ok: false, age: 0.0 }),
+                    VoiceState::Unavailable(why) => {
+                        s.client.command.echo = Some(crate::command::session::Echo { text: "Voice commands are off".into(), ok: false, age: 0.0 });
+                        log.push(format!("voice: off: {why}"));
+                    }
+                    VoiceState::Listening | VoiceState::Thinking => {}
+                },
+                Some(false) => voice.stop(),
+                None => {}
+            }
+            // The command autopilot's spoken line, as if from the microphone.
+            #[cfg(feature = "autopilot")]
+            if voice.state == VoiceState::Ready {
+                if let Some(file) = s.client.autopilot.as_mut().and_then(|ap| ap.voice_due()) {
+                    let engine = CommandEngine { client: &s.client_host, logic: &s.logic, player: inp.local_player };
+                    let vocab = crate::command::session::vocabulary(&s.client.command, &engine);
+                    voice.hear_file(&vocab.to_line(), std::path::Path::new(&file));
+                }
+            }
+            let tuning = crate::tuning::get();
+            for reply in voice.poll() {
+                match reply {
+                    Reply::Ready => log.push("voice: ready".into()),
+                    Reply::Unavailable(why) => log.push(format!("voice: off: {why}")),
+                    Reply::Listening => {}
+                    Reply::Error(e) => log.push(format!("voice: {e}")),
+                    Reply::Heard(h) => {
+                        let a = act(&h, tuning.command_voice_guard, tuning.command_voice_silence);
+                        log.push(apply(&mut s.client.command, &h, &a));
+                    }
+                }
+            }
+            for line in log {
+                crate::host::LogicHost::log(&s.logic, &line);
+            }
         }
         if let Some(line) = s.client.command.take_submitted() {
             let player = inp.local_player;

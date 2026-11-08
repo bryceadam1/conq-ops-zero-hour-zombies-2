@@ -11,26 +11,15 @@
 //! wrong answers, the time per command, every label the mask would refuse (there must be none), and
 //! the first errors. Same meaning counts `a and b` as `b and a`.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
 
-use zhbo_core::command::world::CLASSES;
-use zhbo_core::command::{parse, Noun, Vocabulary};
+use common::same_meaning;
+use zhbo_core::command::{parse, Vocabulary};
 use zhbo_voice::Translator;
-
-/// Whether two texts are the same command: both parse, and the selection's groups match as sets
-/// (`a and b` orders its groups freely; nothing else about the command does).
-fn same_meaning(a: &str, b: &str, v: &Vocabulary) -> bool {
-    let (Ok(mut x), Ok(mut y)) = (parse(a, v), parse(b, v)) else { return false };
-    for cmd in [&mut x, &mut y] {
-        if let Some(sel) = &mut cmd.selection {
-            sel.include.sort_by_key(|g| format!("{g:?}"));
-            sel.exclude.sort_by_key(|g| format!("{g:?}"));
-        }
-    }
-    x == y
-}
 
 /// Where the grammar's mask refuses `label`'s own tokens, if it does: every right answer must get
 /// through, or the mask costs accuracy instead of adding it.
@@ -47,31 +36,6 @@ fn refusal(model: &Translator, label: &str, v: &Vocabulary) -> Result<Option<Str
     Ok((!mask.allowed(eos)?.contains(&eos)).then(|| "the end".to_string()))
 }
 
-fn list(s: &str) -> Vec<String> {
-    s.split('|').filter(|x| !x.is_empty()).map(str::to_string).collect()
-}
-
-fn vocab(line: &str) -> Option<(String, Vocabulary)> {
-    let f: Vec<&str> = line.split('\t').collect();
-    if f.len() < 9 {
-        return None;
-    }
-    let types = f[1].split('|').filter_map(|t| t.split_once('>')).map(|(s, p)| Noun::new(s, p)).collect();
-    let v = Vocabulary {
-        types,
-        classes: CLASSES.iter().map(|(s, p, _)| Noun::new(s, p)).collect(),
-        places: list(f[2]),
-        teams: list(f[3]),
-        upgrades: list(f[4]),
-        powers: list(f[5]),
-        sciences: list(f[6]),
-        modes: list(f[7]),
-        weapons: list(f[8]),
-        ..Vocabulary::default()
-    };
-    Some((f[0].to_string(), v))
-}
-
 fn main() -> Result<(), zhbo_voice::Error> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 2 {
@@ -79,15 +43,8 @@ fn main() -> Result<(), zhbo_voice::Error> {
     }
     let data = Path::new(&args[1]);
     let limit: usize = args.get(2).and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
-    let vocabs: BTreeMap<String, Vocabulary> = std::fs::read_to_string(data.join("vocab.tsv"))?.lines().filter_map(vocab).collect();
-    let rows: Vec<(String, String, String)> = std::fs::read_to_string(data.join("test.tsv"))?
-        .lines()
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split('\t').collect();
-            (f.len() >= 3).then(|| (f[0].to_string(), f[1].to_string(), f[2].to_string()))
-        })
-        .take(limit)
-        .collect();
+    let vocabs: BTreeMap<String, Vocabulary> = common::vocabularies(data)?;
+    let rows = common::test_rows(data, limit)?;
     let mut model = Translator::load(Path::new(&args[0]), candle_core::Device::Cpu)?;
     let (mut free_right, mut free_invalid, mut masked_right, mut stuck) = (0usize, 0usize, 0usize, 0usize);
     let (mut free_same, mut masked_same) = (0usize, 0usize);

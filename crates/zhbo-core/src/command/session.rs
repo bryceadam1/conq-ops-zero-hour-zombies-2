@@ -81,6 +81,10 @@ pub struct Session {
     places_logged: bool,
     /// The keys down last frame, for the menu's edges.
     menu_prev: KeySet,
+    /// The push-to-talk key is held (docs/COMMANDS.md section 11).
+    voice_held: bool,
+    /// It went down (true) or came up (false) this frame, for the voice link.
+    voice_edge: Option<bool>,
 }
 
 /// The character a key types into the line, if any.
@@ -217,6 +221,29 @@ impl Session {
         if self.menu.is_none() && !self.open {
             self.menu = Some(Menu { dirty: true, ..Menu::default() });
         }
+    }
+
+    /// One frame of the push-to-talk key (`free` as for [`Session::keys`]; never while the line or
+    /// the menu is up, where the key types or the wheel picks). Leaving first person lets it go.
+    pub fn voice_input(&mut self, now: &KeySet, free: bool, key: Key) {
+        let down = free && !self.open && self.menu.is_none() && now.is_down(key);
+        if down != self.voice_held {
+            self.voice_held = down;
+            self.voice_edge = Some(down);
+        }
+    }
+
+    /// The push-to-talk edge this frame, if any.
+    pub fn take_voice_edge(&mut self) -> Option<bool> {
+        self.voice_edge.take()
+    }
+
+    /// Open the line with `line` in it, for the player to run (Enter) or drop (Escape): a voice
+    /// command the confidence check would not run unasked.
+    pub fn prefill(&mut self, line: &str) {
+        self.menu = None;
+        self.open = true;
+        self.line = line.chars().take(LINE_MAX).collect();
     }
 
     /// Submit a line directly (the autopilot's command run).
@@ -368,6 +395,11 @@ pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, t
             format!("{places}command: '{line}' refused: {why}{refused}")
         }
     }
+}
+
+/// The match's vocabulary now, as a command would be read against it (the voice decoder's).
+pub fn vocabulary(session: &Session, host: &dyn Host) -> super::Vocabulary {
+    snapshot(host).vocabulary(&session.memory.team_names())
 }
 
 /// Recompute the menu's options after its picks changed: the completions the grammar allows next
