@@ -478,6 +478,12 @@ fn completions_offer_only_what_keeps_the_command_parseable() {
     assert!(c.next.iter().any(|n| n == "power plant") && c.next.iter().any(|n| n == "3"));
     let c = completions("rangers name them", &v);
     assert!(c.next.iter().any(|n| n == "bravo team") && !c.next.iter().any(|n| n == "alpha team"), "{:?}", c.next);
+    // Any name may be given, word by word: the slot stays open after each word, and closes at `then`.
+    assert!(c.name && !c.complete);
+    let c = completions("rangers name them selhalvel", &v);
+    assert!(c.name && c.complete && c.next.iter().any(|n| n == "then"), "{c:?}");
+    assert!(!completions("rangers name them selhalvel wing then", &v).name);
+    assert!(!completions("rangers move to", &v).name);
     // An unparseable prefix has none.
     assert_eq!(completions("rangres", &v), super::parse::Completions::default());
     // Every offer extends the prefix into something that parses on.

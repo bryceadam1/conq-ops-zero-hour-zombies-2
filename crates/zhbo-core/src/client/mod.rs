@@ -925,9 +925,6 @@ fn pick_custom_class(out: &mut ClientOut, general: u32, class: &crate::classes::
     true
 }
 
-/// The multiplayer autopilot's aim: the view angles from the local General's eye to the chest of
-/// the nearest other General in first person (only those have a body the sim moves), or `None`.
-#[cfg(feature = "autopilot")]
 /// The tablet clip's time at the display's rate: the field computer's sim timer `t` (at the last
 /// logic frame) interpolated from the frame before by the render clock since it (`since_logic`,
 /// 0..LOGIC_DT), the eye's rule (`eye_prev.lerp(eye_curr, alpha)`). Presentation only.
@@ -935,6 +932,9 @@ fn tablet_time(t: f32, since_logic: f32) -> f32 {
     (t - LOGIC_DT + since_logic.clamp(0.0, LOGIC_DT)).max(0.0)
 }
 
+/// The multiplayer autopilot's aim: the view angles from the local General's eye to the chest of
+/// the nearest other General in first person (only those have a body the sim moves), or `None`.
+#[cfg(feature = "autopilot")]
 fn autopilot_aim(sim: &Sim, local: i32) -> Option<(f32, f32)> {
     let eye = sim.player(local)?.body.eye();
     let chest = |p: &crate::sim::PlayerSim| p.body.pos + Vec3::new(0.0, 0.0, p.body.eye_height * 0.75);

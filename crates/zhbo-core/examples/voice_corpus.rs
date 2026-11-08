@@ -8,12 +8,12 @@
 //! `sample` draws `count` canonical commands, each over its own invented vocabulary
 //! (`command::sample`), and writes `<dir>/canonical.tsv` (`id`, canonical text, the names a
 //! paraphrase must keep, `|`-separated) split into `<dir>/batches/batch_NN.tsv` for the paraphrase
-//! pass. The paraphrases come back as `<dir>/paraphrases/batch_NN.tsv` (`id`, paraphrase).
+//! pass, and `<dir>/vocab.tsv` (each id's vocabulary, for the constrained decoder's evaluation). The paraphrases come back as `<dir>/paraphrases/batch_NN.tsv` (`id`, paraphrase).
 //!
 //! `assemble` keeps the paraphrases that pass the meaning checks (every name kept as it is; the
 //! counts, group numbers and compass words kept; an exclusion and a sequence still said), adds a
 //! speech-recognition-noisy copy of some (homophones, dropped and filler words; never the names),
-//! and writes `train.tsv`, `dev.tsv` and `test.tsv` (`input`, canonical label) split by command, the
+//! and writes `train.tsv`, `dev.tsv` and `test.tsv` (`input`, canonical label, id) split by command, the
 //! canonical lines themselves among the training inputs, and `stats.txt`.
 
 use std::collections::BTreeMap;
@@ -42,6 +42,7 @@ fn sample(dir: &Path, count: usize, batches: usize, seed: u32) -> Result<(), Str
     fs::create_dir_all(dir.join("batches")).map_err(|e| e.to_string())?;
     let mut rng = Rng::new(seed);
     let mut lines: Vec<String> = Vec::new();
+    let mut vocabs: Vec<String> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     while lines.len() < count {
         let v = invented_vocabulary(&mut rng);
@@ -56,15 +57,25 @@ fn sample(dir: &Path, count: usize, batches: usize, seed: u32) -> Result<(), Str
             continue;
         }
         let names = names_in(&text, &v).join("|");
+        vocabs.push(format!("{:05}\t{}", lines.len(), vocab_line(&v)));
         lines.push(format!("{:05}\t{text}\t{names}", lines.len()));
     }
     fs::write(dir.join("canonical.tsv"), lines.join("\n") + "\n").map_err(|e| e.to_string())?;
+    fs::write(dir.join("vocab.tsv"), vocabs.join("\n") + "\n").map_err(|e| e.to_string())?;
     let per = count.div_ceil(batches.max(1));
     for (b, chunk) in lines.chunks(per).enumerate() {
         fs::write(dir.join("batches").join(format!("batch_{b:02}.tsv")), chunk.join("\n") + "\n").map_err(|e| e.to_string())?;
     }
     eprintln!("voice_corpus: {} canonical commands in {} batches", lines.len(), lines.len().div_ceil(per));
     Ok(())
+}
+
+/// A vocabulary as one `vocab.tsv` line after its id: the types (`singular>plural`), then the
+/// places, teams, upgrades, powers, sciences, weapon modes and weapons, each `|`-separated, tab
+/// between lists (the class words are the grammar's own).
+fn vocab_line(v: &zhbo_core::command::Vocabulary) -> String {
+    let types: Vec<String> = v.types.iter().map(|n| format!("{}>{}", n.singular, n.plural)).collect();
+    [types.join("|"), v.places.join("|"), v.teams.join("|"), v.upgrades.join("|"), v.powers.join("|"), v.sciences.join("|"), v.modes.join("|"), v.weapons.join("|")].join("\t")
 }
 
 /// The number words a count may be said as.
@@ -219,7 +230,7 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
             _ => &mut test,
         };
         if h < 90 {
-            out.push(format!("{label}\t{label}"));
+            out.push(format!("{label}\t{label}\t{id}"));
         }
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         for para in pairs.get(id).into_iter().flatten() {
@@ -228,10 +239,10 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
             if tables.candidates(&words, &zhbo_core::command::Vocabulary::default()).iter().any(|c| c == label) {
                 normalised += 1;
             }
-            out.push(format!("{para}\t{label}"));
+            out.push(format!("{para}\t{label}\t{id}"));
             if rng.next_u32() % 100 < 40 {
                 noisy_count += 1;
-                out.push(format!("{}\t{label}", noisy(&mut rng, para, &names)));
+                out.push(format!("{}\t{label}\t{id}", noisy(&mut rng, para, &names)));
             }
         }
     }

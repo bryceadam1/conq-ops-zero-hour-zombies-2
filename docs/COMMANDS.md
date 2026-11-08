@@ -542,8 +542,9 @@ like every other gameplay number.
 
 Voice runs entirely on the player's machine. **Decided (2026-11-07):** Whisper for recognition,
 downloaded by the launcher at install, never bundled (it is MIT-licensed, code and weights);
-flan-t5-small as the first translation model; candle as the runtime. **Built:** the training set
-(below). Not built yet: the model's fine-tuning, inference and the constrained decoder.
+flan-t5-small as the first translation model; candle as the runtime. **Built:** the training set,
+the fine-tuning script, the translator and the constrained decoder (`crates/zhbo-voice`), measured
+below. Not built yet: Whisper, the launcher's download, and the microphone in game.
 
 - **Speech recognition.** Whisper, prompt-biased each match with the run-time vocabulary (unit,
   place and team names), so proper nouns are heard correctly ("oil derrick", not "oil Derek"). The
@@ -567,18 +568,26 @@ flan-t5-small as the first translation model; candle as the runtime. **Built:** 
   Metal on Apple Silicon and the decoding loop in our own code, which the mask needs. ONNX Runtime
   (`ort`) was the alternative; it would mean shipping its native libraries. The weights are read as
   safetensors, downloaded at install like Whisper's.
-- **Constrained decoding.** At each step the logits of every token the grammar does not allow are
-  set to −∞:
-  - The grammar is precompiled against the model's token list into a state machine. The fixed
-    skeleton is compiled once and shipped. Each run-time word list is a token trie, rebuilt only
-    when its list changes.
+- **Constrained decoding (built, `zhbo_voice::constrain`).** At each step only the tokens the
+  grammar allows may be chosen:
+  - At each word boundary the grammar's completions (`completions_with`, the menu's function with
+    every count from 2 to 50) are tokenized into a trie, built once per prefix and cached.
   - The mask enforces meaning as well as syntax, through the valid-completions function: only
     buildable things after `build`, only existing groups after `group`.
+  - A name the player gives (`name them …`) has no list: `Completions::name` opens the slot and
+    any word may be spelled there, token by token; the grammar decides where it may end.
+  - One token can mean two things. In T5's tokenizer an unfamiliar word starts with a bare `▁`, so
+    after `the` the `▁` may go on into the place `the torwren crossing` or start `korgor tower`.
+    The mask follows every reading at once and allows what any of them allows. Following only one
+    cost 1.4 points of exact match until it was fixed; `voice_eval` now forces every label
+    through the mask and counts refusals (there are none).
 - **Guarding against valid-but-wrong output.** Three guards, used together:
   1. **The abstain production** with its not-found slot (section 9).
   2. **A confidence check.** The command's log-probability and the probability mass the mask
      removed along the way. Too much removed means the model "wanted" something invalid, so the
-     command asks for confirmation instead of running.
+     command asks for confirmation instead of running. Measured: the largest share removed at one
+     step averages 0.002 on right answers and 0.28 on wrong ones; asking above 0.1 asks on 0.4% of
+     right answers and catches a third of the wrong ones.
   3. **Fine-tuning on the canonical language**, so the mask is a safety net, not the main
      mechanism.
 - **Training data (built, `tools/voice/`):**
@@ -604,6 +613,27 @@ flan-t5-small as the first translation model; candle as the runtime. **Built:** 
      exclusion or sequence, 7,848 were filler-only), 8,241 noisy copies; 28,054 training rows,
      1,507 dev, 1,469 test. The normaliser alone already reads 6,722 of the kept phrasings back
      to their label; the model's job is the rest.
+
+- **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set,
+  six epochs on Apple's GPU (MPS) at about 250 s each, keeping the best epoch on a dev sample (the
+  third: later epochs fit the training set closer and the dev sample less). The weights go to
+  `~/.conquerops/voice/flan-t5-small/`, never into the repo. Gotcha: transformers saves T5's own
+  `lm_head` while the config still says the embeddings are tied, and candle trusting the config
+  decodes nonsense; the script writes `tie_word_embeddings = false` and the loader goes by the
+  weights.
+- **Results** (`cargo run --release -p zhbo-voice --example voice_eval -- <model dir> tools/voice`,
+  1,469 held-out rows, greedy, one command at a time on the CPU):
+
+  | | exact match | same meaning | ms per command |
+  |---|---|---|---|
+  | unconstrained | 0.946 | 0.958 (1.2% not a command) | 125 |
+  | constrained | 0.948 | 0.959 (none stuck) | 137 |
+
+  "Same meaning" counts `a and b` as `b and a`. With the guard at 0.1: 95.9% run right, 1.7% ask
+  first, 2.7% run wrong. The remaining errors: an invented selection on a command with an implied
+  one (`force move to tordorosts` read as `tordorosts force move to tordorosts`), a group dropped
+  from a long union, and near-synonyms (`at` against `near`). Next: the abstain production, and
+  flan-t5-base or the 0.5B decoder-only model if real speech falls short.
 
   Training uses **placeholder names** in place of real unit and place names, so the model learns
   to copy names instead of memorising Zero Hour's roster. That generalises to mods and other
@@ -658,7 +688,10 @@ flan-t5-small as the first translation model; candle as the runtime. **Built:** 
    `--command` leg building a command through it.
 5. **Built.** Adjectives, `near`, groups (clusters), place names, team names, and the synonym and
    alias tables with the normaliser, the player's own file included.
-6. Voice: the sampler and dataset, the model prototypes, constrained decoding.
+6. Voice. **Built:** the sampler and dataset, the fine-tuned flan-t5-small, the candle
+   translator and constrained decoder (`crates/zhbo-voice`) with its evaluation. Left: Whisper and
+   the launcher's download, the microphone in game, the abstain production and the confidence
+   guard's tuning key.
 
 **Open questions:**
 - Whether the menu should outline the units its command would select (the engine's local

@@ -13,6 +13,7 @@ zhbo-conformance → zhbo-formats
 zhbo-core        → zhbo-requirements, zhbo-native, (feature "renderer") zhbo-gfx
 zhbo-assets      → zhbo-core, zhbo-formats, zhbo-native, zhbo-conformance, zhbo-requirements
 zhbo-launcher    → zhbo-requirements, zhbo-assets
+zhbo-voice       → zhbo-core (no default features: the command grammar only)
 xtask            → zhbo-core, zhbo-formats, zhbo-assets (the dist keeps a current BO2 archive: `hud::archive_current`)
 
 host/zhbo (C++) ←─ ABI ─→ zhbo-core
@@ -204,6 +205,15 @@ editor's offer).
 `ConquerOps.exe` / `conquerops`: requirement check, BO2 art conversion on first launch,
 starting the game. Depends on `zhbo-requirements` and `zhbo-assets`.
 
+### `crates/zhbo-voice`
+Voice commands (docs/COMMANDS.md section 11): `Translator` loads the fine-tuned T5 the launcher
+downloads (`model.safetensors`, `config.json`, `tokenizer.json`) on candle and decodes greedily;
+`constrain::Mask` turns the grammar's word-level completions (`command::parse::completions_with`)
+into a token trie, so only the match's valid commands can come out, and reports how much
+probability the mask removed (the confidence check). `examples/voice_eval.rs` measures a model
+against the held-out set. Presentation only: what it produces is a typed command line, which the
+session resolves like the keyboard's. Not linked into the game yet.
+
 ## The host bridge (C++)
 
 `host/zhbo/*.cpp` is the engine-side glue. After Phase 2.1 it is split by responsibility:
@@ -257,6 +267,8 @@ calls into Rust internals. Name literals shared across the boundary are generate
    `zhbo-conformance` depends on `zhbo-formats` only — never on the core or the converter (the
    expected side must not share the mod's rules).
 4. `zhbo-launcher` may depend on `zhbo-requirements` and `zhbo-assets`.
+   `zhbo-voice` may depend on `zhbo-core` only, without its default features; the core never
+   depends on it (the model and its runtime stay out of the static library until voice is wired).
 5. Engine code (`host/GeneralsGameCode`) is never modified; changes go through
    `host/patches/*.patch`. The bridge (`host/zhbo/*.cpp`) is the only engine-side mod code
    and it owns the ABI in `host/zhbo/zhbo_core.h`.

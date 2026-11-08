@@ -527,6 +527,8 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
     if logic.is_null() || client.is_null() {
         return;
     }
+    // Mutated only with the autopilot feature (its scripted client is set below).
+    #[cfg_attr(not(feature = "autopilot"), allow(unused_mut))]
     let mut state = State {
         logic: CLogicHost(*logic),
         client_host: CClientHost(*client),

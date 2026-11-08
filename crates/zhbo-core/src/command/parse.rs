@@ -97,19 +97,30 @@ pub struct Completions {
     pub next: Vec<String>,
     /// The prefix is itself a whole command.
     pub complete: bool,
+    /// A name the player is giving may go on with any word (`name them …`): `next` holds only
+    /// the menu's suggestions for it, the voice decoder lets any word be spelled.
+    pub name: bool,
 }
 
 /// The counts the menu offers for `<number>`, and the team names it suggests for `name them`.
 pub const MENU_NUMBERS: [&str; 8] = ["2", "3", "4", "5", "6", "8", "10", "12"];
 pub const TEAM_SUGGESTIONS: [&str; 6] = ["alpha team", "bravo team", "charlie team", "delta team", "echo team", "foxtrot team"];
 
-/// The completions of `prefix` (canonical text, possibly empty). An unparseable prefix has none.
+/// The completions of `prefix` (canonical text, possibly empty), with the menu's counts. An
+/// unparseable prefix has none.
 pub fn completions(prefix: &str, vocab: &Vocabulary) -> Completions {
+    completions_with(prefix, vocab, &MENU_NUMBERS)
+}
+
+/// The completions of `prefix`, offering `numbers` where a count goes (the voice decoder allows
+/// every count a player might say; the menu offers a few).
+pub fn completions_with(prefix: &str, vocab: &Vocabulary, numbers: &[&str]) -> Completions {
     let toks: Vec<String> = prefix.split_whitespace().map(str::to_lowercase).collect();
     let (reached, complete, expected) = reach(&toks, vocab);
     if reached < toks.len() {
-        return Completions { next: Vec::new(), complete: false };
+        return Completions::default();
     }
+    let name = expected.iter().any(|e| e == "<name>" || e == "<name word>");
     // Each expectation as groups of candidates that the grammar treats alike: a list's names are
     // atomic phrases, so one representative's fate is the group's. Only a noun's number tells its
     // forms apart (singulars, plurals, mass nouns that are both).
@@ -139,9 +150,11 @@ pub fn completions(prefix: &str, vocab: &Vocabulary) -> Completions {
             "<science>" => vec![vocab.sciences.clone()],
             "<weapon mode>" => vec![vocab.modes.clone()],
             "<weapon>" => vec![vocab.weapons.clone()],
-            "<number>" => vec![MENU_NUMBERS.iter().map(|s| s.to_string()).collect()],
+            "<number>" => vec![numbers.iter().map(|s| s.to_string()).collect()],
             "<group number>" => vec![(0..10).map(|d| d.to_string()).collect()],
             "<name>" => vec![TEAM_SUGGESTIONS.iter().filter(|t| !vocab.teams.iter().any(|n| n == *t)).map(|s| s.to_string()).collect()],
+            // A name's further words are the player's own: nothing to suggest.
+            "<name word>" => Vec::new(),
             fixed => vec![vec![fixed.to_string()]],
         };
         for group in groups {
@@ -159,7 +172,7 @@ pub fn completions(prefix: &str, vocab: &Vocabulary) -> Completions {
             }
         }
     }
-    Completions { next, complete }
+    Completions { next, complete, name }
 }
 
 /// How far the parser gets through `toks`: the furthest word it reached, whether some parse is a
@@ -626,6 +639,7 @@ impl Parser<'_> {
             }
             if k > j {
                 out.push((Order::NameThem(self.toks[j..k].join(" ")), k));
+                self.expect(k, "<name word>");
             } else {
                 self.expect(j, "<name>");
             }

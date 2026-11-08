@@ -14917,3 +14917,36 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   filler-only share before trusting it.
 - **Results:** 20,643 of 28,800 paraphrases kept; 28,054/1,507/1,469 rows; the normaliser alone
   reads 6,722 of the kept phrasings back to their label.
+
+## First-person commands, step 6: the fine-tuned translator and the constrained decoder (2026-11-07)
+
+- **Built:**
+  - `tools/voice/train/train_t5.py` fine-tunes flan-t5-small on the voice set (MPS, six epochs of
+    about 250 s, best dev-sample epoch kept: the third, 0.957).
+  - `crates/zhbo-voice`: the candle translator (greedy, KV cache) and `constrain::Mask`, the
+    grammar's completions as token tries.
+  - `examples/voice_eval.rs` reports exact match and same meaning, unconstrained and constrained,
+    labels the mask refuses, and the guard's thresholds.
+  - `voice_corpus` writes `vocab.tsv` and an id column so each row's vocabulary is known.
+- **Results on 1,469 held-out rows** (CPU, one at a time): unconstrained 0.946 exact / 0.958 same
+  meaning, 125 ms; constrained 0.948 / 0.959, 137 ms. The mask's largest removed share is 0.002 on
+  right answers and 0.28 on wrong ones; asking above 0.1 asks on 0.4% of right answers and catches
+  a third of the wrong ones.
+- **Gotcha: tied embeddings.** transformers keeps T5's own `lm_head` in the saved weights while
+  `config.json` still says `tie_word_embeddings: true`. candle trusts the config, decodes through
+  the shared embeddings, and produces nonsense. The fixes: the training script writes the flag as
+  false, and the loader unties whenever the checkpoint has `lm_head.weight`.
+- **Gotcha: one token, two readings.** At first the constrained decoder scored below the
+  unconstrained one (0.933 against 0.946), which a mask can only do by refusing right answers.
+  T5 spells an unfamiliar word with a bare `▁` first, so after `the` that token is both inside the
+  place `the torwren crossing` and the start of `korgor tower`. The mask followed only the trie
+  path, then refused `k`. It now follows every reading. `voice_eval` forces each label through the
+  mask and counts refusals (now none), so a mask bug shows as a count, not a dip.
+- **Gotcha: a given name is free text.** The grammar takes any words after `name them` up to
+  `then`, but the completions offered only the six suggestions, so the mask turned
+  `name them selhalvel wing` into `charlie team`. The parser now expects `<name word>` after each
+  word of a name, and `Completions::name` tells the mask any word may be spelled there.
+- **Fixed in passing:** zhbo-core did not build without the `autopilot` feature (a `#[cfg]` sat on
+  the wrong function in `client/mod.rs`).
+- Not built yet: Whisper and the launcher's download, the microphone in game, the abstain
+  production, the guard's tuning key.
