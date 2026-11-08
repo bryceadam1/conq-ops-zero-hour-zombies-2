@@ -195,7 +195,7 @@ pub const ABI_VERSION: u32 = 36;
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
 pub const LOGIC_API_FIELDS: u64 = 24;
-pub const CLIENT_API_FIELDS: u64 = 21;
+pub const CLIENT_API_FIELDS: u64 = 22;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -227,6 +227,7 @@ const _: () = {
     assert!(size_of::<crate::command::world::CmdObject>() == 52);
     assert!(size_of::<crate::command::world::CmdButton>() == 124);
     assert!(size_of::<crate::command::world::CmdOrder>() == 56);
+    assert!(size_of::<crate::command::world::CmdPlace>() == 60);
 };
 
 /// The engine services a first-person command runs against: the client host's object list, names
@@ -253,6 +254,12 @@ impl crate::command::session::Host for CommandEngine<'_> {
     fn ground_height(&self, x: f32, y: f32) -> f32 {
         crate::host::LogicHost::ground_height(self.logic, x, y)
     }
+    fn places(&self) -> Vec<(String, crate::math::Vec3)> {
+        self.client.map_places()
+    }
+    fn extent(&self) -> (crate::math::Vec3, crate::math::Vec3) {
+        crate::host::LogicHost::extent(self.logic)
+    }
 }
 
 /// Load the gameplay tuning pack (`data/ConquerOps/tuning.ini`); the sim's default values hold
@@ -267,6 +274,18 @@ pub unsafe extern "C" fn zhbo_load_tuning(text: *const c_char) {
     }
     let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
     crate::tuning::load(&text);
+}
+
+/// Load the first-person commands' synonyms and aliases: the mod's `Data/ConquerOps/commands.ini`
+/// and the player's own `ConquerOps.commands.ini` (empty or null when he has none; its entries
+/// win). Until this runs the shipped tables hold.
+///
+/// # Safety
+/// Each argument must be null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_command_words(mod_text: *const c_char, player_text: *const c_char) {
+    let read = |p: *const c_char| if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() } };
+    crate::command::normal::load(&read(mod_text), &read(player_text));
 }
 
 /// Load the shipped strings file (`Data/ConquerOps/strings_en.ini`, read by the bridge's
@@ -1423,7 +1442,9 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
                 }
                 None => format!("command: '{line}' refused: no General"),
             };
-            crate::host::LogicHost::log(&s.logic, &log);
+            for line in log.lines() {
+                crate::host::LogicHost::log(&s.logic, line);
+            }
         }
         // The seat this frame presented: the local player's, or the General a spectator follows.
         let viewed = s.client.viewed;

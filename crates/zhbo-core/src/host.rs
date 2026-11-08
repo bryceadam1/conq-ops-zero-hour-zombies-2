@@ -256,6 +256,10 @@ pub trait ClientHost {
     fn command_buttons(&self, _player: i32) -> Vec<crate::command::world::CmdButton> {
         Vec::new()
     }
+    /// The map's named areas and their centres (ABI: `ClientApi::map_places`).
+    fn map_places(&self) -> Vec<(String, crate::math::Vec3)> {
+        Vec::new()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -336,6 +340,9 @@ pub struct ClientApi {
     /// Every button of `player`'s command sets: each of his objects' current set and his own sets
     /// (promotions, power shortcuts), at most `cap`; returns the count. Pending the next ABI bump.
     pub command_buttons: Option<extern "C" fn(player: i32, out: *mut crate::command::world::CmdButton, cap: i32) -> i32>,
+    /// The map's named areas (polygon triggers that are not water), at most `cap`; returns the
+    /// count. Pending the next ABI bump.
+    pub map_places: Option<extern "C" fn(out: *mut crate::command::world::CmdPlace, cap: i32) -> i32>,
 }
 
 fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
@@ -615,6 +622,14 @@ impl ClientHost for CClientHost {
             Some(f) => f(order, ids.as_ptr(), ids.len() as i32),
             None => crate::command::world::issued::NOBODY,
         }
+    }
+
+    fn map_places(&self) -> Vec<(String, crate::math::Vec3)> {
+        let Some(f) = self.0.map_places else { return Vec::new() };
+        const CAP: usize = 512;
+        let mut out = vec![crate::command::world::CmdPlace::default(); CAP];
+        let n = f(out.as_mut_ptr(), CAP as i32).clamp(0, CAP as i32) as usize;
+        out[..n].iter().map(|p| (p.name_text(), p.pos)).collect()
     }
 
     fn command_buttons(&self, player: i32) -> Vec<crate::command::world::CmdButton> {

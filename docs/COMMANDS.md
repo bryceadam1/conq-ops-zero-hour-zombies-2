@@ -2,7 +2,7 @@
 
 How the General commands his army without leaving first person.
 
-**Status (2026-11-07):** steps 1 to 4 of the build order are built (section 13): the language,
+**Status (2026-11-07):** steps 1 to 5 of the build order are built (section 13): the language,
 the typed command line and the command menu in first person, the resolver, the command buttons and right-click verbs,
 and the coverage gates (`crates/zhbo-core/src/command/`, `host/zhbo/ZhboCommand.cpp`,
 CONTRACT.md "First-person commands"). The rest is design. The decisions below were agreed with the user. Section 13 lists
@@ -216,19 +216,31 @@ voice path (after the model, as a second chance, and before it, to clean up reco
 the training data (paraphrases use the same tables, so the model learns the synonyms players
 actually say).
 
-The tables are data, in the mod's INI files (a `CommandWords` file, keys described in CONFIG.md
-when built). They are not in code. Three kinds of entry:
+The tables are data, not code (built: `data/ConquerOps/commands.ini`, read by
+`command::normal`, which also builds the same file in as its default). Three kinds of entry:
 
-1. **Fixed-word synonyms.** Phrases that mean a fixed word of the grammar.
-2. **Type and class aliases.** Words that name a set of types or classes, written per faction
-   (`tanks` is Crusader + Paladin for the USA, Battlemaster + Overlord for China, Scorpion + Marauder
-   for the GLA).
-3. **The player's own synonyms.** A per-profile file with the same format as type and class
-   aliases ("my boys" → rangers). These last across matches. Team names (`name them …`) are
-   different: they are per match and canonical.
+1. **Fixed-word synonyms** (`[Words]`): `phrase = reading | other reading | …`, each reading in
+   canonical words, `<none>` to drop the phrase. A phrase that is canonical words itself (`make`,
+   `on me`) lists itself first.
+2. **Aliases** (`[Aliases]`): `name = plural, plural, …`, a word for several types or classes as
+   their canonical plurals (`tanks = crusaders, paladins, laser tanks, battlemasters, overlords,
+   emperors, scorpions, marauder tanks`, the install's English display names). Only the ones the
+   match has count, so one line serves every faction. An alias stands for all of them where a bare
+   plural goes (`idle tanks stop` → `idle crusaders and idle paladins stop`); after a determiner
+   (`the nearest tank`) it stays as said, since the grammar has no one-of-several noun.
+3. **The player's own synonyms**: `ConquerOps.commands.ini` beside the profile in Zero Hour's
+   user-data folder, in the same sections, read after the mod's file (its entries win). The bridge
+   loads both at init (`zhbo_load_command_words`). These last across matches. Team names
+   (`name them …`) are different: they are per match and canonical.
 
-**Draft of the shipped tables.** The canonical word is on the left. These are first drafts and
-will grow as real speech comes in.
+**How a line is read** (`command::session::run`): the line as typed first; if it is canonical and
+resolves, nothing else is tried. Then each combination of its phrases' readings (at most 32), with
+aliases expanded. The first that parses and resolves is used, and the echo shows its canonical
+text, so the player learns the language. If two readings resolve to different commands, the
+player is asked ("that could mean 'rangers stop' or 'rangers guard': say which").
+
+**The shipped tables' first entries** (the full set is the file). The canonical word is on the
+left. They will grow as real speech comes in.
 
 | Canonical | Accepted synonyms |
 |---|---|
@@ -291,9 +303,9 @@ will grow as real speech comes in.
 
 **Normaliser rules:**
 
-- **A synonym never shadows a run-time name.** If a unit, place or team name equals a synonym, the
-  name wins. A test checks the install's data, and the menu warns when a player names a team with
-  a synonym.
+- **A synonym never shadows a run-time name.** Before it looks a phrase up, the normaliser keeps
+  any stretch of the line that is one of the match's names (a type's or class's either form, a
+  place, a team), longest first.
 - **Ambiguous synonyms are tried in turn.** Some phrases map to more than one canonical word:
   `make` (dozer `build` or factory `build`), `hold` (`stop` or `guard`), `take` (`capture`, or
   `enter` with a transport), `fire` (`use` or `attack`). The normaliser produces every candidate.
@@ -317,7 +329,7 @@ None is written by hand.
 | `"units"` | Exactly what Zero Hour's select-all key selects (the engine's own rule, to be cited in code once read). |
 | `<verb>` | Section 7: command-button labels plus the context verbs. |
 | `<power>`, `<science>` | Special-power and science display names. |
-| `<place-name>` | The map's named trigger areas and waypoints, if it has any. |
+| `<place-name>` | The map's named areas (built): its polygon triggers that are not water (`ZhboClientApi.map_places`), their identifiers split at underscores and case changes (`InnerPerimeter_1` → `inner perimeter 1`), a name that is a grammar word or a unit's left out and logged. A place stands for the area's centre. Waypoints are left out: on skirmish maps they are the AI's paths and the start positions. Alpine Assault names six: combat zone, inner perimeter 1 and 2, outer perimeter 1 and 2, skirmish world. |
 | `<team-name>` | Names this player saved this match with `name them …` |
 
 **Names that collide** (two templates with the same display name, such as faction variants) are
@@ -340,12 +352,14 @@ quantity**.
   garrisoned, loaded (a transport with passengers).
 - **`near X`** uses a radius from the command tuning keys (section 10). `near` on a selection
   keeps the members within that radius of X.
-- **Clusters.** Single-linkage clustering of the candidate set with a fixed link distance (a
-  tuning key): two units share a cluster if a chain of units within the link distance joins them.
-  Each cluster is named by the compass region (`northern`, …, `central`) from the map centre to
-  its centroid. If two clusters get the same name, the one farther along that direction keeps it
-  and the other gets the next nearest region. `in my group` is the cluster that contains the General. The menu
-  shows the clusters so the player learns what the names mean.
+- **Clusters (built, `command::cluster`).** Single-linkage clustering of the query's candidates
+  (after its type, adjectives and `near`) with the link distance `CommandClusterLink`: two units
+  share a group if a chain of them, each within the link of the next, joins them. Each group is
+  named by the compass region (`northern`, …, `central`) of its centre from the map's centre (the
+  logic's extent); within `CommandCentralShare` of the map's half-size it is central. Two groups
+  never share a name: the one farther out keeps it and the other takes the free region nearest its
+  bearing. `in my group` is the group the General joins, as one more point in the clustering. Not
+  built yet: showing the groups in the menu.
 - **Superlatives** sort the set: by position along a compass axis, by distance to the General
   (`nearest`, `farthest`), or by health fraction. Ties break as in rule 5.
 - **Quantity.** `the` means 1 and needs a singular noun. A number means that many. `half the`
@@ -515,10 +529,11 @@ just what is resolvable now. That lets a failed command say what it couldn't fin
 New gameplay-feel numbers go in the tuning pack (CONFIG.md, `tuning.rs` + `tuning.ini`), each
 with its reason (there is no BO2 source, so the comment says it is a mod rule):
 
-- `CommandNearRadius`: the radius for `near`.
-- `CommandOffsetDistance`: how far `north of X` is from X.
-- `CommandClusterLink`: the clustering link distance.
-- `CommandLowConfidence`: the voice confirmation threshold.
+- `CommandNearRadius` (150): the radius for `near`.
+- `CommandOffsetDistance` (150): how far `north of X` is from X.
+- `CommandClusterLink` (120): the clustering link distance.
+- `CommandCentralShare` (0.25): how much of the map's half-size the central group spans.
+- `CommandLowConfidence` (with voice): the confirmation threshold.
 
 These are client-side numbers and never reach the sim. Even so, they belong in the tuning pack,
 like every other gameplay number.
@@ -615,7 +630,8 @@ Voice runs entirely on the player's machine.
    unload, the hotkey orders, and the three-part coverage gate (section 7, section 12).
 4. **Built.** The scroll-wheel menu over valid completions (section 8), with counts and the
    `--command` leg building a command through it.
-5. Adjectives, filters, clusters, place names, team names and synonyms.
+5. **Built.** Adjectives, `near`, groups (clusters), place names, team names, and the synonym and
+   alias tables with the normaliser, the player's own file included.
 6. Voice: the sampler and dataset, the model prototypes, constrained decoding.
 
 **Open questions:**

@@ -453,6 +453,7 @@ void Zhbo_Init()
 		.template_name = cbTemplateName,
 		.issue_order = cbIssueOrder,
 		.command_buttons = cbCommandButtons,
+		.map_places = cbMapPlaces,
 	};
 	zhbo_init(&logicApi, &clientApi);
 
@@ -469,6 +470,22 @@ void Zhbo_Init()
 	}
 	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
 	zhbo_load_tuning(readTextFile(zhbo_names::TUNING_PATH).c_str());
+	{
+		// The first-person commands' synonyms: the mod's, then the player's own beside his profile
+		// (read only; every instance shares it).
+		std::string player;
+		const std::string path = (TheGlobalData ? std::string(TheGlobalData->getPath_UserData().str()) : std::string()) + zhbo_names::PLAYER_COMMANDS_FILE;
+		if (FILE *f = fopen(path.c_str(), "rb"))
+		{
+			char buf[4096];
+			size_t n;
+			while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+				player.append(buf, n);
+			fclose(f);
+			logf("commands: the player's own synonyms from %s", path.c_str());
+		}
+		zhbo_load_command_words(readTextFile(zhbo_names::COMMANDS_PATH).c_str(), player.c_str());
+	}
 	zhbo_load_classes(readTextFile(zhbo_names::CLASSES_PATH).c_str());
 	foldModContentIntoIniCrc();
 	// BO2's impact table (R8d): the FXLists the converted archive carries for each bucket and

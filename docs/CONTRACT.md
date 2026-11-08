@@ -1315,6 +1315,14 @@ to `Sim::state_hash` and no new sim message exists.
   never carries `SELECTABLE` or `SELECT_ALL`. `relation` is `ZHBO_REL_*` from the asking player's
   side (`CIVILIAN`: an owner whose side is `Civilian`). `groups` has bit N for hotkey squad N.
 * **`ZhboClientApi.template_name(tmpl, out, cap)`**: `ThingTemplate::getDisplayName` as UTF-8.
+* **`ZhboClientApi.map_places(out, cap)`** lists `ZhboCmdPlace` records (60 bytes): each polygon
+  trigger of the map that is not water, its name as the map writes it and its centre
+  (`PolygonTrigger::getCenterPoint`, on the ground). The core turns the names into place words.
+* **`zhbo_load_command_words(mod_text, player_text)`**: at init the bridge hands the core the mod's
+  `Data/ConquerOps/commands.ini` (`zhbo_names::COMMANDS_PATH`) and the player's own
+  `ConquerOps.commands.ini` from the user-data folder (`PLAYER_COMMANDS_FILE`; empty when absent):
+  the synonym and alias tables (`command::normal`). A snapshot also reads the map's extent
+  (`LogicHost::extent`) for the groups' compass regions.
 * **`ZhboClientApi.command_buttons(player, out, cap)`** lists `ZhboCmdButton` records (124 bytes):
   every button of each of the player's objects' current command set (`findCommandSet(
   getCommandSetString())`, the General's left out) and of his own sets (`owner` 0, `set`
@@ -1883,14 +1891,15 @@ the perks' and equipment keys (`bettyactivationdelay`, `scr_proximityGrenade*`, 
 Appended since ABI 36 and not yet folded into a version (the next integration bumps
 `ZHBO_ABI_VERSION` and moves these into a numbered entry above):
 
-* `ZhboClientApi.command_objects`, `template_name`, `issue_order` (returning `ZHBO_ISSUED_*`) and
-  `command_buttons` after `image_quad` (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 17 → 21), with
-  the structs `ZhboCmdObject` (52 bytes), `ZhboCmdButton` (124 bytes) and `ZhboCmdOrder` (56
-  bytes), asserted on both sides (see "First-person commands").
+* `ZhboClientApi.command_objects`, `template_name`, `issue_order` (returning `ZHBO_ISSUED_*`),
+  `command_buttons` and `map_places` after `image_quad` (`ZHBO_CLIENT_API_FIELDS`/
+  `CLIENT_API_FIELDS` 17 → 22), with the structs `ZhboCmdObject` (52 bytes), `ZhboCmdButton` (124
+  bytes), `ZhboCmdOrder` (56 bytes) and `ZhboCmdPlace` (60 bytes), asserted on both sides (see
+  "First-person commands"); the free function `zhbo_load_command_words`.
 * `Key::Minus` at bit 49 of the key set (`ZhboPlatform.h`'s `keys::Key`, the bridge's key-name
   table, SDL's `SDL_SCANCODE_MINUS`, Windows' `VK_OEM_MINUS`). The `KeySet` size is unchanged.
-* The tuning pack's `[Commands]` keys `CommandNearRadius` and `CommandOffsetDistance` (the content
-  CRC's tuning part moves with them).
+* The tuning pack's `[Commands]` keys `CommandNearRadius`, `CommandOffsetDistance`,
+  `CommandClusterLink` and `CommandCentralShare` (the content CRC's tuning part moves with them).
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)
   and the object flag `ZHBO_OBJ_GENERAL` (bit 13).
 

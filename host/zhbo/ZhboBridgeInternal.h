@@ -196,6 +196,7 @@ int32_t cbCommandObjects(int32_t player, ZhboCmdObject *out, int32_t cap);
 int32_t cbTemplateName(uint32_t tmpl, char *out, int32_t cap);
 int32_t cbIssueOrder(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count);
 int32_t cbCommandButtons(int32_t player, ZhboCmdButton *out, int32_t cap);
+int32_t cbMapPlaces(ZhboCmdPlace *out, int32_t cap);
 void cbClip(float x, float y, float w, float h);
 int32_t cbRadar(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *youPx);
 int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);

@@ -119,6 +119,9 @@ impl Host for Fake {
     fn ground_height(&self, _x: f32, _y: f32) -> f32 {
         0.0
     }
+    fn places(&self) -> Vec<(String, Vec3)> {
+        vec![("NorthPass".into(), Vec3::new(0.0, 500.0, 0.0)), ("Player_1_Start".into(), Vec3::new(-300.0, -300.0, 0.0)), ("Stop".into(), Vec3::ZERO)]
+    }
 }
 
 /// The General at the origin facing east (+x), the crosshair level along +x at 5 up.
@@ -130,6 +133,8 @@ fn viewer() -> Viewer {
 fn command(session: &mut Session, host: &Fake, line: &str) -> Result<Vec<(CmdOrder, Vec<u32>)>, String> {
     host.issued.borrow_mut().clear();
     let log = run(session, line, host, viewer(), &crate::tuning::Tuning::default());
+    // The names the vocabulary left out close every line in parentheses; the refusal is before them.
+    let log = log.split(" (names left out:").next().unwrap_or(&log).to_string();
     match log.split_once(" refused: ") {
         Some((_, why)) => Err(why.to_string()),
         None => Ok(host.issued.borrow().clone()),
@@ -287,7 +292,7 @@ fn there_is_where_the_crosshair_meets_the_ground() {
     assert!((o.pos.x - 100.0).abs() < 4.0 && o.pos.y.abs() < 1e-3 && o.pos.z == 0.0, "{o:?}");
     v.dir = Vec3::new(0.0, 0.0, 1.0);
     let log = run(&mut s, "rangers move there", &host, v, &crate::tuning::Tuning::default());
-    assert!(log.ends_with("refused: the crosshair isn't on the ground"), "{log}");
+    assert!(log.contains("refused: the crosshair isn't on the ground"), "{log}");
 }
 
 #[test]
@@ -324,7 +329,7 @@ fn a_refused_line_changes_nothing_and_says_why() {
     let echo = s.echo.as_ref().unwrap();
     assert!(!echo.ok && echo.text.starts_with("rangres stop: didn't expect 'rangres'"), "{echo:?}");
     let log = run(&mut s, "rangers move to me", &host, viewer(), &crate::tuning::Tuning::default());
-    assert_eq!(log, "command: 'rangers move to me' -> 3 units: rangers move to me, 1 order(s)");
+    assert!(log.starts_with("command: 'rangers move to me' -> 3 units: rangers move to me, 1 order(s)"), "{log}");
     assert!(s.echo.as_ref().unwrap().ok);
 }
 
@@ -525,4 +530,43 @@ fn the_menu_and_the_typed_line_never_hold_input_together() {
     menu_frame(&mut s, &[Key::Z], 0.0);
     menu_frame(&mut s, &[Key::Escape], 0.0);
     assert!(s.menu.is_none());
+}
+
+#[test]
+fn groups_cluster_the_candidates_and_take_their_compass_names() {
+    // The map runs 0..2000 (the fake's extent): its centre (1000, 1000) is north-east of everyone.
+    // Rangers 10 and 11 are within the link (120) of each other and of the General; Ranger 12
+    // stands apart. Both groups lie south-west: the farther out ({10, 11}) keeps the name, the other
+    // takes the nearest free bearing, west.
+    assert_eq!(one("rangers in my group stop").1, [11, 10]);
+    assert_eq!(one("rangers in the southwestern group stop").1, [11, 10]);
+    assert_eq!(one("rangers in the western group stop").1, [12]);
+    assert_eq!(refusal("rangers in the northern group stop"), "there is no northern group");
+}
+
+#[test]
+fn the_maps_named_areas_are_places() {
+    let (o, _) = one("rangers move to north pass");
+    assert_eq!((o.kind, o.pos), (k::MOVE, Vec3::new(0.0, 500.0, 0.0)));
+    assert_eq!(one("rangers move north of player 1 start").0.pos, Vec3::new(-300.0, -150.0, 0.0));
+    // An area named like a grammar word is left out, and said so.
+    let host = Fake::new();
+    let log = run(&mut Session::default(), "rangers stop", &host, viewer(), &crate::tuning::Tuning::default());
+    assert!(log.contains("place 'stop': a word of the grammar or a unit's name"), "{log}");
+}
+
+#[test]
+fn synonyms_and_aliases_reach_the_resolver_and_the_echo_shows_the_canonical_text() {
+    let host = Fake::new();
+    let mut s = Session::default();
+    let log = run(&mut s, "Everyone, move here!", &host, viewer(), &crate::tuning::Tuning::default());
+    assert!(log.contains("-> 4 units: units move to me"), "{log}");
+    assert_eq!(s.echo.as_ref().unwrap().text, "4 units: units move to me");
+    let log = run(&mut s, "the closest ranger, follow me", &host, viewer(), &crate::tuning::Tuning::default());
+    assert!(log.contains("-> 1 unit: the nearest ranger guard me"), "{log}");
+    // Two readings that both resolve, to different commands: the player is asked.
+    let log = run(&mut s, "rangers hold", &host, viewer(), &crate::tuning::Tuning::default());
+    assert!(log.contains("refused: that could mean 'rangers stop' or 'rangers guard': say which"), "{log}");
+    // The canonical line as typed is never second-guessed.
+    assert!(run(&mut s, "rangers stop", &host, viewer(), &crate::tuning::Tuning::default()).contains("-> 3 units: rangers stop"));
 }

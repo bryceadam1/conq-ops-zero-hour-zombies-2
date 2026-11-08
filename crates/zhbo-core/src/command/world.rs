@@ -131,6 +131,27 @@ fn c_text(b: &[u8]) -> String {
     String::from_utf8_lossy(&b[..n]).into_owned()
 }
 
+/// One of the map's named areas (`ZhboCmdPlace`, 60 bytes): a polygon trigger's name (UTF-8,
+/// NUL-terminated, the map's identifier as written) and its centre.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CmdPlace {
+    pub name: [u8; 48],
+    pub pos: Vec3,
+}
+
+impl Default for CmdPlace {
+    fn default() -> Self {
+        CmdPlace { name: [0; 48], pos: Vec3::ZERO }
+    }
+}
+
+impl CmdPlace {
+    pub fn name_text(&self) -> String {
+        c_text(&self.name)
+    }
+}
+
 /// [`CmdButton::set`] for the player's own sets (`ZHBO_PLAYERSET_*`).
 pub mod playerset {
     /// The player template's special-power shortcuts (`SpecialPowerShortcutCommandSet`).
@@ -371,6 +392,11 @@ pub struct World {
     /// The crosshair: the eye and the view's direction.
     pub eye: Vec3,
     pub dir: Vec3,
+    /// The map's named areas (their canonical names) and their centres ([`World::set_places`]).
+    pub places: Vec<(String, Vec3)>,
+    /// The map's centre and half its smaller side (the groups' compass regions).
+    pub map_centre: Vec3,
+    pub map_radius: f32,
     /// Names the vocabulary refused, with why (logged with each command).
     pub refused_names: Vec<String>,
 }
@@ -444,8 +470,32 @@ impl World {
         World { objects, buttons, types, names, refused_names: refused, ..World::default() }
     }
 
+    /// The map's named areas from their raw names (`MapAreaName`, `North_Pass`): split into words at
+    /// underscores and case changes, made canonical; a name that is a grammar word, a unit's or
+    /// another area's is refused (and logged).
+    pub fn set_places(&mut self, raw: Vec<(String, Vec3)>) {
+        let fixed = fixed_words();
+        let verbs: Vec<String> = fixed_verbs().into_iter().map(|v| v.words).collect();
+        for (name, at) in raw {
+            let Some(words) = canonical_name(&split_words(&name)) else { continue };
+            let clash = fixed.contains(&words.as_str())
+                || verbs.contains(&words)
+                || words.split(' ').any(|w| w == "then")
+                || self.types.iter().any(|(n, _)| n.singular == words || n.plural == words)
+                || CLASSES.iter().any(|(s, p, _)| *s == words || *p == words);
+            if clash {
+                self.refused_names.push(format!("place '{words}': a word of the grammar or a unit's name"));
+            } else if self.places.iter().any(|(n, _)| *n == words) {
+                self.refused_names.push(format!("place '{words}': two areas share the name"));
+            } else {
+                self.places.push((words, at));
+            }
+        }
+        self.places.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+
     /// The vocabulary of this world: its type names, the class words no type name took, the names
-    /// the buttons give, and the team names given.
+    /// the buttons give, the map's places, and the team names given.
     pub fn vocabulary(&self, teams: &[String]) -> Vocabulary {
         use super::vocab::ThingList as L;
         let types: Vec<Noun> = self.types.iter().map(|(n, _)| n.clone()).collect();
@@ -462,6 +512,7 @@ impl World {
             sciences: list(L::Sciences),
             modes: list(L::Modes),
             weapons: list(L::Weapons),
+            places: self.places.iter().map(|(n, _)| n.clone()).collect(),
             teams: teams.to_vec(),
             ..Vocabulary::default()
         }
@@ -500,6 +551,29 @@ pub fn canonical_name(raw: &str) -> Option<String> {
         return None;
     }
     Some(words.join(" "))
+}
+
+/// A map's identifier as words: underscores and case changes split it (`NorthPass_2` → `North Pass
+/// 2`).
+pub fn split_words(raw: &str) -> String {
+    let mut out = String::new();
+    let mut prev: Option<char> = None;
+    for c in raw.chars() {
+        let boundary = match prev {
+            Some(p) => (p.is_ascii_lowercase() && c.is_ascii_uppercase()) || (p.is_ascii_alphabetic() && c.is_ascii_digit()) || (p.is_ascii_digit() && c.is_ascii_alphabetic()),
+            None => false,
+        };
+        if c == '_' {
+            out.push(' ');
+        } else {
+            if boundary {
+                out.push(' ');
+            }
+            out.push(c);
+        }
+        prev = Some(c);
+    }
+    out
 }
 
 /// The plural of a name by English's regular rules, on its last word: `-y` after a consonant to

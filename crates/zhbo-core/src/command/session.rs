@@ -77,6 +77,8 @@ pub struct Session {
     pub(crate) swallow: bool,
     /// The command menu, while it is up.
     pub menu: Option<Menu>,
+    /// The map's places were logged (once per game, with the first command).
+    places_logged: bool,
     /// The keys down last frame, for the menu's edges.
     menu_prev: KeySet,
 }
@@ -246,6 +248,24 @@ pub trait Host {
     /// Send an order; the answer is an [`issued`] code.
     fn issue(&self, order: &CmdOrder, ids: &[u32]) -> i32;
     fn ground_height(&self, x: f32, y: f32) -> f32;
+    /// The map's named areas (raw names) and their centres.
+    fn places(&self) -> Vec<(String, Vec3)> {
+        Vec::new()
+    }
+    /// The map's extent (low and high corners).
+    fn extent(&self) -> (Vec3, Vec3) {
+        (Vec3::new(0.0, 0.0, 0.0), Vec3::new(2000.0, 2000.0, 0.0))
+    }
+}
+
+/// The world as the engine reports it now, for a command run or a menu refresh.
+fn snapshot(host: &dyn Host) -> World {
+    let mut world = World::new(host.objects(), host.buttons(), &|t| host.template_name(t));
+    world.set_places(host.places());
+    let (lo, hi) = host.extent();
+    world.map_centre = Vec3::new((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5, 0.0);
+    world.map_radius = ((hi.x - lo.x).min(hi.y - lo.y) * 0.5).max(1.0);
+    world
 }
 
 /// Where the General is and where he looks, for the resolver.
@@ -261,7 +281,14 @@ pub struct Viewer {
 /// Run a submitted line: parse it, resolve it against the world now, send its orders, remember
 /// its selection and team names, and set the echo. Returns the log line.
 pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, tuning: &crate::tuning::Tuning) -> String {
-    let mut world = World::new(host.objects(), host.buttons(), &|t| host.template_name(t));
+    let mut world = snapshot(host);
+    let places = if session.places_logged {
+        String::new()
+    } else {
+        session.places_logged = true;
+        let names: Vec<&str> = world.places.iter().map(|(n, _)| n.as_str()).collect();
+        format!("commands: the map's places: {}\n", if names.is_empty() { "none".to_string() } else { names.join(", ") })
+    };
     world.general = viewer.general;
     world.general_pos = viewer.feet;
     world.general_yaw = viewer.yaw;
@@ -269,10 +296,48 @@ pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, t
     world.dir = viewer.dir;
     let vocab = world.vocabulary(&session.memory.team_names());
     let ground = |x: f32, y: f32| host.ground_height(x, y);
-    let settings = Settings { near_radius: tuning.command_near_radius, offset_distance: tuning.command_offset_distance, ground: &ground };
-    let outcome = super::parse(line, &vocab)
-        .map_err(|e| e.to_string())
-        .and_then(|cmd| resolve(&cmd, &world, &session.memory, &vocab, &settings));
+    let settings = Settings {
+        near_radius: tuning.command_near_radius,
+        offset_distance: tuning.command_offset_distance,
+        cluster_link: tuning.command_cluster_link,
+        central_share: tuning.command_central_share,
+        ground: &ground,
+    };
+    // The line as typed, then the normaliser's readings (synonyms, aliases): the first that parses
+    // and resolves is used. Two readings that resolve to different commands are put to the player;
+    // none: the error of the first reading that differed from the line (the more telling one).
+    let tables = super::normal::get();
+    let candidates = tables.candidates(line, &vocab);
+    let mut outcome: Result<super::resolve::Plan, String> = Err(String::new());
+    let mut first_error: Option<String> = None;
+    let mut readings: Vec<String> = Vec::new();
+    for (i, text) in candidates.iter().enumerate() {
+        match super::parse(text, &vocab).map_err(|e| e.to_string()).and_then(|cmd| resolve(&cmd, &world, &session.memory, &vocab, &settings)) {
+            Ok(plan) => {
+                let canonical = plan.summary.split_once(": ").map_or(plan.summary.as_str(), |(_, t)| t).to_string();
+                if outcome.is_err() {
+                    outcome = Ok(plan);
+                    readings.push(canonical);
+                } else if !readings.contains(&canonical) {
+                    readings.push(canonical);
+                }
+                // The line as typed is canonical: no reading can mean anything else.
+                if i == 0 {
+                    break;
+                }
+            }
+            Err(e) => {
+                if first_error.is_none() || (i == 1 && candidates[0] != *text) {
+                    first_error = Some(e);
+                }
+            }
+        }
+    }
+    if readings.len() > 1 {
+        outcome = Err(format!("that could mean '{}': say which", readings.join("' or '")));
+    } else if outcome.is_err() {
+        outcome = Err(first_error.unwrap_or_else(|| "say a command".into()));
+    }
     let refused = if world.refused_names.is_empty() { String::new() } else { format!(" (names left out: {})", world.refused_names.join(", ")) };
     match outcome {
         Ok(plan) => {
@@ -284,7 +349,7 @@ pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, t
             if !plan.orders.is_empty() && sent == 0 {
                 let why = issued::reason(failed.unwrap_or(issued::NOBODY));
                 session.echo = Some(Echo { text: format!("{line}: {why}"), ok: false, age: 0.0 });
-                return format!("command: '{line}' refused: {why}{refused}");
+                return format!("{places}command: '{line}' refused: {why}{refused}");
             }
             session.memory.last = plan.selection.clone();
             for (name, ids) in plan.teams {
@@ -296,11 +361,11 @@ pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, t
                 None => String::new(),
             };
             session.echo = Some(Echo { text: format!("{}{partly}", plan.summary), ok: true, age: 0.0 });
-            format!("command: '{line}' -> {}, {sent} order(s){partly}{refused}", plan.summary)
+            format!("{places}command: '{line}' -> {}, {sent} order(s){partly}{refused}", plan.summary)
         }
         Err(why) => {
             session.echo = Some(Echo { text: format!("{line}: {why}"), ok: false, age: 0.0 });
-            format!("command: '{line}' refused: {why}{refused}")
+            format!("{places}command: '{line}' refused: {why}{refused}")
         }
     }
 }
@@ -312,7 +377,7 @@ pub fn refresh_menu(session: &mut Session, host: &dyn Host) {
     let teams = session.memory.team_names();
     let alive_in_team = |name: &str| session.memory.teams.iter().find(|(n, _)| n == name).map(|(_, ids)| ids.clone());
     let Some(menu) = session.menu.as_mut().filter(|m| m.dirty) else { return };
-    let world = World::new(host.objects(), host.buttons(), &|t| host.template_name(t));
+    let world = snapshot(host);
     let vocab = world.vocabulary(&teams);
     let c = super::parse::completions(&menu.text(), &vocab);
     let own: Vec<&CmdObject> = world.objects.iter().filter(|o| o.relation == super::world::relation::OWN && o.flags & super::world::cmdflags::SELECTABLE != 0).collect();

@@ -8,6 +8,9 @@
 //!
 //! * [`actions`]: how the language covers every engine command type and order message.
 //! * [`ast`]: the command AST.
+//! * [`cluster`]: the groups `in the <region> group` names.
+//! * [`normal`]: the synonyms and aliases, and the normaliser that turns a line into canonical
+//!   candidates.
 //! * [`vocab`]: the match's word lists and the verbs with the arguments each takes.
 //! * [`parse`] and [`print`]: canonical text to the AST and back. Each AST has one spelling, and
 //!   `parse(print(ast)) == ast`.
@@ -18,6 +21,8 @@
 
 pub mod actions;
 pub mod ast;
+pub mod cluster;
+pub mod normal;
 pub mod parse;
 pub mod print;
 pub mod resolve;

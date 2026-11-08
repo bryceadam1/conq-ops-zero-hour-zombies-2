@@ -18,6 +18,7 @@
 #include "GameClient/GameText.h"
 #include "GameLogic/Module/ContainModule.h"
 #include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/PolygonTrigger.h"
 #include "GameLogic/Squad.h"
 
 namespace
@@ -715,6 +716,29 @@ int32_t cbCommandButtons(int32_t playerIndex, ZhboCmdButton *out, int32_t cap)
 	// The player's own sets: the special-power shortcuts and the Generals' promotions.
 	for (int32_t set : { ZHBO_PLAYERSET_SHORTCUTS, ZHBO_PLAYERSET_RANK1, ZHBO_PLAYERSET_RANK3, ZHBO_PLAYERSET_RANK8 })
 		addButtons(playerSet(player, set), 0, set, nullptr, player, out, cap, n);
+	return n;
+}
+
+int32_t cbMapPlaces(ZhboCmdPlace *out, int32_t cap)
+{
+	// The map's named areas (World Builder's polygon triggers), not its water: the core turns their
+	// names into words and refuses the ones that are not.
+	int32_t n = 0;
+	for (const PolygonTrigger *t = PolygonTrigger::getFirstPolygonTrigger(); t && out && n < cap; t = t->getNext())
+	{
+		if (t->isWaterArea() || t->getTriggerName().isEmpty())
+			continue;
+		ZhboCmdPlace &p = out[n++];
+		memset(&p, 0, sizeof(p));
+		const AsciiString &name = t->getTriggerName();
+		const size_t len = std::min<size_t>((size_t)name.getLength(), sizeof(p.name) - 1);
+		memcpy(p.name, name.str(), len);
+		Coord3D c;
+		t->getCenterPoint(&c);
+		p.pos.x = c.x;
+		p.pos.y = c.y;
+		p.pos.z = TheTerrainLogic ? TheTerrainLogic->getGroundHeight(c.x, c.y) : c.z;
+	}
 	return n;
 }
 

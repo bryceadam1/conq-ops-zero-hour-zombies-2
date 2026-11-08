@@ -44,6 +44,10 @@ pub const STRINGS_PATH: &str = "ConquerOps\\strings_en.ini";
 pub const TUNING_PATH: &str = "ConquerOps\\tuning.ini";
 /// The class presets (see classes.rs).
 pub const CLASSES_PATH: &str = "ConquerOps\\classes.ini";
+/// The first-person commands' synonyms and aliases (see command/normal.rs).
+pub const COMMANDS_PATH: &str = "ConquerOps\\commands.ini";
+/// The player's own command synonyms, beside the profile in Zero Hour's user-data folder.
+pub const PLAYER_COMMANDS_FILE: &str = "ConquerOps.commands.ini";
 /// The converted BO2 HUD/texture archive and its version marker.
 pub const BO2_ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const BO2_ARCHIVE_VERSION_PATH: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
@@ -272,6 +276,8 @@ inline constexpr const char *SOUND_LAYERS_PATH = "Data\\ConquerOps\\sound_layers
 inline constexpr const char *STRINGS_PATH = "ConquerOps\\strings_en.ini";
 inline constexpr const char *TUNING_PATH = "ConquerOps\\tuning.ini";
 inline constexpr const char *CLASSES_PATH = "ConquerOps\\classes.ini";
+inline constexpr const char *COMMANDS_PATH = "ConquerOps\\commands.ini";
+inline constexpr const char *PLAYER_COMMANDS_FILE = "ConquerOps.commands.ini";
 inline constexpr const char *FONTS_PATH = "Data\\ConquerOps\\bo2_fonts.txt";
 } // namespace zhbo_names
 "#;

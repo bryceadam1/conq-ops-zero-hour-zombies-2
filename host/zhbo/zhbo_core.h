@@ -17,7 +17,7 @@
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
 #define ZHBO_LOGIC_API_FIELDS 24u
-#define ZHBO_CLIENT_API_FIELDS 21u
+#define ZHBO_CLIENT_API_FIELDS 22u
 
 #ifdef __cplusplus
 extern "C" {
@@ -203,6 +203,11 @@ typedef struct ZhboCmdButton
 	char name[48]; /* the upgrade's / science's name, or the label of a power or weapon mode */
 	char label[48];
 } ZhboCmdButton;
+typedef struct ZhboCmdPlace
+{
+	char name[48]; /* the polygon trigger's name as the map writes it */
+	ZhboVec3 pos; /* its centre */
+} ZhboCmdPlace;
 typedef struct ZhboCmdOrder
 {
 	int32_t kind; /* ZHBO_ORDER_* */
@@ -374,6 +379,8 @@ typedef struct ZhboClientApi
 	int32_t (*issue_order)(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count); /* ZHBO_ISSUED_* */
 	/* every button of the player's command sets (each object's current set, his own sets) */
 	int32_t (*command_buttons)(int32_t player, ZhboCmdButton *out, int32_t cap);
+	/* the map's named areas (polygon triggers that are not water), pending the next ABI bump */
+	int32_t (*map_places)(ZhboCmdPlace *out, int32_t cap);
 } ZhboClientApi;
 
 /* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit
@@ -594,6 +601,9 @@ uint64_t zhbo_abi_fields(void);
 void zhbo_load_strings(const char *text);
 /* Load the gameplay tuning pack (see tuning.rs); the sim's defaults hold until this runs. */
 void zhbo_load_tuning(const char *text);
+/* the first-person commands' synonyms: the mod's commands.ini and the player's own file (pending the
+   next ABI bump) */
+void zhbo_load_command_words(const char *mod_text, const char *player_text);
 /* Load the class presets (see classes.rs); the five basic BO2 classes hold until this runs. */
 void zhbo_load_classes(const char *text);
 /* Load the converted BO2 impact table (Data\ConquerOps\impacts.txt; see impacts.rs); returns the
@@ -910,6 +920,7 @@ static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match 
 static_assert(sizeof(ZhboCmdObject) == 52, "ZhboCmdObject layout must match command/world.rs");
 static_assert(sizeof(ZhboCmdButton) == 124, "ZhboCmdButton layout must match command/world.rs");
 static_assert(sizeof(ZhboCmdOrder) == 56, "ZhboCmdOrder layout must match command/world.rs");
+static_assert(sizeof(ZhboCmdPlace) == 60, "ZhboCmdPlace layout must match command/world.rs");
 static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");
 static_assert(sizeof(ZhboNativeLight) == 24, "ZhboNativeLight layout must match nativevm/ffi.rs");
 static_assert(sizeof(ZhboNativeIn) == 168, "ZhboNativeIn layout must match nativevm/ffi.rs");

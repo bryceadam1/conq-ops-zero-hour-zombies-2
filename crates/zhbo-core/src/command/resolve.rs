@@ -37,6 +37,9 @@ impl Memory {
 pub struct Settings<'a> {
     pub near_radius: f32,
     pub offset_distance: f32,
+    /// The groups' link distance and the central region's share of the map's half-size.
+    pub cluster_link: f32,
+    pub central_share: f32,
     /// The terrain's height at (x, y), for points on the ground.
     pub ground: &'a dyn Fn(f32, f32) -> f32,
 }
@@ -205,9 +208,6 @@ impl Resolver<'_> {
     /// the General) puts them, cut to its quantity. `selection`: the player's selectable units,
     /// else the objects of `relation`.
     fn query(&self, relation: Relation, q: &Query, selection: bool) -> Result<Vec<u32>, String> {
-        if q.filters.region.is_some() || q.filters.my_group {
-            return Err("group filters ('in the … group', 'in my group') come in a later step".into());
-        }
         let near = match &q.filters.near {
             Some(p) => Some(self.point(p)?),
             None => None,
@@ -223,6 +223,9 @@ impl Resolver<'_> {
             .filter(|o| q.adjectives.iter().all(|&a| adjective_matches(a, o)))
             .filter(|o| near.is_none_or(|at| (o.pos - at).length_xy() <= self.settings.near_radius))
             .collect();
+        if q.filters.region.is_some() || q.filters.my_group {
+            found = self.in_group(found, q.filters.region, q.filters.my_group)?;
+        }
         let me = self.world.general_pos;
         let dist = |o: &CmdObject| (o.pos - me).length_xy();
         found.sort_by(|a, b| {
@@ -250,6 +253,34 @@ impl Resolver<'_> {
             Quantity::Half => found.len().div_ceil(2),
         };
         Ok(found.into_iter().take(n).map(|o| o.id).collect())
+    }
+
+    /// The candidates in the named group: clustered among themselves (with the General as one
+    /// more point for `in my group`), the group named by its compass region from the map's centre.
+    fn in_group<'o>(&self, found: Vec<&'o CmdObject>, region: Option<Region>, mine: bool) -> Result<Vec<&'o CmdObject>, String> {
+        let mut points: Vec<Vec3> = found.iter().map(|o| o.pos).collect();
+        points.push(self.world.general_pos);
+        let general = points.len() - 1;
+        let groups = super::cluster::clusters(&points, self.settings.cluster_link);
+        let mut keep: Vec<usize> = (0..found.len()).collect();
+        if mine {
+            let g = groups.iter().find(|g| g.contains(&general)).cloned().unwrap_or_default();
+            keep.retain(|i| g.contains(i));
+            if keep.is_empty() {
+                return Err("none of them is in your group".into());
+            }
+        }
+        if let Some(r) = region {
+            // Named among the groups of the candidates themselves (the General's point aside).
+            let own: Vec<Vec<usize>> = groups.iter().map(|g| g.iter().copied().filter(|&i| i != general).collect::<Vec<_>>()).filter(|g| !g.is_empty()).collect();
+            let names = super::cluster::names(&own, &points, self.world.map_centre, self.settings.central_share * self.world.map_radius);
+            let picked: Vec<usize> = own.iter().zip(&names).filter(|(_, n)| **n == r).flat_map(|(g, _)| g.iter().copied()).collect();
+            if picked.is_empty() {
+                return Err(format!("there is no {} group", r.word()));
+            }
+            keep.retain(|i| picked.contains(i));
+        }
+        Ok(keep.into_iter().map(|i| found[i]).collect())
     }
 
     fn base_matches(&self, base: &Base, o: &CmdObject, selection: bool) -> bool {
@@ -294,7 +325,10 @@ impl Resolver<'_> {
                 let at = self.world.object(id).map_or(Vec3::ZERO, |o| o.pos);
                 Ok(Aim::Object(id, at))
             }
-            Point::Place(name) => Err(format!("place names ('{name}') come in a later step")),
+            Point::Place(name) => match self.world.places.iter().find(|(n, _)| n == name) {
+                Some(&(_, at)) => Ok(Aim::Point(Vec3::new(at.x, at.y, (self.settings.ground)(at.x, at.y)))),
+                None => Err(format!("this map has no place called {name}")),
+            },
         }
     }
 

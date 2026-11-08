@@ -14860,3 +14860,32 @@ will reuse), with live counts, the wheel and buttons borrowed while it is up, an
   completions over the real vocabulary, and `rangers guard me` ran. It ran for four Rangers: the
   fourth was the one the build line had left queued. The first run's checks expected three; they
   now accept the count.
+
+## First-person commands, step 5: groups, places, synonyms (2026-11-07)
+
+The language now names groups and the map's areas, and reads synonyms (docs/COMMANDS.md sections
+4 to 6).
+- **Groups** (`command::cluster`): single linkage over a query's candidates (`CommandClusterLink`
+  120), named by compass region from the map's centre (the logic's extent; central within
+  `CommandCentralShare` 0.25 of its half-size). A shared name goes to the group farther out; the
+  other takes the free region nearest its bearing. `in my group` clusters with the General as one
+  more point.
+- **Places**: `ZhboClientApi.map_places` lists the map's polygon triggers that are not water. Their
+  identifiers are split into words (`InnerPerimeter_1` → `inner perimeter 1`), and names equal to
+  a grammar word or a unit's are left out and logged. Waypoints are left out: on skirmish maps they
+  are AI paths and start positions. Alpine Assault names six.
+- **Synonyms** (`command::normal`, `data/ConquerOps/commands.ini`, `zhbo_load_command_words`): the
+  design's tables made data. `[Words]` maps phrases to readings; `[Aliases]` maps a word to plurals,
+  of which the match's own count. A player's `ConquerOps.commands.ini` overrides. `run` tries the
+  line as typed, then each combination of readings; the first that resolves wins, and two that
+  resolve differently are put to the player. A synonym that is canonical words itself (`make`,
+  `on me`) lists itself first, or `make them group 3` would become `build them group 3`. The
+  aliases use the install's display names (decoded from its string table: "Crusader", "Paladin",
+  "Battlemaster", …; the USA dozer is "Construction Dozer", so `dozers` and `workers` map to the
+  `builders` class).
+- **Verification:** 54 command tests pass; `scripts/autotest-mac.sh --command` 25/25:
+  "Everyone, follow me!" ran as `units guard me` for four units, `rangers in my group stop` took the
+  two in his group, and the map's places were logged. One change landed after that run: the
+  normaliser now keeps the match's names (types, classes, places, teams) as said before it looks up
+  synonyms (`a_synonym_never_shadows_one_of_the_matchs_names`). It is a Rust-only change to how
+  candidates are formed, covered by its unit test; the leg's lines do not touch it.

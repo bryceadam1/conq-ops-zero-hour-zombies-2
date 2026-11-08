@@ -259,7 +259,8 @@ pub struct Scripted {
 /// to the General, the nearest of them attacks the enemy rebel ahead, a misspelt line is refused,
 /// an order with no selection goes to the last one (`them`); then the command buttons: the
 /// Barracks queues two Rangers and one is cancelled, the dozer lays out a Barracks near the
-/// General, and the Rangers take a right-click on open ground.
+/// General, and the Rangers take a right-click on open ground; after the menu's run, a line in
+/// synonyms (`everyone, follow me` is `units guard me`) and one naming the General's group.
 /// The command run's menu: open it, then pick each option as the completions offer it, `(done)`
 /// last (each with the first-person second it is due at).
 pub const MENU_OPEN: &str = "(open)";
@@ -267,7 +268,7 @@ pub const MENU_PICKS: [(f32, &str); 5] = [(32.0, MENU_OPEN), (33.0, "rangers"), 
 /// How long a pick may wait to be offered before the run gives up on it and logs the options.
 pub const MENU_PATIENCE: f32 = 3.0;
 
-pub const COMMAND_LINES: [(f32, &str); 8] = [
+pub const COMMAND_LINES: [(f32, &str); 10] = [
     (2.0, "rangers move to me"),
     (14.0, "the nearest ranger attack the nearest enemy rebel"),
     (18.0, "rangres stop"),
@@ -276,6 +277,8 @@ pub const COMMAND_LINES: [(f32, &str); 8] = [
     (24.0, "cancel ranger"),
     (26.0, "the construction dozer build barracks near me"),
     (28.0, "rangers act on north of me"),
+    (38.0, "Everyone, follow me!"),
+    (40.0, "rangers in my group stop"),
 ];
 
 impl Autopilot {

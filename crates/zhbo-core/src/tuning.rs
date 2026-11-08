@@ -425,6 +425,8 @@ tuning! {
     projectile_bounce_along: "ProjectileBounceAlong" = 0.6, "Grenade bounce: share of the speed along the surface kept, where the def has no `parallelBounce` cell (the mod's value).";
     projectile_rest_speed: "ProjectileRestSpeed" = 3.0, "A bouncing grenade below this speed comes to rest, Zero Hour units/s (the mod's value).";
     command_near_radius: "CommandNearRadius" = 150.0, "First-person commands: how close `near X` is, Zero Hour units from X (docs/COMMANDS.md section 6). A mod rule with no BO2 source: about a Ranger's sight. Client-side only; never reaches the sim.";
+    command_cluster_link: "CommandClusterLink" = 120.0, "First-person commands: two units share a group (`in the northern group`, `in my group`) when a chain of them, each within this of the next, joins them; Zero Hour units (docs/COMMANDS.md section 6). A mod rule with no BO2 source. Client-side only.";
+    command_central_share: "CommandCentralShare" = 0.25, "First-person commands: a group within this share of the map's half-size from its centre is the central group (docs/COMMANDS.md section 6). A mod rule with no BO2 source. Client-side only.";
     command_offset_distance: "CommandOffsetDistance" = 150.0, "First-person commands: how far `north of X`, `behind X` and `in front of X` are from X, Zero Hour units (docs/COMMANDS.md section 10). A mod rule with no BO2 source. Client-side only.";
 }
 

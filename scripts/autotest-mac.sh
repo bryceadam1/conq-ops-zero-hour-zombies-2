@@ -62,8 +62,9 @@
 #                                      give an order with no selection to the last one; then a
 #                                      Barracks queues two Rangers and cancels one, his dozer lays out
 #                                      a Barracks near him, and the Rangers take a right-click on open
-#                                      ground; last, the command menu builds `rangers guard me` from its
-#                                      own completions and runs it
+#                                      ground; the command menu builds `rangers guard me` from its own
+#                                      completions and runs it; last, a line in synonyms and one naming
+#                                      the General's group
 #   scripts/autotest-mac.sh --detail   the graphics detail Zero Hour picks (host patch 0025): four starts
 #                                      with Options.ini set up as a new player (none), a player whose
 #                                      file holds the old detector's Low, one who chose Low and one who
@@ -883,6 +884,9 @@ EOF
     # Three Rangers, or four once the Barracks has finished the one the build line left queued.
     check "  ...its command ran" "command: 'rangers guard me' -> [0-9]+ units: rangers guard me, 1 order\(s\)"
     check "  ...guard order sent" "command order: guard object to [0-9]+ object\(s\)"
+    check "synonyms: canonical reading ran" "command: 'Everyone, follow me!' -> [0-9]+ units: units guard me, 1 order\(s\)"
+    check "my group: resolved" "command: 'rangers in my group stop' -> [0-9]+ units?: rangers in my group stop, 1 order\(s\)"
+    check "the map's places logged" "commands: the map's places: "
     grep -E "command" "$l" | head -60
     echo "screenshots and log: $out"
     exit $ok
