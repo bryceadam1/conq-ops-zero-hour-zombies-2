@@ -225,6 +225,17 @@ impl Vocabulary {
         .join("\t")
     }
 
+    /// The names a player says, for the voice models' prompts (Whisper's and the translator's,
+    /// and the training set's `names.tsv`): the types' plurals, then the places, teams,
+    /// upgrades, powers, sciences, weapon modes and weapons.
+    pub fn spoken_names(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.types.iter().map(|n| n.plural.clone()).collect();
+        for list in [&self.places, &self.teams, &self.upgrades, &self.powers, &self.sciences, &self.modes, &self.weapons] {
+            out.extend(list.iter().cloned());
+        }
+        out
+    }
+
     /// A vocabulary from [`Vocabulary::to_line`]'s line. Without the class list (the training
     /// set's lines), all the grammar's classes.
     pub fn from_line(line: &str) -> Option<Vocabulary> {

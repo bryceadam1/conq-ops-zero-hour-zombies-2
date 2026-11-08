@@ -15037,3 +15037,38 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   wrong ones.
 - **In game,** the `--command` leg with the released model and the loop guard: every check PASS.
   The spoken line ran as `rangers move to me` (mask 0.02).
+
+## First-person commands, step 6: voice experiments, and the names prompt (2026-11-08)
+
+- **Untuned flan-t5-small:** 1.5% unconstrained, 4–5% under the mask. Neither the bare prefix nor
+  an instruction with the names and three examples helps; the 1.5% are rows already canonical.
+  Fine-tuning is essential.
+- **Fine-tuned with a prompt carrying the match's names** (`tools/voice/prompts/names.txt`,
+  `train_t5.py --prompt`; `names.tsv` from `Vocabulary::spoken_names`; the runtime reads
+  `prompt.txt`). Typed: 0.973 against 0.967. Spoken: 0.760 against 0.757. `voice_match`: 13 of
+  16, and `go back to` now reads `move to`. The guard at 0.1 asks on 0.1% of right answers
+  (against 1.8%) for 27% of wrong ones. Translation costs 231 ms against 138 (the longer input).
+  **Released:** it replaces r3 in the manifest, adding `prompt.txt` as a fifth file. The release
+  is still unpublished. `--command` leg: 28 PASS, the spoken line at mask 0.03.
+- **Decoding by options** (the user's idea): every option the grammar allows is run through the
+  decoder as if written and compared by probability. It needs our own T5 (`t5net`): candle's
+  returns only the last position's logits and keeps its cache inside. The port equals candle's
+  greedy output on 300 of 300 rows and is faster (163 against 211 ms). An exact bound prunes:
+  an option's score is at most its first token's log-probability.
+  - Results: greedy over options 0.82 typed (`the` beats `the mirdorhal bridge`, which it
+    begins); beam 4 0.943 typed and 0.743 spoken. A token-level beam 4 under the mask is 0.747
+    spoken. Greedy under the mask stays best at 0.757 / 0.760.
+  - Kept: the weakest option's probability is a clean unknown signal (under 0.2 on 0% of right
+    answers and 12% of wrong ones), for the abstain production.
+- **Whisper encoder into the translator's decoder through a trained bridge** (the user's ideas 2
+  and 3): 12,000 spoken training commands as encoder states (`voice_audio`, 4.1 GB),
+  `train_bridge.py`.
+  - Audio only: 0.347 same meaning, 48% not a command. It spells names from sound
+    (`tordordors`) and overfits by epoch 8. Fast: 140 ms for the bridge and decoder.
+  - Names as T5-encoded text plus audio, T5 trainable: 0.043. Modality collapse: the decoder
+    writes plausible commands from the names and ignores the audio.
+  - Next, in a separate project: far more audio, a frozen T5 so only the bridge learns (BLSP,
+    arXiv 2309.00916), distilled from flan-t5 on public FLAN data.
+- **Gotcha: `cargo build -p A --bin B -p C` builds only binaries named B.** The launcher wasn't
+  rebuilt, and the dist's stale manifest started a fetch for a file whose size had changed. It
+  failed harmlessly (nothing is renamed unless the hash checks). Build the launcher on its own.

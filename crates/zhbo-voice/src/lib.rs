@@ -13,8 +13,10 @@
 pub mod audio;
 pub mod constrain;
 pub mod hear;
+pub mod options;
 pub mod pipeline;
 pub mod snap;
+pub mod t5net;
 mod whisper;
 
 use std::path::Path;
@@ -25,8 +27,8 @@ use candle_transformers::models::t5;
 use tokenizers::Tokenizer;
 use zhbo_core::command::Vocabulary;
 
-/// The task prefix the model was trained with.
-pub const PREFIX: &str = "command: ";
+/// The prompt a model was trained with when its folder has no `prompt.txt`: the task prefix alone.
+pub const PROMPT: &str = "command: {heard}";
 /// The longest translation, in tokens.
 pub const MAX_TOKENS: usize = 64;
 
@@ -60,6 +62,8 @@ pub struct Translator {
     device: Device,
     start: u32,
     eos: u32,
+    /// The model's prompt (`prompt.txt`): `{heard}` is what was said, `{names}` the match's names.
+    template: String,
 }
 
 impl Translator {
@@ -78,29 +82,32 @@ impl Translator {
         let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights], DType::F32, &device)? };
         let model = t5::T5ForConditionalGeneration::load(vb, &config)?;
         let start = config.decoder_start_token_id.unwrap_or(config.pad_token_id) as u32;
-        Ok(Translator { model, tokenizer, device, start, eos: config.eos_token_id as u32 })
+        let template = std::fs::read_to_string(dir.join("prompt.txt")).map(|t| t.trim().to_string()).unwrap_or_else(|_| PROMPT.to_string());
+        Ok(Translator { model, tokenizer, device, start, eos: config.eos_token_id as u32, template })
     }
 
     pub fn tokenizer(&self) -> &Tokenizer {
         &self.tokenizer
     }
 
-    /// Translate `heard` greedily; under the grammar's mask over `vocab` when given.
-    pub fn translate(&mut self, heard: &str, vocab: Option<&Vocabulary>) -> Result<Translation, Error> {
-        self.translate_traced(heard, vocab, &mut |_| {})
+    /// The model's input for `heard` over `vocab`'s names.
+    pub fn source(&self, heard: &str, vocab: &Vocabulary) -> String {
+        prompt(&self.template, heard, vocab)
+    }
+
+    /// Translate `heard` greedily over `vocab`'s names; under the grammar's mask if `constrained`.
+    pub fn translate(&mut self, heard: &str, vocab: &Vocabulary, constrained: bool) -> Result<Translation, Error> {
+        self.translate_traced(heard, vocab, constrained, &mut |_| {})
     }
 
     /// [`Translator::translate`], with each step reported to `trace`: the model's own choice and
     /// its probability, and the token taken.
-    pub fn translate_traced(&mut self, heard: &str, vocab: Option<&Vocabulary>, trace: &mut dyn FnMut(Step)) -> Result<Translation, Error> {
-        let input = self.tokenizer.encode(format!("{PREFIX}{heard}"), true)?;
+    pub fn translate_traced(&mut self, heard: &str, vocab: &Vocabulary, constrained: bool, trace: &mut dyn FnMut(Step)) -> Result<Translation, Error> {
+        let input = self.tokenizer.encode(self.source(heard, vocab), true)?;
         let ids = Tensor::new(input.get_ids(), &self.device)?.unsqueeze(0)?;
         self.model.clear_kv_cache();
         let encoded = self.model.encode(&ids)?;
-        let mut mask = match vocab {
-            Some(v) => Some(constrain::Mask::new(v, &self.tokenizer)?),
-            None => None,
-        };
+        let mut mask = if constrained { Some(constrain::Mask::new(vocab, &self.tokenizer)?) } else { None };
         let mut out: Vec<u32> = vec![self.start];
         let mut log_prob = 0.0f32;
         let mut masked_max = 0.0f32;
@@ -137,6 +144,12 @@ impl Translator {
         let text = self.tokenizer.decode(&out[1..], true)?.trim().to_string();
         Ok(Translation { text, log_prob, masked_max, stuck })
     }
+}
+
+/// `template` filled: `{heard}` with what was said, `{names}` with the match's names, comma
+/// separated (`Vocabulary::spoken_names`; the training script reads the same from `names.tsv`).
+pub fn prompt(template: &str, heard: &str, vocab: &Vocabulary) -> String {
+    template.replace("{names}", &vocab.spoken_names().join(", ")).replace("{heard}", heard)
 }
 
 /// The most probable token, among `allowed` when given.

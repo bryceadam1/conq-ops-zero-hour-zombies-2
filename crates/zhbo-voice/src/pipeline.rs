@@ -49,6 +49,8 @@ pub struct Pipeline {
     ears: Listener,
     snapper: Snapper,
     model: Translator,
+    /// Decoding by options with this beam instead of the token mask (`options`), when set.
+    options: Option<(crate::options::OptionDecoder, usize)>,
 }
 
 impl Pipeline {
@@ -61,7 +63,11 @@ impl Pipeline {
         Ok(Pipeline {
             ears: Listener::load(&whisper, device.clone())?,
             snapper: Snapper::new(words.lines().map(str::to_string), tables),
-            model: Translator::load(&translator, device)?,
+            model: Translator::load(&translator, device.clone())?,
+            options: match std::env::var("ZHBO_VOICE_OPTIONS").ok().and_then(|b| b.parse::<usize>().ok()).filter(|&b| b > 0) {
+                Some(beam) => Some((crate::options::OptionDecoder::load(&translator, device)?, beam)),
+                None => None,
+            },
         })
     }
 
@@ -75,7 +81,12 @@ impl Pipeline {
         let said = self.ears.hear(pcm, &hear::prompt(vocab))?;
         let heard = hear::tidy(&said.text);
         let snapped = self.snapper.snap(&heard, vocab);
-        let t = self.model.translate(&snapped, Some(vocab))?;
+        if let Some((decoder, beam)) = &self.options {
+            let s = decoder.decode(&snapped, vocab, *beam, 0.0)?;
+            // The confidence check reads the weakest option: 1 - its mean token probability.
+            return Ok(Outcome { heard, snapped, command: s.text, masked_max: 1.0 - s.weakest, stuck: s.unknown.is_some(), no_speech: said.no_speech });
+        }
+        let t = self.model.translate(&snapped, vocab, true)?;
         Ok(Outcome { heard, snapped, command: t.text, masked_max: t.masked_max, stuck: t.stuck, no_speech: said.no_speech })
     }
 }

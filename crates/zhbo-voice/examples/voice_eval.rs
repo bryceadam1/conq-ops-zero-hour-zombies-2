@@ -57,7 +57,7 @@ fn main() -> Result<(), zhbo_voice::Error> {
     for (input, label, id) in &rows {
         let Some(v) = vocabs.get(id) else { continue };
         let t = Instant::now();
-        let free = model.translate(input, None)?;
+        let free = model.translate(input, v, false)?;
         free_time += t.elapsed().as_secs_f64();
         if free.text == *label {
             free_right += 1;
@@ -67,7 +67,7 @@ fn main() -> Result<(), zhbo_voice::Error> {
             free_invalid += 1;
         }
         let t = Instant::now();
-        let masked = model.translate(input, Some(v))?;
+        let masked = model.translate(input, v, true)?;
         masked_time += t.elapsed().as_secs_f64();
         stuck += masked.stuck as usize;
         let same = same_meaning(&masked.text, label, v);

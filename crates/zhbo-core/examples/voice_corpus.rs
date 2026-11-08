@@ -302,6 +302,14 @@ fn assemble(dir: &Path, seed: u32) -> Result<(), String> {
     let ordinary: Vec<&str> = counts.iter().filter(|(_, &n)| n >= 2).map(|(w, _)| w.as_str()).collect();
     fs::write(dir.join("words.txt"), ordinary.join("\n") + "\n").map_err(|e| e.to_string())?;
     fs::write(dir.join("vocab_renamed.tsv"), renamed_vocabs.join("\n") + "\n").map_err(|e| e.to_string())?;
+    // Each vocabulary's spoken names, for a prompt that carries them (`train_t5.py --prompt`).
+    let mut names_lines: Vec<String> = vocabs.iter().map(|(id, v)| format!("{id}\t{}", v.spoken_names().join(", "))).collect();
+    for line in &renamed_vocabs {
+        if let Some((id, v)) = line.split_once('\t').and_then(|(id, rest)| Some((id, zhbo_core::command::Vocabulary::from_line(rest)?))) {
+            names_lines.push(format!("{id}\t{}", v.spoken_names().join(", ")));
+        }
+    }
+    fs::write(dir.join("names.tsv"), names_lines.join("\n") + "\n").map_err(|e| e.to_string())?;
     let mut stats = format!(
         "canonical commands: {}\nparaphrases read: {read} (unknown ids: {unknown})\nkept: {kept}\nnoisy copies: {noisy_count}\nread back by the normaliser alone: {normalised}\nrenamed with English names: {} commands, {renamed_rows} rows\nrows: train {}, dev {}, test {}\nordinary words: {}\ndropped:\n",
         labels.len(),

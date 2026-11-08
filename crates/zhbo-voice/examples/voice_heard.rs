@@ -23,24 +23,6 @@ use zhbo_core::command::normal::{self, Tables};
 use zhbo_voice::hear::{self, Listener};
 use zhbo_voice::snap::Snapper;
 
-/// The voices for training, none of `voice_listen`'s.
-const VOICES: [&str; 14] = [
-    "Eddy (English (UK))",
-    "Eddy (English (US))",
-    "Flo (English (UK))",
-    "Flo (English (US))",
-    "Fred",
-    "Grandma (English (UK))",
-    "Grandpa (English (US))",
-    "Kathy",
-    "Ralph",
-    "Reed (English (UK))",
-    "Rocko (English (UK))",
-    "Rocko (English (US))",
-    "Sandy (English (US))",
-    "Shelley (English (UK))",
-];
-
 /// Whether `heard` has every name of `label` whole.
 fn names_kept(heard: &str, label: &str, vocab: &zhbo_core::command::Vocabulary) -> bool {
     let padded = format!(" {} ", zhbo_core::command::normal::words(heard).join(" "));
@@ -104,7 +86,7 @@ fn main() -> Result<(), zhbo_voice::Error> {
     let mut written = 0usize;
     for (input, label, id) in all.iter().step_by(stride).take(limit) {
         let Some(v) = vocabs.get(id) else { continue };
-        let voice = VOICES[next() as usize % VOICES.len()];
+        let voice = common::TRAIN_VOICES[next() as usize % common::TRAIN_VOICES.len()];
         let rate = 140 + next() % 91;
         // A row `say` cannot speak (a stray control character in a paraphrase) is skipped.
         let pcm = match common::speak(input, voice, Some(rate), &scratch) {

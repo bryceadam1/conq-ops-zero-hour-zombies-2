@@ -620,8 +620,8 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   2. **A confidence check.** The command's log-probability and the probability mass the mask
      removed along the way. Too much removed means the model "wanted" something invalid, so the
      command asks for confirmation instead of running. Measured (the released model, `voice_eval`):
-     the largest share removed at one step averages 0.012 on right answers and 0.24 on wrong ones;
-     asking above 0.1 asks on 1.8% of right answers and catches a quarter of the wrong ones.
+     the largest share removed at one step averages 0.001 on right answers and 0.24 on wrong ones;
+     asking above 0.1 asks on 0.1% of right answers and catches 27% of the wrong ones.
   3. **Fine-tuning on the canonical language**, so the mask is a safety net, not the main
      mechanism.
 - **The game's side (built).** `conquerops-voice` is its own process beside the game (the
@@ -685,8 +685,11 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      4,541 rows kept of 6,842 (a third of them English-named).
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
-  the heard rows, six epochs on Apple's GPU (MPS) at about 370 s each, keeping the best epoch on a
-  dev sample (the fifth). The weights, stored in f16 (half the download; the same answers to the
+  the heard rows, with a prompt that carries the match's names (`--prompt
+  tools/voice/prompts/names.txt`: `Translate the spoken order into a command. Names: {names}.
+  Order: {heard}`; the runtime fills it the same way from `prompt.txt`, the names from
+  `Vocabulary::spoken_names`), five epochs on Apple's GPU (MPS) at about 20 minutes each, keeping
+  the best epoch on a dev sample (the fourth). The weights, stored in f16 (half the download; the same answers to the
   last row), go to `~/.conquerops/voice/commands-t5-small/`, never into the repo; players get them
   from this project's GitHub release `voice-commands-v1`. Gotcha: transformers saves T5's own
   `lm_head` while the config still says the embeddings are tied, and candle trusting the config
@@ -697,20 +700,47 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
 
   | | exact match | same meaning | ms per command |
   |---|---|---|---|
-  | unconstrained | 0.951 | 0.959 (1.5% not a command) | 122 |
-  | constrained | 0.959 | 0.967 (none stuck) | 138 |
+  | unconstrained | 0.963 | 0.973 (0.6% not a command) | 217 |
+  | constrained | 0.963 | 0.973 (none stuck) | 231 |
 
   Spoken (`voice_listen`, 300 held-out commands in 8 voices, base.en, prompted and snapped): the
-  meaning right 0.757, against 0.713 for the first model (trained on text alone). Over a match's
+  meaning right 0.760, against 0.713 for the first model (trained on text alone). Over a match's
   kind of names (`voice_match`, 16 commands about Rangers, Humvees and a War Factory): 13 right,
   against 13 for the first model and 2 for a model trained on unfiltered heard rows without
   English names, which read `rangers` as noise and answered `group 2 move to me`. The synthetic
   test cannot show that: its names are all invented, so `voice_match` is part of choosing a
-  model. "Same meaning" counts `a and b` as `b and a`. The remaining errors: an invented selection on a command with an implied
-  one (`force move to tordorosts` read as `tordorosts force move to tordorosts`), a group dropped
-  from a long union, near-synonyms (`at` against `near`; `go back to` read as `resume building`),
-  and `the barracks` against `barracks`. Next: the abstain production, and flan-t5-base or the
-  0.5B decoder-only model if real speech falls short.
+  model. "Same meaning" counts `a and b` as `b and a`. The remaining errors: an invented
+  selection on a command with an implied one, a group dropped from a long union, near-synonyms
+  (`at` against `near`), and `the barracks` against `barracks`.
+- **Experiments (2026-11-08), what was tried and kept or not:**
+
+  | | spoken, same meaning | typed | notes |
+  |---|---|---|---|
+  | flan-t5-small untuned, `command:` prefix | | 0.04 (masked) | it cannot write the language unseen |
+  | untuned, instruction prompt with names and three examples | | 0.05 (masked) | a 77M model does not learn a grammar from a prompt |
+  | fine-tuned, `command:` prefix (r3) | 0.757 | 0.967 | guard: asks on 1.8% of right answers |
+  | **fine-tuned, names prompt (released)** | **0.760** | **0.973** | guard: 0.1%; +90 ms |
+  | options, beam 4 (`options::decode`) | 0.743 | 0.943 | below |
+  | token beam 4 under the mask (`decode_tokens`) | 0.747 | 0.98 (100 rows) | below |
+  | Whisper encoder → bridge → T5 decoder (`train_bridge.py --mode audio`) | 0.347 (unconstrained) | | 48% not a command; 240 ms in all |
+  | T5-encoded names + bridged audio (`--mode both`) | 0.043 | | modality collapse |
+
+  - **Option scoring** (`options`: every option the grammar allows run through the decoder as
+    if written, compared by probability, an exact first-token bound pruning them; our own T5
+    port in `t5net`, equal to candle's on 300 of 300 rows and faster). Greedy over whole options
+    loses to the token mask (0.82 against 0.95 typed), because a short option (`the`) is at
+    least as likely as any longer one it begins (`the mirdorhal bridge`); a beam of 4 recovers it
+    but does not beat the mask, on speech either, where plain greedy under the mask is best. The
+    weakest chosen option is a clean "unknown" signal (under 0.2 on none of the right answers and
+    12% of the wrong ones) for the abstain production when it is built.
+  - **The audio bridges** (12,000 spoken training commands as Whisper encoder states from
+    `voice_audio`, a stride-2 convolution and two transformer layers into the translator's
+    decoder). Audio alone writes the command's shape but spells names from their sound
+    (`tordordors`), and 12,000 utterances overfit by the eighth epoch. With the names as
+    T5-encoded text beside the audio and T5 left trainable, the decoder learned to write
+    plausible commands from the names and ignore the audio. Both point at the same need: far more
+    audio, and a frozen T5 so only the bridge learns (BLSP's behaviour alignment, arXiv
+    2309.00916): a separate project.
 
   Training uses **placeholder names** in place of real unit and place names, so the model learns
   to copy names instead of memorising Zero Hour's roster. That generalises to mods and other

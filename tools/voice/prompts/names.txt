@@ -1,0 +1,1 @@
+Translate the spoken order into a command. Names: {names}. Order: {heard}

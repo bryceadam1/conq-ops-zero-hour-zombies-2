@@ -18,7 +18,7 @@ fn main() -> Result<(), zhbo_voice::Error> {
     let vocab = Vocabulary::from_line(&args[1]).ok_or("a vocabulary line needs eight lists")?;
     let mut model = Translator::load(Path::new(&args[0]), candle_core::Device::Cpu)?;
     let mut steps = Vec::new();
-    let t = model.translate_traced(&args[2], Some(&vocab), &mut |s| steps.push(s))?;
+    let t = model.translate_traced(&args[2], &vocab, true, &mut |s| steps.push(s))?;
     let tok = model.tokenizer();
     let name = |id: u32| tok.id_to_token(id).unwrap_or_default();
     for s in &steps {

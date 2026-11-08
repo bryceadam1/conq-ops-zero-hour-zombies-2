@@ -92,6 +92,14 @@ impl Listener {
     /// Transcribe `pcm` (16 kHz mono, at most 30 s), with `prompt` as the text before it.
     pub fn hear(&mut self, pcm: &[f32], prompt: &str) -> Result<Heard, Error> {
         let clock = std::time::Instant::now();
+        let features = self.encode(pcm)?;
+        let encode_seconds = clock.elapsed().as_secs_f32();
+        self.decode(pcm, prompt, &features, clock, encode_seconds)
+    }
+
+    /// The audio's features from Whisper's encoder (`[1, positions, d_model]`), over the
+    /// listener's window.
+    pub fn encode(&mut self, pcm: &[f32]) -> Result<Tensor, Error> {
         let n_mels = self.config.num_mel_bins;
         let mel = audio::pcm_to_mel(&self.config, pcm, &self.filters);
         let frames = mel.len() / n_mels;
@@ -107,9 +115,11 @@ impl Listener {
             window[m * width..m * width + take].copy_from_slice(&mel[m * frames..m * frames + take]);
         }
         let mel = Tensor::from_vec(window, (1, n_mels, width), &self.device)?;
-        let features = self.model.encode(&mel)?;
-        let encode_seconds = clock.elapsed().as_secs_f32();
+        Ok(self.model.encode(&mel)?)
+    }
 
+    fn decode(&mut self, pcm: &[f32], prompt: &str, features: &Tensor, clock: std::time::Instant, encode_seconds: f32) -> Result<Heard, Error> {
+        let features = features.clone();
         let mut tokens = Vec::new();
         if !prompt.is_empty() {
             // The prompt may use half the decoder's context, its end kept.
@@ -200,14 +210,7 @@ pub fn tidy(heard: &str) -> String {
 
 /// The match's names as Whisper's prompt: the words it should expect, most specific first.
 pub fn prompt(vocab: &Vocabulary) -> String {
-    let mut names: Vec<&str> = Vec::new();
-    for n in &vocab.types {
-        names.push(&n.plural);
-    }
-    for list in [&vocab.places, &vocab.teams, &vocab.upgrades, &vocab.powers, &vocab.sciences, &vocab.modes, &vocab.weapons] {
-        names.extend(list.iter().map(String::as_str));
-    }
-    format!("Commands for {}.", names.join(", "))
+    format!("Commands for {}.", vocab.spoken_names().join(", "))
 }
 
 /// Whisper's mel filterbank: librosa's `filters.mel(sr, n_fft, n_mels)` with its defaults (the

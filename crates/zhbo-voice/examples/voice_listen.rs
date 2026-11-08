@@ -24,8 +24,6 @@ use zhbo_voice::hear::{self, Listener};
 use zhbo_voice::snap::Snapper;
 use zhbo_voice::Translator;
 
-const VOICES: [&str; 8] = ["Samantha", "Daniel", "Karen", "Moira", "Rishi", "Tessa", "Reed (English (US))", "Shelley (English (US))"];
-
 fn main() -> Result<(), zhbo_voice::Error> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 3 {
@@ -56,9 +54,17 @@ fn main() -> Result<(), zhbo_voice::Error> {
     let mut took = [0f64; 3];
     let mut parts = [[0f64; 2]; 3];
     let mut wrong: Vec<String> = Vec::new();
+    let mut free_right = 0usize;
+    // VOICE_OPTIONS=<beam>: also decode the snapped text by options (`options`).
+    let options = match std::env::var("VOICE_OPTIONS").ok().and_then(|b| b.parse::<usize>().ok()) {
+        Some(beam) => Some((zhbo_voice::options::OptionDecoder::load(Path::new(&args[1]), candle_core::Device::Cpu)?, beam)),
+        None => None,
+    };
+    let (mut options_right, mut options_time) = (0usize, 0f64);
+    let (mut tokens_right, mut tokens_time) = (0usize, 0f64);
     for (i, (input, label, id)) in rows.iter().enumerate() {
         let Some(v) = vocabs.get(id) else { continue };
-        let voice = VOICES[i % VOICES.len()];
+        let voice = common::TEST_VOICES[i % common::TEST_VOICES.len()];
         let pcm = common::speak(input, voice, None, &scratch)?;
         let wanted = names_in(label, v);
         let names_prompt = hear::prompt(v);
@@ -78,16 +84,28 @@ fn main() -> Result<(), zhbo_voice::Error> {
                 prompted = text.clone();
             }
             names[k] += wanted.iter().all(|n| text.contains(n.as_str())) as usize;
-            let out = model.translate(&text, Some(v))?;
+            let out = model.translate(&text, v, true)?;
             let same = same_meaning(&out.text, label, v);
             right[k] += same as usize;
+            if k == 2 {
+                // The same, unconstrained: a model trained elsewhere without the mask compares here.
+                free_right += same_meaning(&model.translate(&text, v, false)?.text, label, v) as usize;
+                if let Some((decoder, beam)) = &options {
+                    let t = Instant::now();
+                    options_right += same_meaning(&decoder.decode(&text, v, *beam, 0.0)?.text, label, v) as usize;
+                    options_time += t.elapsed().as_secs_f64();
+                    let t = Instant::now();
+                    tokens_right += same_meaning(&decoder.decode_tokens(&text, v, *beam)?.text, label, v) as usize;
+                    tokens_time += t.elapsed().as_secs_f64();
+                }
+            }
             if k == 2 && !same && wrong.len() < 25 {
                 wrong.push(format!("  [{voice}] {input}\n    heard {prompted}\n    snapped {text}\n    want  {label}\n    got   {}", out.text));
             }
         }
     }
     let n = rows.len().max(1) as f64;
-    println!("{} spoken test rows, {} voices, CPU", rows.len(), VOICES.len());
+    println!("{} spoken test rows, {} voices, CPU", rows.len(), common::TEST_VOICES.len());
     for (k, name) in WAYS.iter().enumerate() {
         println!(
             "{name:>9}: names heard {:.3}, same meaning {:.3}, {:.0} ms hearing ({:.0} encoding, {:.0} decoding)",
@@ -97,6 +115,11 @@ fn main() -> Result<(), zhbo_voice::Error> {
             parts[k][0] / n * 1000.0,
             parts[k][1] / n * 1000.0
         );
+    }
+    println!("  snapped, unconstrained: same meaning {:.3}", free_right as f64 / n);
+    if let Some((_, beam)) = &options {
+        println!("  snapped, options (beam {beam}): same meaning {:.3}, {:.0} ms translating", options_right as f64 / n, options_time / n * 1000.0);
+        println!("  snapped, token beam {beam}: same meaning {:.3}, {:.0} ms translating", tokens_right as f64 / n, tokens_time / n * 1000.0);
     }
     println!("snapped errors (first 25):\n{}", wrong.join("\n"));
     Ok(())

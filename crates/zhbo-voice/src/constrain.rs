@@ -118,20 +118,22 @@ impl Spelling {
     }
 }
 
-/// The mask's state through one translation.
+/// The mask's state through one translation. A clone shares the clone's tables (the spelling,
+/// the levels built so far), so a beam can carry one per hypothesis.
+#[derive(Clone)]
 pub struct Mask<'a> {
     vocab: &'a Vocabulary,
     tok: &'a Tokenizer,
     numbers: Vec<String>,
-    spelling: Spelling,
+    spelling: Rc<Spelling>,
     /// Each prefix's level, built once.
-    levels: HashMap<String, Rc<Level>>,
+    levels: Rc<std::cell::RefCell<HashMap<String, Rc<Level>>>>,
     paths: Vec<Path>,
 }
 
 impl<'a> Mask<'a> {
     pub fn new(vocab: &'a Vocabulary, tok: &'a Tokenizer) -> Result<Mask<'a>, Error> {
-        let mut mask = Mask { vocab, tok, numbers: voice_numbers(), spelling: Spelling::new(tok), levels: HashMap::new(), paths: Vec::new() };
+        let mut mask = Mask { vocab, tok, numbers: voice_numbers(), spelling: Rc::new(Spelling::new(tok)), levels: Rc::default(), paths: Vec::new() };
         let level = mask.level(&[])?;
         mask.paths.push(Path { words: Vec::new(), level, at: At::Node(0) });
         Ok(mask)
@@ -139,12 +141,12 @@ impl<'a> Mask<'a> {
 
     fn level(&mut self, words: &[String]) -> Result<Rc<Level>, Error> {
         let prefix = words.join(" ");
-        if let Some(l) = self.levels.get(&prefix) {
+        if let Some(l) = self.levels.borrow().get(&prefix) {
             return Ok(l.clone());
         }
         let refs: Vec<&str> = self.numbers.iter().map(String::as_str).collect();
         let level = Rc::new(Level::build(&prefix, self.vocab, self.tok, &refs)?);
-        self.levels.insert(prefix, level.clone());
+        self.levels.borrow_mut().insert(prefix, level.clone());
         Ok(level)
     }
 

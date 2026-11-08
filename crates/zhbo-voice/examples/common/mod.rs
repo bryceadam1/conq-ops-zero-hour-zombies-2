@@ -49,6 +49,27 @@ fn vocab(line: &str) -> Option<(String, Vocabulary)> {
 }
 
 
+/// The voices the held-out evaluations speak in (`voice_listen`, `voice_audio`'s test split).
+pub const TEST_VOICES: [&str; 8] = ["Samantha", "Daniel", "Karen", "Moira", "Rishi", "Tessa", "Reed (English (US))", "Shelley (English (US))"];
+
+/// The voices training audio is spoken in: none of [`TEST_VOICES`].
+pub const TRAIN_VOICES: [&str; 14] = [
+    "Eddy (English (UK))",
+    "Eddy (English (US))",
+    "Flo (English (UK))",
+    "Flo (English (US))",
+    "Fred",
+    "Grandma (English (UK))",
+    "Grandpa (English (US))",
+    "Kathy",
+    "Ralph",
+    "Reed (English (UK))",
+    "Rocko (English (UK))",
+    "Rocko (English (US))",
+    "Sandy (English (US))",
+    "Shelley (English (UK))",
+];
+
 /// `text` spoken by macOS's `say` in `voice` (at `rate` words a minute, or the voice's own) as
 /// 16 kHz mono samples.
 pub fn speak(text: &str, voice: &str, rate: Option<u32>, scratch: &Path) -> Result<Vec<f32>, zhbo_voice::Error> {
