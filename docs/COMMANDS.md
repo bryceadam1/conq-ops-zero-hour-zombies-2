@@ -538,24 +538,35 @@ with its reason (there is no BO2 source, so the comment says it is a mod rule):
 These are client-side numbers and never reach the sim. Even so, they belong in the tuning pack,
 like every other gameplay number.
 
-## 11. Voice (later)
+## 11. Voice
 
-Voice runs entirely on the player's machine.
+Voice runs entirely on the player's machine. **Decided (2026-11-07):** Whisper for recognition,
+downloaded by the launcher at install, never bundled (it is MIT-licensed, code and weights);
+flan-t5-small as the first translation model; candle as the runtime. **Built:** the training set
+(below). Not built yet: the model's fine-tuning, inference and the constrained decoder.
 
-- **Speech recognition.** A Whisper-class model, prompt-biased each match with the run-time
-  vocabulary (unit, place and team names), so proper nouns are heard correctly ("oil derrick",
-  not "oil Derek").
-- **Translation.** A small generative model translates the recognised text into canonical
-  language. Two kinds will be prototyped and measured on the same data:
-  - a T5-style encoder-decoder (about 60–250M parameters), which is quick and suited to narrow
-    translation;
-  - a small decoder-only model, which can also take instructions and a short, fixed-format
-    situation summary (own unit types and counts, the last selection, nearby place names) built
-    from the resolver's data.
+- **Speech recognition.** Whisper, prompt-biased each match with the run-time vocabulary (unit,
+  place and team names), so proper nouns are heard correctly ("oil derrick", not "oil Derek"). The
+  launcher downloads its weights at install, beside the converted archive.
+- **Translation: flan-t5-small first** (77M parameters, Apache-2.0), fine-tuned on the training
+  set; flan-t5-base (250M) is the step up if it falls short, and a decoder-only model of about
+  0.5B (Qwen-class) the comparison to run on the same data. Why this order:
+  - The task is narrow: mostly copying names and reordering words into a fixed grammar. Recent
+    small-model work finds that grammar-constrained decoding makes every output well formed, but
+    meaning still depends on size and fine-tuning; fine-tuning plus constraints is the strongest
+    pairing for small models (arXiv 2609.23742, SLOT arXiv 2505.04016). For a decoder-only 0.5B
+    model, inference-time search only partly closed the gap on a harder constrained task
+    (arXiv 2608.25761).
+  - An encoder-decoder reads the sentence once and decodes 10–30 tokens: fast on a CPU, and small
+    (about 300 MB in f32, a quarter of that quantised), which matters beside a running game.
+  - A decoder-only model's advantage, a situation summary in its prompt, is worth measuring once
+    the small model's errors are known.
 
-  The model runs on the GPU if there is room, otherwise on the CPU or the Apple Neural Engine.
-  Commands are 10–30 tokens, so either is fast enough. Inference runs from Rust (candle or ONNX
-  Runtime) with our own logit hook.
+  The model runs on the GPU if there is room, otherwise on the CPU.
+- **Runtime: candle.** Pure Rust (the project's rule), with T5, Whisper and Qwen implementations,
+  Metal on Apple Silicon and the decoding loop in our own code, which the mask needs. ONNX Runtime
+  (`ort`) was the alternative; it would mean shipping its native libraries. The weights are read as
+  safetensors, downloaded at install like Whisper's.
 - **Constrained decoding.** At each step the logits of every token the grammar does not allow are
   set to −∞:
   - The grammar is precompiled against the model's token list into a state machine. The fixed
@@ -570,14 +581,29 @@ Voice runs entirely on the player's machine.
      command asks for confirmation instead of running.
   3. **Fine-tuning on the canonical language**, so the mask is a safety net, not the main
      mechanism.
-- **Training data** comes from the grammar:
-  1. A Rust sampler walks the grammar and writes ASTs with their canonical text, weighted toward
-     common commands.
-  2. A subagent writes many natural paraphrases of each line. The labels stay correct because
-     they came from the sampler.
-  3. A back-translation pass drops pairs whose paraphrase no longer means the label.
-  4. Code adds speech-recognition noise (homophones, dropped words, number confusions) so it can
-     be reproduced.
+- **Training data (built, `tools/voice/`):**
+  1. **The sampler** (`command::sample`) draws canonical commands, each over its own invented
+     vocabulary (made-up unit, place, team and power names; the real class words), weighted toward
+     common commands. Every draw round-trips through the parser; every verb turns up.
+     `cargo run -p zhbo-core --example voice_corpus -- sample tools/voice 2400 16 20261107` wrote
+     2,400 commands in 16 batches.
+  2. **Paraphrases:** Sonnet agents wrote six spoken phrasings per command to
+     `tools/voice/PARAPHRASE_BRIEF.md`'s rules; the labels stay correct because they came from the
+     sampler. A first pass (8 agents, 300 commands each) came back about half templated: the
+     canonical text with filler around it. A second pass (16 agents, 150 each) under a stricter
+     brief (no scripts, at least four of six reworded, written in chunks) came back 17%
+     filler-only. Both passes are kept, with at most one filler-only phrasing per command.
+  3. **Meaning checks** stand in for the back-translation pass and drop a paraphrase that loses a
+     name (every name verbatim), a count or group number, a compass word, an exclusion or a
+     sequence (`voice_corpus assemble`).
+  4. **Speech noise** in code, seeded: homophones (for/four, there/their, guard/god, …), a filler,
+     a dropped small word, never inside a name, on 40% of the kept phrasings.
+  5. **Splits** by command, 90/5/5 (`train.tsv`, `dev.tsv`, `test.tsv`, built, not committed), the
+     canonical lines among the training inputs; `stats.txt` counts what was kept and dropped and
+     why. The first build: 20,643 paraphrases kept of 28,800 (287 lost a name, 22 a count,
+     exclusion or sequence, 7,848 were filler-only), 8,241 noisy copies; 28,054 training rows,
+     1,507 dev, 1,469 test. The normaliser alone already reads 6,722 of the kept phrasings back
+     to their label; the model's job is the rest.
 
   Training uses **placeholder names** in place of real unit and place names, so the model learns
   to copy names instead of memorising Zero Hour's roster. That generalises to mods and other

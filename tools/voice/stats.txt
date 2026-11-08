@@ -1,0 +1,12 @@
+canonical commands: 2400
+paraphrases read: 28800 (unknown ids: 0)
+kept: 20643
+noisy copies: 8241
+read back by the normaliser alone: 6722
+rows: train 28054, dev 1507, test 1469
+dropped:
+  lost the exclusion: 18
+  lost the name: 287
+  lost the number 2: 3
+  lost the sequence: 1
+  only filler around the label (one kept per command): 7848

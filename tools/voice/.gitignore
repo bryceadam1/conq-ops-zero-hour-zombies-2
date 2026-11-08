@@ -1,0 +1,4 @@
+# Built from canonical.tsv and paraphrases/ by `voice_corpus assemble` (deterministic for its seed).
+train.tsv
+dev.tsv
+test.tsv

@@ -14889,3 +14889,31 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   normaliser now keeps the match's names (types, classes, places, teams) as said before it looks up
   synonyms (`a_synonym_never_shadows_one_of_the_matchs_names`). It is a Rust-only change to how
   candidates are formed, covered by its unit test; the leg's lines do not touch it.
+
+## First-person commands, step 6 begun: voice decisions and the training set (2026-11-07)
+
+- **Decisions:**
+  - Whisper for speech recognition, downloaded by the launcher at install and never bundled (the
+    user's call; MIT code and weights).
+  - flan-t5-small (77M, Apache-2.0) as the first translation model, flan-t5-base as the step up,
+    and a Qwen-class 0.5B decoder-only model as the comparison. The research: grammar-constrained
+    decoding guarantees structure but not meaning in small models, and fine-tuning plus constraints
+    is the strongest small-model pairing (arXiv 2609.23742, SLOT arXiv 2505.04016). Our task is
+    narrow, so a small encoder-decoder fits.
+  - candle as the runtime: pure Rust, T5/Whisper/Qwen implementations, our own decoding loop for
+    the mask. `ort` would ship native libraries.
+  - docs/COMMANDS.md section 11 has the reasoning.
+- **The training set** (`tools/voice/`, `command::sample`, the `voice_corpus` example): 2,400
+  canonical commands over invented vocabularies; Sonnet paraphrases; meaning checks; seeded speech
+  noise; splits by command. The splits are rebuilt by `assemble`, not committed.
+- **Gotcha: paraphrase agents template when the batch is large.** With 300 commands × 6 each,
+  the first eight agents finished in 30–60 s and wrote scripts that put filler around the canonical
+  text: 42–67% of each batch, flagged by measuring the filler-only share. The fixes were:
+  - smaller batches (150);
+  - a brief that bans scripts and demands rewording, with examples, written in chunks;
+  - an `assemble` guard keeping one filler-only phrasing per command.
+
+  The second pass ran 2–4 minutes per agent and came back 17% filler-only. Check a pass's
+  filler-only share before trusting it.
+- **Results:** 20,643 of 28,800 paraphrases kept; 28,054/1,507/1,469 rows; the normaliser alone
+  reads 6,722 of the kept phrasings back to their label.

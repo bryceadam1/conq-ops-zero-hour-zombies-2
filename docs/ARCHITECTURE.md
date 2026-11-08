@@ -128,7 +128,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   it stopped), `world.rs` (the ABI records `CmdObject`/`CmdButton`/`CmdOrder` and the `World`
   snapshot that names the types and the buttons' things), `actions.rs` (how the language covers
   every engine command type and order message: the one table of which buttons a verb presses, and
-  the coverage gates), `cluster.rs` (the groups `in the <region> group` names), `normal.rs`
+  the coverage gates), `cluster.rs` (the groups `in the <region> group` names), `sample.rs` (canonical
+  commands over invented vocabularies for the voice training set; the `voice_corpus` example
+  builds it in `tools/voice/`), `normal.rs`
   (the synonym and alias tables of `data/ConquerOps/commands.ini` and the normaliser),
   `resolve.rs` (a command to object ids and orders), `session.rs` (the command
   line's typing and echo, and `run`, which the FFI layer calls after the client frame). The HUD

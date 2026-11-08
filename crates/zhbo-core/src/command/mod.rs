@@ -16,6 +16,7 @@
 //!   `parse(print(ast)) == ast`.
 //! * [`world`]: the ABI records of the client services and the snapshot a command resolves against.
 //! * [`resolve`]: a command to object ids and engine orders.
+//! * [`sample`]: canonical commands drawn from the grammar for the voice model's training set.
 //! * [`session`]: the first-person command line (typing, submitting, the echo) and running a
 //!   submitted line against the engine.
 
@@ -26,6 +27,7 @@ pub mod normal;
 pub mod parse;
 pub mod print;
 pub mod resolve;
+pub mod sample;
 pub mod session;
 pub mod vocab;
 pub mod world;
