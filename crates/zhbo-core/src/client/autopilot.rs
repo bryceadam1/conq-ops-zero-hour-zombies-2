@@ -152,8 +152,9 @@ pub struct Autopilot {
     /// his class and submits [`COMMAND_LINES`] to the command line; the bridge's scene (his Rangers
     /// behind him, an enemy rebel ahead) logs what they do.
     pub command: bool,
-    /// The command run's next line.
+    /// The command run's next line, and its next menu pick.
     pub(crate) command_step: usize,
+    pub(crate) menu_step: usize,
     /// The drops run: where the nearest dropped weapon is from the eye (yaw, pitch, the distance
     /// across the ground), set by the client from the sim, and when the use key was pressed.
     pub(crate) drop_aim: Option<(f32, f32, f32)>,
@@ -249,6 +250,9 @@ pub struct Scripted {
     /// Submit this command line this frame (the command run, [`Autopilot::command_input`]): the
     /// line goes to the command session as if typed and confirmed with Enter.
     pub command: Option<&'static str>,
+    /// Open the command menu ([`MENU_OPEN`]) or pick this option in it, if it is offered; the
+    /// client answers with [`Autopilot::menu_answer`].
+    pub menu_pick: Option<&'static str>,
 }
 
 /// The command run's lines, each with the first-person second it is submitted at: the Rangers come
@@ -256,6 +260,13 @@ pub struct Scripted {
 /// an order with no selection goes to the last one (`them`); then the command buttons: the
 /// Barracks queues two Rangers and one is cancelled, the dozer lays out a Barracks near the
 /// General, and the Rangers take a right-click on open ground.
+/// The command run's menu: open it, then pick each option as the completions offer it, `(done)`
+/// last (each with the first-person second it is due at).
+pub const MENU_OPEN: &str = "(open)";
+pub const MENU_PICKS: [(f32, &str); 5] = [(32.0, MENU_OPEN), (33.0, "rangers"), (34.0, "guard"), (35.0, "me"), (36.0, crate::command::session::DONE)];
+/// How long a pick may wait to be offered before the run gives up on it and logs the options.
+pub const MENU_PATIENCE: f32 = 3.0;
+
 pub const COMMAND_LINES: [(f32, &str); 8] = [
     (2.0, "rangers move to me"),
     (14.0, "the nearest ranger attack the nearest enemy rebel"),
@@ -816,7 +827,22 @@ impl Autopilot {
                 command = Some(line);
             }
         }
-        Scripted { class_pick: pick, command, ..Default::default() }
+        let menu_pick = MENU_PICKS.get(self.menu_step).filter(|(at, _)| self.t >= *at).map(|&(_, p)| p);
+        Scripted { class_pick: pick, command, menu_pick, ..Default::default() }
+    }
+
+    /// The client's answer to this frame's [`Scripted::menu_pick`]: whether the menu offered it
+    /// (`options`: what it did offer). The run moves on when it was, or once [`MENU_PATIENCE`] has
+    /// passed.
+    pub fn menu_answer(&mut self, pick: &str, offered: bool, options: &[String]) {
+        let Some(&(at, _)) = MENU_PICKS.get(self.menu_step) else { return };
+        if offered {
+            self.menu_step += 1;
+            self.log.push(format!("autopilot: command menu: picked '{pick}'"));
+        } else if self.t - at > MENU_PATIENCE {
+            self.menu_step += 1;
+            self.log.push(format!("autopilot: command menu: '{pick}' was not offered; the options were {options:?}"));
+        }
     }
 
     /// The smoke-screen run: pick the seeded class (its tactical the smoke grenade), throw it ahead,

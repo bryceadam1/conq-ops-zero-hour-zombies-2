@@ -40,6 +40,8 @@ pub struct Bindings {
     pub alt_mode: Key,
     /// The builder's hammer (the use key builds at a site).
     pub hammer: Key,
+    /// The first-person command menu (docs/COMMANDS.md section 8).
+    pub command_menu: Key,
 }
 
 impl Default for Bindings {
@@ -66,6 +68,7 @@ impl Default for Bindings {
             scoreboard: Key::Tab,
             alt_mode: Key::Key3,
             hammer: Key::B,
+            command_menu: Key::Z,
         }
     }
 }
@@ -1056,6 +1059,18 @@ impl Client {
         if let Some(line) = script.command {
             self.command.submit(line);
         }
+        if let Some(pick) = script.menu_pick {
+            let offered = if pick == autopilot::MENU_OPEN {
+                self.command.open_menu();
+                true
+            } else {
+                self.command.pick_text(pick)
+            };
+            let options: Vec<String> = self.command.menu.as_ref().map(|m| m.options.iter().map(|o| o.text.clone()).collect()).unwrap_or_default();
+            if let Some(ap) = self.autopilot.as_mut() {
+                ap.menu_answer(pick, offered, &options);
+            }
+        }
         scripted.input_allowed = 1;
         if let Some((yaw, pitch)) = script.look {
             self.yaw = wrap_angle(yaw);
@@ -1275,10 +1290,26 @@ impl Client {
                     let menu = self.class_pick_wanted(unclassed) || self.declining(unclassed);
                     // The command line (Enter): while it is up it holds the keyboard, as the class
                     // screen does; the keys still down as it closes are swallowed.
-                    let typing = self.command.keys(&inp.keys, allowed && !in_fc && !menu && !spectating && !unclassed);
+                    let free = allowed && !in_fc && !menu && !spectating && !unclassed;
+                    // The command menu (its key): while up it borrows the wheel and the mouse
+                    // buttons; movement and look stay.
+                    let pointing = self.command.menu_input(&inp.keys, inp.wheel, free, self.cfg.bindings.command_menu);
+                    let typing = self.command.keys(&inp.keys, free && self.command.menu.is_none() && !pointing);
                     if std::mem::take(&mut self.command.swallow) {
                         self.prev_held = u32::MAX;
                     }
+                    let quiet;
+                    let inp = if pointing {
+                        let mut q = *inp;
+                        q.wheel = 0.0;
+                        q.keys.set_down(Key::MouseLeft, false);
+                        q.keys.set_down(Key::MouseRight, false);
+                        q.keys.set_down(Key::Enter, false);
+                        quiet = q;
+                        &quiet
+                    } else {
+                        inp
+                    };
                     if spectating {
                         // Following: his aim, as the sim stepped it, smoothed between logic
                         // frames. The spectator's own mouse never turns the view.
@@ -1436,7 +1467,10 @@ impl Client {
         if !matches!(self.view, ViewMode::Fps) {
             self.command.open = false;
         }
-        out.menu_open = (self.class_pick_open || self.command.open) as i32;
+        if !matches!(self.view, ViewMode::Fps) {
+            self.command.menu = None;
+        }
+        out.menu_open = (self.class_pick_open || self.command.open || self.command.menu.is_some()) as i32;
         // The frame's impacts (consume_events and the prediction filled them above): the
         // presented seat's own, then other players' into the slots left.
         out.hits = self.hits;

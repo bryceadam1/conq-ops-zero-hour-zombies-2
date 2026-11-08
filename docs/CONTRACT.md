@@ -1293,6 +1293,12 @@ to `Sim::state_hash` and no new sim message exists.
   look, the map and scoreboard keys do nothing, and `ZhboClientOut.menu_open` is set so the bridge
   eats Escape (Escape cancels the line). The keys still down as it closes are swallowed
   (`prev_held = u32::MAX`). `Key::Minus` (bit 49) types the hyphen of `attack-move`.
+* **The menu.** Z (`Bindings::command_menu`) toggles the command menu in first person
+  (`command::session::Session::menu_input`). While it is up the client strips the wheel, the mouse
+  buttons and Enter from first person's input (movement and look stay), and `menu_open` is set as
+  for the line. After the client frame, when its picks changed, `zhbo_client_frame` recomputes its
+  options with the client host at hand (`command::session::refresh_menu`: a fresh snapshot, the
+  grammar's completions, the counts). Its `(done)` submits the picks as a line.
 * **Running.** `zhbo_client_frame` runs a submitted line after the client frame, with the client
   host at hand: `command::session::run` takes a `command_objects` snapshot, builds the vocabulary
   from `template_name`, parses, resolves (`command::resolve`) and sends each order with

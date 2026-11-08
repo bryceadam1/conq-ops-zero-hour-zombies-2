@@ -1,5 +1,11 @@
-//! The first-person command line (docs/COMMANDS.md section 8, the typed entry) and running a
-//! submitted line against the engine.
+//! The first-person command line and command menu (docs/COMMANDS.md section 8) and running a
+//! submitted command against the engine.
+//!
+//! The menu (its key, Z by default) builds a command a word or phrase at a time from the
+//! completions the grammar allows next ([`super::parse::completions`]), with live counts: the wheel
+//! (or Up/Down) walks the options, the left button (or Enter) picks one, the right button (or
+//! Backspace) takes the last pick back, and `(done)` runs the command. While it is up it borrows
+//! the wheel and the mouse buttons; movement and look stay with first person.
 //!
 //! In first person, Enter opens the line; letters, digits, space and `-` type, Backspace deletes,
 //! Enter submits and Escape cancels. While it is open it holds the keyboard: the client sends no
@@ -17,6 +23,34 @@ use crate::math::Vec3;
 pub const ECHO_TIME: f32 = 5.0;
 /// The longest line the entry takes, characters.
 pub const LINE_MAX: usize = 120;
+
+/// The menu's option that runs the command built so far.
+pub const DONE: &str = "(done)";
+
+/// One option of the command menu: a word or phrase, and how many of the player's objects it
+/// names, where it names some.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MenuOption {
+    pub text: String,
+    pub count: Option<usize>,
+}
+
+/// The command menu while it is up.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Menu {
+    /// The words and phrases picked so far: the command's canonical text, in order.
+    pub picks: Vec<String>,
+    pub options: Vec<MenuOption>,
+    pub highlight: usize,
+    /// The picks changed: the options are recomputed after the frame ([`refresh_menu`]).
+    pub dirty: bool,
+}
+
+impl Menu {
+    pub fn text(&self) -> String {
+        self.picks.join(" ")
+    }
+}
 
 /// What the last command did, for the echo line.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +75,10 @@ pub struct Session {
     /// Keys down when the line closed: ignored until released, so the Enter or the last letter
     /// does not reach first person.
     pub(crate) swallow: bool,
+    /// The command menu, while it is up.
+    pub menu: Option<Menu>,
+    /// The keys down last frame, for the menu's edges.
+    menu_prev: KeySet,
 }
 
 /// The character a key types into the line, if any.
@@ -105,6 +143,78 @@ impl Session {
         self.open = false;
         self.line.clear();
         self.swallow = true;
+    }
+
+    /// One frame of the command menu (`menu_key` toggles it; `free` as for [`Session::keys`], and
+    /// never while the typed line is up). Returns whether the menu holds the wheel and the mouse
+    /// buttons this frame (the frame it closes included).
+    pub fn menu_input(&mut self, now: &KeySet, wheel: f32, free: bool, menu_key: Key) -> bool {
+        let prev = std::mem::replace(&mut self.menu_prev, *now);
+        let edge = |k: Key| now.is_down(k) && !prev.is_down(k);
+        if !free || self.open {
+            self.menu = None;
+            return false;
+        }
+        let Some(menu) = &mut self.menu else {
+            if edge(menu_key) {
+                self.menu = Some(Menu { dirty: true, ..Menu::default() });
+                return true;
+            }
+            return false;
+        };
+        if edge(menu_key) || edge(Key::Escape) {
+            self.menu = None;
+            self.swallow = true;
+            return true;
+        }
+        let n = menu.options.len();
+        if n > 0 {
+            // Wheel up (positive notches) walks up the list, as BO2's lists scroll.
+            let mut step = -(wheel.trunc() as i32);
+            step += edge(Key::Down) as i32 - edge(Key::Up) as i32;
+            menu.highlight = (menu.highlight as i32 + step).rem_euclid(n as i32) as usize;
+        }
+        if edge(Key::MouseRight) || edge(Key::Backspace) {
+            if menu.picks.pop().is_some() {
+                menu.dirty = true;
+                menu.highlight = 0;
+            }
+        } else if edge(Key::MouseLeft) || edge(Key::Enter) {
+            if let Some(text) = menu.options.get(menu.highlight).map(|o| o.text.clone()) {
+                self.pick(&text);
+            }
+        }
+        true
+    }
+
+    fn pick(&mut self, text: &str) {
+        let Some(menu) = &mut self.menu else { return };
+        if text == DONE {
+            self.submitted = Some(menu.text());
+            self.menu = None;
+            self.swallow = true;
+        } else {
+            menu.picks.push(text.to_string());
+            menu.dirty = true;
+            menu.highlight = 0;
+        }
+    }
+
+    /// Pick the option `text` if the menu offers it now (the autopilot's menu run). Returns whether
+    /// it was offered.
+    pub fn pick_text(&mut self, text: &str) -> bool {
+        let offered = self.menu.as_ref().is_some_and(|m| !m.dirty && m.options.iter().any(|o| o.text == text));
+        if offered {
+            self.pick(text);
+        }
+        offered
+    }
+
+    /// Open the menu (the autopilot's menu run).
+    pub fn open_menu(&mut self) {
+        if self.menu.is_none() && !self.open {
+            self.menu = Some(Menu { dirty: true, ..Menu::default() });
+        }
     }
 
     /// Submit a line directly (the autopilot's command run).
@@ -193,4 +303,38 @@ pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, t
             format!("command: '{line}' refused: {why}{refused}")
         }
     }
+}
+
+/// Recompute the menu's options after its picks changed: the completions the grammar allows next
+/// over this world's vocabulary, `(done)` first when the picks are a whole command, each name with
+/// how many of the player's objects it names.
+pub fn refresh_menu(session: &mut Session, host: &dyn Host) {
+    let teams = session.memory.team_names();
+    let alive_in_team = |name: &str| session.memory.teams.iter().find(|(n, _)| n == name).map(|(_, ids)| ids.clone());
+    let Some(menu) = session.menu.as_mut().filter(|m| m.dirty) else { return };
+    let world = World::new(host.objects(), host.buttons(), &|t| host.template_name(t));
+    let vocab = world.vocabulary(&teams);
+    let c = super::parse::completions(&menu.text(), &vocab);
+    let own: Vec<&CmdObject> = world.objects.iter().filter(|o| o.relation == super::world::relation::OWN && o.flags & super::world::cmdflags::SELECTABLE != 0).collect();
+    let count = |text: &str| -> Option<usize> {
+        if text == "units" {
+            return Some(own.iter().filter(|o| o.flags & super::world::cmdflags::SELECT_ALL != 0).count());
+        }
+        if let Some((noun, tmpls)) = world.types.iter().find(|(n, _)| n.singular == text || n.plural == text) {
+            let _ = noun;
+            return Some(own.iter().filter(|o| tmpls.contains(&o.tmpl)).count());
+        }
+        if let Some(&(_, _, flag)) = super::world::CLASSES.iter().find(|(s, p, _)| *s == text || *p == text) {
+            return Some(own.iter().filter(|o| o.flags & flag != 0).count());
+        }
+        alive_in_team(text).map(|ids| own.iter().filter(|o| ids.contains(&o.id)).count())
+    };
+    let mut options: Vec<MenuOption> = Vec::new();
+    if c.complete {
+        options.push(MenuOption { text: DONE.to_string(), count: None });
+    }
+    options.extend(c.next.iter().map(|t| MenuOption { text: t.clone(), count: count(t) }));
+    menu.options = options;
+    menu.highlight = menu.highlight.min(menu.options.len().saturating_sub(1));
+    menu.dirty = false;
 }

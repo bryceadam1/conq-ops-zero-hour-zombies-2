@@ -14842,3 +14842,21 @@ The language now presses the player's command buttons and does what a right-clic
   Barracks' queue going to 2 and back to 1, a construct order placing a Barracks site 71 from the
   General, and the Rangers' right-click on open ground sent. No `--mp` leg: the sim and the
   engine's logic are unchanged.
+
+## First-person commands, step 4: the command menu (2026-11-07)
+
+Z opens the command menu in first person (docs/COMMANDS.md section 8). It builds a command from
+the grammar's own valid completions (`command::parse::completions`, which the voice decoder's mask
+will reuse), with live counts, the wheel and buttons borrowed while it is up, and `(done)` to run.
+- **Completions** expand the parser's expectations (`<unit type>`, `<place>`, …) into the match's
+  names and keep only what still parses. Validating every name was slow: 0.4 s per refresh over
+  309 types in a debug build, a full parse per name. Names are atomic in the grammar, so each
+  list's names now form groups that the grammar treats alike (a noun's singulars, plurals, mass
+  nouns), and one representative validates its group: about 22 ms per debug refresh.
+- **Options are recomputed after the frame** when the picks change, with the client host at hand
+  (`command::session::refresh_menu`), from a fresh snapshot.
+- **Verification:** 44 command tests and the HUD tests pass; `scripts/autotest-mac.sh --command`
+  22/22: the menu opened, every pick (`rangers`, `guard`, `me`, `(done)`) was offered by the real
+  completions over the real vocabulary, and `rangers guard me` ran. It ran for four Rangers: the
+  fourth was the one the build line had left queued. The first run's checks expected three; they
+  now accept the count.

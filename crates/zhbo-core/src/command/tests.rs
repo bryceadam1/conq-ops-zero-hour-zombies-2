@@ -3,6 +3,7 @@
 
 use super::ast::*;
 use super::vocab::{fixed_verbs, Noun, ThingList};
+use super::parse::completions;
 use super::{parse, print, Vocabulary};
 use crate::weapons::rng::Rng;
 
@@ -445,4 +446,62 @@ fn random_commands_print_and_parse_back_unchanged() {
             Err(e) => panic!("#{i}: '{text}' did not parse: {e}\n{cmd:#?}"),
         }
     }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Completions
+// ------------------------------------------------------------------------------------------------
+
+#[test]
+fn completions_offer_only_what_keeps_the_command_parseable() {
+    let v = vocab();
+    let c = completions("", &v);
+    assert!(!c.complete);
+    // A command may start with a selection or a verb (an implied selection).
+    for want in ["rangers", "the", "units", "group", "them", "that", "alpha team", "build", "stop", "move", "purchase"] {
+        assert!(c.next.iter().any(|n| n == want), "'{want}' missing from {:?}", c.next);
+    }
+    // After `the`, singulars only.
+    let c = completions("the", &v);
+    assert!(c.next.iter().any(|n| n == "ranger") && !c.next.iter().any(|n| n == "rangers"), "{:?}", c.next);
+    assert!(c.next.iter().any(|n| n == "nearest"));
+    // After the selection: verbs. `rangers move to` wants a point, not `there` (no preposition there).
+    let c = completions("rangers move to", &v);
+    assert!(c.next.iter().any(|n| n == "me") && c.next.iter().any(|n| n == "the bridge"));
+    assert!(!c.next.iter().any(|n| n == "there"), "{:?}", c.next);
+    // A whole command is complete, and may go on.
+    let c = completions("rangers move to me", &v);
+    assert!(c.complete);
+    assert!(c.next.iter().any(|n| n == "then"));
+    // `build` offers counts and types; `name them` offers fresh team names.
+    let c = completions("build", &v);
+    assert!(c.next.iter().any(|n| n == "power plant") && c.next.iter().any(|n| n == "3"));
+    let c = completions("rangers name them", &v);
+    assert!(c.next.iter().any(|n| n == "bravo team") && !c.next.iter().any(|n| n == "alpha team"), "{:?}", c.next);
+    // An unparseable prefix has none.
+    assert_eq!(completions("rangres", &v), super::parse::Completions::default());
+    // Every offer extends the prefix into something that parses on.
+    for prefix in ["", "the nearest", "rangers", "rangers guard", "build 3"] {
+        for n in completions(prefix, &v).next {
+            let longer = format!("{prefix} {n}");
+            assert!(completions(&longer, &v).complete || !completions(&longer, &v).next.is_empty(), "'{longer}' is a dead end");
+        }
+    }
+}
+
+#[test]
+fn completions_stay_quick_over_a_large_vocabulary() {
+    // A full match's vocabulary: hundreds of type names (the map's and the buildable ones).
+    let mut v = vocab();
+    for i in 0..300 {
+        v.types.push(Noun::new(&format!("unit kind {i}"), &format!("unit kinds {i}")));
+    }
+    let start = std::time::Instant::now();
+    for prefix in ["", "the", "rangers", "rangers move to", "build"] {
+        assert!(!completions(prefix, &v).next.is_empty());
+    }
+    let took = start.elapsed();
+    eprintln!("five menu refreshes over {} types: {took:?}", v.types.len());
+    // A refresh runs once per pick, not per frame; even unoptimised it stays well under a second.
+    assert!(took.as_secs_f32() < 1.0, "{took:?}");
 }

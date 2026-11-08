@@ -2,8 +2,8 @@
 
 How the General commands his army without leaving first person.
 
-**Status (2026-11-07):** steps 1 to 3 of the build order are built (section 13): the language,
-the typed command line in first person, the resolver, the command buttons and right-click verbs,
+**Status (2026-11-07):** steps 1 to 4 of the build order are built (section 13): the language,
+the typed command line and the command menu in first person, the resolver, the command buttons and right-click verbs,
 and the coverage gates (`crates/zhbo-core/src/command/`, `host/zhbo/ZhboCommand.cpp`,
 CONTRACT.md "First-person commands"). The rest is design. The decisions below were agreed with the user. Section 13 lists
 what is still open.
@@ -472,12 +472,18 @@ CRC, retaliation mode (a game option).
 
 ## 8. Front ends
 
-- **Scroll-wheel menu.** A held or toggled command mode (key still to be chosen) borrows the
-  wheel and a confirm key. Movement and aiming stay live. The menu walks the grammar. Each step
-  lists only valid completions, with live counts ("rangers (12)", "the northernmost dozer (1)").
-  While a command is being built, the units it would select are outlined in the world, and the
-  canonical text so far is shown. The menu is how players learn the language they will later
-  speak.
+- **Scroll-wheel menu (built).** Z (the `command_menu` binding) toggles it in first person. It
+  builds a command a word or phrase at a time from the grammar's valid completions
+  (`command::parse::completions`): the wheel or Up/Down walks the options, the left button or
+  Enter picks one, the right button or Backspace takes the last pick back, and `(done)`, first in
+  the list once the picks are a whole command, runs it. Escape or Z closes it. While it is up it
+  borrows the wheel and the mouse buttons (no weapon swap, fire or aim); movement and look stay
+  with first person. Names show how many of the player's objects they name ("rangers (12)"). The
+  options are recomputed after the frame each time the picks change, from a fresh world snapshot
+  (a few milliseconds over a full match's vocabulary). Completions validate one representative of
+  each group a list's names form (a noun's singulars, plurals, mass nouns), since names are atomic
+  in the grammar. Not built yet: outlining in the world the units the command would select.
+  The menu is how players learn the language they will later speak.
 - **Typed entry (built).** In first person, Enter opens a line at the lower left, where BO2 puts
   chat. Letters, digits, space and `-` type, Backspace deletes, Enter submits and Escape cancels.
   While the line is up it holds the keyboard: no movement, look, map or scoreboard, and Escape does
@@ -607,13 +613,14 @@ Voice runs entirely on the player's machine.
 3. **Built.** The command buttons (`command_buttons`) and their verbs, the right-click verbs
    through the engine's own `evaluateContextCommand`, construction (lines included), cancel,
    unload, the hotkey orders, and the three-part coverage gate (section 7, section 12).
-4. The scroll-wheel menu over valid completions.
+4. **Built.** The scroll-wheel menu over valid completions (section 8), with counts and the
+   `--command` leg building a command through it.
 5. Adjectives, filters, clusters, place names, team names and synonyms.
 6. Voice: the sampler and dataset, the model prototypes, constrained decoding.
 
 **Open questions:**
-- Which key opens the scroll-wheel menu, and whether it's held or toggled (the typed line opens
-  with Enter).
+- Whether the menu should outline the units its command would select (the engine's local
+  selection decals would do it, through one more client service).
 - How a distance is spoken: coarse words only (`near`, `north of`), or numbers too, and in what
   unit.
 - Whether the General's own field-computer orders (CONTRACT.md "The General under RTS control")

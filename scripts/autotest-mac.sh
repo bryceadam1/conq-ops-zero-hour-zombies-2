@@ -62,7 +62,8 @@
 #                                      give an order with no selection to the last one; then a
 #                                      Barracks queues two Rangers and cancels one, his dozer lays out
 #                                      a Barracks near him, and the Rangers take a right-click on open
-#                                      ground
+#                                      ground; last, the command menu builds `rangers guard me` from its
+#                                      own completions and runs it
 #   scripts/autotest-mac.sh --detail   the graphics detail Zero Hour picks (host patch 0025): four starts
 #                                      with Options.ini set up as a new player (none), a player whose
 #                                      file holds the old detector's Low, one who chose Low and one who
@@ -873,6 +874,15 @@ EOF
     check "construct line: placed" "command order: construct to 1 object\(s\).*: 1$"
     check "  ...a Barracks site" "autopilot: command scene: a Barracks site [0-9]+"
     check "right-click on open ground" "command order: right-click to 3 object\(s\).*: 1$"
+    check "menu: picks offered to (done)" "autopilot: command menu: picked '\(done\)'"
+    if grep -q "was not offered" "$l"; then
+        printf '%-34s FAIL\n' "  ...every pick was offered"; ok=1
+    else
+        printf '%-34s PASS\n' "  ...every pick was offered"
+    fi
+    # Three Rangers, or four once the Barracks has finished the one the build line left queued.
+    check "  ...its command ran" "command: 'rangers guard me' -> [0-9]+ units: rangers guard me, 1 order\(s\)"
+    check "  ...guard order sent" "command order: guard object to [0-9]+ object\(s\)"
     grep -E "command" "$l" | head -60
     echo "screenshots and log: $out"
     exit $ok

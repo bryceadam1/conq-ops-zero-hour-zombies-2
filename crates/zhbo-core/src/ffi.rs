@@ -1402,6 +1402,11 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         // A command line submitted this frame (docs/COMMANDS.md): resolved against the engine now
         // and sent as the overhead view's orders. Presentation-side: only the orders' messages
         // reach the sim, replicated like any player's.
+        // The command menu's options, after its picks changed.
+        if s.client.command.menu.as_ref().is_some_and(|m| m.dirty) {
+            let engine = CommandEngine { client: &s.client_host, logic: &s.logic, player: inp.local_player };
+            crate::command::session::refresh_menu(&mut s.client.command, &engine);
+        }
         if let Some(line) = s.client.command.take_submitted() {
             let player = inp.local_player;
             let viewer = s.sim.player(player).map(|p| crate::command::session::Viewer {

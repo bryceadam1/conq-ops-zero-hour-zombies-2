@@ -88,6 +88,89 @@ pub fn parse(text: &str, vocab: &Vocabulary) -> Result<Command, ParseError> {
     }
 }
 
+/// What may come next after a partial command (docs/COMMANDS.md section 8): the menu's options and,
+/// later, the voice decoder's mask.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Completions {
+    /// Each word or phrase that keeps the command parseable, in the parser's order of expectation
+    /// (names expanded from their lists), no repeats.
+    pub next: Vec<String>,
+    /// The prefix is itself a whole command.
+    pub complete: bool,
+}
+
+/// The counts the menu offers for `<number>`, and the team names it suggests for `name them`.
+pub const MENU_NUMBERS: [&str; 8] = ["2", "3", "4", "5", "6", "8", "10", "12"];
+pub const TEAM_SUGGESTIONS: [&str; 6] = ["alpha team", "bravo team", "charlie team", "delta team", "echo team", "foxtrot team"];
+
+/// The completions of `prefix` (canonical text, possibly empty). An unparseable prefix has none.
+pub fn completions(prefix: &str, vocab: &Vocabulary) -> Completions {
+    let toks: Vec<String> = prefix.split_whitespace().map(str::to_lowercase).collect();
+    let (reached, complete, expected) = reach(&toks, vocab);
+    if reached < toks.len() {
+        return Completions { next: Vec::new(), complete: false };
+    }
+    // Each expectation as groups of candidates that the grammar treats alike: a list's names are
+    // atomic phrases, so one representative's fate is the group's. Only a noun's number tells its
+    // forms apart (singulars, plurals, mass nouns that are both).
+    let nouns = |list: &[Noun]| -> Vec<Vec<String>> {
+        let mut singular = Vec::new();
+        let mut plural = Vec::new();
+        let mut mass = Vec::new();
+        for n in list {
+            if n.is_mass() {
+                mass.push(n.singular.clone());
+            } else {
+                singular.push(n.singular.clone());
+                plural.push(n.plural.clone());
+            }
+        }
+        vec![singular, plural, mass]
+    };
+    let mut next: Vec<String> = Vec::new();
+    for e in expected {
+        let groups: Vec<Vec<String>> = match e.as_str() {
+            "<unit type>" => nouns(&vocab.types),
+            "<class>" => nouns(&vocab.classes),
+            "<place>" => vec![vocab.places.clone()],
+            "<team>" => vec![vocab.teams.clone()],
+            "<upgrade>" => vec![vocab.upgrades.clone()],
+            "<power>" => vec![vocab.powers.clone()],
+            "<science>" => vec![vocab.sciences.clone()],
+            "<weapon mode>" => vec![vocab.modes.clone()],
+            "<weapon>" => vec![vocab.weapons.clone()],
+            "<number>" => vec![MENU_NUMBERS.iter().map(|s| s.to_string()).collect()],
+            "<group number>" => vec![(0..10).map(|d| d.to_string()).collect()],
+            "<name>" => vec![TEAM_SUGGESTIONS.iter().filter(|t| !vocab.teams.iter().any(|n| n == *t)).map(|s| s.to_string()).collect()],
+            fixed => vec![vec![fixed.to_string()]],
+        };
+        for group in groups {
+            let Some(first) = group.first() else { continue };
+            // Kept only if the command still parses through it (a plural after `the` does not).
+            let mut longer = toks.clone();
+            longer.extend(first.split_whitespace().map(str::to_string));
+            let (r, done, _) = reach(&longer, vocab);
+            if r >= longer.len() || done {
+                for c in group {
+                    if !next.contains(&c) {
+                        next.push(c);
+                    }
+                }
+            }
+        }
+    }
+    Completions { next, complete }
+}
+
+/// How far the parser gets through `toks`: the furthest word it reached, whether some parse is a
+/// whole command, and what it expected at the furthest word.
+fn reach(toks: &[String], vocab: &Vocabulary) -> (usize, bool, BTreeSet<String>) {
+    let mut p = Parser { toks, vocab, furthest: 0, expected: BTreeSet::new() };
+    let complete = p.command(0).iter().any(|(_, end)| *end == toks.len());
+    let reached = if complete { toks.len().max(p.furthest) } else { p.furthest };
+    (reached, complete, p.expected)
+}
+
 /// Every parse of a part of the text: the value and the word index after it.
 type Alts<T> = Vec<(T, usize)>;
 

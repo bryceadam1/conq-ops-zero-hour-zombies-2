@@ -4,7 +4,7 @@
 
 use std::cell::RefCell;
 
-use super::session::{run, typed_char, Host, Session, Viewer};
+use super::session::{refresh_menu, run, typed_char, Host, Session, Viewer, DONE};
 use super::world::{availability as av, button as b, canonical_name, cmdflags as f, context as cx, issued, orderkind as k, playerset, plural, relation as rel, CmdButton, CmdObject, CmdOrder, World};
 use crate::input::{Key, KeySet};
 use crate::math::Vec3;
@@ -454,4 +454,75 @@ fn what_the_engine_refuses_is_said_and_a_command_none_of_whose_orders_went_out_c
     host.answers.clear();
     let log = run(&mut s, "rangers move to me", &host, viewer(), &crate::tuning::Tuning::default());
     assert!(log.contains("3 order(s)") || log.contains("1 order(s)"), "{log}");
+}
+
+fn menu_frame(s: &mut Session, keys: &[Key], wheel: f32) -> bool {
+    let mut held = KeySet::default();
+    for &key in keys {
+        held.set_down(key, true);
+    }
+    let a = s.menu_input(&held, wheel, true, Key::Z);
+    let b = s.menu_input(&KeySet::default(), 0.0, true, Key::Z);
+    a || b
+}
+
+#[test]
+fn the_menu_builds_a_command_from_completions_with_counts() {
+    let host = Fake::new();
+    let mut s = Session::default();
+    assert!(menu_frame(&mut s, &[Key::Z], 0.0) && s.menu.is_some());
+    refresh_menu(&mut s, &host);
+    let menu = s.menu.as_ref().unwrap();
+    assert!(!menu.dirty);
+    // Names carry how many of the player's objects they name.
+    let rangers = menu.options.iter().find(|o| o.text == "rangers").unwrap();
+    assert_eq!(rangers.count, Some(3));
+    assert_eq!(menu.options.iter().find(|o| o.text == "units").unwrap().count, Some(4));
+    // Pick by text (the autopilot's way), then by wheel and click.
+    assert!(s.pick_text("rangers"));
+    assert!(!s.pick_text("move to"), "nothing is offered until the options are refreshed");
+    refresh_menu(&mut s, &host);
+    assert!(s.pick_text("guard"));
+    refresh_menu(&mut s, &host);
+    let menu = s.menu.as_ref().unwrap();
+    // `rangers guard` is whole already (guard where they stand): `(done)` comes first.
+    assert_eq!(menu.options[0].text, DONE);
+    let me = menu.options.iter().position(|o| o.text == "me").unwrap();
+    menu_frame(&mut s, &[], -(me as f32));
+    menu_frame(&mut s, &[Key::MouseLeft], 0.0);
+    assert_eq!(s.menu.as_ref().unwrap().text(), "rangers guard me");
+    // The right button takes the last pick back.
+    menu_frame(&mut s, &[Key::MouseRight], 0.0);
+    assert_eq!(s.menu.as_ref().unwrap().text(), "rangers guard");
+    s.menu.as_mut().unwrap().picks.push("me".into());
+    s.menu.as_mut().unwrap().dirty = true;
+    refresh_menu(&mut s, &host);
+    assert!(s.pick_text(DONE));
+    assert!(s.menu.is_none());
+    assert_eq!(s.take_submitted().as_deref(), Some("rangers guard me"));
+}
+
+#[test]
+fn the_menu_and_the_typed_line_never_hold_input_together() {
+    let mut s = Session::default();
+    // The line open: the menu key types a `z`, and no menu opens.
+    let mut held = KeySet::default();
+    held.set_down(Key::Enter, true);
+    s.keys(&held, true);
+    s.keys(&KeySet::default(), true);
+    assert!(s.open);
+    held = KeySet::default();
+    held.set_down(Key::Z, true);
+    assert!(!s.menu_input(&held, 0.0, true, Key::Z));
+    s.keys(&held, true);
+    assert!(s.menu.is_none() && s.line == "z");
+    // Out of first person the menu closes; Escape closes it too.
+    let mut s = Session::default();
+    menu_frame(&mut s, &[Key::Z], 0.0);
+    assert!(s.menu.is_some());
+    assert!(!s.menu_input(&KeySet::default(), 0.0, false, Key::Z));
+    assert!(s.menu.is_none());
+    menu_frame(&mut s, &[Key::Z], 0.0);
+    menu_frame(&mut s, &[Key::Escape], 0.0);
+    assert!(s.menu.is_none());
 }
