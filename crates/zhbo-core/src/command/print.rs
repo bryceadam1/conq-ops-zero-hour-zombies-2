@@ -191,7 +191,12 @@ impl Printer<'_> {
                         self.push(&t.name);
                     }
                 }
-                if let Some(t) = target {
+                if let Some(Target { location, end: Some(end), .. }) = target.as_deref() {
+                    self.push("from");
+                    self.location(location);
+                    self.push("to");
+                    self.location(end);
+                } else if let Some(t) = target.as_deref() {
                     if !drops_prep(&t.location) {
                         if let Some(prep) = self.vocab.verb(verb).and_then(|v| v.prep.as_deref()) {
                             self.push(prep);

@@ -17,7 +17,7 @@
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
 #define ZHBO_LOGIC_API_FIELDS 24u
-#define ZHBO_CLIENT_API_FIELDS 20u
+#define ZHBO_CLIENT_API_FIELDS 21u
 
 #ifdef __cplusplus
 extern "C" {
@@ -107,6 +107,7 @@ enum
 	ZHBO_CMD_IDLE       = 1u << 9,
 	ZHBO_CMD_LOADED     = 1u << 10, /* has passengers or a garrison */
 	ZHBO_CMD_GENERAL    = 1u << 11,
+	ZHBO_CMD_CONTAINED  = 1u << 12, /* the player's own passenger, inside `container` (never selectable) */
 };
 /* ZhboCmdObject.relation, from the asking player's side */
 enum
@@ -117,7 +118,8 @@ enum
 	ZHBO_REL_NEUTRAL = 3,
 	ZHBO_REL_CIVILIAN = 4,
 };
-/* ZhboCmdOrder.kind: the message the bridge sends after MSG_CREATE_SELECTED_GROUP */
+/* ZhboCmdOrder.kind: the message the bridge sends after MSG_CREATE_SELECTED_GROUP (command/world.rs
+   orderkind has each one's rule) */
 enum
 {
 	ZHBO_ORDER_MOVE = 1,                /* MSG_DO_MOVETO pos (queued: MSG_ADD_WAYPOINT) */
@@ -130,6 +132,50 @@ enum
 	ZHBO_ORDER_GUARD_POSITION = 8,      /* MSG_DO_GUARD_POSITION pos, GUARDMODE_NORMAL */
 	ZHBO_ORDER_GUARD_OBJECT = 9,        /* MSG_DO_GUARD_OBJECT target, GUARDMODE_NORMAL */
 	ZHBO_ORDER_MAKE_GROUP = 10,         /* MSG_CREATE_TEAM<arg> */
+	ZHBO_ORDER_BUTTON = 11,             /* press button slot of the owner's set (or player set `set`) */
+	ZHBO_ORDER_CONSTRUCT = 12,          /* MSG_DOZER_CONSTRUCT(_LINE) of tmpl near pos at angle (NaN: the template's) */
+	ZHBO_ORDER_CANCEL = 13,             /* cancel the last tmpl queued, or the upgrade of button slot */
+	ZHBO_ORDER_UNLOAD = 14,             /* MSG_EXIT of passenger target */
+	ZHBO_ORDER_CONTEXT = 15,            /* the right-click on target / at pos, if its outcome is in arg (ZHBO_CTX_*) */
+	ZHBO_ORDER_SCATTER = 16,
+	ZHBO_ORDER_FORM_UP = 17,
+	ZHBO_ORDER_CHEER = 18,
+	ZHBO_ORDER_PLACE_BEACON = 19,
+	ZHBO_ORDER_REMOVE_BEACON = 20,
+};
+/* ZhboCmdButton.code: each GUICommandType, numbered independently of the engine's build flags */
+enum
+{
+	ZHBO_BUTTON_NONE = 0, ZHBO_BUTTON_DOZER_CONSTRUCT, ZHBO_BUTTON_DOZER_CONSTRUCT_CANCEL, ZHBO_BUTTON_UNIT_BUILD,
+	ZHBO_BUTTON_CANCEL_UNIT_BUILD, ZHBO_BUTTON_PLAYER_UPGRADE, ZHBO_BUTTON_OBJECT_UPGRADE, ZHBO_BUTTON_CANCEL_UPGRADE,
+	ZHBO_BUTTON_ATTACK_MOVE, ZHBO_BUTTON_GUARD, ZHBO_BUTTON_GUARD_WITHOUT_PURSUIT, ZHBO_BUTTON_GUARD_FLYING_UNITS_ONLY,
+	ZHBO_BUTTON_STOP, ZHBO_BUTTON_WAYPOINTS, ZHBO_BUTTON_EXIT_CONTAINER, ZHBO_BUTTON_EVACUATE,
+	ZHBO_BUTTON_EXECUTE_RAILED_TRANSPORT, ZHBO_BUTTON_BEACON_DELETE, ZHBO_BUTTON_SET_RALLY_POINT, ZHBO_BUTTON_SELL,
+	ZHBO_BUTTON_FIRE_WEAPON, ZHBO_BUTTON_SPECIAL_POWER, ZHBO_BUTTON_PURCHASE_SCIENCE, ZHBO_BUTTON_HACK_INTERNET,
+	ZHBO_BUTTON_TOGGLE_OVERCHARGE, ZHBO_BUTTON_POW_RETURN_TO_PRISON, ZHBO_BUTTON_COMBATDROP, ZHBO_BUTTON_SWITCH_WEAPON,
+	ZHBO_BUTTON_HIJACK_VEHICLE, ZHBO_BUTTON_CONVERT_TO_CARBOMB, ZHBO_BUTTON_SABOTAGE_BUILDING, ZHBO_BUTTON_PICK_UP_PRISONER,
+	ZHBO_BUTTON_PLACE_BEACON, ZHBO_BUTTON_SPECIAL_POWER_FROM_SHORTCUT, ZHBO_BUTTON_SPECIAL_POWER_CONSTRUCT,
+	ZHBO_BUTTON_SPECIAL_POWER_CONSTRUCT_FROM_SHORTCUT, ZHBO_BUTTON_SELECT_ALL_UNITS_OF_TYPE,
+};
+/* ZhboCmdButton.set for owner 0: the player's own sets */
+enum
+{
+	ZHBO_PLAYERSET_SHORTCUTS = 1, ZHBO_PLAYERSET_RANK1 = 2, ZHBO_PLAYERSET_RANK3 = 3, ZHBO_PLAYERSET_RANK8 = 4,
+};
+/* ZHBO_ORDER_CONTEXT's arg: what the right-click did (evaluateContextCommand's message) */
+enum
+{
+	ZHBO_CTX_MOVE = 1 << 0, ZHBO_CTX_ATTACK = 1 << 1, ZHBO_CTX_ENTER = 1 << 2, ZHBO_CTX_CAPTURE = 1 << 3,
+	ZHBO_CTX_REPAIR = 1 << 4, ZHBO_CTX_RESUME_CONSTRUCTION = 1 << 5, ZHBO_CTX_GET_REPAIRED = 1 << 6,
+	ZHBO_CTX_GET_HEALED = 1 << 7, ZHBO_CTX_DOCK = 1 << 8, ZHBO_CTX_CARBOMB = 1 << 9, ZHBO_CTX_HACK = 1 << 10,
+	ZHBO_CTX_SALVAGE = 1 << 11, ZHBO_CTX_SPECIAL_POWER = 1 << 12, ZHBO_CTX_RALLY_POINT = 1 << 13, ZHBO_CTX_OTHER = 1 << 14,
+};
+/* issue_order's answer */
+enum
+{
+	ZHBO_ISSUED_SENT = 1, ZHBO_ISSUED_NOBODY = 0, ZHBO_ISSUED_UNAVAILABLE = -1, ZHBO_ISSUED_CANT_AFFORD = -2,
+	ZHBO_ISSUED_NOT_READY = -3, ZHBO_ISSUED_QUEUE_FULL = -4, ZHBO_ISSUED_NO_PLACE = -5, ZHBO_ISSUED_BAD_TARGET = -6,
+	ZHBO_ISSUED_OTHER_ACTION = -7, ZHBO_ISSUED_NOT_FOUND = -8,
 };
 typedef struct ZhboCmdObject
 {
@@ -142,7 +188,21 @@ typedef struct ZhboCmdObject
 	float radius; /* bounding sphere */
 	int32_t veterancy; /* 0 regular .. 3 heroic */
 	uint32_t groups; /* control groups it is in: bit N for group N */
+	int32_t queue; /* production queue entries */
+	uint32_t container; /* ZHBO_CMD_CONTAINED: what it rides in */
 } ZhboCmdObject;
+typedef struct ZhboCmdButton
+{
+	uint32_t owner; /* 0: the player's own set `set` */
+	int32_t set; /* ZHBO_PLAYERSET_* for owner 0 */
+	int32_t slot;
+	int32_t code; /* ZHBO_BUTTON_* */
+	uint32_t options; /* CommandOption bits */
+	uint32_t tmpl; /* the thing template it builds or names, else 0 */
+	int32_t availability; /* CommandAvailability */
+	char name[48]; /* the upgrade's / science's name, or the label of a power or weapon mode */
+	char label[48];
+} ZhboCmdButton;
 typedef struct ZhboCmdOrder
 {
 	int32_t kind; /* ZHBO_ORDER_* */
@@ -150,6 +210,11 @@ typedef struct ZhboCmdOrder
 	ZhboVec3 pos;
 	int32_t queued;
 	int32_t arg;
+	uint32_t tmpl;
+	int32_t slot;
+	float angle;
+	int32_t set;
+	ZhboVec3 end;
 } ZhboCmdOrder;
 
 /* zhbo_core::building::BuildOption. status: ZHBO_BUILD_*. */
@@ -306,7 +371,9 @@ typedef struct ZhboClientApi
 	   (returns its length, 0 for none); an order sent to ids as the overhead view would. */
 	int32_t (*command_objects)(int32_t player, ZhboCmdObject *out, int32_t cap);
 	int32_t (*template_name)(uint32_t tmpl, char *out, int32_t cap);
-	void (*issue_order)(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count);
+	int32_t (*issue_order)(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count); /* ZHBO_ISSUED_* */
+	/* every button of the player's command sets (each object's current set, his own sets) */
+	int32_t (*command_buttons)(int32_t player, ZhboCmdButton *out, int32_t cap);
 } ZhboClientApi;
 
 /* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit
@@ -840,8 +907,9 @@ static_assert(sizeof(ZhboRtsIcons) == 240, "ZhboRtsIcons layout must match sim/r
 static_assert(sizeof(ZhboClassButton) == 756, "ZhboClassButton layout must match ffi.rs");
 static_assert(sizeof(ZhboClientApi) == ZHBO_CLIENT_API_FIELDS * sizeof(void *), "ZhboClientApi layout must match host.rs");
 static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");
-static_assert(sizeof(ZhboCmdObject) == 44, "ZhboCmdObject layout must match command/world.rs");
-static_assert(sizeof(ZhboCmdOrder) == 28, "ZhboCmdOrder layout must match command/world.rs");
+static_assert(sizeof(ZhboCmdObject) == 52, "ZhboCmdObject layout must match command/world.rs");
+static_assert(sizeof(ZhboCmdButton) == 124, "ZhboCmdButton layout must match command/world.rs");
+static_assert(sizeof(ZhboCmdOrder) == 56, "ZhboCmdOrder layout must match command/world.rs");
 static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");
 static_assert(sizeof(ZhboNativeLight) == 24, "ZhboNativeLight layout must match nativevm/ffi.rs");
 static_assert(sizeof(ZhboNativeIn) == 168, "ZhboNativeIn layout must match nativevm/ffi.rs");

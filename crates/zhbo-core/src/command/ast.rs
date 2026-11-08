@@ -196,7 +196,8 @@ pub enum Order {
         /// The verb's words without its preposition (`move`, `attack-move`, `set rally point`).
         verb: String,
         thing: Option<Thing>,
-        target: Option<Target>,
+        /// Boxed: a target with a line's two ends is several times the other variants' size.
+        target: Option<Box<Target>>,
     },
     /// `name them <name>`: save the selection as a team name.
     NameThem(String),
@@ -219,6 +220,9 @@ pub struct Target {
     pub location: Location,
     /// `facing <direction>`: a building's angle, for verbs that place one.
     pub facing: Option<Direction>,
+    /// `from <location> to <end>`: a line structure's far end (a wall, `MSG_DOZER_CONSTRUCT_LINE`);
+    /// `location` is then its near end.
+    pub end: Option<Location>,
 }
 
 impl Superlative {

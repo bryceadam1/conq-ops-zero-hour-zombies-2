@@ -31,6 +31,8 @@ fn vocab() -> Vocabulary {
         upgrades: vec!["composite armor".into(), "flash-bang grenades".into()],
         powers: vec!["carpet bomb".into(), "paradrop".into()],
         sciences: vec!["advanced training".into()],
+        modes: vec!["flash-bang grenades mode".into()],
+        weapons: vec!["nuke cannon shell".into()],
         places: vec!["the bridge".into(), "north pass".into()],
         teams: vec!["alpha team".into()],
         ..Vocabulary::default()
@@ -78,6 +80,8 @@ fn the_design_docs_examples_parse_and_print_back() {
         "rangers move to the bridge then attack-move north of the bridge",
         "use carpet bomb there",
         "purchase advanced training",
+        "the nearest dozer build power plant from me to north of me",
+        "rangers act on there",
     ] {
         round_trip(text);
     }
@@ -103,10 +107,11 @@ fn a_command_reads_as_its_parts() {
         Order::Verb {
             verb: "move".into(),
             thing: None,
-            target: Some(Target {
+            target: Some(Box::new(Target {
                 location: Location { offset: None, point: Point::Place("the bridge".into()) },
-                facing: None
-            }),
+                facing: None,
+                end: None
+            })),
         }
     );
 
@@ -188,8 +193,10 @@ fn non_canonical_spellings_are_refused() {
     refused("build 1 power plant");
     refused("build power plants");
     refused("upgrade 2 composite armor");
-    // `facing` only where a building is placed.
+    // `facing` only where a building is placed, a line only where one is built.
     refused("rangers move to the bridge facing north");
+    refused("rangers move from me to the bridge");
+    refused("build power plant from me to there facing north");
     // Unfinished, or extra words.
     refused("rangers move to");
     refused("rangers");
@@ -245,6 +252,7 @@ fn the_vocabulary_check_names_each_problem() {
         "team 'bravo then charlie' contains 'then'",
         "power 'Carpet Bomb': 'Carpet' is not lowercase letters, digits, '-' or '''",
         "science 'advanced training' is listed twice",
+        "'ranger' is both a type and a place",
     ] {
         assert!(problems.iter().any(|p| p == want), "missing '{want}' in {problems:#?}");
     }
@@ -402,10 +410,14 @@ impl Gen<'_> {
                         let point = if self.chance(20) { Point::Me } else { Point::Object(self.object(true)) };
                         Location { offset: None, point }
                     };
+                    if slot.line && self.chance(20) {
+                        let end = Location { offset: None, point: self.point(true) };
+                        return Some(Target { location, facing: None, end: Some(end) });
+                    }
                     let facing = if slot.facing && self.chance(40) { Some(self.pick(&Direction::ALL)) } else { None };
-                    Some(Target { location, facing })
+                    Some(Target { location, facing, end: None })
                 });
-                Order::Verb { verb: verb.words, thing, target }
+                Order::Verb { verb: verb.words, thing, target: target.map(Box::new) }
             }
         }
     }

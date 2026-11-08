@@ -253,12 +253,18 @@ pub struct Scripted {
 
 /// The command run's lines, each with the first-person second it is submitted at: the Rangers come
 /// to the General, the nearest of them attacks the enemy rebel ahead, a misspelt line is refused,
-/// and an order with no selection goes to the last one (`them`).
-pub const COMMAND_LINES: [(f32, &str); 4] = [
+/// an order with no selection goes to the last one (`them`); then the command buttons: the
+/// Barracks queues two Rangers and one is cancelled, the dozer lays out a Barracks near the
+/// General, and the Rangers take a right-click on open ground.
+pub const COMMAND_LINES: [(f32, &str); 8] = [
     (2.0, "rangers move to me"),
     (14.0, "the nearest ranger attack the nearest enemy rebel"),
     (18.0, "rangres stop"),
     (20.0, "stop"),
+    (22.0, "build 2 rangers"),
+    (24.0, "cancel ranger"),
+    (26.0, "the construction dozer build barracks near me"),
+    (28.0, "rangers act on north of me"),
 ];
 
 impl Autopilot {

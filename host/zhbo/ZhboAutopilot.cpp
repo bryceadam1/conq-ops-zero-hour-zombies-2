@@ -682,6 +682,18 @@ void autopilotSpawn()
 		s_autopilot.commandRebel = rebel ? rebel->getID() : INVALID_ID;
 		logf("autopilot: command scene: Rangers %u, %u, %u 150 behind the General, rebel %u 320 ahead", (unsigned)s_autopilot.commandRangers[0],
 			(unsigned)s_autopilot.commandRangers[1], (unsigned)s_autopilot.commandRangers[2], (unsigned)s_autopilot.commandRebel);
+		// For the command buttons: a Barracks 200 to his left (the build and cancel lines) and a
+		// dozer beside him (the construction line).
+		Coord3D bp;
+		bp.set(pos.x - s * 200.0f, pos.y + c * 200.0f, 0.0f);
+		Object *barracks = spawnAt("AmericaBarracks", local->getDefaultTeam(), bp, yaw);
+		Coord3D dp;
+		dp.set(pos.x + s * 40.0f, pos.y - c * 40.0f, 0.0f);
+		Object *dozer = spawnAt("AmericaVehicleDozer", local->getDefaultTeam(), dp, yaw);
+		s_autopilot.commandBarracks = barracks ? barracks->getID() : INVALID_ID;
+		s_autopilot.commandDozer = dozer ? dozer->getID() : INVALID_ID;
+		s_autopilot.commandQueue = -1;
+		logf("autopilot: command scene: Barracks %u, dozer %u", (unsigned)s_autopilot.commandBarracks, (unsigned)s_autopilot.commandDozer);
 	}
 	logf("autopilot: spawned General %u at (%.0f, %.0f), enemies: %s", (unsigned)s_autopilot.general, pos.x, pos.y,
 		enemy ? "3 GLA rebels" : "none (no enemy player)");
@@ -854,6 +866,26 @@ void commandAutopilotFrame(UnsignedInt frame)
 	}
 	if ((frame - a.spawnFrame) % (2 * LOGICFRAMES_PER_SECOND) == 0)
 		logf("autopilot: command scene: %d Rangers, the farthest %.0f from the General", (int)alive, farthest);
+	// The Barracks' production queue, each time it changes.
+	Object *barracks = TheGameLogic->findObjectByID(a.commandBarracks);
+	ProductionUpdateInterface *pu = barracks ? barracks->getProductionUpdateInterface() : nullptr;
+	const Int queue = pu ? (Int)pu->getProductionCount() : -1;
+	if (queue != a.commandQueue)
+	{
+		a.commandQueue = queue;
+		logf("autopilot: command scene: the Barracks' queue holds %d", (int)queue);
+	}
+	// A Barracks site of the player's other than the scene's: the dozer's construction.
+	if (!a.commandSite)
+		for (Object *obj = TheGameLogic->getFirstObject(); obj; obj = obj->getNextObject())
+			if (obj->getID() != a.commandBarracks && obj->getControllingPlayer() == general->getControllingPlayer() &&
+				obj->getTemplate()->getName() == "AmericaBarracks")
+			{
+				a.commandSite = TRUE;
+				const Real dx = obj->getPosition()->x - g->x, dy = obj->getPosition()->y - g->y;
+				logf("autopilot: command scene: a Barracks site %u, %.0f from the General", (unsigned)obj->getID(), sqrtf(dx * dx + dy * dy));
+				break;
+			}
 }
 
 void rtsAutopilotWave(UnsignedInt frame)

@@ -195,7 +195,7 @@ pub const ABI_VERSION: u32 = 36;
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
 pub const LOGIC_API_FIELDS: u64 = 24;
-pub const CLIENT_API_FIELDS: u64 = 20;
+pub const CLIENT_API_FIELDS: u64 = 21;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -224,8 +224,9 @@ const _: () = {
     assert!(size_of::<LogicApi>() == (LOGIC_API_FIELDS as usize) * size_of::<usize>());
     assert!(size_of::<ClientApi>() == (CLIENT_API_FIELDS as usize) * size_of::<usize>());
     // ZhboCmdObject and ZhboCmdOrder (the command services, pending the next ABI bump).
-    assert!(size_of::<crate::command::world::CmdObject>() == 44);
-    assert!(size_of::<crate::command::world::CmdOrder>() == 28);
+    assert!(size_of::<crate::command::world::CmdObject>() == 52);
+    assert!(size_of::<crate::command::world::CmdButton>() == 124);
+    assert!(size_of::<crate::command::world::CmdOrder>() == 56);
 };
 
 /// The engine services a first-person command runs against: the client host's object list, names
@@ -243,8 +244,11 @@ impl crate::command::session::Host for CommandEngine<'_> {
     fn template_name(&self, tmpl: u32) -> Option<String> {
         self.client.template_name(tmpl)
     }
-    fn issue(&self, order: &crate::command::world::CmdOrder, ids: &[u32]) {
-        self.client.issue_order(order, ids);
+    fn buttons(&self) -> Vec<crate::command::world::CmdButton> {
+        self.client.command_buttons(self.player)
+    }
+    fn issue(&self, order: &crate::command::world::CmdOrder, ids: &[u32]) -> i32 {
+        self.client.issue_order(order, ids)
     }
     fn ground_height(&self, x: f32, y: f32) -> f32 {
         crate::host::LogicHost::ground_height(self.logic, x, y)

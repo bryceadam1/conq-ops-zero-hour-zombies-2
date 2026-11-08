@@ -125,8 +125,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   AST), `vocab.rs` (the match's word lists and the verb table with each verb's argument slots,
   `Vocabulary::problems`), `parse.rs` and `print.rs` (canonical text to the AST and back; the
   parser keeps every complete parse, so ambiguity is an error, and records what it expected where
-  it stopped), `world.rs` (the ABI records `CmdObject`/`CmdOrder` and the `World` snapshot that
-  names the types), `resolve.rs` (a command to object ids and orders), `session.rs` (the command
+  it stopped), `world.rs` (the ABI records `CmdObject`/`CmdButton`/`CmdOrder` and the `World`
+  snapshot that names the types and the buttons' things), `actions.rs` (how the language covers
+  every engine command type and order message: the one table of which buttons a verb presses, and
+  the coverage gates), `resolve.rs` (a command to object ids and orders), `session.rs` (the command
   line's typing and echo, and `run`, which the FFI layer calls after the client frame). The HUD
   draws the line in `hud/command.rs`.
 - `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
@@ -213,7 +215,7 @@ starting the game. Depends on `zhbo-requirements` and `zhbo-assets`.
 | `ZhboScreenLook.cpp` | Sky/BO2-look toggles |
 | `ZhboControlBar.cpp` | `ZhboControlBarAccess`, idle-worker tracking |
 | `ZhboBuilding.cpp` | First-person build/repair/ghost |
-| `ZhboCommand.cpp` | First-person commands: the clickable-object list, template names, orders sent as the overhead view sends them |
+| `ZhboCommand.cpp` | First-person commands: the clickable-object and command-button lists, template names, orders sent as the overhead view sends them (the control bar's presses, the bridge's own `CommandTranslator` for targeted buttons and right-clicks, construction placement) |
 | `ZhboDetail.cpp` | The render rate at each game start (`Zhbo_PaceNewGame`, host patch 0026); logs the graphics detail GameLOD applied, the dynamic LOD's changes and the frame rate (presentation only) |
 | `ZhboMenu.cpp` | The shell create-a-class window (modal, code-built) and `Zhbo_MenuFrame` |
 

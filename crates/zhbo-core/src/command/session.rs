@@ -9,7 +9,7 @@
 //! done or why not.
 
 use super::resolve::{resolve, Memory, Settings};
-use super::world::{CmdObject, CmdOrder, World};
+use super::world::{issued, CmdButton, CmdObject, CmdOrder, World};
 use crate::input::{Key, KeySet};
 use crate::math::Vec3;
 
@@ -127,12 +127,14 @@ impl Session {
     }
 }
 
-/// The engine services a command needs (the client host's `command_objects`, `template_name` and
-/// `issue_order`, and the terrain).
+/// The engine services a command needs (the client host's `command_objects`, `command_buttons`,
+/// `template_name` and `issue_order`, and the terrain).
 pub trait Host {
     fn objects(&self) -> Vec<CmdObject>;
+    fn buttons(&self) -> Vec<CmdButton>;
     fn template_name(&self, tmpl: u32) -> Option<String>;
-    fn issue(&self, order: &CmdOrder, ids: &[u32]);
+    /// Send an order; the answer is an [`issued`] code.
+    fn issue(&self, order: &CmdOrder, ids: &[u32]) -> i32;
     fn ground_height(&self, x: f32, y: f32) -> f32;
 }
 
@@ -149,7 +151,7 @@ pub struct Viewer {
 /// Run a submitted line: parse it, resolve it against the world now, send its orders, remember
 /// its selection and team names, and set the echo. Returns the log line.
 pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, tuning: &crate::tuning::Tuning) -> String {
-    let mut world = World::new(host.objects(), &|t| host.template_name(t));
+    let mut world = World::new(host.objects(), host.buttons(), &|t| host.template_name(t));
     world.general = viewer.general;
     world.general_pos = viewer.feet;
     world.general_yaw = viewer.yaw;
@@ -164,16 +166,27 @@ pub fn run(session: &mut Session, line: &str, host: &dyn Host, viewer: Viewer, t
     let refused = if world.refused_names.is_empty() { String::new() } else { format!(" (names left out: {})", world.refused_names.join(", ")) };
     match outcome {
         Ok(plan) => {
-            for (order, ids) in &plan.orders {
-                host.issue(order, ids);
+            // Each order's answer: what the engine refused is said, and a command none of whose
+            // orders went out is refused as a whole (and changes nothing).
+            let codes: Vec<i32> = plan.orders.iter().map(|(order, ids)| host.issue(order, ids)).collect();
+            let sent = codes.iter().filter(|&&c| c == issued::SENT).count();
+            let failed = codes.iter().copied().find(|&c| c != issued::SENT);
+            if !plan.orders.is_empty() && sent == 0 {
+                let why = issued::reason(failed.unwrap_or(issued::NOBODY));
+                session.echo = Some(Echo { text: format!("{line}: {why}"), ok: false, age: 0.0 });
+                return format!("command: '{line}' refused: {why}{refused}");
             }
             session.memory.last = plan.selection.clone();
             for (name, ids) in plan.teams {
                 session.memory.teams.retain(|(n, _)| n != &name);
                 session.memory.teams.push((name, ids));
             }
-            session.echo = Some(Echo { text: plan.summary.clone(), ok: true, age: 0.0 });
-            format!("command: '{line}' -> {}, {} order(s){refused}", plan.summary, plan.orders.len())
+            let partly = match failed {
+                Some(code) => format!(" ({sent} of {} went out: {})", codes.len(), issued::reason(code)),
+                None => String::new(),
+            };
+            session.echo = Some(Echo { text: format!("{}{partly}", plan.summary), ok: true, age: 0.0 });
+            format!("command: '{line}' -> {}, {sent} order(s){partly}{refused}", plan.summary)
         }
         Err(why) => {
             session.echo = Some(Echo { text: format!("{line}: {why}"), ok: false, age: 0.0 });

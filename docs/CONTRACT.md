@@ -1298,23 +1298,56 @@ to `Sim::state_hash` and no new sim message exists.
   from `template_name`, parses, resolves (`command::resolve`) and sends each order with
   `issue_order`. It logs `command: '<line>' -> <n> units: <canonical text>, <k> order(s)` or
   `command: '<line>' refused: <why>`; the HUD echoes the same.
-* **`ZhboClientApi.command_objects(player, out, cap)`** lists `ZhboCmdObject` records (44 bytes) for
-  everything the player's overhead view would let them click: `Object::isSelectable`, alive, not
-  contained; the player's own always; others' only when the player's shroud status is clear or
-  partly clear, or fogged with a ghost object (a building seen before). Flags (`ZHBO_CMD_*`):
+* **`ZhboClientApi.command_objects(player, out, cap)`** lists `ZhboCmdObject` records (52 bytes) for
+  everything the player's overhead view would let them click: `Object::isSelectable`, alive; the
+  player's own always; others' only when the player's shroud status is clear or partly clear, or
+  fogged with a ghost object (a building seen before), and never a passenger. The player's own
+  passengers are listed too, flagged `ZHBO_CMD_CONTAINED` with their `container` (never selectable:
+  only `unload` names them). `queue` is the production queue's length. Flags (`ZHBO_CMD_*`):
   KindOf classes, `SELECT_ALL` (Zero Hour's select-all rule from `CommandXlat`'s
   `MSG_META_SELECT_ALL`), `SELECTABLE` (own), `GHOST`, `IDLE`, `LOADED`, `GENERAL`; the General
   never carries `SELECTABLE` or `SELECT_ALL`. `relation` is `ZHBO_REL_*` from the asking player's
   side (`CIVILIAN`: an owner whose side is `Civilian`). `groups` has bit N for hotkey squad N.
 * **`ZhboClientApi.template_name(tmpl, out, cap)`**: `ThingTemplate::getDisplayName` as UTF-8.
-* **`ZhboClientApi.issue_order(order, ids, count)`**: `ZhboCmdOrder` (28 bytes). The bridge keeps
-  the ids the local player controls (never the General), selects their drawables locally, sends
-  `MSG_CREATE_SELECTED_GROUP` (new group, the ids), then the order: `ZHBO_ORDER_MOVE`
-  (`MSG_DO_MOVETO`, or `MSG_ADD_WAYPOINT` when `queued`), `FORCE_MOVE`, `ATTACK_MOVE`, `STOP`,
-  `ATTACK` (`MSG_DO_ATTACK_OBJECT`), `FORCE_ATTACK`, `FORCE_ATTACK_GROUND`, `GUARD_POSITION` and
-  `GUARD_OBJECT` (with `GUARDMODE_NORMAL`), or `MAKE_GROUP` (`MSG_CREATE_TEAM<arg>` with the ids,
-  no selection message). The arguments are those `GameLogicDispatch` reads. It logs
-  `command order: <kind> to <n> object(s), target <id> at (<x>, <y>)`.
+* **`ZhboClientApi.command_buttons(player, out, cap)`** lists `ZhboCmdButton` records (124 bytes):
+  every button of each of the player's objects' current command set (`findCommandSet(
+  getCommandSetString())`, the General's left out) and of his own sets (`owner` 0, `set`
+  `ZHBO_PLAYERSET_*`: the template's special-power shortcuts and purchase-science sets). `code` is
+  the bridge's stable `ZHBO_BUTTON_*` for the `GUICommandType`; `availability` is
+  `ControlBar::getCommandAvailability` (with no window; for the shortcuts, at the most ready
+  building; for a promotion, from the player's sciences and points); `name` is the upgrade's
+  display name, else the label (empty for a build: `tmpl` names it).
+* **`ZhboClientApi.issue_order(order, ids, count)`** → `ZHBO_ISSUED_*`: `ZhboCmdOrder` (56 bytes).
+  The bridge keeps the ids the local player controls (never the General), selects their drawables
+  locally and sends `MSG_CREATE_SELECTED_GROUP` (new group, the ids), then the order's messages, with
+  the arguments `GameLogicDispatch` reads:
+  * `MOVE` (`MSG_DO_MOVETO`, or `MSG_ADD_WAYPOINT` when `queued`), `FORCE_MOVE`, `ATTACK_MOVE`,
+    `STOP`, `ATTACK`, `FORCE_ATTACK`, `FORCE_ATTACK_GROUND`, `GUARD_POSITION`/`GUARD_OBJECT` (guard
+    mode `arg`), `SCATTER`, `FORM_UP`, `CHEER`, `REMOVE_BEACON`; `PLACE_BEACON` (under the
+    multiplayer settings' beacon cap); `MAKE_GROUP` (`MSG_CREATE_TEAM<arg>` with the ids, no
+    selection message).
+  * `BUTTON`: button `slot` of the owner's current set (or the player's set `set` with no ids). An
+    untargeted one sends what `ControlBar::processCommandUI` sends for its type, with its checks;
+    one with `COMMAND_OPTION_NEED_TARGET` is set as the pending GUI command and finished by the
+    bridge's own `CommandTranslator::evaluateContextCommand(target's drawable, pos, DO_COMMAND)`
+    (`MSG_SET_MINE_CLEARING_DETAIL` first for a mine-clearing button); a special power's
+    construction sends `MSG_DO_SPECIAL_POWER_AT_LOCATION` with the angle at a legal place, as
+    `PlaceEventTranslator` does.
+  * `CONSTRUCT`: `MSG_DOZER_CONSTRUCT` of `tmpl` at the nearest place to `pos` that passes
+    `isLocationLegalToBuild` with `PlaceEventTranslator`'s flags (rings outward a footprint radius
+    apart), at `angle` or, when it is NaN, the template's `PlacementViewAngle`; a `LINEBUILD`
+    template sends `MSG_DOZER_CONSTRUCT_LINE` from `pos` to `end` (`arg` 1) or to `pos`.
+  * `CANCEL`: in the first of the ids with one queued, the last `tmpl` (`MSG_CANCEL_UNIT_CREATE`
+    with its production id) or the upgrade of button `slot` (`MSG_CANCEL_UPGRADE`).
+  * `UNLOAD`: `MSG_EXIT` of passenger `target` from the container (the first id).
+  * `CONTEXT`: the right-click on `target` (or at `pos` with no target): evaluated first with
+    `EVALUATE_ONLY`, its message classified as `ZHBO_CTX_*`, and sent with `DO_COMMAND` only if that
+    is one of `arg`'s bits.
+
+  Around every translator call the UI's force-attack, waypoint and prefer-selection modes are off
+  (first person's Ctrl is prone) and restored after, and the pending GUI command is cleared. It
+  logs `command order: <kind> to <n> object(s), target <id> at (<x>, <y>), slot <s>, tmpl <t>:
+  <result>`.
 
 ## Lifecycle
 
@@ -1844,9 +1877,10 @@ the perks' and equipment keys (`bettyactivationdelay`, `scr_proximityGrenade*`, 
 Appended since ABI 36 and not yet folded into a version (the next integration bumps
 `ZHBO_ABI_VERSION` and moves these into a numbered entry above):
 
-* `ZhboClientApi.command_objects`, `template_name` and `issue_order` after `image_quad`
-  (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 17 → 20), with the structs `ZhboCmdObject` (44
-  bytes) and `ZhboCmdOrder` (28 bytes), asserted on both sides (see "First-person commands").
+* `ZhboClientApi.command_objects`, `template_name`, `issue_order` (returning `ZHBO_ISSUED_*`) and
+  `command_buttons` after `image_quad` (`ZHBO_CLIENT_API_FIELDS`/`CLIENT_API_FIELDS` 17 → 21), with
+  the structs `ZhboCmdObject` (52 bytes), `ZhboCmdButton` (124 bytes) and `ZhboCmdOrder` (56
+  bytes), asserted on both sides (see "First-person commands").
 * `Key::Minus` at bit 49 of the key set (`ZhboPlatform.h`'s `keys::Key`, the bridge's key-name
   table, SDL's `SDL_SCANCODE_MINUS`, Windows' `VK_OEM_MINUS`). The `KeySet` size is unchanged.
 * The tuning pack's `[Commands]` keys `CommandNearRadius` and `CommandOffsetDistance` (the content

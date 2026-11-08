@@ -6,6 +6,7 @@
 //! points, and leaves as the standard engine messages the overhead view sends; nothing here runs
 //! in `zhbo_logic_*` or reaches the sim's state.
 //!
+//! * [`actions`]: how the language covers every engine command type and order message.
 //! * [`ast`]: the command AST.
 //! * [`vocab`]: the match's word lists and the verbs with the arguments each takes.
 //! * [`parse`] and [`print`]: canonical text to the AST and back. Each AST has one spelling, and
@@ -15,6 +16,7 @@
 //! * [`session`]: the first-person command line (typing, submitting, the echo) and running a
 //!   submitted line against the engine.
 
+pub mod actions;
 pub mod ast;
 pub mod parse;
 pub mod print;

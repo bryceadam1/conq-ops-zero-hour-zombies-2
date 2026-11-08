@@ -1,11 +1,15 @@
 //! A parsed command to concrete orders (docs/COMMANDS.md sections 3, 6 and 7): the selection as
 //! object ids, each order as a [`CmdOrder`] the bridge sends as the overhead view would.
 //!
-//! Built so far (the build order's step 2): base sets (types, class words, `units`), adjectives,
+//! Built (the build order's steps 2 and 3): base sets (types, class words, `units`), adjectives,
 //! the `near` filter, superlatives and quantities, `and`/`except`, control groups, team names,
-//! `them` and `that`; targets (`me`, `there`, `that`, object queries, offsets); and the orders
-//! move, force move, attack-move, stop, attack, force attack, guard, `name them` and `make them
-//! group`, with `then` queueing moves. Everything else is refused with a message saying so.
+//! `them` and `that`; targets (`me`, `there`, `that`, object queries, offsets); the direct orders
+//! (move, force move, attack-move, stop, attack, force attack, the guards, scatter, form up,
+//! cheer, the beacons, `name them`, `make them group`, with `then` queueing moves); the right-click
+//! verbs, each checked against what the engine's right-click would do; and the command buttons'
+//! verbs (`build`, `upgrade`, `use`, `purchase`, `cancel`, `unload`, `switch to`, `fire`, `sell`,
+//! …), from the buttons the bridge lists, refused with the button's own availability. Cluster
+//! filters and place names are refused with a message saying they come later.
 //!
 //! Resolution reads only the [`World`] snapshot, so it never feeds the sim. Ties break the same way
 //! every time (rule 5): by the stated order, then the distance to the General, then the object id.
@@ -13,7 +17,7 @@
 use super::ast::*;
 use super::print::{print_group, print_order};
 use super::vocab::Vocabulary;
-use super::world::{cmdflags, orderkind, relation as rel, CmdObject, CmdOrder, World, CLASSES};
+use super::world::{availability as av, button as btn, cmdflags, context as ctx, orderkind, relation as rel, CmdButton, CmdObject, CmdOrder, World, CLASSES};
 use crate::math::Vec3;
 
 /// What the player commanded before: the last selection (`them`) and the team names.
@@ -42,7 +46,7 @@ pub struct Settings<'a> {
 pub struct Plan {
     /// Each order with the ids it goes to, in order.
     pub orders: Vec<(CmdOrder, Vec<u32>)>,
-    /// The selection (the next command's `them`).
+    /// The units the command was for (the next command's `them`).
     pub selection: Vec<u32>,
     /// Team names this command saves.
     pub teams: Vec<(String, Vec<u32>)>,
@@ -57,40 +61,59 @@ const CROSSHAIR_STEP: f32 = 4.0;
 
 pub fn resolve(cmd: &Command, world: &World, memory: &Memory, vocab: &Vocabulary, settings: &Settings) -> Result<Plan, String> {
     let r = Resolver { world, memory, vocab, settings };
-    let selection = match &cmd.selection {
-        Some(sel) => r.selection(sel)?,
-        // Implied: the last selection, for the orders built so far (production, construction and
-        // powers, which imply their own, come with those verbs).
-        None => {
-            let them = r.alive(&memory.last);
-            if them.is_empty() {
-                return Err("say who: no units were commanded yet".into());
-            }
-            them
-        }
+    // The selection said, if any. Without one, each verb implies its own (section 7): the button
+    // verbs that produce or use the player's things look across all his objects, the rest take the
+    // last selection.
+    let mut selection = match &cmd.selection {
+        Some(sel) => Some(r.selection(sel)?),
+        None => None,
     };
-    let mut orders = Vec::new();
+    let mut orders: Vec<(CmdOrder, Vec<u32>)> = Vec::new();
     let mut teams = Vec::new();
     for (i, order) in cmd.orders.iter().enumerate() {
         match order {
-            Order::NameThem(name) => teams.push((name.clone(), selection.clone())),
-            Order::MakeGroup(n) => orders.push((CmdOrder { kind: orderkind::MAKE_GROUP, arg: *n as i32, ..CmdOrder::default() }, selection.clone())),
-            Order::Verb { verb, target, .. } => {
-                let mut o = r.verb(verb, target.as_ref(), &selection)?;
+            Order::NameThem(name) => {
+                let sel = selection.get_or_insert(r.them()?);
+                teams.push((name.clone(), sel.clone()));
+            }
+            Order::MakeGroup(n) => {
+                let sel = selection.get_or_insert(r.them()?).clone();
+                orders.push((CmdOrder { kind: orderkind::MAKE_GROUP, arg: *n as i32, ..order_default() }, sel));
+            }
+            Order::Verb { verb, thing, target } => {
+                let mut planned = r.verb(verb, thing.as_ref(), target.as_deref(), selection.as_deref())?;
                 if i > 0 {
-                    if o.kind != orderkind::MOVE {
+                    if planned.iter().any(|(o, _)| o.kind != orderkind::MOVE) {
                         return Err(format!("only a move can follow 'then' for now, not '{}'", print_order(order, vocab)));
                     }
-                    o.queued = 1;
+                    planned.iter_mut().for_each(|(o, _)| o.queued = 1);
                 }
-                orders.push((o, selection.clone()));
+                if selection.is_none() {
+                    let mut acting: Vec<u32> = Vec::new();
+                    for id in planned.iter().flat_map(|(_, ids)| ids.iter().copied()) {
+                        if !acting.contains(&id) {
+                            acting.push(id);
+                        }
+                    }
+                    selection = Some(acting);
+                }
+                orders.extend(planned);
             }
         }
     }
+    let selection = selection.unwrap_or_default();
     let text = super::print(cmd, vocab);
-    let n = selection.len();
-    let summary = format!("{n} {}: {text}", if n == 1 { "unit" } else { "units" });
+    let summary = match selection.len() {
+        0 => text,
+        1 => format!("1 unit: {text}"),
+        n => format!("{n} units: {text}"),
+    };
     Ok(Plan { orders, selection, teams, summary })
+}
+
+/// An order with nothing set: no button slot.
+fn order_default() -> CmdOrder {
+    CmdOrder { slot: -1, ..CmdOrder::default() }
 }
 
 struct Resolver<'a> {
@@ -192,7 +215,7 @@ impl Resolver<'_> {
         let candidates: Vec<&CmdObject> = if selection {
             self.selectable().collect()
         } else {
-            self.world.objects.iter().filter(|o| o.id != self.world.general && relation_matches(relation, o.relation)).collect()
+            self.world.objects.iter().filter(|o| o.id != self.world.general && o.flags & cmdflags::CONTAINED == 0 && relation_matches(relation, o.relation)).collect()
         };
         let mut found: Vec<&CmdObject> = candidates
             .into_iter()
@@ -319,7 +342,7 @@ impl Resolver<'_> {
         self.world
             .objects
             .iter()
-            .filter(|o| o.id != self.world.general)
+            .filter(|o| o.id != self.world.general && o.flags & cmdflags::CONTAINED == 0)
             .filter_map(|o| {
                 let to = o.pos + Vec3::new(0.0, 0.0, o.radius * 0.5) - eye;
                 let t = to.dot(dir);
@@ -335,32 +358,308 @@ impl Resolver<'_> {
     // Orders
     // --------------------------------------------------------------------------------------------
 
-    fn verb(&self, verb: &str, target: Option<&Target>, selection: &[u32]) -> Result<CmdOrder, String> {
+    /// The last selection still alive, for an order that names nobody.
+    fn them(&self) -> Result<Vec<u32>, String> {
+        let them = self.alive(&self.memory.last);
+        if them.is_empty() {
+            return Err("say who: no units were commanded yet".into());
+        }
+        Ok(them)
+    }
+
+    /// One verb's orders, each with the ids it goes to. `selection`: the units the command named,
+    /// if it named any.
+    fn verb(&self, verb: &str, thing: Option<&Thing>, target: Option<&Target>, selection: Option<&[u32]>) -> Result<Vec<(CmdOrder, Vec<u32>)>, String> {
         let aim = match target {
             Some(t) => Some(self.location(&t.location)?),
             None => None,
         };
+        let facing = target.and_then(|t| t.facing);
+        let end = match target.and_then(|t| t.end.as_ref()) {
+            Some(l) => Some(self.location(l)?),
+            None => None,
+        };
+        if end.is_some() && verb != "build" {
+            return Err(format!("only a building is built from one place to another, not '{verb}'"));
+        }
+        match verb {
+            "build" | "upgrade" | "use" | "purchase" | "switch to" | "fire" | "sell" | "overcharge" | "hack internet" | "depart"
+            | "cancel construction" | "evacuate" | "combat drop" => return self.press(verb, thing, aim.as_ref(), facing, end.as_ref(), selection),
+            "cancel" => return self.cancel(thing, selection),
+            "unload" => return self.unload(thing, selection),
+            _ => {}
+        }
+        let sel = match selection {
+            Some(s) => s.to_vec(),
+            None => self.them()?,
+        };
+        // The right-click's context modes that are also buttons (the Terrorist's car bomb, the
+        // hijacker's, the saboteur's): the button where the selection has it.
+        let mode = match verb {
+            "hijack" => Some(btn::HIJACK_VEHICLE),
+            "car-bomb" => Some(btn::CONVERT_TO_CARBOMB),
+            "sabotage" => Some(btn::SABOTAGE_BUILDING),
+            _ => None,
+        };
+        if let (Some(code), Some(aim)) = (mode, aim.as_ref()) {
+            let owners: Vec<&CmdButton> = self.owned_buttons(&sel, |b| b.code == code).collect();
+            if !owners.is_empty() {
+                return owners.iter().map(|b| self.button_order(b, Some(aim), verb)).collect();
+            }
+        }
+        let order = self.direct(verb, aim.as_ref(), &sel)?;
+        Ok(vec![(order, sel)])
+    }
+
+    /// The orders that go straight to the engine's messages, and the right-click verbs.
+    fn direct(&self, verb: &str, aim: Option<&Aim>, sel: &[u32]) -> Result<CmdOrder, String> {
         let at = |kind: i32, aim: &Aim| match aim {
-            Aim::Object(_, p) | Aim::Point(p) => CmdOrder { kind, pos: *p, ..CmdOrder::default() },
+            Aim::Object(_, p) | Aim::Point(p) => CmdOrder { kind, pos: *p, ..order_default() },
         };
         let on = |kind: i32, aim: &Aim| match aim {
-            Aim::Object(id, p) => Ok(CmdOrder { kind, target: *id, pos: *p, ..CmdOrder::default() }),
+            Aim::Object(id, p) => Ok(CmdOrder { kind, target: *id, pos: *p, ..order_default() }),
             Aim::Point(_) => Err(format!("'{verb}' needs something to aim at, not a spot")),
         };
-        match (verb, aim.as_ref()) {
-            ("stop", _) => Ok(CmdOrder { kind: orderkind::STOP, ..CmdOrder::default() }),
+        // GuardMode (GameCommon.h): normal, without pursuit, flying units only.
+        let guard = |mode: i32| -> Result<CmdOrder, String> {
+            let mut o = match aim {
+                Some(a @ Aim::Object(..)) => on(orderkind::GUARD_OBJECT, a)?,
+                Some(a) => at(orderkind::GUARD_POSITION, a),
+                // Guard with no target: where they stand (their centre).
+                None => CmdOrder { kind: orderkind::GUARD_POSITION, pos: self.centre(sel), ..order_default() },
+            };
+            o.arg = mode;
+            Ok(o)
+        };
+        // The right-click verbs: what `evaluateContextCommand` may do for each.
+        let context = |allowed: i32| -> Result<CmdOrder, String> {
+            match aim {
+                Some(a) => Ok(CmdOrder { arg: allowed, ..on(orderkind::CONTEXT, a)? }),
+                None => Err(format!("'{verb}' needs a target")),
+            }
+        };
+        match (verb, aim) {
+            ("stop", _) => Ok(CmdOrder { kind: orderkind::STOP, ..order_default() }),
+            ("scatter", _) => Ok(CmdOrder { kind: orderkind::SCATTER, ..order_default() }),
+            ("form up", _) => Ok(CmdOrder { kind: orderkind::FORM_UP, ..order_default() }),
+            ("cheer", _) => Ok(CmdOrder { kind: orderkind::CHEER, ..order_default() }),
+            ("remove beacon", _) => Ok(CmdOrder { kind: orderkind::REMOVE_BEACON, ..order_default() }),
+            ("place beacon", Some(a)) => Ok(at(orderkind::PLACE_BEACON, a)),
             ("move", Some(a)) => Ok(at(orderkind::MOVE, a)),
             ("force move", Some(a)) => Ok(at(orderkind::FORCE_MOVE, a)),
             ("attack-move", Some(a)) => Ok(at(orderkind::ATTACK_MOVE, a)),
             ("attack", Some(a)) => on(orderkind::ATTACK, a),
             ("force attack", Some(a @ Aim::Object(..))) => on(orderkind::FORCE_ATTACK, a),
             ("force attack", Some(a)) => Ok(at(orderkind::FORCE_ATTACK_GROUND, a)),
-            ("guard", Some(a @ Aim::Object(..))) => on(orderkind::GUARD_OBJECT, a),
-            ("guard", Some(a)) => Ok(at(orderkind::GUARD_POSITION, a)),
-            // Guard with no target: where they stand (their centre).
-            ("guard", None) => Ok(CmdOrder { kind: orderkind::GUARD_POSITION, pos: self.centre(selection), ..CmdOrder::default() }),
-            _ => Err(format!("'{verb}' comes in a later step")),
+            ("guard", _) => guard(0),
+            ("guard without pursuit", _) => guard(1),
+            ("guard against aircraft", _) => guard(2),
+            // On open ground, the right-click at the spot.
+            ("act on", Some(a @ Aim::Point(_))) => Ok(CmdOrder { arg: ctx::ANY, ..at(orderkind::CONTEXT, a) }),
+            ("act on", _) => context(ctx::ANY),
+            ("enter" | "garrison" | "hijack", _) => context(ctx::ENTER),
+            ("capture", _) => context(ctx::CAPTURE | ctx::SPECIAL_POWER),
+            ("repair", _) => context(ctx::REPAIR),
+            ("resume building", _) => context(ctx::RESUME_CONSTRUCTION),
+            ("get repaired", _) => context(ctx::GET_REPAIRED),
+            ("get healed", _) => context(ctx::GET_HEALED),
+            ("dock" | "deliver supplies", _) => context(ctx::DOCK),
+            ("car-bomb", _) => context(ctx::CARBOMB | ctx::ENTER),
+            ("sabotage", _) => context(ctx::ENTER | ctx::SPECIAL_POWER | ctx::OTHER),
+            ("salvage", _) => context(ctx::SALVAGE),
+            ("disable" | "steal cash", _) => context(ctx::HACK | ctx::SPECIAL_POWER),
+            // A rally point is the right-click on open ground with a factory selected.
+            ("set rally point", Some(a)) => Ok(CmdOrder { arg: ctx::RALLY_POINT, ..at(orderkind::CONTEXT, a) }),
+            _ => Err(format!("'{verb}' needs a target")),
         }
+    }
+
+    // --------------------------------------------------------------------------------------------
+    // Command buttons
+    // --------------------------------------------------------------------------------------------
+
+    /// The buttons of `owners` (and the player's own sets) that pass `keep`, never a hidden or
+    /// script-only one.
+    fn owned_buttons<'b>(&'b self, owners: &'b [u32], keep: impl Fn(&CmdButton) -> bool + 'b) -> impl Iterator<Item = &'b CmdButton> + 'b {
+        self.world.buttons.iter().filter(move |b| {
+            (b.owner == 0 || owners.contains(&b.owner)) && b.availability != av::HIDDEN && b.options & super::world::option::SCRIPT_ONLY == 0 && keep(b)
+        })
+    }
+
+    /// Every object of the player's that has buttons (the scope of an order that implies its own
+    /// units), nearest first.
+    fn all_owners(&self) -> Vec<u32> {
+        self.sorted(self.world.objects.iter().filter(|o| o.relation == rel::OWN && o.flags & cmdflags::CONTAINED == 0).collect())
+    }
+
+    /// A button verb: the buttons it means, who presses them, and their targets.
+    fn press(&self, verb: &str, thing: Option<&Thing>, aim: Option<&Aim>, facing: Option<Direction>, end: Option<&Aim>, selection: Option<&[u32]>) -> Result<Vec<(CmdOrder, Vec<u32>)>, String> {
+        let name = thing.map(|t| t.name.as_str());
+        let templates = name.map(|n| self.world.templates(n)).unwrap_or(&[]);
+        let named: Vec<*const CmdButton> = name.map(|n| self.world.named_buttons(n).map(|b| b as *const _).collect()).unwrap_or_default();
+        // The buttons the verb presses (`actions::BUTTONS`), and for the verbs with a thing, the
+        // ones that name it: a build by its template, the rest by the name the button gives.
+        let codes = super::actions::button_codes(verb);
+        let wanted = |b: &CmdButton| -> bool {
+            codes.contains(&b.code)
+                && match verb {
+                    "build" => templates.contains(&b.tmpl),
+                    "upgrade" | "use" | "purchase" | "switch to" | "fire" => named.contains(&(b as *const _)),
+                    _ => true,
+                }
+        };
+        // Who may press: the units named; else, for the verbs that make or use the player's
+        // things, all his objects; else the last selection.
+        let produces = matches!(verb, "build" | "upgrade" | "use" | "purchase");
+        let scope: Vec<u32> = match selection {
+            Some(s) => s.to_vec(),
+            None if produces => self.all_owners(),
+            None => self.them()?,
+        };
+        let what = || match thing {
+            Some(t) => format!("{verb} {}", t.name),
+            None => verb.to_string(),
+        };
+        let candidates: Vec<&CmdButton> = self.owned_buttons(&scope, wanted).collect();
+        if candidates.is_empty() {
+            return Err(if selection.is_some() { format!("none of them can {}", what()) } else { format!("nothing of yours can {}", what()) });
+        }
+        let ready: Vec<&CmdButton> = candidates.iter().copied().filter(|b| matches!(b.availability, av::AVAILABLE | av::ACTIVE)).collect();
+        if ready.is_empty() {
+            let worst = |code: i32| candidates.iter().any(|b| b.availability == code);
+            return Err(if worst(av::CANT_AFFORD) {
+                format!("you can't afford to {}", what())
+            } else if worst(av::NOT_READY) {
+                format!("{} isn't ready", what())
+            } else {
+                format!("{} isn't available yet", what())
+            });
+        }
+        let order_of = |b: &CmdButton| scope.iter().position(|&id| id == b.owner).unwrap_or(usize::MAX);
+        let mut ready = ready;
+        ready.sort_by_key(|b| (order_of(b), b.slot));
+        let count = thing.map_or(1, |t| t.count.max(1)) as usize;
+        let first = ready[0];
+        if end.is_some() && first.code != btn::DOZER_CONSTRUCT {
+            return Err(format!("only a building is built from one place to another, not {}", what()));
+        }
+        match first.code {
+            btn::UNIT_BUILD => {
+                // Each unit at the producer with the shortest queue, ties to the nearer.
+                let mut queues: Vec<(&CmdButton, i32)> = ready.iter().filter(|b| b.code == btn::UNIT_BUILD).map(|&b| (b, self.world.object(b.owner).map_or(0, |o| o.queue))).collect();
+                let mut out = Vec::new();
+                for _ in 0..count {
+                    let Some(i) = (0..queues.len()).min_by_key(|&i| (queues[i].1, order_of(queues[i].0))) else { break };
+                    queues[i].1 += 1;
+                    out.push(self.button_order(queues[i].0, None, verb)?);
+                }
+                Ok(out)
+            }
+            btn::DOZER_CONSTRUCT => {
+                if count > 1 {
+                    return Err("build one building at a time".into());
+                }
+                // The builder: the nearest idle one, else the nearest.
+                let idle = |b: &CmdButton| self.world.object(b.owner).is_some_and(|o| o.flags & cmdflags::IDLE != 0);
+                let builders: Vec<&CmdButton> = ready.iter().copied().filter(|b| b.code == btn::DOZER_CONSTRUCT).collect();
+                let builder = builders.iter().copied().find(|b| idle(b)).or_else(|| builders.first().copied()).unwrap_or(first);
+                let at = match aim {
+                    Some(Aim::Object(_, p) | Aim::Point(p)) => *p,
+                    None => self.world.object(builder.owner).map_or(self.world.general_pos, |o| o.pos),
+                };
+                // Without `facing`, the bridge takes the template's own placement angle (NaN).
+                let angle = facing.map_or(f32::NAN, |d| {
+                    let v = compass(d);
+                    v.y.atan2(v.x)
+                });
+                let mut order = CmdOrder { kind: orderkind::CONSTRUCT, tmpl: builder.tmpl, pos: at, angle, ..order_default() };
+                if let Some(Aim::Object(_, p) | Aim::Point(p)) = end {
+                    order.end = *p;
+                    order.arg = 1;
+                }
+                Ok(vec![(order, vec![builder.owner])])
+            }
+            btn::PLAYER_UPGRADE | btn::PURCHASE_SCIENCE | btn::SPECIAL_POWER | btn::SPECIAL_POWER_FROM_SHORTCUT | btn::SPECIAL_POWER_CONSTRUCT
+            | btn::SPECIAL_POWER_CONSTRUCT_FROM_SHORTCUT => {
+                // One press: the player's own set first (a shortcut fires from the most ready
+                // building), then the shortest queue, then the nearest.
+                let pick = ready.iter().copied().min_by_key(|b| (b.owner != 0, self.world.object(b.owner).map_or(0, |o| o.queue), order_of(b))).unwrap_or(first);
+                Ok(vec![self.button_order(pick, aim, verb)?])
+            }
+            // Every unit that has it presses it (an object upgrade, a weapon mode, sell, evacuate,
+            // …); with no units named, only the nearest for an upgrade.
+            _ => {
+                let mut out = Vec::new();
+                let mut seen = Vec::new();
+                for b in ready {
+                    if seen.contains(&b.owner) {
+                        continue;
+                    }
+                    seen.push(b.owner);
+                    out.push(self.button_order(b, aim, verb)?);
+                    if selection.is_none() && produces {
+                        break;
+                    }
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    /// One press of `b`, at the target it asks for.
+    fn button_order(&self, b: &CmdButton, aim: Option<&Aim>, verb: &str) -> Result<(CmdOrder, Vec<u32>), String> {
+        let (wants_object, wants_point) = b.needs();
+        let mut o = CmdOrder { kind: orderkind::BUTTON, slot: b.slot, set: b.set, tmpl: b.tmpl, ..order_default() };
+        match aim {
+            None if wants_object || wants_point => return Err(format!("'{verb}' needs a target ({})", if wants_point { "a spot or a unit" } else { "a unit or a building" })),
+            None => {}
+            Some(_) if !wants_object && !wants_point => return Err(format!("'{verb}' takes no target")),
+            Some(Aim::Point(_)) if !wants_point => return Err(format!("'{verb}' needs a unit or a building to aim at, not a spot")),
+            Some(Aim::Object(id, p)) => {
+                o.target = if wants_object { *id } else { 0 };
+                o.pos = *p;
+            }
+            Some(Aim::Point(p)) => o.pos = *p,
+        }
+        let ids = if b.owner == 0 { Vec::new() } else { vec![b.owner] };
+        Ok((o, ids))
+    }
+
+    /// `cancel X`: the last X queued, at the first producer (named, or any of the player's) that
+    /// has one. The bridge looks in each in turn.
+    fn cancel(&self, thing: Option<&Thing>, selection: Option<&[u32]>) -> Result<Vec<(CmdOrder, Vec<u32>)>, String> {
+        let Some(t) = thing else { return Err("cancel what?".into()) };
+        let scope: Vec<u32> = match selection {
+            Some(s) => s.to_vec(),
+            None => self.all_owners(),
+        };
+        let templates = self.world.templates(&t.name);
+        if !templates.is_empty() {
+            // The producers that build it, each with its own template of that name.
+            let producers: Vec<&CmdButton> = self.owned_buttons(&scope, |b| b.code == btn::UNIT_BUILD && templates.contains(&b.tmpl)).collect();
+            let Some(first) = producers.first() else { return Err(format!("nothing of yours builds {}", t.name)) };
+            let ids: Vec<u32> = producers.iter().map(|b| b.owner).collect();
+            return Ok(vec![(CmdOrder { kind: orderkind::CANCEL, tmpl: first.tmpl, ..order_default() }, ids)]);
+        }
+        let upgrades: Vec<&CmdButton> = self.world.named_buttons(&t.name).filter(|b| matches!(b.code, btn::PLAYER_UPGRADE | btn::OBJECT_UPGRADE) && scope.contains(&b.owner)).collect();
+        let Some(first) = upgrades.first() else { return Err(format!("nothing of yours researches {}", t.name)) };
+        let ids: Vec<u32> = upgrades.iter().filter(|b| b.slot == first.slot).map(|b| b.owner).collect();
+        Ok(vec![(CmdOrder { kind: orderkind::CANCEL, slot: first.slot, ..order_default() }, ids)])
+    }
+
+    /// `unload [N] X`: that many of the X riding in the named containers (or the last selection).
+    fn unload(&self, thing: Option<&Thing>, selection: Option<&[u32]>) -> Result<Vec<(CmdOrder, Vec<u32>)>, String> {
+        let Some(t) = thing else { return Err("unload what?".into()) };
+        let containers: Vec<u32> = match selection {
+            Some(s) => s.to_vec(),
+            None => self.them()?,
+        };
+        let templates = self.world.templates(&t.name);
+        let riders: Vec<&CmdObject> = self.world.objects.iter().filter(|o| o.flags & cmdflags::CONTAINED != 0 && containers.contains(&o.container) && templates.contains(&o.tmpl)).collect();
+        if riders.is_empty() {
+            return Err(format!("no {} riding in them", t.name));
+        }
+        Ok(riders.iter().take(t.count.max(1) as usize).map(|o| (CmdOrder { kind: orderkind::UNLOAD, target: o.id, ..order_default() }, vec![o.container])).collect())
     }
 
     fn centre(&self, ids: &[u32]) -> Vec3 {

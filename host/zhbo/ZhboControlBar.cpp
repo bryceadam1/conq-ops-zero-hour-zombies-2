@@ -146,6 +146,14 @@ public:
 	}
 
 	/// The single selected General, if the selection is exactly one General.
+	/// Whether `button` can be pressed for `obj` now, as the control bar would draw it (no window:
+	/// ControlBar::getCommandAvailability only touches one to draw a reload clock). For the
+	/// first-person commands (ZhboCommand.cpp).
+	static Int commandAvailability(const CommandButton *button, Object *obj)
+	{
+		return (Int)TheControlBar->getCommandAvailability(button, obj, nullptr);
+	}
+
 	static Object *selectedGeneral()
 	{
 		if (!TheInGameUI || TheInGameUI->getSelectCount() != 1)
@@ -529,6 +537,11 @@ void zhboInjectConstructButtons()
 Object *zhboSelectedGeneral()
 {
 	return ZhboControlBarAccess::selectedGeneral();
+}
+
+Int zhboCommandAvailability(const CommandButton *button, Object *obj)
+{
+	return ZhboControlBarAccess::commandAvailability(button, obj);
 }
 
 Int zhboPressedClassButton()

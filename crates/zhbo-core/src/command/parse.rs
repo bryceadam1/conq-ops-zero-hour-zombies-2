@@ -488,16 +488,44 @@ impl Parser<'_> {
             if !fits(slot, &location) {
                 continue;
             }
-            out.push((Some(Target { location: location.clone(), facing: None }), j));
+            out.push((Some(Target { location: location.clone(), facing: None, end: None }), j));
             if slot.facing {
                 if let Some(k) = self.word(j, "facing") {
                     for d in Direction::ALL {
                         if let Some(m) = self.word(k, d.word()) {
-                            out.push((Some(Target { location: location.clone(), facing: Some(d) }), m));
+                            out.push((Some(Target { location: location.clone(), facing: Some(d), end: None }), m));
                         }
                     }
                 }
             }
+        }
+        // A line: `from <location> to <location>`, its two ends (no preposition of the verb's).
+        if slot.line {
+            if let Some(j) = self.word(i, "from") {
+                for (start, k) in self.bare_location(j) {
+                    if let Some(m) = self.word(k, "to") {
+                        for (end, n) in self.bare_location(m) {
+                            out.push((Some(Target { location: start.clone(), facing: None, end: Some(end) }), n));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `[offset] point`, with no preposition before it (a line's ends).
+    fn bare_location(&mut self, i: usize) -> Alts<Location> {
+        let mut out = Vec::new();
+        for o in Offset::all() {
+            if let Some(j) = self.word(i, o.words()) {
+                for (point, k) in self.point(j, true, true) {
+                    out.push((Location { offset: Some(o), point }, k));
+                }
+            }
+        }
+        for (point, k) in self.point(i, true, true) {
+            out.push((Location { offset: None, point }, k));
         }
         out
     }
@@ -537,7 +565,7 @@ impl Parser<'_> {
                     Some(slot) => self.target(k, verb, slot),
                 };
                 for (target, m) in targets {
-                    out.push((Order::Verb { verb: verb.words.clone(), thing: thing.clone(), target }, m));
+                    out.push((Order::Verb { verb: verb.words.clone(), thing: thing.clone(), target: target.map(Box::new) }, m));
                 }
             }
         }
@@ -546,6 +574,11 @@ impl Parser<'_> {
 
     fn thing(&mut self, i: usize, list: ThingList, counted: bool) -> Alts<Thing> {
         let mut out = Vec::new();
+        if list == ThingList::Production {
+            out.extend(self.thing(i, ThingList::Types, false));
+            out.extend(self.thing(i, ThingList::Upgrades, false));
+            return out;
+        }
         if list == ThingList::Types {
             let types = &self.vocab.types;
             for n in types {
@@ -568,6 +601,8 @@ impl Parser<'_> {
         let (names, label) = match list {
             ThingList::Upgrades => (&vocab.upgrades, "<upgrade>"),
             ThingList::Powers => (&vocab.powers, "<power>"),
+            ThingList::Modes => (&vocab.modes, "<weapon mode>"),
+            ThingList::Weapons => (&vocab.weapons, "<weapon>"),
             _ => (&vocab.sciences, "<science>"),
         };
         self.names(i, names, label).into_iter().map(|(name, j)| (Thing { name, count: 1 }, j)).collect()

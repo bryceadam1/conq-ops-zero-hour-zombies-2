@@ -2,10 +2,10 @@
 
 How the General commands his army without leaving first person.
 
-**Status (2026-11-07):** steps 1 and 2 of the build order are built (section 13): the language,
-and the typed command line in first person with the resolver and the engine services behind it
-(`crates/zhbo-core/src/command/`, `host/zhbo/ZhboCommand.cpp`, CONTRACT.md "First-person
-commands"). The rest is design. The decisions below were agreed with the user. Section 13 lists
+**Status (2026-11-07):** steps 1 to 3 of the build order are built (section 13): the language,
+the typed command line in first person, the resolver, the command buttons and right-click verbs,
+and the coverage gates (`crates/zhbo-core/src/command/`, `host/zhbo/ZhboCommand.cpp`,
+CONTRACT.md "First-person commands"). The rest is design. The decisions below were agreed with the user. Section 13 lists
 what is still open.
 
 ## 1. Goal and constraints
@@ -126,11 +126,14 @@ filter      = "near" point                           ; that point has no filters
             | "in" "my" "group"                      ; the cluster the General is in
 
 verb-phrase = <verb> [thing] [target]                ; as the verb's entry says (section 7)
-thing       = <buildable> | number <buildable-plural>          ; "build", counted
+thing       = <buildable> | number <buildable-plural>          ; "build", "unload", counted
             | <upgrade> | <power> | <science>        ; "upgrade", "use", "purchase"
+            | <weapon-mode> | <weapon>               ; "switch to", "fire"
+            | <buildable> | <upgrade>                ; "cancel"
 target      = [prep] point ["facing" direction]      ; prep: the verb's ("to", "at", "on")
             | offset point ["facing" direction]      ; no prep before an offset
             | "there" ["facing" direction]           ; no prep before "there"
+            | "from" location "to" location          ; a line (a wall), where the verb builds one
 
 offset      = "near" | direction "of" | "behind" | "in" "front" "of"
 point       = "me" | "there" | "that" | <place-name> | query
@@ -194,6 +197,7 @@ Spelling rules, so that every command has exactly one spelling:
 | `units except dozers guard the nearest oil derrick` | Difference. `MSG_DO_GUARD_OBJECT` on the derrick nearest to the General. |
 | `idle rangers near me name them alpha team` | Saves the IDs as `alpha team`. |
 | `alpha team act on that` | Whatever right-clicking that object would do (enter, garrison, capture, …), as `CommandXlat` decides. Spoken as "alpha team, deal with that". |
+| `the nearest dozer build america wall from me to there` | `MSG_DOZER_CONSTRUCT_LINE` from the General to the crosshair's spot (a `LINEBUILD` template). |
 | `rangers guard me` | `MSG_DO_GUARD_OBJECT` on the General: they follow and protect him. Spoken as "rangers, follow me" or "cover me". |
 | `rangers move to the bridge then attack-move to north of the bridge` | A map place name, then a queued second order. |
 | `use carpet bomb there` | The special power's building is the implied selection (as the shortcut button does). |
@@ -352,80 +356,119 @@ quantity**.
 
 ## 7. Actions
 
-### From command-set data
+Every verb and the button or message behind it is in one table, `command/actions.rs`: `BUTTONS`
+lists each engine command type (`GUICommandType`) and `MESSAGES` each message a player's machine
+sends the logic, each with the verb or grammar that produces it, or why it is not a player's order.
+The resolver reads which buttons a verb presses from there (section 12 holds it to the engine).
 
-Actions come from each object's **current** command set, the one the control bar would show.
-Upgrades and state can swap command sets, so the resolver reads the live one.
+### From command-set data (built)
 
-- **Each button's `Command` type** (`GUICommandType`: `UNIT_BUILD`, `DOZER_CONSTRUCT`,
-  `OBJECT_UPGRADE`, `PLAYER_UPGRADE`, `SPECIAL_POWER`, `FIRE_WEAPON`, `SELL`, `EVACUATE`,
-  `GUARD*`, `STOP`, `ATTACK_MOVE`, `SET_RALLY_POINT`, `SWITCH_WEAPON`, `TOGGLE_OVERCHARGE`,
-  `HACK_INTERNET`, `COMBATDROP`, …) chooses the verb and the message to emit.
-- **Its options** choose the target slot: `NEED_TARGET_POS` takes a location,
-  `NEED_TARGET_ENEMY_OBJECT`/`ALLY_OBJECT`/`NEUTRAL_OBJECT` take an object reference with that
-  relation, and `NEED_SPECIAL_POWER_SCIENCE` makes the verb conditional on the science.
-- **Its label** gives the verb's or object's words.
-- **Availability** is the engine's own button state. Missing money, missing prerequisites,
-  cooldown and a full queue all reject the command with the engine's reason (section 9).
+The bridge lists every button of the player's command sets (`ZhboClientApi.command_buttons`):
+each of his objects' **current** command set, the one the control bar shows when the object is
+selected, and his own sets, the special-power shortcuts and the Generals' promotions (rank 1, 3
+and 8). The General's own set is left out: his actions are first person's (constraint 1's
+exception). Each button carries:
 
-### Context verbs (right-click in the overhead view)
+- **its command type**, which picks the verb (`actions::BUTTONS`);
+- **its options**: `NEED_TARGET_POS` takes a spot, the `NEED_TARGET_*_OBJECT` options and
+  `CONTEXTMODE_COMMAND` take a unit or building;
+- **its thing**: the template it builds, or the name it gives (an upgrade's display name, else the
+  button's label: a power, a promotion, a weapon mode, a weapon);
+- **its availability**, `ControlBar::getCommandAvailability` now. A command whose buttons are all
+  unaffordable, not ready or restricted is refused with that reason ("you can't afford to upgrade
+  composite armor").
 
-Right-clicking a target makes `CommandXlat` choose an action, using `ActionManager`'s `can*`
-queries. Each query becomes an explicit verb so it can be asked for by name, and `act on <object>`
-asks the engine to choose, as a right-click does. `go to <object>` is only a synonym of `move to`,
-never the right-click: when someone says "go to the oil derrick", they mean move there. An
-Engineer capturing the derrick instead would be a surprise.
+The names join the vocabulary's lists (`upgrades`, `powers`, `sciences`, `modes`, `weapons`), and
+the templates the buttons build join the type names, so `build crusader tank` works before any
+Crusader is on the map.
 
-| Verb | ActionManager query | Message |
+| Verb | Buttons | What is sent |
 |---|---|---|
-| `move to` | — | `MSG_DO_MOVETO` |
-| `force move to` | — | `MSG_DO_FORCEMOVETO` |
-| `attack` / `force attack` | `canFireWeaponAtObject` | `MSG_DO_ATTACK_OBJECT` / `MSG_DO_FORCE_ATTACK_OBJECT` |
-| `force attack` (location) | `canFireWeaponAtLocation` | `MSG_DO_FORCE_ATTACK_GROUND` |
-| `enter`, `garrison` | `canEnterObject`, `canGarrison` | `MSG_ENTER` |
-| `capture` | `canCaptureBuilding` | `MSG_CAPTUREBUILDING` |
-| `repair` | `canRepairObject` | `MSG_DO_REPAIR` |
-| `resume building` | `canResumeConstructionOf` | `MSG_RESUME_CONSTRUCTION` |
-| `get repaired at`, `get healed at` | `canGetRepairedAt`, `canGetHealedAt` | `MSG_GET_REPAIRED`, `MSG_GET_HEALED` |
-| `dock at`, `deliver supplies to` | `canDockAt`, `canTransferSuppliesAt` | `MSG_DOCK` |
-| `hijack`, `car-bomb` | `canHijackVehicle`, `canConvertObjectToCarBomb` | `MSG_ENTER`, `MSG_CONVERT_TO_CARBOMB` |
-| `snipe` | `canSnipeVehicle` | `MSG_SNIPE_VEHICLE` |
-| `disable` (vehicle or building), `steal cash from` | `canDisableVehicleViaHacking`, `canDisableBuildingViaHacking`, `canStealCashViaHacking` | `MSG_DISABLEVEHICLE_HACK`, `MSG_DISABLEBUILDING_HACK`, `MSG_STEALCASH_HACK` |
-| `sabotage`, `cut power to`, `bribe`, `convert` (make defector), `pick up` | `canSabotageBuilding`, `canCutBuildingPower`, `canBribeUnit`, `canMakeObjectDefector`, `canPickUpPrisoner` | per the engine's mapping in `CommandXlat` |
-| `salvage` | — | `MSG_DO_SALVAGE` |
+| `build [N] <type> [placement]` | `UNIT_BUILD` | One press per unit at the producer with the shortest queue, ties to the nearer (`MSG_QUEUE_UNIT_CREATE`) |
+| | `DOZER_CONSTRUCT` | The nearest idle builder (else the nearest), `MSG_DOZER_CONSTRUCT` at the nearest legal place to the spot named (else the builder), searched outward with the overhead placement's own legality flags (`PlaceEventTranslator`); `facing` sets the angle, else the template's `PlacementViewAngle` (`InGameUI::placeBuildAvailable`) |
+| `build <wall> from <place> to <place>` | `DOZER_CONSTRUCT` of a `LINEBUILD` template | `MSG_DOZER_CONSTRUCT_LINE` from one end to the other (the walls and the GLA's burning barricade) |
+| | `SPECIAL_POWER_CONSTRUCT[_FROM_SHORTCUT]` | `MSG_DO_SPECIAL_POWER_AT_LOCATION` with the angle, at a legal place, as `PlaceEventTranslator` sends it |
+| `upgrade <upgrade>` | `PLAYER_UPGRADE`, `OBJECT_UPGRADE` | `MSG_QUEUE_UPGRADE` (a player upgrade at one producer; an object upgrade on every unit named that has it) |
+| `use <power> [target]` | `SPECIAL_POWER[_FROM_SHORTCUT]` | The shortcut first (it fires from the most ready building), else the nearest owner; a power with a target is finished as the world click would be |
+| `purchase <science>` | `PURCHASE_SCIENCE` | `MSG_PURCHASE_SCIENCE` of the first rank the player can buy |
+| `cancel <type or upgrade>` | the queue | The last one queued at the first producer that has one (`MSG_CANCEL_UNIT_CREATE` by production id, `MSG_CANCEL_UPGRADE`) |
+| `unload [N] <type>` | `EXIT_CONTAINER` | `MSG_EXIT` of that many such passengers from the containers named |
+| `switch to <mode>`, `fire <weapon> [target]` | `SWITCH_WEAPON`, `FIRE_WEAPON` | `MSG_SWITCH_WEAPONS`, `MSG_DO_WEAPON` (or the world click for an aimed weapon) |
+| `sell`, `evacuate`, `overcharge`, `hack internet`, `depart`, `cancel construction` | `SELL`, `EVACUATE`, `TOGGLE_OVERCHARGE`, `HACK_INTERNET`, `EXECUTE_RAILED_TRANSPORT`, `DOZER_CONSTRUCT_CANCEL` | The button's message, from each unit named that has it |
+| `combat drop <target>` | `COMBATDROP` | The world click with the button pending |
 
-The wording is the fixed verb table in `command/vocab.rs` (`fixed_verbs`). The rule is fixed: one
-verb per `can*` query, and the message emitted is whatever `CommandXlat` emits for that case.
+**How a press is sent.** An untargeted button sends what `ControlBar::processCommandUI` sends for
+its type (ported case by case, with its checks: money, queue, single-use buttons). A button that
+needs a target is set as the pending GUI command and finished by
+`CommandTranslator::evaluateContextCommand` at the target, the code a world click runs. The bridge
+owns its own `CommandTranslator`; the call reads only the UI's selection and the pending command.
+A button that uses the mine-clearing weapon set sends `MSG_SET_MINE_CLEARING_DETAIL` first, as the
+control bar does.
 
-### Orders bound to hotkeys, and player-level orders
+### Right-click verbs (built)
+
+`act on <unit, building or spot>` is the right-click: `evaluateContextCommand` decides, as it does
+overhead (on open ground: a move, a rally point, a special power's new destination). The other
+verbs name one thing the right-click can do. The bridge evaluates the right-click first without
+sending anything; if what it would do is not one the verb allows, the command is refused ("that
+would do something else"). Only then is it sent.
+
+| Verb | Allowed outcome of the right-click |
+|---|---|
+| `act on` | anything |
+| `enter`, `garrison`, `hijack` | `MSG_ENTER` |
+| `capture` | `MSG_CAPTUREBUILDING`, or a special power (a hacker's capture) |
+| `repair` | `MSG_DO_REPAIR` |
+| `resume building` | `MSG_RESUME_CONSTRUCTION` |
+| `get repaired at`, `get healed at` | `MSG_GET_REPAIRED`, `MSG_GET_HEALED` |
+| `dock at`, `deliver supplies to` | `MSG_DOCK` |
+| `car-bomb` | `MSG_CONVERT_TO_CARBOMB` or `MSG_ENTER` |
+| `sabotage` | `MSG_ENTER`, a special power, or another action |
+| `salvage` | `MSG_DO_SALVAGE` |
+| `disable`, `steal cash from` | a hack (`MSG_DISABLEVEHICLE_HACK`, `MSG_DISABLEBUILDING_HACK`, `MSG_STEALCASH_HACK`) or a special power |
+| `set rally point at <spot>` | `MSG_SET_RALLY_POINT` (the right-click on open ground with a factory selected) |
+
+`hijack`, `car-bomb` and `sabotage` are also context-mode buttons; where the units named have the
+button, it is pressed at the target instead. The right-click verbs the first draft listed for
+`ActionManager`'s other queries (`snipe`, `cut power`, `bribe`, `convert`, `pick up`) are not
+right-clicks in Zero Hour: they are special-power buttons (`use <power> on …`), or compiled out
+(`ALLOW_SURRENDER`). The engine sends `MSG_SNIPE_VEHICLE` from nowhere.
+
+`go to <object>` is only a synonym of `move to`, never the right-click: when someone says "go to
+the oil derrick", they mean move there. An Engineer capturing the derrick instead would be a
+surprise.
+
+### Direct orders and hotkeys (built)
 
 | Overhead input | Command |
 |---|---|
+| Right-click on the ground, attack, force attack, stop | `move to`, `force move to`, `attack-move to`, `attack`, `force attack`, `stop` |
+| Guard buttons | `guard`, `guard without pursuit`, `guard against aircraft` (`MSG_DO_GUARD_POSITION`/`OBJECT` with the guard mode; with no target, where they stand) |
 | Scatter, formation, cheer | `scatter`, `form up`, `cheer` (`MSG_DO_SCATTER`, `MSG_CREATE_FORMATION`, `MSG_DO_CHEER`) |
-| Ctrl+digit, digit | `make them group N`, `group N` as a selection (`MSG_CREATE_TEAMn`, `MSG_SELECT_TEAMn`) |
-| Waypoint mode, shift-queued orders | `then` |
-| Beacons | `place beacon <location>` (`MSG_PLACE_BEACON`) |
-| Generals' promotions | `purchase <science>` (`MSG_PURCHASE_SCIENCE`) |
-| Shortcut special powers, superweapons | `use <power> …`, with the owning building as the implied selection |
+| Ctrl+digit, digit, Shift+digit | `make them group N`, `group N`, `and group N` |
+| Waypoint mode, shift-queued moves | `then` (moves only: Zero Hour queues waypoints, nothing else) |
+| Beacons | `place beacon at <spot>` (under the multiplayer settings' cap, as `MSG_META_PLACE_BEACON` allows), `remove beacon` |
 
-### Narrowing and implied selection
+Not orders, and so not in the language (`actions::MESSAGES` gives each reason): deselecting,
+closing a pop-up, a beacon's chat text, the replay camera, the quit menu's surrender, the logic
+CRC, retaliation mode (a game option).
 
-- **Narrowing by capability.** If the selection is mixed, the order goes to the members that can
-  carry it out (`units build power plant` → the dozers). Orders the engine already filters per
-  unit, such as attack-move, are passed through unchanged. If nobody can carry out the order, it
-  is rejected (section 9).
-- **Implied selection.** An order with no selection gets the capable set the order implies:
-  - production: the factories that can build it, shortest queue first, splitting a count across
-    them;
-  - construction or repair: the nearest idle capable dozer, otherwise the nearest capable dozer;
-  - a power: its owning building;
+### Implied selection, and who acts
+
+- **Implied selection.** An order with no units named:
+  - `build`, `upgrade`, `use`, `purchase`, `cancel`: every object of the player's that has the
+    button (the player's own sets included), then the rules in the table above;
   - anything else: the last selection (`them`).
-- **One target or many.** Object slots that take one object (`attack`, `enter`, `repair`) resolve
-  a plural or ambiguous reference to the candidate nearest the General. Slots that take many
-  (`garrison` across several buildings) are marked as such in the verb table.
-- **Placement.** `build X near Y` asks the engine's legality check for the nearest legal spot to
-  Y, searching outward. `facing` sets the building's angle. Without it, the engine's default
-  angle is used.
+
+  The units that acted become `them` for the next command.
+- **Narrowing.** A button verb goes to the members of the selection that have the button; if none
+  has it, the command is refused ("none of them can build crusader tank"). Orders the engine
+  filters per unit itself, such as attack-move, go to the whole selection.
+- **One target.** A target that names several objects resolves to the one nearest the General.
+- **What the engine refuses** comes back from `issue_order` (`ZHBO_ISSUED_*`: no room to build,
+  the queue is full, the target does not suit the button, the right-click would do something
+  else, nothing like that to cancel). A command none of whose orders went out is refused and
+  changes nothing; a partial one says how many went out.
 
 ## 8. Front ends
 
@@ -529,11 +572,15 @@ Voice runs entirely on the player's machine.
   list. Run over the install's data in the real-install suite.
 - **Resolver.** Selection, filters, clusters, superlatives, implied selection, narrowing, fog and
   ghost rules over a fake world in the headless tests.
-- **Coverage gate (constraint 1), in two parts:**
-  1. Every `CommandButton` in the install's command sets can be produced as a command.
-  2. Every message type in `MessageStream.h` that a player can issue as an order has a command
-     that emits it. Message types that are not orders (hints, system, camera, debug) are
-     classified in code, each with its reason, the way `state_hash` skips are.
+- **Coverage gate (constraint 1), built, in three parts:**
+  1. Every `GUICommandType` in the engine's `ControlBar.h` is in `actions::BUTTONS`, and nothing
+     else is (`command::actions::tests`, read from the engine submodule).
+  2. Every message a player's machine sends the logic (`MessageStream.h`, from
+     `MSG_BEGIN_NETWORK_MESSAGES` to the debug ones) is in `actions::MESSAGES`, with the verb or
+     grammar that sends it, or why it is not a player's order or never sent.
+  3. Every `CommandButton` in the player's own install (`INIZH.big`, `PatchINI.big`) uses a
+     command type a verb or the grammar covers (`zhbo-assets` `command_gate`, real-install suite:
+     813 buttons).
 - **Lockstep.** A command issued from first person produces the same message stream, and the same
   state hash, as the equivalent overhead clicks in the harness.
 - **In game.** An autotest leg that issues typed commands (move, build, produce, attack) and
@@ -556,8 +603,10 @@ Voice runs entirely on the player's machine.
      only (Zero Hour queues waypoints, not other orders).
 
    Left for later steps, each refused with a message saying so: cluster filters (`in the … group`,
-   `in my group`), place names, and every other verb.
-3. Actions from command-set data and the context verbs, with the coverage gate.
+   `in my group`) and place names.
+3. **Built.** The command buttons (`command_buttons`) and their verbs, the right-click verbs
+   through the engine's own `evaluateContextCommand`, construction (lines included), cancel,
+   unload, the hotkey orders, and the three-part coverage gate (section 7, section 12).
 4. The scroll-wheel menu over valid completions.
 5. Adjectives, filters, clusters, place names, team names and synonyms.
 6. Voice: the sampler and dataset, the model prototypes, constrained decoding.

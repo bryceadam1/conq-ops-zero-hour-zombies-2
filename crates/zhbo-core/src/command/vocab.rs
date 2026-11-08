@@ -2,10 +2,11 @@
 //! (types, classes, upgrades, powers, sciences, place names, team names) and the verbs with the
 //! arguments each takes.
 //!
-//! The lists are filled from data by the caller (the world query, a later step). The verbs start as
-//! the fixed table below: the context verbs (one per `ActionManager::can*` query), the orders bound
-//! to hotkeys and the verbs with their own shapes (`build`, `use`, …). The verbs built from each
-//! object's command set extend it in a later step.
+//! The lists are filled from data by the caller ([`super::world::World::vocabulary`]: the objects'
+//! display names and the names their command buttons give). The verbs are the fixed table below:
+//! the right-click verbs (each a way `CommandTranslator::evaluateContextCommand` can act), the
+//! orders bound to hotkeys, and the verbs of the command buttons (`build`, `upgrade`, `use`, …),
+//! whose things come from the buttons.
 
 use super::ast::{Adjective, Direction, Region, Relation, Superlative};
 
@@ -36,6 +37,12 @@ pub enum ThingList {
     Upgrades,
     Powers,
     Sciences,
+    /// Weapon modes (`SWITCH_WEAPON` buttons' labels).
+    Modes,
+    /// Weapons fired by button (`FIRE_WEAPON` buttons' labels).
+    Weapons,
+    /// What a producer can have queued: a type or an upgrade (`cancel`).
+    Production,
 }
 
 /// What a verb's target may be.
@@ -49,12 +56,14 @@ pub struct TargetSlot {
     pub required: bool,
     /// `facing <direction>` may follow (verbs that place a building).
     pub facing: bool,
+    /// `from <place> to <place>` may stand instead (verbs that build a line, like a wall).
+    pub line: bool,
 }
 
 impl TargetSlot {
-    pub const OBJECT: TargetSlot = TargetSlot { object: true, point: false, required: true, facing: false };
-    pub const POINT: TargetSlot = TargetSlot { object: false, point: true, required: true, facing: false };
-    pub const EITHER: TargetSlot = TargetSlot { object: true, point: true, required: true, facing: false };
+    pub const OBJECT: TargetSlot = TargetSlot { object: true, point: false, required: true, facing: false, line: false };
+    pub const POINT: TargetSlot = TargetSlot { object: false, point: true, required: true, facing: false, line: false };
+    pub const EITHER: TargetSlot = TargetSlot { object: true, point: true, required: true, facing: false, line: false };
 }
 
 /// One verb: its words, the preposition before its target, and its arguments.
@@ -76,58 +85,72 @@ impl VerbDef {
     }
 }
 
-/// The verbs the language has before any command-set data is read (docs/COMMANDS.md section 7).
+/// The verbs of the language (docs/COMMANDS.md section 7).
 pub fn fixed_verbs() -> Vec<VerbDef> {
     use TargetSlot as T;
     let optional_either = TargetSlot { required: false, ..T::EITHER };
-    let placement = TargetSlot { object: false, point: true, required: false, facing: true };
-    let mut v = vec![
-        // Orders with no target.
-        VerbDef::new("stop", None, None, None),
-        VerbDef::new("evacuate", None, None, None),
-        VerbDef::new("sell", None, None, None),
-        VerbDef::new("scatter", None, None, None),
-        VerbDef::new("form up", None, None, None),
-        VerbDef::new("cheer", None, None, None),
+    let optional_point = TargetSlot { required: false, ..T::POINT };
+    let placement = TargetSlot { object: false, point: true, required: false, facing: true, line: true };
+    let none = |w: &str| VerbDef::new(w, None, None, None);
+    let on = |w: &str, prep: Option<&str>, slot: TargetSlot| VerbDef::new(w, prep, None, Some(slot));
+    let thing = |w: &str, prep: Option<&str>, list: ThingList, counted: bool, slot: Option<TargetSlot>| VerbDef::new(w, prep, Some((list, counted)), slot);
+    vec![
+        // Orders with no target: hotkeys (`MSG_META_SCATTER`, `MSG_META_CREATE_FORMATION`,
+        // `MSG_META_ALL_CHEER`, `MSG_META_REMOVE_BEACON`) and command buttons.
+        none("stop"),
+        none("scatter"),
+        none("form up"),
+        none("cheer"),
+        none("sell"),
+        none("overcharge"),
+        none("hack internet"),
+        none("depart"),
+        none("cancel construction"),
+        none("remove beacon"),
+        on("evacuate", Some("at"), optional_point),
         // Movement and attack.
-        VerbDef::new("move", Some("to"), None, Some(T::POINT)),
-        VerbDef::new("force move", Some("to"), None, Some(T::POINT)),
-        VerbDef::new("attack-move", Some("to"), None, Some(T::POINT)),
-        VerbDef::new("attack", None, None, Some(T::OBJECT)),
-        VerbDef::new("force attack", None, None, Some(T::EITHER)),
-        VerbDef::new("guard", None, None, Some(optional_either)),
-        // The right-click, and one verb per ActionManager::can* query.
-        VerbDef::new("act", Some("on"), None, Some(T::OBJECT)),
-        VerbDef::new("enter", None, None, Some(T::OBJECT)),
-        VerbDef::new("garrison", None, None, Some(T::OBJECT)),
-        VerbDef::new("capture", None, None, Some(T::OBJECT)),
-        VerbDef::new("repair", None, None, Some(T::OBJECT)),
-        VerbDef::new("resume building", None, None, Some(T::OBJECT)),
-        VerbDef::new("get repaired", Some("at"), None, Some(T::OBJECT)),
-        VerbDef::new("get healed", Some("at"), None, Some(T::OBJECT)),
-        VerbDef::new("dock", Some("at"), None, Some(T::OBJECT)),
-        VerbDef::new("deliver supplies", Some("to"), None, Some(T::OBJECT)),
-        VerbDef::new("hijack", None, None, Some(T::OBJECT)),
-        VerbDef::new("car-bomb", None, None, Some(T::OBJECT)),
-        VerbDef::new("snipe", None, None, Some(T::OBJECT)),
-        VerbDef::new("disable", None, None, Some(T::OBJECT)),
-        VerbDef::new("steal cash", Some("from"), None, Some(T::OBJECT)),
-        VerbDef::new("sabotage", None, None, Some(T::OBJECT)),
-        VerbDef::new("cut power", Some("to"), None, Some(T::OBJECT)),
-        VerbDef::new("bribe", None, None, Some(T::OBJECT)),
-        VerbDef::new("convert", None, None, Some(T::OBJECT)),
-        VerbDef::new("pick up", None, None, Some(T::OBJECT)),
-        VerbDef::new("salvage", None, None, Some(T::OBJECT)),
+        on("move", Some("to"), T::POINT),
+        on("force move", Some("to"), T::POINT),
+        on("attack-move", Some("to"), T::POINT),
+        on("attack", None, T::OBJECT),
+        on("force attack", None, T::EITHER),
+        on("guard", None, optional_either),
+        on("guard without pursuit", None, optional_either),
+        on("guard against aircraft", None, optional_either),
+        // The right-click, and each way `CommandTranslator::evaluateContextCommand` can act on a
+        // target.
+        // `act on` a spot is the right-click on open ground (a move, a rally point, a special
+        // power's new destination).
+        on("act on", None, T::EITHER),
+        on("enter", None, T::OBJECT),
+        on("garrison", None, T::OBJECT),
+        on("capture", None, T::OBJECT),
+        on("repair", None, T::OBJECT),
+        on("resume building", None, T::OBJECT),
+        on("get repaired", Some("at"), T::OBJECT),
+        on("get healed", Some("at"), T::OBJECT),
+        on("dock", Some("at"), T::OBJECT),
+        on("deliver supplies", Some("to"), T::OBJECT),
+        on("hijack", None, T::OBJECT),
+        on("car-bomb", None, T::OBJECT),
+        on("sabotage", None, T::OBJECT),
+        on("salvage", None, T::OBJECT),
+        on("disable", None, T::OBJECT),
+        on("steal cash", Some("from"), T::OBJECT),
         // Points the overhead view clicks.
-        VerbDef::new("set rally point", Some("at"), None, Some(T::POINT)),
-        VerbDef::new("place beacon", Some("at"), None, Some(T::POINT)),
-    ];
-    // The verbs with things.
-    v.push(VerbDef::new("build", Some("at"), Some((ThingList::Types, true)), Some(placement)));
-    v.push(VerbDef::new("upgrade", None, Some((ThingList::Upgrades, false)), None));
-    v.push(VerbDef::new("use", Some("at"), Some((ThingList::Powers, false)), Some(optional_either)));
-    v.push(VerbDef::new("purchase", None, Some((ThingList::Sciences, false)), None));
-    v
+        on("set rally point", Some("at"), T::POINT),
+        on("place beacon", Some("at"), T::POINT),
+        on("combat drop", Some("on"), T::EITHER),
+        // The command buttons with things.
+        thing("build", Some("at"), ThingList::Types, true, Some(placement)),
+        thing("upgrade", None, ThingList::Upgrades, false, None),
+        thing("use", Some("at"), ThingList::Powers, false, Some(optional_either)),
+        thing("purchase", None, ThingList::Sciences, false, None),
+        thing("cancel", None, ThingList::Production, false, None),
+        thing("unload", None, ThingList::Types, true, None),
+        thing("switch to", None, ThingList::Modes, false, None),
+        thing("fire", Some("at"), ThingList::Weapons, false, Some(optional_either)),
+    ]
 }
 
 /// Every word list of one match.
@@ -140,6 +163,8 @@ pub struct Vocabulary {
     pub upgrades: Vec<String>,
     pub powers: Vec<String>,
     pub sciences: Vec<String>,
+    pub modes: Vec<String>,
+    pub weapons: Vec<String>,
     /// The map's place names.
     pub places: Vec<String>,
     /// Team names saved this match.
@@ -155,6 +180,8 @@ impl Default for Vocabulary {
             upgrades: Vec::new(),
             powers: Vec::new(),
             sciences: Vec::new(),
+            modes: Vec::new(),
+            weapons: Vec::new(),
             places: Vec::new(),
             teams: Vec::new(),
             verbs: fixed_verbs(),
@@ -166,7 +193,7 @@ impl Default for Vocabulary {
 pub fn fixed_words() -> Vec<&'static str> {
     let mut w = vec![
         "then", "and", "except", "the", "my", "half", "group", "them", "that", "me", "there", "near",
-        "in", "of", "behind", "front", "facing", "name", "make", "units", "unit",
+        "in", "of", "behind", "front", "facing", "from", "name", "make", "units", "unit",
     ];
     w.extend(Superlative::ALL.iter().map(|s| s.word()));
     w.extend(Adjective::ALL.iter().map(|a| a.word()));
@@ -187,6 +214,9 @@ impl Vocabulary {
             ThingList::Upgrades => self.upgrades.iter().map(String::as_str).collect(),
             ThingList::Powers => self.powers.iter().map(String::as_str).collect(),
             ThingList::Sciences => self.sciences.iter().map(String::as_str).collect(),
+            ThingList::Modes => self.modes.iter().map(String::as_str).collect(),
+            ThingList::Weapons => self.weapons.iter().map(String::as_str).collect(),
+            ThingList::Production => self.types.iter().map(|n| n.singular.as_str()).chain(self.upgrades.iter().map(String::as_str)).collect(),
         }
     }
 
@@ -214,6 +244,8 @@ impl Vocabulary {
             ("upgrade", &self.upgrades),
             ("power", &self.powers),
             ("science", &self.sciences),
+            ("mode", &self.modes),
+            ("weapon", &self.weapons),
             ("place", &self.places),
             ("team", &self.teams),
         ] {
@@ -233,7 +265,13 @@ impl Vocabulary {
             if name.split_whitespace().any(|w| w == "then") {
                 out.push(format!("{list} '{name}' contains 'then'"));
             }
-            match names[..i].iter().find(|&&(_, n)| n == name) {
+            // Two lists clash only where the parser reads them in the same place: the noun lists
+            // (types, classes, places, teams) together, and types with upgrades (`cancel` takes
+            // either). A power, science, weapon mode or weapon is only read after its own verb, so
+            // it may share a unit's name (the Scud Storm is a building and a power).
+            const NOUNS: [&str; 4] = ["type", "class", "place", "team"];
+            let clash = |a: &str, b: &str| a == b || (NOUNS.contains(&a) && NOUNS.contains(&b)) || matches!((a, b), ("type", "upgrade") | ("upgrade", "type"));
+            match names[..i].iter().find(|&&(other, n)| n == name && clash(other, list)) {
                 Some(&(other, _)) if other == list => out.push(format!("{list} '{name}' is listed twice")),
                 Some(&(other, _)) => out.push(format!("'{name}' is both a {other} and a {list}")),
                 None => {}

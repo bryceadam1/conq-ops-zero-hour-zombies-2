@@ -194,7 +194,8 @@ int32_t cbImageQuad(const char *name, const float *corners, uint32_t argb);
 // ZhboCommand.cpp: the first-person command services (docs/COMMANDS.md).
 int32_t cbCommandObjects(int32_t player, ZhboCmdObject *out, int32_t cap);
 int32_t cbTemplateName(uint32_t tmpl, char *out, int32_t cap);
-void cbIssueOrder(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count);
+int32_t cbIssueOrder(const ZhboCmdOrder *order, const uint32_t *ids, int32_t count);
+int32_t cbCommandButtons(int32_t player, ZhboCmdButton *out, int32_t cap);
 void cbClip(float x, float y, float w, float h);
 int32_t cbRadar(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *youPx);
 int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);
@@ -258,6 +259,8 @@ Bool zhboCommandWindowShown(GameWindow *win);
 // The command bar's class set (zhbo_core::classicons): one page of presets and the active set's
 // customs.
 Object *zhboSelectedGeneral();
+// ControlBar::getCommandAvailability (protected; ZhboControlBarAccess is its friend).
+Int zhboCommandAvailability(const CommandButton *button, Object *obj);
 Int zhboPressedClassButton();
 void zhboOpenClassSet(Object *general, Bool forced);
 void zhboCloseClassSet(Object *general);
@@ -324,6 +327,9 @@ struct Autopilot
 	// ahead, when an attack order was sent (cbIssueOrder) and what has been logged.
 	ObjectID commandRangers[3];
 	ObjectID commandRebel;
+	ObjectID commandBarracks, commandDozer;
+	Int commandQueue; // the Barracks' queue last logged
+	Bool commandSite; // a new Barracks site was logged
 	UnsignedInt commandAttackOrdered;
 	Bool commandArrived, commandAttacked;
 	// ZHBO_AUTOPILOT=splash (splashAutopilotFrame): the scene's objects (the struck target first)

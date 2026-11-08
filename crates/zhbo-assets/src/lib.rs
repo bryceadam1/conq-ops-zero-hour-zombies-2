@@ -17,6 +17,7 @@ pub mod impacts;
 mod hipfire_gate;
 mod lockstep_gate;
 mod health_gate;
+mod command_gate;
 pub mod ini;
 pub mod emblems;
 pub mod paks;

@@ -247,9 +247,15 @@ pub trait ClientHost {
     fn template_name(&self, _tmpl: u32) -> Option<String> {
         None
     }
-    /// Send an order to objects as the overhead view would (ABI: `ClientApi::issue_order`). A host
-    /// without it sends nothing.
-    fn issue_order(&self, _order: &crate::command::world::CmdOrder, _ids: &[u32]) {}
+    /// Send an order to objects as the overhead view would (ABI: `ClientApi::issue_order`); a
+    /// `command::world::issued` code. A host without it sends nothing.
+    fn issue_order(&self, _order: &crate::command::world::CmdOrder, _ids: &[u32]) -> i32 {
+        crate::command::world::issued::NOBODY
+    }
+    /// The buttons of the player's command sets (ABI: `ClientApi::command_buttons`).
+    fn command_buttons(&self, _player: i32) -> Vec<crate::command::world::CmdButton> {
+        Vec::new()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -324,8 +330,12 @@ pub struct ClientApi {
     /// returns its length, 0 for none. Pending the next ABI bump.
     pub template_name: Option<extern "C" fn(tmpl: u32, out: *mut c_char, cap: i32) -> i32>,
     /// Send `order` to the `count` objects at `ids` as the overhead view would: the selection as
-    /// `MSG_CREATE_SELECTED_GROUP`, then the order's message. Pending the next ABI bump.
-    pub issue_order: Option<extern "C" fn(order: *const crate::command::world::CmdOrder, ids: *const u32, count: i32)>,
+    /// `MSG_CREATE_SELECTED_GROUP`, then the order's message; returns a `command::world::issued`
+    /// code. Pending the next ABI bump.
+    pub issue_order: Option<extern "C" fn(order: *const crate::command::world::CmdOrder, ids: *const u32, count: i32) -> i32>,
+    /// Every button of `player`'s command sets: each of his objects' current set and his own sets
+    /// (promotions, power shortcuts), at most `cap`; returns the count. Pending the next ABI bump.
+    pub command_buttons: Option<extern "C" fn(player: i32, out: *mut crate::command::world::CmdButton, cap: i32) -> i32>,
 }
 
 fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
@@ -600,10 +610,21 @@ impl ClientHost for CClientHost {
         Some(String::from_utf8_lossy(&buf[..n]).into_owned())
     }
 
-    fn issue_order(&self, order: &crate::command::world::CmdOrder, ids: &[u32]) {
-        if let Some(f) = self.0.issue_order {
-            f(order, ids.as_ptr(), ids.len() as i32);
+    fn issue_order(&self, order: &crate::command::world::CmdOrder, ids: &[u32]) -> i32 {
+        match self.0.issue_order {
+            Some(f) => f(order, ids.as_ptr(), ids.len() as i32),
+            None => crate::command::world::issued::NOBODY,
         }
+    }
+
+    fn command_buttons(&self, player: i32) -> Vec<crate::command::world::CmdButton> {
+        let Some(f) = self.0.command_buttons else { return Vec::new() };
+        // Every button of every object: a full army's sets fit with room over.
+        const CAP: usize = 8192;
+        let mut out = vec![crate::command::world::CmdButton::default(); CAP];
+        let n = f(player, out.as_mut_ptr(), CAP as i32).clamp(0, CAP as i32) as usize;
+        out.truncate(n);
+        out
     }
 }
 

@@ -59,7 +59,10 @@
 #                                      stand behind the General and an enemy rebel far ahead; typed
 #                                      lines bring the Rangers to him, send the nearest at the rebel
 #                                      (and nobody fights before that order), refuse a misspelt line,
-#                                      and give an order with no selection to the last one
+#                                      give an order with no selection to the last one; then a
+#                                      Barracks queues two Rangers and cancels one, his dozer lays out
+#                                      a Barracks near him, and the Rangers take a right-click on open
+#                                      ground
 #   scripts/autotest-mac.sh --detail   the graphics detail Zero Hour picks (host patch 0025): four starts
 #                                      with Options.ini set up as a new player (none), a player whose
 #                                      file holds the old detector's Low, one who chose Low and one who
@@ -837,7 +840,7 @@ Command Test
 primary=an94_mp;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
 end
 EOF
-    export ZHBO_AUTOPILOT=command GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-45} GGC_BGFX_SCREENSHOT_INTERVAL=${GGC_BGFX_SCREENSHOT_INTERVAL:-150}
+    export ZHBO_AUTOPILOT=command GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-55} GGC_BGFX_SCREENSHOT_INTERVAL=${GGC_BGFX_SCREENSHOT_INTERVAL:-150}
     "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
     wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
     for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
@@ -863,7 +866,14 @@ EOF
     check "misspelt line refused" "command: 'rangres stop' refused: didn't expect 'rangres'"
     check "no selection: the last one" "command: 'stop' -> 1 unit: stop, 1 order"
     check "  ...order sent" "command order: stop to 1 object\(s\)"
-    grep -E "command" "$l" | head -40
+    check "build line: two presses" "command: 'build 2 rangers' -> 1 unit: build 2 rangers, 2 order\(s\)"
+    check "  ...the queue holds two" "autopilot: command scene: the Barracks' queue holds 2"
+    check "cancel line: one cancelled" "command: 'cancel ranger' -> 1 unit: cancel ranger, 1 order\(s\)"
+    check "  ...the queue holds one" "autopilot: command scene: the Barracks' queue holds 1"
+    check "construct line: placed" "command order: construct to 1 object\(s\).*: 1$"
+    check "  ...a Barracks site" "autopilot: command scene: a Barracks site [0-9]+"
+    check "right-click on open ground" "command order: right-click to 3 object\(s\).*: 1$"
+    grep -E "command" "$l" | head -60
     echo "screenshots and log: $out"
     exit $ok
 fi

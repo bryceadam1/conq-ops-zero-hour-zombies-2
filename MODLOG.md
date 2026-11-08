@@ -14789,3 +14789,56 @@ says what was done or why not (docs/COMMANDS.md, CONTRACT.md "First-person comma
   selection went to the last one, and the Ranger stopped short of the rebel. The capture at frame
   600 shows the green echo at the lower left. No `--mp` leg: the sim and the engine's logic are
   unchanged (the orders are the overhead view's own messages).
+
+## First-person commands, step 3: command buttons, right-click verbs, coverage gates (2026-11-07)
+
+The language now presses the player's command buttons and does what a right-click does
+(docs/COMMANDS.md section 7, CONTRACT.md "First-person commands").
+- **Buttons from data.** `ZhboClientApi.command_buttons` lists every button of each of the player's
+  objects' current command set and of his own sets (special-power shortcuts, the three
+  purchase-science ranks), with a stable `ZHBO_BUTTON_*` code (the engine's `GUICommandType`
+  numbering moves with `ALLOW_SURRENDER`), options, template, availability and name. Upgrades,
+  powers, promotions, weapon modes and weapons become vocabulary; the templates buttons build join
+  the type names. `command/actions.rs` is the one table of which buttons a verb presses.
+- **Presses as the engine does them.** An untargeted button sends what `ControlBar::processCommandUI`
+  sends for its type, with its checks. A targeted button and every right-click verb go through the
+  engine's own `CommandTranslator::evaluateContextCommand`, on a translator instance the bridge
+  owns: the call reads only the UI's selection and pending GUI command. A right-click verb is
+  evaluated first (`EVALUATE_ONLY`) and refused if the right-click would do something else.
+  Construction searches outward for a place that passes `PlaceEventTranslator`'s own legality
+  flags; a `LINEBUILD` template (the walls, the GLA's burning barricade: the install has three
+  such buttons) takes `build <wall> from <place> to <place>` and `MSG_DOZER_CONSTRUCT_LINE`; a
+  special power's construction sends `MSG_DO_SPECIAL_POWER_AT_LOCATION` with the angle, as
+  placement does. `cancel`, `unload` (the player's passengers are listed, never selectable),
+  scatter, form up, cheer and the beacons are in. `issue_order` answers with `ZHBO_ISSUED_*`, and
+  a command none of whose orders went out is refused and changes nothing.
+- **Coverage gates** (constraint 1): every `GUICommandType` in the engine's `ControlBar.h` and every
+  network message in `MessageStream.h` is covered by a verb or the grammar, or classified as not an
+  order or never sent, with the reason (`command::actions::tests`, read from the submodule); every
+  one of the install's 813 `CommandButton`s uses a covered command type (`zhbo-assets`
+  `command_gate`, real-install).
+- **Decided while building:** the draft's `snipe`, `cut power`, `bribe`, `convert` and `pick up`
+  verbs are gone. They are not right-clicks in Zero Hour but special-power buttons (`use …`) or
+  compiled out, and nothing sends `MSG_SNIPE_VEHICLE` or `MSG_DO_ATTACKSQUAD`. `act on` takes a
+  spot too (the right-click on open ground: moves, rally points, a special power's new
+  destination, which covers `MSG_DO_SPECIAL_POWER_OVERRIDE_DESTINATION`); its words are the verb
+  itself, so `act on there` keeps its `on`. A power, science, weapon mode or weapon may share a
+  unit's name (the Scud Storm is both); only an upgrade may not (`cancel` reads either).
+- **Gotchas:**
+  - `CommandTranslator`'s move and attack paths act only after a selection has passed through
+    that translator (`m_teamExists`). The bridge's own instance never saw one, so the first
+    open-ground right-click came back `MSG_INVALID`. The bridge now hands its
+    `MSG_CREATE_SELECTED_GROUP` to it, through the base class, as the stream calls translators
+    (`translateGameMessage` is private in the subclass).
+  - `ControlBar::getCommandAvailability` is protected: it goes through `ZhboControlBarAccess`, the
+    control bar's declared friend (patch 0001), as `zhboCommandAvailability`.
+  - The USA dozer's display name is "Construction Dozer", so `the dozer …` is refused until the
+    synonyms (step 5).
+  - A backgrounded `cargo xtask build …; echo "exit $?"` reports the echo, not the build: the
+    first step-3 build had failed while the notification said 0. Read the build log's last lines.
+- **Verification:** `cargo test --workspace` (ZHBO_BO2_DIR unset) all pass, 39 command tests;
+  clippy clean (workspace `--all-targets`; zhbo-core `--features harness,renderer`). Real install:
+  `command_gate` 813/813. `scripts/autotest-mac.sh --command` 19/19: the earlier 11, plus the
+  Barracks' queue going to 2 and back to 1, a construct order placing a Barracks site 71 from the
+  General, and the Rangers' right-click on open ground sent. No `--mp` leg: the sim and the
+  engine's logic are unchanged.

@@ -452,6 +452,7 @@ void Zhbo_Init()
 		.command_objects = cbCommandObjects,
 		.template_name = cbTemplateName,
 		.issue_order = cbIssueOrder,
+		.command_buttons = cbCommandButtons,
 	};
 	zhbo_init(&logicApi, &clientApi);
 

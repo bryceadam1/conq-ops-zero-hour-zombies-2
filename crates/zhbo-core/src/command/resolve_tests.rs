@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 
 use super::session::{run, typed_char, Host, Session, Viewer};
-use super::world::{canonical_name, cmdflags as f, orderkind as k, plural, relation as rel, CmdObject, CmdOrder, World};
+use super::world::{availability as av, button as b, canonical_name, cmdflags as f, context as cx, issued, orderkind as k, playerset, plural, relation as rel, CmdButton, CmdObject, CmdOrder, World};
 use crate::input::{Key, KeySet};
 use crate::math::Vec3;
 
@@ -31,6 +31,46 @@ fn objects() -> Vec<CmdObject> {
     v[3].health = 0.5;
     v[2].veterancy = 1;
     v[5].groups = 1 << 3;
+    // A second war factory far off with a unit queued, a Humvee with a Ranger riding in it.
+    let mut second = obj(31, 102, f::SELECTABLE | f::STRUCTURE, rel::OWN, -900.0, 0.0);
+    second.queue = 1;
+    v.push(second);
+    v.push(obj(21, 105, f::SELECTABLE | f::SELECT_ALL | f::VEHICLE | f::LOADED, rel::OWN, 0.0, -100.0));
+    let mut rider = obj(13, 100, f::INFANTRY | f::CONTAINED, rel::OWN, 0.0, -100.0);
+    rider.container = 21;
+    v.push(rider);
+    v
+}
+
+fn button(owner: u32, slot: i32, code: i32, tmpl: u32, name: &str) -> CmdButton {
+    let mut out = CmdButton { owner, slot, code, tmpl, availability: av::AVAILABLE, ..CmdButton::default() };
+    out.name[..name.len()].copy_from_slice(name.as_bytes());
+    out
+}
+
+/// The war factories build Crusaders and research Composite Armor (unaffordable), the dozer builds
+/// a Power Plant, the Rangers switch to flash-bangs, the second factory can be sold, the player has
+/// the Carpet Bomb shortcut (aimed at a spot) and a promotion to buy.
+fn buttons() -> Vec<CmdButton> {
+    let mut armor = button(30, 3, b::PLAYER_UPGRADE, 0, "Composite Armor");
+    armor.availability = av::CANT_AFFORD;
+    let mut bomb = button(0, 0, b::SPECIAL_POWER_FROM_SHORTCUT, 0, "&Carpet Bomb");
+    bomb.set = playerset::SHORTCUTS;
+    bomb.options = super::world::option::NEED_TARGET_POS;
+    let mut science = button(0, 2, b::PURCHASE_SCIENCE, 0, "Advanced Training");
+    science.set = playerset::RANK1;
+    let mut v = vec![
+        button(30, 0, b::UNIT_BUILD, 103, ""),
+        button(31, 0, b::UNIT_BUILD, 103, ""),
+        armor,
+        button(20, 4, b::DOZER_CONSTRUCT, 104, ""),
+        button(31, 9, b::SELL, 0, ""),
+        bomb,
+        science,
+    ];
+    for r in [10, 11, 12] {
+        v.push(button(r, 1, b::SWITCH_WEAPON, 0, "Flash-Bang Grenades"));
+    }
     v
 }
 
@@ -39,6 +79,9 @@ fn name(tmpl: u32) -> Option<String> {
         100 => Some("Ranger".into()),
         101 => Some("Dozer".into()),
         102 => Some("&War Factory".into()),
+        103 => Some("Crusader Tank".into()),
+        104 => Some("Power Plant".into()),
+        105 => Some("Humvee".into()),
         200 => Some("Rebel".into()),
         900 => Some("General".into()),
         _ => None,
@@ -47,12 +90,15 @@ fn name(tmpl: u32) -> Option<String> {
 
 struct Fake {
     objects: Vec<CmdObject>,
+    buttons: Vec<CmdButton>,
     issued: RefCell<Vec<(CmdOrder, Vec<u32>)>>,
+    /// The engine's answer to each order kind (sent unless set).
+    answers: Vec<(i32, i32)>,
 }
 
 impl Fake {
     fn new() -> Fake {
-        Fake { objects: objects(), issued: RefCell::new(Vec::new()) }
+        Fake { objects: objects(), buttons: buttons(), issued: RefCell::new(Vec::new()), answers: Vec::new() }
     }
 }
 
@@ -63,8 +109,12 @@ impl Host for Fake {
     fn template_name(&self, tmpl: u32) -> Option<String> {
         name(tmpl)
     }
-    fn issue(&self, order: &CmdOrder, ids: &[u32]) {
+    fn buttons(&self) -> Vec<CmdButton> {
+        self.buttons.clone()
+    }
+    fn issue(&self, order: &CmdOrder, ids: &[u32]) -> i32 {
         self.issued.borrow_mut().push((*order, ids.to_vec()));
+        self.answers.iter().find(|(kind, _)| *kind == order.kind).map_or(issued::SENT, |&(_, code)| code)
     }
     fn ground_height(&self, _x: f32, _y: f32) -> f32 {
         0.0
@@ -102,16 +152,44 @@ fn refusal(line: &str) -> String {
 fn the_world_names_its_types_and_leaves_out_grammar_words() {
     let mut objs = objects();
     objs.push(obj(60, 300, f::SELECTABLE, rel::OWN, 0.0, 0.0));
-    let world = World::new(objs, &|t| if t == 300 { Some("Stop".into()) } else { name(t) });
+    let world = World::new(objs, buttons(), &|t| if t == 300 { Some("Stop".into()) } else { name(t) });
     let names: Vec<&str> = world.types.iter().map(|(n, _)| n.singular.as_str()).collect();
-    assert_eq!(names, ["dozer", "general", "ranger", "rebel", "war factory"]);
+    // The types on the map and the ones the buttons build (the Crusader, the Power Plant).
+    assert_eq!(names, ["crusader tank", "dozer", "general", "humvee", "power plant", "ranger", "rebel", "war factory"]);
     assert_eq!(world.templates("war factory"), [102]);
     assert_eq!(world.refused_names, ["'stop': a word of the grammar"]);
     // The class words stay, but none a type took.
     let vocab = world.vocabulary(&[]);
     let classes: Vec<&str> = vocab.classes.iter().map(|n| n.singular.as_str()).collect();
     assert_eq!(classes, ["infantry", "vehicle", "aircraft", "building", "builder", "harvester"]);
+    // The buttons' names, each in its list.
+    assert_eq!(vocab.upgrades, ["composite armor"]);
+    assert_eq!(vocab.powers, ["carpet bomb"]);
+    assert_eq!(vocab.sciences, ["advanced training"]);
+    assert_eq!(vocab.modes, ["flash-bang grenades"]);
     assert_eq!(vocab.problems(), Vec::<String>::new());
+}
+
+#[test]
+fn a_power_may_share_a_units_name_but_an_upgrade_may_not() {
+    // The Scud Storm is a building and its power; an upgrade named like a unit would clash with it
+    // after `cancel`.
+    let mut objs = objects();
+    objs.push(obj(70, 106, f::SELECTABLE | f::STRUCTURE, rel::OWN, 0.0, 300.0));
+    let mut storm = button(70, 0, b::SPECIAL_POWER, 0, "Scud Storm");
+    storm.options = super::world::option::NEED_TARGET_POS;
+    let world = World::new(objs.clone(), vec![storm, button(30, 5, b::PLAYER_UPGRADE, 0, "Ranger")], &|t| if t == 106 { Some("Scud Storm".into()) } else { name(t) });
+    let vocab = world.vocabulary(&[]);
+    assert_eq!(vocab.powers, ["scud storm"]);
+    assert!(vocab.upgrades.is_empty());
+    assert_eq!(world.refused_names, ["'ranger': an upgrade with a unit's name"]);
+    assert_eq!(vocab.problems(), Vec::<String>::new());
+    let mut host = Fake::new();
+    host.objects = objs;
+    host.buttons = vec![storm];
+    let mut s = Session::default();
+    let (o, ids) = command(&mut s, &host, "use scud storm north of me").unwrap()[0].clone();
+    assert_eq!((o.kind, ids), (k::BUTTON, vec![70]));
 }
 
 #[test]
@@ -120,6 +198,9 @@ fn display_names_become_canonical_words_with_regular_plurals() {
     assert_eq!(canonical_name("  Crusader   Tank ").as_deref(), Some("crusader tank"));
     assert_eq!(canonical_name("MISSING: 'OBJECT:Foo'"), None);
     assert_eq!(canonical_name(""), None);
+    // Punctuation is a word break; a hyphen inside a word stays.
+    assert_eq!(canonical_name("Upgrade: Flash-Bang (Rangers)").as_deref(), Some("upgrade flash-bang rangers"));
+    assert_eq!(canonical_name("A-10 Strike!").as_deref(), Some("a-10 strike"));
     assert_eq!(plural("war factory"), "war factories");
     assert_eq!(plural("humvee"), "humvees");
     assert_eq!(plural("supply truck"), "supply trucks");
@@ -133,10 +214,11 @@ fn selections_resolve_nearest_first() {
     let (o, ids) = one("rangers move to me");
     assert_eq!((o.kind, o.pos), (k::MOVE, Vec3::ZERO));
     assert_eq!(ids, [11, 10, 12]);
-    // `units` is Zero Hour's select-all: no dozer, no building, never the General.
-    assert_eq!(one("units stop").1, [11, 10, 12]);
+    // `units` is Zero Hour's select-all: no dozer, no building, never the General (the Humvee, at
+    // the same distance as Ranger 10, after him by id).
+    assert_eq!(one("units stop").1, [11, 10, 21, 12]);
     assert_eq!(one("builders stop").1, [20]);
-    assert_eq!(one("buildings stop").1, [30]);
+    assert_eq!(one("buildings stop").1, [30, 31]);
     assert_eq!(one("group 3 stop").1, [30]);
     assert_eq!(refusal("group 4 stop"), "group 4 is empty");
 }
@@ -166,7 +248,7 @@ fn targets_resolve_to_objects_and_points() {
     assert_eq!((o.kind, o.target, ids), (k::ATTACK, 40, vec![11]));
     // A building seen before and now in fog is still a target (rule 1).
     assert_eq!(one("rangers attack the enemy war factory").0.target, 50);
-    assert_eq!(one("rangers guard my war factory").0, CmdOrder { kind: k::GUARD_OBJECT, target: 30, pos: Vec3::new(-200.0, 0.0, 0.0), ..CmdOrder::default() });
+    assert_eq!(one("rangers guard my war factory").0, CmdOrder { kind: k::GUARD_OBJECT, target: 30, pos: Vec3::new(-200.0, 0.0, 0.0), slot: -1, ..CmdOrder::default() });
     assert_eq!(one("rangers guard me").0.target, GENERAL);
     // Offsets: north is +y on the radar; behind me is against his facing (east).
     assert_eq!(one("rangers move north of me").0.pos, Vec3::new(0.0, 150.0, 0.0));
@@ -220,13 +302,13 @@ fn them_teams_groups_and_then() {
     // A team name joins the vocabulary.
     command(&mut s, &host, "veteran rangers name them alpha team").unwrap();
     assert_eq!(command(&mut s, &host, "alpha team stop").unwrap()[0].1, [11]);
-    assert_eq!(command(&mut s, &host, "rangers make them group 2").unwrap()[0].0, CmdOrder { kind: k::MAKE_GROUP, arg: 2, ..CmdOrder::default() });
+    assert_eq!(command(&mut s, &host, "rangers make them group 2").unwrap()[0].0, CmdOrder { kind: k::MAKE_GROUP, arg: 2, slot: -1, ..CmdOrder::default() });
     // `then` queues moves.
     let orders = command(&mut s, &host, "rangers move to me then move to the dozer").unwrap();
     assert_eq!(orders.iter().map(|(o, _)| (o.kind, o.queued)).collect::<Vec<_>>(), [(k::MOVE, 0), (k::MOVE, 1)]);
     assert_eq!(command(&mut s, &host, "rangers move to me then stop").unwrap_err(), "only a move can follow 'then' for now, not 'stop'");
-    // Verbs not built yet say so.
-    assert_eq!(command(&mut s, &host, "rangers capture that").unwrap_err(), "'capture' comes in a later step");
+    // The right-click verbs now go to the engine to check (here: the Ranger under the crosshair).
+    assert_eq!(command(&mut s, &host, "rangers capture that").unwrap()[0].0.kind, k::CONTEXT);
 }
 
 #[test]
@@ -284,4 +366,92 @@ fn the_command_line_types_submits_and_cancels() {
     assert_eq!(typed_char(Key::Key1), Some('1'));
     assert_eq!(typed_char(Key::Key6), Some('6'));
     assert_eq!(typed_char(Key::Enter), None);
+}
+
+#[test]
+fn build_queues_at_the_shortest_queue_and_constructs_with_the_nearest_idle_builder() {
+    let host = Fake::new();
+    let mut s = Session::default();
+    // Factory 30 (empty, near) twice, then factory 31 (one queued) once the queues tie and the
+    // nearer one has taken its turn.
+    let orders = command(&mut s, &host, "build 3 crusader tanks").unwrap();
+    assert_eq!(orders.iter().map(|(o, ids)| (o.kind, o.slot, ids[0])).collect::<Vec<_>>(), [(k::BUTTON, 0, 30), (k::BUTTON, 0, 30), (k::BUTTON, 0, 31)]);
+    // No units named: the ones that acted are `them`.
+    assert_eq!(s.memory.last, [30, 31]);
+    assert_eq!(command(&mut s, &host, "the war factory build crusader tank").unwrap()[0].1, [30]);
+
+    // Construction: the dozer, at the place named; `facing east` is angle 0.
+    let (o, ids) = command(&mut s, &host, "the dozer build power plant near me facing east").unwrap()[0].clone();
+    assert_eq!((o.kind, o.tmpl, o.pos, o.angle, ids), (k::CONSTRUCT, 104, Vec3::ZERO, 0.0, vec![20]));
+    // Implied builder, no place: at the builder, the template's own angle (NaN for the bridge).
+    let (o, ids) = command(&mut s, &host, "build power plant").unwrap()[0].clone();
+    assert_eq!((o.pos, ids), (Vec3::new(30.0, -40.0, 0.0), vec![20]));
+    assert!(o.angle.is_nan());
+    assert_eq!(command(&mut s, &host, "build 2 power plants").unwrap_err(), "build one building at a time");
+    // A line (a wall): both ends go to the bridge, which sends the line message for a LINEBUILD
+    // template and refuses one for anything else.
+    let (o, _) = command(&mut s, &host, "the dozer build power plant from me to north of me").unwrap()[0].clone();
+    assert_eq!((o.pos, o.end, o.arg), (Vec3::ZERO, Vec3::new(0.0, 150.0, 0.0), 1));
+    assert_eq!(command(&mut s, &host, "build crusader tank from me to north of me").unwrap_err(), "only a building is built from one place to another, not build crusader tank");
+    assert_eq!(command(&mut s, &host, "rangers build crusader tank").unwrap_err(), "none of them can build crusader tank");
+}
+
+#[test]
+fn powers_promotions_upgrades_and_modes_press_their_buttons() {
+    let host = Fake::new();
+    let mut s = Session::default();
+    let (o, ids) = command(&mut s, &host, "use carpet bomb north of me").unwrap()[0].clone();
+    assert_eq!((o.kind, o.set, o.slot, o.pos, ids.len()), (k::BUTTON, playerset::SHORTCUTS, 0, Vec3::new(0.0, 150.0, 0.0), 0));
+    assert_eq!(command(&mut s, &host, "use carpet bomb").unwrap_err(), "'use' needs a target (a spot or a unit)");
+    let (o, _) = command(&mut s, &host, "purchase advanced training").unwrap()[0].clone();
+    assert_eq!((o.set, o.slot), (playerset::RANK1, 2));
+    assert_eq!(command(&mut s, &host, "upgrade composite armor").unwrap_err(), "you can't afford to upgrade composite armor");
+    let orders = command(&mut s, &host, "rangers switch to flash-bang grenades").unwrap();
+    assert_eq!(orders.iter().map(|(_, ids)| ids[0]).collect::<Vec<_>>(), [11, 10, 12]);
+    assert_eq!(command(&mut s, &host, "rangers sell").unwrap_err(), "none of them can sell");
+    assert_eq!(command(&mut s, &host, "war factories sell").unwrap()[0].1, [31]);
+    assert!(command(&mut s, &host, "rangers switch to flash-bang grenades there").unwrap_err().starts_with("didn't expect 'there'"));
+}
+
+#[test]
+fn right_click_verbs_say_what_they_allow() {
+    let (o, ids) = one("rangers capture the enemy war factory");
+    assert_eq!((o.kind, o.target, o.arg, ids), (k::CONTEXT, 50, cx::CAPTURE | cx::SPECIAL_POWER, vec![11, 10, 12]));
+    assert_eq!(one("rangers act on that").0.arg, cx::ANY);
+    // On open ground: the right-click at the spot, no target object.
+    let (o, _) = one("rangers act on north of me");
+    assert_eq!((o.kind, o.target, o.arg, o.pos), (k::CONTEXT, 0, cx::ANY, Vec3::new(0.0, 150.0, 0.0)));
+    assert_eq!(one("the dozer repair my war factory").0.arg, cx::REPAIR);
+    let (o, _) = one("the war factory set rally point north of me");
+    assert_eq!((o.kind, o.target, o.arg, o.pos), (k::CONTEXT, 0, cx::RALLY_POINT, Vec3::new(0.0, 150.0, 0.0)));
+    assert_eq!(one("rangers guard without pursuit me").0.arg, 1);
+    assert_eq!(one("rangers guard against aircraft north of me").0, CmdOrder { kind: k::GUARD_POSITION, pos: Vec3::new(0.0, 150.0, 0.0), arg: 2, slot: -1, ..CmdOrder::default() });
+    assert_eq!(one("rangers scatter").0.kind, k::SCATTER);
+    assert_eq!(one("rangers place beacon north of me").0.kind, k::PLACE_BEACON);
+}
+
+#[test]
+fn cancel_and_unload_name_what_is_queued_and_who_rides() {
+    let (o, ids) = one("cancel crusader tank");
+    assert_eq!((o.kind, o.tmpl, ids), (k::CANCEL, 103, vec![30, 31]));
+    let (o, ids) = one("the humvee unload ranger");
+    assert_eq!((o.kind, o.target, ids), (k::UNLOAD, 13, vec![21]));
+    assert_eq!(refusal("the dozer unload ranger"), "no ranger riding in them");
+    // A passenger is never selected or targeted: three Rangers, not four.
+    assert_eq!(one("rangers stop").1, [11, 10, 12]);
+}
+
+#[test]
+fn what_the_engine_refuses_is_said_and_a_command_none_of_whose_orders_went_out_changes_nothing() {
+    let mut host = Fake::new();
+    host.answers = vec![(k::CONSTRUCT, issued::NO_PLACE), (k::BUTTON, issued::QUEUE_FULL)];
+    let mut s = Session::default();
+    assert_eq!(command(&mut s, &host, "build power plant").unwrap_err(), "there's no room to build it there");
+    assert!(s.memory.last.is_empty());
+    host.answers = vec![(k::CONTEXT, issued::OTHER_ACTION)];
+    assert_eq!(command(&mut s, &host, "rangers capture the enemy war factory").unwrap_err(), "that would do something else");
+    // Part of a command going out is said too.
+    host.answers.clear();
+    let log = run(&mut s, "rangers move to me", &host, viewer(), &crate::tuning::Tuning::default());
+    assert!(log.contains("3 order(s)") || log.contains("1 order(s)"), "{log}");
 }
