@@ -22,3 +22,5 @@ tokenizers = { version = "0.22", default-features = false, features = ["fancy-re
 serde_json = "1"
 # The microphone, for the conquerops-voice process.
 cpal = "0.18"
+# Whisper's log-mel, computed exactly as openai/whisper does (hear::log_mel).
+rustfft = "6.4"

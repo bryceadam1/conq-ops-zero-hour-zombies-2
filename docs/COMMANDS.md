@@ -564,6 +564,12 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
     Rust, and the two changes above were where our time went.
   - **The filterbank** is computed (librosa's Slaney mel, as OpenAI ships it precomputed) and
     matches transformers' to the last bit (`the_mel_filters_are_whispers`).
+  - **The log-mel is openai's** (`hear::log_mel`, `hear::window_samples`): a centred,
+    reflect-padded periodic-Hann STFT over the audio plus 3 s, padded to a whole number of frame
+    pairs (`the_log_mel_is_openais`). candle's `pcm_to_mel` frames the audio differently: its
+    encoder states differed from the reference by about 17% of their size (cosine 0.987); now they
+    agree to bf16 rounding (cosine 0.999999), which a bridge trained on reference features needs.
+    The pipeline's own score moved within noise (0.783 to 0.787 spoken).
 - **Snapping (built, `zhbo_voice::snap`).** Whisper writes what a name sounds like (`velgal team`
   for `belcal team`, `enami`, `play spican` for `place beacon`), and the translator, which copies
   names, then guesses. The snapper respells each word it does not know into the nearest-sounding

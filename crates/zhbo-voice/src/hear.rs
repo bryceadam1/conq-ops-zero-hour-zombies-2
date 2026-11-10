@@ -10,7 +10,7 @@ use std::path::Path;
 
 use candle_core::{Device, Tensor, D};
 use candle_nn::VarBuilder;
-use candle_transformers::models::whisper::{self, audio, Config};
+use candle_transformers::models::whisper::{self, Config};
 use tokenizers::Tokenizer;
 use zhbo_core::command::Vocabulary;
 
@@ -101,20 +101,10 @@ impl Listener {
     /// listener's window.
     pub fn encode(&mut self, pcm: &[f32]) -> Result<Tensor, Error> {
         let n_mels = self.config.num_mel_bins;
-        let mel = audio::pcm_to_mel(&self.config, pcm, &self.filters);
-        let frames = mel.len() / n_mels;
-        // The window, in frames: even (the encoder halves it), at most 30 s. `pcm_to_mel` pads
-        // with silence, so the frames after the audio are silence's.
-        let width = match self.window {
-            None => whisper::N_FRAMES,
-            Some(extra) => ((pcm.len() / whisper::HOP_LENGTH + extra + 1) & !1).min(whisper::N_FRAMES),
-        };
-        let mut window = vec![0f32; n_mels * width];
-        for m in 0..n_mels {
-            let take = frames.min(width);
-            window[m * width..m * width + take].copy_from_slice(&mel[m * frames..m * frames + take]);
-        }
-        let mel = Tensor::from_vec(window, (1, n_mels, width), &self.device)?;
+        let samples = window_samples(pcm, self.window);
+        let mel = log_mel(&samples, &self.filters, n_mels);
+        let width = mel.len() / n_mels;
+        let mel = Tensor::from_vec(mel, (1, n_mels, width), &self.device)?;
         Ok(self.model.encode(&mel)?)
     }
 
@@ -213,9 +203,73 @@ pub fn prompt(vocab: &Vocabulary) -> String {
     format!("Commands for {}.", vocab.spoken_names().join(", "))
 }
 
+/// The samples the encoder's window covers: the audio and `silence` frames of silence after it,
+/// zero-padded to a whole number of frame pairs (the encoder halves the frames), or with `None`
+/// Whisper's full 30 s. As whisper-t5-bridge's `audio.window_samples`, so a bridge trained there
+/// sees the same states.
+pub fn window_samples(pcm: &[f32], silence: Option<usize>) -> Vec<f32> {
+    let hop = whisper::HOP_LENGTH;
+    let n = match silence {
+        Some(frames) => (pcm.len() + frames * hop).div_ceil(2 * hop) * 2 * hop,
+        None => whisper::N_SAMPLES,
+    }
+    .min(whisper::N_SAMPLES);
+    let mut out = vec![0f32; n];
+    let take = pcm.len().min(n);
+    out[..take].copy_from_slice(&pcm[..take]);
+    out
+}
+
+/// Whisper's log-mel spectrogram exactly as openai/whisper's `log_mel_spectrogram`: a 400-point
+/// periodic Hann STFT, hop 160, centred with reflect padding, its last frame dropped; the power
+/// spectrum through `filters` (`n_mels` rows of 201); log10 clamped at 1e-10, floored at the
+/// window's maximum less 8, then `(x + 4) / 4`. Row-major `[n_mels, samples / 160]`. (candle's
+/// `pcm_to_mel` frames the audio differently, and its states drifted from the reference by a few
+/// percent: `the_log_mel_is_openais`.)
+pub fn log_mel(samples: &[f32], filters: &[f32], n_mels: usize) -> Vec<f32> {
+    use rustfft::num_complex::Complex;
+    let (n_fft, hop) = (whisper::N_FFT, whisper::HOP_LENGTH);
+    let bins = n_fft / 2 + 1;
+    let half = n_fft / 2;
+    let n = samples.len();
+    // Reflect padding: `x[-k] = x[k]`, without repeating the edge.
+    let at = |i: isize| -> f32 {
+        let i = if i < 0 { -i } else if i >= n as isize { 2 * (n as isize - 1) - i } else { i };
+        samples.get(i.clamp(0, n as isize - 1) as usize).copied().unwrap_or(0.0)
+    };
+    let hann: Vec<f32> = (0..n_fft).map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n_fft as f32).cos()).collect();
+    let frames = n / hop;
+    let fft = rustfft::FftPlanner::<f32>::new().plan_fft_forward(n_fft);
+    let mut power = vec![0f32; bins * frames];
+    let mut buf = vec![Complex::new(0f32, 0f32); n_fft];
+    for t in 0..frames {
+        let start = (t * hop) as isize - half as isize;
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = Complex::new(at(start + i as isize) * hann[i], 0.0);
+        }
+        fft.process(&mut buf);
+        for k in 0..bins {
+            power[k * frames + t] = buf[k].norm_sqr();
+        }
+    }
+    let mut mel = vec![0f32; n_mels * frames];
+    for m in 0..n_mels {
+        let row = &filters[m * bins..(m + 1) * bins];
+        for t in 0..frames {
+            let s: f32 = row.iter().enumerate().map(|(k, w)| w * power[k * frames + t]).sum();
+            mel[m * frames + t] = s.max(1e-10).log10();
+        }
+    }
+    let top = mel.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    for x in &mut mel {
+        *x = ((*x).max(top - 8.0) + 4.0) / 4.0;
+    }
+    mel
+}
+
 /// Whisper's mel filterbank: librosa's `filters.mel(sr, n_fft, n_mels)` with its defaults (the
 /// Slaney mel scale and area normalisation), which OpenAI's code loads precomputed. Row-major,
-/// `n_mels` rows of `n_fft / 2 + 1` bins, as candle's `pcm_to_mel` reads it.
+/// `n_mels` rows of `n_fft / 2 + 1` bins, as [`log_mel`] reads it.
 pub fn mel_filters(sample_rate: usize, n_fft: usize, n_mels: usize) -> Vec<f32> {
     const F_SP: f64 = 200.0 / 3.0;
     const MIN_LOG_HZ: f64 = 1000.0;
@@ -257,6 +311,29 @@ mod tests {
     fn a_transcription_is_tidied_for_the_translator() {
         assert_eq!(tidy(" Korgor towers, move to Nixvel Hill."), "korgor towers, move to nixvel hill");
         assert_eq!(tidy("Uh, the dozer's -- build it?"), "uh, the dozer's -- build it");
+    }
+
+    #[test]
+    fn the_log_mel_is_openais() {
+        // Reference: whisper-t5-bridge's `audio.LogMel` (openai/whisper's computation) on the
+        // same signal and window: two tones, half a second, then the 3 s of silence.
+        let x: Vec<f32> = (0..8000)
+            .map(|i| {
+                let t = i as f32 / 16000.0;
+                0.3 * (std::f32::consts::TAU * 440.0 * t).sin() + 0.1 * (std::f32::consts::TAU * 1234.0 * t).sin() * t
+            })
+            .collect();
+        let w = window_samples(&x, Some(WINDOW_SILENCE));
+        assert_eq!(w.len(), 56000);
+        let mel = log_mel(&w, &mel_filters(16000, 400, 80), 80);
+        let frames = mel.len() / 80;
+        assert_eq!(frames, 350);
+        for (m, t, want) in [(0, 0, 0.8723545074462891), (10, 5, 1.2378135919570923), (40, 49, -0.211248517036438), (30, 300, -0.672720193862915)] {
+            let got = mel[m * frames + t] as f64;
+            assert!((got - want).abs() < 2e-4, "mel {m} frame {t}: {got} against {want}");
+        }
+        let sum: f64 = mel.iter().map(|&v| v as f64).sum();
+        assert!((sum + 17906.207256436348).abs() < 0.5, "sum {sum}");
     }
 
     #[test]

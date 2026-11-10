@@ -15103,3 +15103,19 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - **Gotcha: an early "it helps" was an artefact.** Ranking options by their first token alone
   made the baseline weak (0.40). The questions mostly patched that weakness. Ranked by whole
   probability, the untuned answerer helped nothing.
+
+## Voice: Whisper's log-mel made openai's (2026-11-10)
+
+- **Gotcha: candle's `pcm_to_mel` is not openai's log-mel.** It frames the audio differently.
+  Our encoder states differed from whisper-t5-bridge's reference (transformers' encoder on
+  openai's mel) by a mean of 0.12 against a mean magnitude of 0.71, with cosine 0.987.
+- **Now:** `hear::log_mel` computes openai's exactly: a centred, reflect-padded periodic-Hann STFT
+  through `rustfft`, the last frame dropped, log10 floored at max − 8, then (x + 4) / 4.
+  `hear::window_samples` gives the audio plus 3 s, padded to a multiple of 320 samples, as
+  whisper-t5-bridge's `audio.window_samples`.
+  - Reference test: `the_log_mel_is_openais`.
+  - States now agree to bf16 rounding (cosine 0.999999).
+  - Pipeline: spoken 0.787 against 0.783, English-named 0.815 against 0.802 (within noise).
+- **Why it matters:** fine-tuning whisper-t5-bridge's pretrained bridge on our commands
+  (`tools/voice/train/finetune_bridge.py`, results to follow) needs the features it was trained
+  on.
