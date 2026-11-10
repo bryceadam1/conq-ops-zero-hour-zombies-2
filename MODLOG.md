@@ -15119,3 +15119,28 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - **Why it matters:** fine-tuning whisper-t5-bridge's pretrained bridge on our commands
   (`tools/voice/train/finetune_bridge.py`, results to follow) needs the features it was trained
   on.
+
+## Voice: whisper-t5-bridge's bridge fine-tuned on commands (2026-11-10)
+
+- **The question (the user's):** can the bridge from the whisper-t5-bridge project (R3, distilled
+  on FLAN against frozen flan-t5-small) be fine-tuned to match the pipeline?
+- **Setup:** `tools/voice/train/finetune_bridge.py`. T5's encoder is frozen and reads the names
+  prompt; the bridged audio follows; 12,000 spoken training commands with openai-exact features
+  (`audio2`, see the log-mel entry); 6 epochs, about 5 minutes each on MPS.
+- **Gotcha: MPS has no fused attention with dropout.** T5 loads with `attn_implementation=
+  "eager"`; the bridge's layers train with dropout 0.
+- **Results, on 300 held-out spoken commands, unconstrained:**
+
+  | configuration | same meaning | not a command |
+  |---|---|---|
+  | LoRA on untuned flan-t5-small | 0.413 | 45% |
+  | LoRA on our translator | 0.450 | 35% |
+  | our translator's whole decoder trained | **0.533** | 28% |
+  | bridge from scratch (earlier) | 0.347 | 48% |
+  | the pipeline, unconstrained (masked) | 0.750 (0.787) | |
+
+  - Silenced audio scores 0 in every configuration, so the model listens.
+  - Of the best one's 140 errors, only 11 are a wrong name alone. The rest drop or swap parts:
+    the lexical gap whisper-t5-bridge reported.
+- **Kept:** the pipeline. The bridge route would be faster (about 75 ms for encoder and bridge,
+  then the decoder) but is about 25 points short.

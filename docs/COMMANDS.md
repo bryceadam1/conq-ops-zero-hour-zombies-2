@@ -734,6 +734,9 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   | token beam 4 under the mask (`decode_tokens`) | 0.747 | 0.98 (100 rows) | below |
   | Whisper encoder → bridge → T5 decoder (`train_bridge.py --mode audio`) | 0.347 (unconstrained) | | 48% not a command; 240 ms in all |
   | T5-encoded names + bridged audio (`--mode both`) | 0.043 | | modality collapse |
+  | whisper-t5-bridge's pretrained bridge (R3) fine-tuned, LoRA on untuned flan-t5-small (`finetune_bridge.py`) | 0.413 (unconstrained) | | 45% not a command |
+  | R3 fine-tuned, LoRA on our translator | 0.450 | | 35% not a command |
+  | R3 fine-tuned, our translator's whole decoder trained | 0.533 | | 28% not a command; silenced audio 0.000 |
 
   - **Option scoring** (`options`: every option the grammar allows run through the decoder as
     if written, compared by probability, an exact first-token bound pruning them; our own T5
@@ -759,6 +762,13 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
     plausible commands from the names and ignore the audio. Both point at the same need: far more
     audio, and a frozen T5 so only the bridge learns (BLSP's behaviour alignment, arXiv
     2309.00916): a separate project.
+  - **That project's bridge, fine-tuned** (whisper-t5-bridge's R3, distilled on FLAN with T5
+    frozen; `tools/voice/train/finetune_bridge.py`, T5's encoder frozen, on the same 12,000 spoken
+    commands, features now from the openai-exact log-mel). It listens (silenced audio: nothing
+    right) and starts far ahead of a bridge from scratch, best with our translator's decoder
+    trained whole: 0.533 against 0.347. But it stays well below Whisper's own decoder: only 11 of
+    its 140 errors are a wrong name alone; the rest drop or swap parts (`attack the enemy jet` for
+    `thunder jet`), the lexical gap whisper-t5-bridge's own report found. The pipeline stays.
 
   Training uses **placeholder names** in place of real unit and place names, so the model learns
   to copy names instead of memorising Zero Hour's roster. That generalises to mods and other
