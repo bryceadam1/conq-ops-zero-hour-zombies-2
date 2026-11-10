@@ -86,6 +86,7 @@ def main():
     ap.add_argument("--seed", type=int, default=20261107)
     ap.add_argument("--dev-sample", type=int, default=600, help="dev rows checked after each epoch (all at the end)")
     ap.add_argument("--prompt", help="a file holding the prompt: {heard} is what was said, {names} the row's names (names.tsv)")
+    ap.add_argument("--choices", action="store_true", help="also train on choices_train.tsv's multiple-choice questions")
     ap.add_argument("--max-src", type=int, help="the longest input in tokens (default: 64, or 384 with {names} in the prompt)")
     args = ap.parse_args()
 
@@ -105,7 +106,12 @@ def main():
     # Training inputs as the game hears them (`voice_heard`): Whisper's transcripts, snapped.
     heard = [row for path in sorted(data.glob("heard*.tsv")) for row in read(path, prompt, names)]
     train += heard
-    print(f"{len(train)} train ({len(heard)} heard), {len(dev)} dev, {len(test)} test rows on {device}", flush=True)
+    # Multiple-choice questions (`voice_choices`), read as written: the question and its letter.
+    choices = []
+    if args.choices and (data / "choices_train.tsv").exists():
+        choices = [(q.replace("\\n", "\n"), a) for q, a in read(data / "choices_train.tsv", "{heard}", {})]
+    train += choices
+    print(f"{len(train)} train ({len(heard)} heard, {len(choices)} questions), {len(dev)} dev, {len(test)} test rows on {device}", flush=True)
 
     tok = AutoTokenizer.from_pretrained(args.model)
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model).to(device)

@@ -365,6 +365,63 @@ impl OptionDecoder {
     }
 }
 
+/// A decoding by choice and what it took.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chosen {
+    pub text: String,
+    /// The steps where the generator asked, and those where the answer differed from its own pick.
+    pub asked: usize,
+    pub overruled: usize,
+    /// The lowest probability an answer had, among the questions asked (1 if none).
+    pub weakest_answer: f32,
+}
+
+impl OptionDecoder {
+    /// Decode `heard` over `vocab` a step at a time: the grammar's options ranked by this model's
+    /// first-token probability; the top one taken where it holds at least `sure` of the options'
+    /// share, otherwise the top [`crate::choice::MAX_OPTIONS`] put to `mc` as a multiple-choice
+    /// question and its answer taken. `mc` reads the question as written (its `prompt.txt`
+    /// `{heard}`).
+    pub fn decode_choice(&self, heard: &str, vocab: &Vocabulary, mc: &OptionDecoder, sure: f32) -> Result<Chosen, Error> {
+        use crate::choice::{question, LETTERS, MAX_OPTIONS};
+        let letters: Vec<u32> = LETTERS.iter().map(|l| mc.tokenizer.encode(*l, false).map(|e| e.get_ids()[0])).collect::<Result<_, _>>()?;
+        let enc = self.encode(heard, vocab)?;
+        let (state, next) = self.first(&enc)?;
+        let mut h = Hypothesis { words: Vec::new(), state, next, score: 0.0, weakest: 1.0 };
+        let (mut asked, mut overruled, mut weakest_answer) = (0usize, 0usize, 1.0f32);
+        for _ in 0..MAX_PHRASES {
+            // The likeliest options, scored whole (`expand`, pruned to the question's size).
+            let mut top: Vec<f32> = Vec::new();
+            let mut options = self.expand(&enc, &h, vocab, MAX_OPTIONS, &mut top)?;
+            if options.is_empty() {
+                break;
+            }
+            options.sort_by(|a, b| b.0.total_cmp(&a.0));
+            options.truncate(MAX_OPTIONS);
+            let total: f32 = options.iter().map(|o| o.0.exp()).sum();
+            let share = options[0].0.exp() / total.max(1e-12);
+            let mut pick = 0;
+            if share < sure && options.len() > 1 {
+                let offered: Vec<String> = options.iter().map(|o| o.2.as_ref().map_or(String::new(), |g| g.words.last().cloned().unwrap_or_default())).collect();
+                let q = mc.encode(&question(heard, &h.words, &offered), vocab)?;
+                let (_, answer) = mc.first(&q)?;
+                let probs: Vec<f32> = letters.iter().take(offered.len()).map(|&t| answer[t as usize].exp()).collect();
+                let sum: f32 = probs.iter().sum();
+                pick = probs.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).map_or(0, |(i, _)| i);
+                asked += 1;
+                overruled += (pick != 0) as usize;
+                weakest_answer = weakest_answer.min(probs[pick] / sum.max(1e-12));
+            }
+            match options.swap_remove(pick).2 {
+                Some(g) => h = g,
+                None => break,
+            }
+        }
+        let words = h.words;
+        Ok(Chosen { text: words.join(" "), asked, overruled, weakest_answer })
+    }
+}
+
 fn argmax(v: &[f32]) -> u32 {
     v.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).map_or(0, |(i, _)| i as u32)
 }

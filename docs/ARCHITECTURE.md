@@ -215,7 +215,8 @@ Voice commands (docs/COMMANDS.md section 11), on candle:
   word-level completions as token tries), reporting the probability the mask removed;
 - `t5net`: our port of T5 (flan-t5) with every position's logits and a copyable decoder cache,
   and `options`: decoding by whole options or a token beam under the mask (experiments; the
-  pipeline uses them when `ZHBO_VOICE_OPTIONS` is set);
+  pipeline uses them when `ZHBO_VOICE_OPTIONS` is set), and `choice`: the multiple-choice
+  question a step can be put as (`OptionDecoder::decode_choice`);
 - `pipeline` runs the three; `audio` brings sound to 16 kHz mono;
 - the `conquerops-voice` binary: the game's voice process (microphone through `cpal`, a line
   protocol over pipes), staged beside the game by `cargo xtask build`;
@@ -224,7 +225,8 @@ Voice commands (docs/COMMANDS.md section 11), on candle:
   `voice_heard` (training rows as Whisper hears them), `voice_trace` (one translation step by
   step), `voice_options` (option and beam decoding against the mask), `voice_audio` (Whisper
   encoder states for spoken commands, for `tools/voice/train/train_bridge.py`), `voice_judge`
-  (scores a model's predictions).
+  (scores a model's predictions), `voice_choices` (multiple-choice training rows) and
+  `voice_choice` (deciding by multiple choice against never asking).
 
 The game side is `zhbo-core`'s `command::voice` (the link to the process, presentation only).
 The launcher's `voice` module downloads the models listed in `data/ConquerOps/voice.ini`.

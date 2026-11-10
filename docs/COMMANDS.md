@@ -620,8 +620,8 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   2. **A confidence check.** The command's log-probability and the probability mass the mask
      removed along the way. Too much removed means the model "wanted" something invalid, so the
      command asks for confirmation instead of running. Measured (the released model, `voice_eval`):
-     the largest share removed at one step averages 0.001 on right answers and 0.24 on wrong ones;
-     asking above 0.1 asks on 0.1% of right answers and catches 27% of the wrong ones.
+     the largest share removed at one step averages 0.000 on right answers and 0.27 on wrong ones;
+     asking above 0.1 asks on 0.1% of right answers and catches 31% of the wrong ones.
   3. **Fine-tuning on the canonical language**, so the mask is a safety net, not the main
      mechanism.
 - **The game's side (built).** `conquerops-voice` is its own process beside the game (the
@@ -689,7 +689,8 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   tools/voice/prompts/names.txt`: `Translate the spoken order into a command. Names: {names}.
   Order: {heard}`; the runtime fills it the same way from `prompt.txt`, the names from
   `Vocabulary::spoken_names`), five epochs on Apple's GPU (MPS) at about 20 minutes each, keeping
-  the best epoch on a dev sample (the fourth). The weights, stored in f16 (half the download; the same answers to the
+  the best epoch on a dev sample (the fourth); then three more epochs with the multiple-choice
+  questions added (`--choices`, below), which made its plain generation better on speech. The weights, stored in f16 (half the download; the same answers to the
   last row), go to `~/.conquerops/voice/commands-t5-small/`, never into the repo; players get them
   from this project's GitHub release `voice-commands-v1`. Gotcha: transformers saves T5's own
   `lm_head` while the config still says the embeddings are tied, and candle trusting the config
@@ -700,13 +701,13 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
 
   | | exact match | same meaning | ms per command |
   |---|---|---|---|
-  | unconstrained | 0.963 | 0.973 (0.6% not a command) | 217 |
-  | constrained | 0.963 | 0.973 (none stuck) | 231 |
+  | unconstrained | 0.961 | 0.970 (0.8% not a command) | 217 |
+  | constrained | 0.961 | 0.970 (none stuck) | 229 |
 
   Spoken (`voice_listen`, 300 held-out commands in 8 voices, base.en, prompted and snapped): the
-  meaning right 0.760, against 0.713 for the first model (trained on text alone). Over a match's
-  kind of names (`voice_match`, 16 commands about Rangers, Humvees and a War Factory): 13 right,
-  against 13 for the first model and 2 for a model trained on unfiltered heard rows without
+  meaning right 0.783 (0.802 on its 81 English-named commands), against 0.713 for the first model
+  (trained on text alone). Over a match's kind of names (`voice_match`, 16 commands about Rangers,
+  Humvees and a War Factory): 12 right (the miss asks rather than runs), against 13 for the first model and 2 for a model trained on unfiltered heard rows without
   English names, which read `rangers` as noise and answered `group 2 move to me`. The synthetic
   test cannot show that: its names are all invented, so `voice_match` is part of choosing a
   model. "Same meaning" counts `a and b` as `b and a`. The remaining errors: an invented
@@ -719,7 +720,10 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   | flan-t5-small untuned, `command:` prefix | | 0.04 (masked) | it cannot write the language unseen |
   | untuned, instruction prompt with names and three examples | | 0.05 (masked) | a 77M model does not learn a grammar from a prompt |
   | fine-tuned, `command:` prefix (r3) | 0.757 | 0.967 | guard: asks on 1.8% of right answers |
-  | **fine-tuned, names prompt (released)** | **0.760** | **0.973** | guard: 0.1%; +90 ms |
+  | fine-tuned, names prompt | 0.760 | 0.973 | guard: 0.1%; +90 ms |
+  | **names prompt, then with multiple-choice questions (released)** | **0.783** | **0.970** | guard: 0.1% for 31% of wrong ones |
+  | the same, deciding by multiple choice where unsure (`decode_choice`, below 0.9) | 0.753 | 0.955 (200 rows, against 0.835 never asking) | 0.3–0.5 questions per command; about 700 ms |
+  | untuned flan-t5-small answering the questions | | 0.820 (against 0.830) | |
   | options, beam 4 (`options::decode`) | 0.743 | 0.943 | below |
   | token beam 4 under the mask (`decode_tokens`) | 0.747 | 0.98 (100 rows) | below |
   | Whisper encoder → bridge → T5 decoder (`train_bridge.py --mode audio`) | 0.347 (unconstrained) | | 48% not a command; 240 ms in all |
@@ -733,6 +737,14 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
     but does not beat the mask, on speech either, where plain greedy under the mask is best. The
     weakest chosen option is a clean "unknown" signal (under 0.2 on none of the right answers and
     12% of the wrong ones) for the abstain production when it is built.
+  - **Multiple choice** (`choice`, the user's idea): where the generator is unsure, the grammar's
+    likeliest options go into the encoder beside the transcript and the command so far, and the
+    model answers with a letter. Untuned flan-t5-small does not help. Fine-tuned on 70,102
+    questions (`voice_choices`: each training command cut into the grammar's steps,
+    `parse::phrases`; the wrong options the hardest ones, an overlapping phrase or the nearest in
+    sound, at random letters), it lifts option decoding a lot (0.835 to 0.955 typed, 26 fixed and
+    2 broken) but stays below the token mask on speech. Training on the questions, though, made
+    the same model's plain generation better on speech (0.760 to 0.783), and that model ships.
   - **The audio bridges** (12,000 spoken training commands as Whisper encoder states from
     `voice_audio`, a stride-2 convolution and two transformer layers into the translator's
     decoder). Audio alone writes the command's shape but spells names from their sound

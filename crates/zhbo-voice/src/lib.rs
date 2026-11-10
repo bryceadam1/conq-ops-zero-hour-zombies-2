@@ -11,6 +11,7 @@
 //!   Whisper's 16 kHz mono. The `conquerops-voice` binary is the game's process for all of it.
 
 pub mod audio;
+pub mod choice;
 pub mod constrain;
 pub mod hear;
 pub mod options;

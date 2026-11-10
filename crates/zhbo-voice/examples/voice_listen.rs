@@ -55,6 +55,9 @@ fn main() -> Result<(), zhbo_voice::Error> {
     let mut parts = [[0f64; 2]; 3];
     let mut wrong: Vec<String> = Vec::new();
     let mut free_right = 0usize;
+    // The English-named commands (the renamed copies, vocabulary ids ending in `e`): a match's
+    // names are English, so these are told apart.
+    let (mut english, mut english_right) = (0usize, 0usize);
     // VOICE_OPTIONS=<beam>: also decode the snapped text by options (`options`).
     let options = match std::env::var("VOICE_OPTIONS").ok().and_then(|b| b.parse::<usize>().ok()) {
         Some(beam) => Some((zhbo_voice::options::OptionDecoder::load(Path::new(&args[1]), candle_core::Device::Cpu)?, beam)),
@@ -62,6 +65,13 @@ fn main() -> Result<(), zhbo_voice::Error> {
     };
     let (mut options_right, mut options_time) = (0usize, 0f64);
     let (mut tokens_right, mut tokens_time) = (0usize, 0f64);
+    // VOICE_CHOICE=<share>: also decode by options, asking the model's multiple-choice question
+    // where its top option holds less than that share (`OptionDecoder::decode_choice`).
+    let choice = match std::env::var("VOICE_CHOICE").ok().and_then(|s| s.parse::<f32>().ok()) {
+        Some(sure) => Some((zhbo_voice::options::OptionDecoder::load(Path::new(&args[1]), candle_core::Device::Cpu)?, sure)),
+        None => None,
+    };
+    let (mut choice_right, mut choice_time, mut choice_asked) = (0usize, 0f64, 0usize);
     for (i, (input, label, id)) in rows.iter().enumerate() {
         let Some(v) = vocabs.get(id) else { continue };
         let voice = common::TEST_VOICES[i % common::TEST_VOICES.len()];
@@ -87,6 +97,13 @@ fn main() -> Result<(), zhbo_voice::Error> {
             let out = model.translate(&text, v, true)?;
             let same = same_meaning(&out.text, label, v);
             right[k] += same as usize;
+            if let (2, Some((decoder, sure))) = (k, &choice) {
+                let t = Instant::now();
+                let c = decoder.decode_choice(&text, v, decoder, *sure)?;
+                choice_time += t.elapsed().as_secs_f64();
+                choice_asked += c.asked;
+                choice_right += same_meaning(&c.text, label, v) as usize;
+            }
             if k == 2 {
                 // The same, unconstrained: a model trained elsewhere without the mask compares here.
                 free_right += same_meaning(&model.translate(&text, v, false)?.text, label, v) as usize;
@@ -98,6 +115,10 @@ fn main() -> Result<(), zhbo_voice::Error> {
                     tokens_right += same_meaning(&decoder.decode_tokens(&text, v, *beam)?.text, label, v) as usize;
                     tokens_time += t.elapsed().as_secs_f64();
                 }
+            }
+            if k == 2 && id.ends_with('e') {
+                english += 1;
+                english_right += same as usize;
             }
             if k == 2 && !same && wrong.len() < 25 {
                 wrong.push(format!("  [{voice}] {input}\n    heard {prompted}\n    snapped {text}\n    want  {label}\n    got   {}", out.text));
@@ -117,6 +138,15 @@ fn main() -> Result<(), zhbo_voice::Error> {
         );
     }
     println!("  snapped, unconstrained: same meaning {:.3}", free_right as f64 / n);
+    println!("  snapped, English-named commands only: same meaning {:.3} of {english}", english_right as f64 / english.max(1) as f64);
+    if let Some((_, sure)) = &choice {
+        println!(
+            "  snapped, choice below {sure:.2}: same meaning {:.3}, {:.1} questions per command, {:.0} ms translating",
+            choice_right as f64 / n,
+            choice_asked as f64 / n,
+            choice_time / n * 1000.0
+        );
+    }
     if let Some((_, beam)) = &options {
         println!("  snapped, options (beam {beam}): same meaning {:.3}, {:.0} ms translating", options_right as f64 / n, options_time / n * 1000.0);
         println!("  snapped, token beam {beam}: same meaning {:.3}, {:.0} ms translating", tokens_right as f64 / n, tokens_time / n * 1000.0);

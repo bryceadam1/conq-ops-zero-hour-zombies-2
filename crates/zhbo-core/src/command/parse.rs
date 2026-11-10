@@ -175,6 +175,40 @@ pub fn completions_with(prefix: &str, vocab: &Vocabulary, numbers: &[&str]) -> C
     Completions { next, complete, name }
 }
 
+/// `text` (canonical) as the grammar's steps: the phrases [`completions_with`] offered one after
+/// another to spell it (a word of a name being given counts as a step of its own). The voice
+/// decoder's multiple-choice questions and their training rows cut commands this way. `None` if
+/// the text is not a whole command.
+pub fn phrases(text: &str, vocab: &Vocabulary, numbers: &[&str]) -> Option<Vec<String>> {
+    fn walk(done: &[String], rest: &[&str], vocab: &Vocabulary, numbers: &[&str]) -> Option<Vec<String>> {
+        let c = completions_with(&done.join(" "), vocab, numbers);
+        if rest.is_empty() {
+            return c.complete.then(|| done.to_vec());
+        }
+        // Longest first: `the torwren crossing` before `the`; back off if the rest will not go.
+        let mut fits: Vec<&String> = c.next.iter().filter(|p| {
+            let words: Vec<&str> = p.split(' ').collect();
+            rest.len() >= words.len() && rest[..words.len()] == words[..]
+        }).collect();
+        fits.sort_by_key(|p| std::cmp::Reverse(p.split(' ').count()));
+        let mut tries: Vec<String> = fits.into_iter().cloned().collect();
+        if c.name && !tries.iter().any(|t| t == rest[0]) {
+            tries.push(rest[0].to_string());
+        }
+        for p in tries {
+            let n = p.split(' ').count();
+            let mut next = done.to_vec();
+            next.push(p);
+            if let Some(out) = walk(&next, &rest[n..], vocab, numbers) {
+                return Some(out);
+            }
+        }
+        None
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    walk(&[], &words, vocab, numbers)
+}
+
 /// How far the parser gets through `toks`: the furthest word it reached, whether some parse is a
 /// whole command, and what it expected at the furthest word.
 fn reach(toks: &[String], vocab: &Vocabulary) -> (usize, bool, BTreeSet<String>) {

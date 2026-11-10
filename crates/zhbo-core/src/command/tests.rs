@@ -523,3 +523,25 @@ fn a_vocabulary_goes_through_its_line_unchanged() {
     assert_eq!(back.classes.len(), super::world::CLASSES.len());
     assert_eq!(back.types, v.types);
 }
+
+#[test]
+fn a_command_splits_into_the_grammars_steps() {
+    use super::parse::{phrases, MENU_NUMBERS};
+    let v = vocab();
+    let steps = phrases("rangers move to the bridge then stop", &v, &MENU_NUMBERS).unwrap();
+    assert_eq!(steps.join(" "), "rangers move to the bridge then stop");
+    assert!(steps.iter().any(|p| p == "the bridge"), "a place with its article is one step: {steps:?}");
+    assert_eq!(phrases("rangers name them selhalvel wing", &v, &MENU_NUMBERS).unwrap().join("|"), "rangers|name them|selhalvel|wing");
+    assert!(phrases("rangers move", &v, &MENU_NUMBERS).is_none());
+    // Drawn commands all split, and their steps spell them.
+    let counts: Vec<String> = (2..=50).map(|n| n.to_string()).collect();
+    let counts: Vec<&str> = counts.iter().map(String::as_str).collect();
+    let mut rng = Rng::new(5);
+    for _ in 0..300 {
+        let iv = super::sample::invented_vocabulary(&mut rng);
+        let mut s = super::sample::Sampler { rng: Rng::new(rng.next_u32()), vocab: &iv };
+        let text = print(&s.command(), &iv);
+        let steps = phrases(&text, &iv, &counts).unwrap_or_else(|| panic!("'{text}' did not split"));
+        assert_eq!(steps.join(" "), text);
+    }
+}

@@ -15072,3 +15072,34 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - **Gotcha: `cargo build -p A --bin B -p C` builds only binaries named B.** The launcher wasn't
   rebuilt, and the dist's stale manifest started a fetch for a file whose size had changed. It
   failed harmlessly (nothing is renamed unless the hash checks). Build the launcher on its own.
+
+## First-person commands, step 6: multiple choice, and the model trained on it (2026-11-10)
+
+- **The idea (the user's):** put each step of the command to the model as a multiple-choice
+  question. The grammar's options for the next phrase go into the encoder beside what was heard
+  and the command so far, and the model answers with a letter. The encoder can then compare the
+  candidates, which a decoder scoring one at a time cannot.
+- **Built:**
+  - `parse::phrases` cuts a canonical command into the grammar's steps (backtracking, longest
+    phrase first).
+  - `choice::question` is the question's format, Flan-style, with letters A–H.
+  - `OptionDecoder::decode_choice` asks only where its top option, scored whole, holds less than
+    a share.
+  - `voice_choices` writes training questions: about 1.6 per command, the wrong options the
+    hardest ones (an overlapping phrase, then the nearest in sound), the answer at a random
+    letter. `voice_choice` evaluates.
+- **Results:**
+  - Untuned flan-t5-small as the answerer: no help (0.830 to 0.820 typed).
+  - Fine-tuned (`train_t5.py --choices`, the names-prompt model plus 70,102 questions, three
+    epochs): option decoding goes from 0.835 to 0.955 typed, asking 0.3 times a command (26
+    fixed, 2 broken). On speech it reaches 0.753, below this model's own token mask.
+  - **The win was elsewhere:** training on the questions made plain masked generation better on
+    speech. 0.783 against 0.760 (English-named commands 0.802 against 0.778); typed 0.970
+    against 0.973; the guard asks on 0.1% of right answers for 31% of wrong ones. `voice_match`
+    is 12 of 16: one more miss, `rangers and missile defenders` read with `group 2`, which asks
+    rather than runs.
+  - **Released:** the manifest's `[Translator]` is this model, and the release folder is
+    updated. `--command` leg: 28 PASS, the spoken line at mask 0.08.
+- **Gotcha: an early "it helps" was an artefact.** Ranking options by their first token alone
+  made the baseline weak (0.40). The questions mostly patched that weakness. Ranked by whole
+  probability, the untuned answerer helped nothing.

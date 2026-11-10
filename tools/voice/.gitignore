@@ -5,3 +5,4 @@ test.tsv
 heard*.tsv
 vocab_renamed.tsv
 names.tsv
+choices_*.tsv
