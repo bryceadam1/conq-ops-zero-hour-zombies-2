@@ -12,12 +12,13 @@ and their ratio (above 1 is faster than real time).
 
 import argparse
 import io
+import json
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-import requests
 import soundfile as sf
 
 
@@ -25,9 +26,9 @@ def speak(url, refs_url, row):
     lid, text, _, _, _, clip, ref_text = row
     body = {"model": "fishaudio/s2-pro", "voice": "default", "input": text, "response_format": "wav",
             "references": [{"audio_path": f"{refs_url}/{clip}", "text": ref_text}]}
-    r = requests.post(f"{url}/v1/audio/speech", json=body, timeout=600)
-    r.raise_for_status()
-    audio, sr = sf.read(io.BytesIO(r.content), dtype="float32")
+    req = urllib.request.Request(f"{url}/v1/audio/speech", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=600) as r:
+        audio, sr = sf.read(io.BytesIO(r.read()), dtype="float32")
     if audio.ndim > 1:
         audio = audio.mean(1)
     return lid, audio, sr

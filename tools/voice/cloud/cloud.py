@@ -200,6 +200,11 @@ def cost(c, st):
 def terminate_now(c, st, why):
     log(f"terminating {st['instance']}: {why}")
     c.terminate_instances(InstanceIds=[st["instance"]])
+    # A one-time spot request can stay "active" after its instance is gone, and it still counts
+    # against the account's spot limit (MaxSpotInstanceCountExceeded on the next launch).
+    reqs = c.describe_spot_instance_requests(Filters=[{"Name": "instance-id", "Values": [st["instance"]]}])["SpotInstanceRequests"]
+    if reqs:
+        c.cancel_spot_instance_requests(SpotInstanceRequestIds=[r["SpotInstanceRequestId"] for r in reqs])
     st["terminated"] = datetime.now(timezone.utc).isoformat()
     st["why"] = why
     state_path(st["job"]).write_text(json.dumps(st, indent=2))
