@@ -75,6 +75,7 @@ impl Sim {
             deployed,
             drops,
             packs,
+            rounds,
             kills,
             history,
             score,
@@ -109,13 +110,15 @@ impl Sim {
             let mut h = Hasher::new();
             things.hash(&mut h);
             history.hash(&mut h);
+            // The Zombies round engine (off, and so default, but on a Zombies map).
+            rounds.hash(&mut h);
             h.finish()
         };
         let mut h = Hasher::new();
         frame.hash(&mut h);
         seats.hash(&mut h);
         world.hash(&mut h);
-        let active = seats.iter().any(Option::is_some) || things != empty_world();
+        let active = seats.iter().any(Option::is_some) || things != empty_world() || *rounds != super::zombies::Rounds::default();
         Fingerprint { hash: h.finish(), seats, world, frame: *frame, active }
     }
 }

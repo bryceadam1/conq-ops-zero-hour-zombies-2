@@ -192,6 +192,198 @@ impl RuleTable {
     }
 }
 
+/// The rule table the game loaded (`zhbo_load_zombie_rules`, from the archive); empty until then.
+static RULES: std::sync::RwLock<Option<RuleTable>> = std::sync::RwLock::new(None);
+
+/// Install the archive's rule table (the bridge reads `names::ZOMBIE_RULES_PATH`). Returns its row
+/// count.
+pub fn install_rules(csv: &str) -> usize {
+    let t = RuleTable::parse(csv);
+    let n = t.rows.len();
+    *RULES.write().unwrap_or_else(|e| e.into_inner()) = Some(t);
+    n
+}
+
+/// The installed rule table (empty if none was loaded).
+pub fn rules() -> RuleTable {
+    RULES.read().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+}
+
+/// A `[Rounds]` key of a `zombies.ini` text.
+fn rounds_value(text: &str, key: &str) -> Option<f32> {
+    let mut in_section = false;
+    for line in text.lines() {
+        let line = line.split(';').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            in_section = line.eq_ignore_ascii_case("[Rounds]");
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=').filter(|_| in_section) {
+            if k.trim() == key {
+                return v.trim().parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// BO2's `level.zombie_vars` the round engine and the score read: each `set_zombie_var( name,
+/// default, is_float, column )` (`_zm_utility.gsc:2428-2453`) — the rule table's cell in the
+/// difficulty's column when it has one (`int()` unless `is_float`), else the script's default
+/// (`_zm.gsc:855-875`) — and the `[Rounds]` constants the script hard-codes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Vars {
+    pub health_start: f32,
+    pub health_increase: f32,
+    pub health_increase_multiplier: f32,
+    pub spawn_delay: f32,
+    pub move_speed_multiplier: i32,
+    pub max_ai: i32,
+    pub ai_per_player: i32,
+    pub ai_limit: u32,
+    pub between_rounds: f32,
+    pub spawn_delay_floor: f32,
+    pub spawn_delay_decay: f32,
+    /// `zombie_score_kill_<n>player`, n = 1..4.
+    pub score_kill: [i32; 4],
+    pub score_damage: i32,
+    pub score_bonus_melee: i32,
+    pub score_bonus_head: i32,
+    pub score_bonus_neck: i32,
+    pub score_bonus_torso: i32,
+}
+
+impl Vars {
+    /// The vars over `rules` and the `zombies.ini` text `ini`.
+    pub fn of(rules: &RuleTable, ini: &str) -> Vars {
+        let difficulty = rounds_value(ini, "Difficulty").unwrap_or(1.0) as usize;
+        let column = difficulty + 1;
+        // `set_zombie_var` without a column reads column 1 (`_zm_utility.gsc:2433-2434`).
+        let int = |name: &str, default: i32, col: usize| rules.cell(name, col).and_then(|c| c.parse::<f64>().ok()).map_or(default, |v| v as i32);
+        let float = |name: &str, default: f32, col: usize| rules.cell(name, col).and_then(|c| c.parse::<f32>().ok()).unwrap_or(default);
+        Vars {
+            health_start: int("zombie_health_start", 150, column) as f32,
+            health_increase: int("zombie_health_increase", 100, column) as f32,
+            health_increase_multiplier: float("zombie_health_increase_multiplier", 0.1, column),
+            spawn_delay: float("zombie_spawn_delay", 2.0, column),
+            move_speed_multiplier: int("zombie_move_speed_multiplier", 8, column),
+            max_ai: int("zombie_max_ai", 24, column),
+            ai_per_player: int("zombie_ai_per_player", 6, column),
+            ai_limit: rounds_value(ini, "AiLimit").unwrap_or(24.0) as u32,
+            between_rounds: float("zombie_between_round_time", rounds_value(ini, "BetweenRounds").unwrap_or(10.0), 1),
+            spawn_delay_floor: rounds_value(ini, "SpawnDelayFloor").unwrap_or(0.08),
+            spawn_delay_decay: rounds_value(ini, "SpawnDelayDecay").unwrap_or(0.95),
+            score_kill: [1, 2, 3, 4].map(|n| int(&format!("zombie_score_kill_{n}player"), 50, 1)),
+            score_damage: int("zombie_score_damage_normal", 10, 1),
+            score_bonus_melee: int("zombie_score_bonus_melee", 80, 1),
+            score_bonus_head: int("zombie_score_bonus_head", 50, 1),
+            score_bonus_neck: int("zombie_score_bonus_neck", 20, 1),
+            score_bonus_torso: int("zombie_score_bonus_torso", 10, 1),
+        }
+    }
+
+    /// The vars over the installed rules and the shipped `zombies.ini`.
+    pub fn get() -> Vars {
+        Vars::of(&rules(), SHIPPED)
+    }
+
+    /// `ai_calculate_health( round )` (`_zm.gsc:3566-3584`): BO2 health of the round's zombies.
+    pub fn health(&self, round: u32) -> f32 {
+        let mut h = self.health_start as i64;
+        for i in 2..=round.max(1) {
+            if i >= 10 {
+                let old = h;
+                h += (h as f32 * self.health_increase_multiplier) as i64;
+                if h < old {
+                    return old as f32;
+                }
+            } else {
+                h = (h as f32 + self.health_increase) as i64;
+            }
+        }
+        h as f32
+    }
+
+    /// `round_spawning`'s zombie total (`_zm.gsc:2914-2935`, `default_max_zombie_func`,
+    /// `:2872-2894`) for `players` players.
+    pub fn zombie_total(&self, round: u32, players: u32) -> u32 {
+        let mut max = self.max_ai as f32;
+        let mut multiplier = round as f32 / 5.0;
+        if multiplier < 1.0 {
+            multiplier = 1.0;
+        }
+        if round >= 10 {
+            multiplier *= round as f32 * 0.15;
+        }
+        if players <= 1 {
+            max += (0.5 * self.ai_per_player as f32 * multiplier) as i32 as f32;
+        } else {
+            max += ((players - 1) as f32 * self.ai_per_player as f32 * multiplier) as i32 as f32;
+        }
+        let max = max as i32;
+        let share = match round {
+            0 | 1 => 0.25,
+            2 => 0.3,
+            3 => 0.5,
+            4 => 0.7,
+            5 => 0.9,
+            _ => return max.max(0) as u32,
+        };
+        ((max as f32 * share) as i32).max(0) as u32
+    }
+
+    /// `level.zombie_move_speed` in round `round`: `round * zombie_move_speed_multiplier` set at
+    /// the start (`_zm.gsc:904-906`) and, at each round's end, from the round just played before it
+    /// counts up (`round_think`, `:3503-3508`).
+    pub fn move_speed(&self, round: u32) -> i32 {
+        round.saturating_sub(1).max(1) as i32 * self.move_speed_multiplier
+    }
+
+    /// `zombie_spawn_delay` in round `round`: shrunk by the decay at each round's end while above
+    /// the floor, else set to it (`round_think`, `:3496-3501`).
+    pub fn spawn_delay_in(&self, round: u32) -> f32 {
+        let mut d = self.spawn_delay;
+        for _ in 1..round.max(1) {
+            if d > self.spawn_delay_floor {
+                d *= self.spawn_delay_decay;
+            } else if d < self.spawn_delay_floor {
+                d = self.spawn_delay_floor;
+            }
+        }
+        d
+    }
+}
+
+/// A zombie's run cycle (`set_run_speed`, `_zm_utility.gsc:214-224`): `rand` drawn in
+/// `[move_speed, move_speed + 35)`; up to 35 walks, up to 70 runs, beyond sprints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunCycle {
+    Walk,
+    Run,
+    Sprint,
+}
+
+impl RunCycle {
+    pub fn of(rand: i32) -> RunCycle {
+        if rand <= 35 {
+            RunCycle::Walk
+        } else if rand <= 70 {
+            RunCycle::Run
+        } else {
+            RunCycle::Sprint
+        }
+    }
+
+    /// The zombie object of this cycle (`zhbo_assets::zombies::unit::CYCLES`).
+    pub fn object(self) -> &'static str {
+        match self {
+            RunCycle::Walk => "ZHBO_Zombie_Walk",
+            RunCycle::Run => "ZHBO_Zombie_Run",
+            RunCycle::Sprint => "ZHBO_Zombie_Sprint",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +411,24 @@ mod tests {
         assert_eq!((kit.lethal.as_str(), kit.lethal_count), ("frag_grenade_zm", Some(0)));
         assert_eq!((kit.tactical.as_str(), kit.melee.as_str()), ("", "knife_zm"));
         assert!(!kit.held_knife, "Zombies gives no held knife");
+    }
+
+    #[test]
+    fn the_rounds_follow_bo2s_formulas() {
+        let csv = "NAME,EASY,MEDIUM,HARD,VETERAN\nzombie_health_start,80,150,150,150\nzombie_health_increase,80,100,100,100\nzombie_health_increase_multiplier,0.075,0.1,0.1,0.1\nzombie_max_ai,24,24,24,24\nzombie_ai_per_player,6,6,6,6\nzombie_move_speed_multiplier,6,8,8,8\nzombie_spawn_delay,2.0,2.0,2.0,2.0\nzombie_score_kill_1player,50,,,\n";
+        let v = Vars::of(&RuleTable::parse(csv), SHIPPED);
+        // The "original" column: 150, +100 a round to 9, then +10% a round.
+        assert_eq!((v.health(1), v.health(2), v.health(9)), (150.0, 250.0, 950.0));
+        assert_eq!(v.health(10), 1045.0);
+        // Round 1 alone: 24 + int(0.5 * 6 * 1) = 27, a quarter of it.
+        assert_eq!(v.zombie_total(1, 1), 6);
+        assert_eq!(v.zombie_total(1, 4), 10, "24 + 3 * 6 = 42, a quarter");
+        assert_eq!(v.zombie_total(6, 1), 27 + 0, "round 6: multiplier 1.2: 24 + int(3.6) = 27, all of it");
+        assert_eq!((v.move_speed(1), v.move_speed(2), v.move_speed(5)), (8, 8, 32));
+        assert!((v.spawn_delay_in(1) - 2.0).abs() < 1e-6 && (v.spawn_delay_in(3) - 2.0 * 0.95 * 0.95).abs() < 1e-5);
+        assert_eq!((RunCycle::of(35), RunCycle::of(36), RunCycle::of(71)), (RunCycle::Walk, RunCycle::Run, RunCycle::Sprint));
+        assert_eq!((v.score_kill[0], v.score_damage, v.score_bonus_melee), (50, 10, 80));
+        assert_eq!(v.ai_limit, 24);
     }
 
     #[test]

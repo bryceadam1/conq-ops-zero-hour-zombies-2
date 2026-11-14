@@ -15400,3 +15400,49 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     each swipe deals 900.1 of her 1500, and the second kills her (`MOD_MELEE`). The capture shows
     two zombies closing in while she reloads the M1911.
 - **Bump:** `hud::VERSION` 92 → 94.
+
+## The Zombies round engine (2026-11-14)
+
+- **What:** `sim::zombies`, BO2's `round_think`/`round_spawning`, running on any map with zombie
+  spawn points (`ZHBO_ZM_Spawner`, `objflags::SPAWNER`, BO2's `zombie_spawn_locations`).
+- **BO2's rules, cited in the code:**
+  - The round's total: `zombie_max_ai` + the per-player add, × the early rounds' share
+    (`_zm.gsc:2914-2935`, `default_max_zombie_func` :2872-2894).
+  - Health: `ai_calculate_health`, :3566-3584.
+  - Spawn delay: × 0.95 a round down to 0.08, `round_think` :3496-3501.
+  - Move speed: :904-906 and :3503-3508; the run cycle `set_run_speed`'s 35/70 bands
+    (`_zm_utility.gsc:214-224`, drawn in `[speed, speed+35)`).
+  - One zombie per spawn delay, never more than `zombie_ai_limit` alive (:114), and a spawn
+    point redrawn once if it repeats (`round_spawning`).
+  - The 10 s `round_over` wait (:872, :3363).
+- **Where the numbers live:**
+  - Every `zombie_vars` value goes through `set_zombie_var`'s rule (`_zm_utility.gsc:2428-2453`):
+    the rule table's cell in column difficulty + 1 (difficulty 1, :858-859), else the script's
+    default.
+  - The table is the install's `mp/zombiemode.csv`, loaded into the core
+    (`zhbo_load_zombie_rules`); the hard-coded constants are in `zombies.ini` `[Rounds]`.
+  - Solo round 1 comes out at 6 zombies at 150 health.
+- **Targets:** each zombie is sent at the nearest survivor (`find_flesh`'s closest player), and
+  re-sent every second as players move.
+- **Points** (`_zm_score.gsc` `player_add_points`), paid into the one wallet with Zero Hour cash
+  (user ruling) through the new `add_cash`:
+  - a hit pays `zombie_score_damage_normal`;
+  - a kill pays `zombie_score_kill_<n>player`, plus the melee bonus for a melee kill.
+  - **Not yet ported:** the head/neck/torso kill bonuses, which need the hit's location on the
+    step's hit record.
+- **Engine calls:** `order_attack`, `set_max_health` and `add_cash` are appended to the logic API
+  (pending for the next ABI bump). The prediction sandbox doesn't forward them; the score, drop
+  and guard wrappers do.
+- **Determinism:**
+  - The engine steps after the seats, from sim state and its own seeded stream.
+  - `Sim::rounds` is in the world hash and the perturbation test; prediction never copies it (a
+    player's step doesn't read it).
+- **Verified:**
+  - Unit tests: BO2's formulas, and the engine on a fake map.
+  - `cargo test -p zhbo-core` (1058), clippy clean.
+  - In game (survivor plus two spawn points): round 1 begins with 6 zombies at 150 health, from
+    the install's table (106 rows). The walkers reach Misty, and two swipes kill her.
+  - The plain default leg still passes all 22 checks.
+  - **Not yet verified in game:** points, because no scripted run aims at zombies yet; the unit
+    test covers the payment.
+- **Bump:** `hud::VERSION` → 95 (the spawner object).

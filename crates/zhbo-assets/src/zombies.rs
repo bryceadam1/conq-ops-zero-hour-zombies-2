@@ -16,7 +16,7 @@ use zhbo_formats::weapon::Weapon;
 use crate::paks::ZmPool;
 
 /// Where the converter writes Zombies' rule table in the archive (`zhbo_core::zombies::RuleTable`).
-pub const RULES_PATH: &str = "Data\\ConquerOps\\zombiemode.csv";
+pub const RULES_PATH: &str = zhbo_core::names::ZOMBIE_RULES_PATH;
 
 /// TranZit's pool and what the converter takes from it.
 pub(crate) struct Zombies {
@@ -214,6 +214,13 @@ pub(crate) fn zombie_unit(
         unit::MELEE_RANGE * zhbo_core::units::DRAWN_ZH_PER_INCH,
         attack_ms
     );
+    // The spawn point a Zombies map stands where BO2's `zombie_spawn_locations` are: a marker the
+    // round engine reads (`objflags::SPAWNER`), owned by the zombies' side; nothing draws, hits or
+    // blocks it.
+    objects.push_str(&format!(
+        "\nObject {}\n  Draw = W3DModelDraw ModuleTag_01\n    DefaultConditionState\n      Model = NONE\n    End\n  End\n  DisplayName = OBJECT:ZHBO_Zombie\n  Side = Civilian\n  EditorSorting = SYSTEM\n  KindOf = IMMOBILE NO_COLLIDE UNATTACKABLE INERT\n  Body = ImmortalBody ModuleTag_02\n    MaxHealth = 1\n    InitialHealth = 1\n  End\n  Geometry = SPHERE\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\nEnd\n",
+        zhbo_core::names::ZOMBIE_SPAWNER
+    ));
     out.insert(unit::OBJECT_INI.to_string(), objects.into_bytes());
     out.insert(unit::LOCOMOTOR_INI.to_string(), locos.into_bytes());
     out.insert(unit::WEAPON_INI.to_string(), weapon.into_bytes());

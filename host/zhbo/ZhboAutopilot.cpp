@@ -659,6 +659,19 @@ void autopilotSpawn()
 			logf("autopilot: zombie %u (%s) sent at the General", zombie ? (unsigned)zombie->getID() : 0u, cycles[i % 3]);
 		}
 	}
+	// ZHBO_AUTOPILOT_SPAWNERS=n: n zombie spawn points 150 ahead on the enemy side, spread across his
+	// line: the core's round engine starts on them (a Zombies map in miniature).
+	if (enemy && s_config.autopilot_spawners > 0)
+	{
+		for (Int i = 0; i < s_config.autopilot_spawners; ++i)
+		{
+			const Real side = ((Real)i - (Real)(s_config.autopilot_spawners - 1) * 0.5f) * 60.0f;
+			Coord3D z;
+			z.set(pos.x + c * 150.0f - s * side, pos.y + s * 150.0f + c * side, 0.0f);
+			Object *spawner = spawnAt(zhbo_names::ZOMBIE_SPAWNER, enemy->getDefaultTeam(), z, yaw + PI);
+			logf("autopilot: zombie spawn point %u", spawner ? (unsigned)spawner->getID() : 0u);
+		}
+	}
 	// ZHBO_AUTOPILOT=equipment: an enemy Sentry Drone in front for the Black Hat, and two rocket
 	// troopers firing at the General for the Trophy System.
 	if (enemy && s_config.autopilot_equipment)

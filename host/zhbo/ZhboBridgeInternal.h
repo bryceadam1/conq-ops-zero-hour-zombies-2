@@ -98,6 +98,7 @@ struct ZhboConfig
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	const char *autopilot_general = nullptr; // ZHBO_AUTOPILOT_GENERAL: the General template the scene spawns (a survivor, say)
 	Int autopilot_zombies = 0; // ZHBO_AUTOPILOT_ZOMBIES: how many BO2 zombies the scene sends at the General
+	Int autopilot_spawners = 0; // ZHBO_AUTOPILOT_SPAWNERS: how many zombie spawn points the scene stands (a Zombies map's round engine)
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
 	Bool has_showcase_pitch = FALSE;	   // ZHBO_SHOWCASE_PITCH (radians)
 	Real showcase_pitch = 0.0f;
@@ -174,6 +175,10 @@ void cbDisable(uint32_t id, int32_t kind, float seconds);
 void cbFx(const char *name, const ZhboVec3 *pos);
 void cbCapture(uint32_t id, uint32_t newOwner);
 void cbSmoke(const ZhboVec3 *at, float radius);
+// The Zombies round engine's calls (zhbo_core::sim::zombies): logic state only.
+void cbOrderAttack(uint32_t id, uint32_t target);
+void cbSetMaxHealth(uint32_t id, float health);
+void cbAddCash(int32_t player, int32_t amount);
 void cbHeal(uint32_t id, float amount);
 int32_t cbBuildOptions(uint32_t general, ZhboBuildOption *out, int32_t cap);
 int32_t cbCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);
@@ -223,6 +228,8 @@ Bool isGeneral(const Object *obj);
 Bool isSurvivor(const Object *obj);
 /// A BO2 zombie (ZHBO_Zombie*).
 Bool isZombie(const Object *obj);
+/// A Zombies map's zombie spawn point (ZHBO_ZM_Spawner).
+Bool isZombieSpawner(const Object *obj);
 /// The order a General's command button gives (ZHBO_ACTION_LETHAL/_TACTICAL/_MELEE/_RELOAD), or -1.
 Int rtsOrderAction(const CommandButton *button);
 /// Tell every client what each selected General is ordered to do (MSG_ZHBO_TAKE_CONTROL).

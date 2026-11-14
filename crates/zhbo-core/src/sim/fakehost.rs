@@ -50,6 +50,15 @@ pub struct FakeHost {
     /// out the round's script under the others' fire at their real health; every hit still lands
     /// and is hashed).
     pub undying: std::cell::Cell<bool>,
+    /// The Zombies round engine's calls: each spawn's owner (in [`FakeHost::spawned`]'s order),
+    /// attack orders `(id, target)`, health set `(id, health)` and money `(player, amount)`.
+    pub spawn_owners: RefCell<Vec<u32>>,
+    pub orders: RefCell<Vec<(u32, u32)>>,
+    pub healths: RefCell<Vec<(u32, f32)>>,
+    pub cash: RefCell<Vec<(i32, i32)>>,
+    /// A spawn also stands an object of that id where it was made (on its owner's side), so the
+    /// round engine sees its zombies (off: a spawn is only recorded).
+    pub spawn_objects: std::cell::Cell<bool>,
 }
 
 impl FakeHost {
@@ -137,10 +146,16 @@ impl LogicHost for FakeHost {
             o.health = (o.health + amount).min(o.max_health);
         }
     }
-    fn spawn(&self, template: &str, _owner: u32, _pos: Vec3, _yaw: f32) -> u32 {
+    fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32 {
         let mut s = self.spawned.borrow_mut();
         let id = 10_000 + s.len() as u32;
         s.push((id, template.to_string()));
+        self.spawn_owners.borrow_mut().push(owner);
+        if self.spawn_objects.get() {
+            let owner_player = self.objects.borrow().iter().find(|o| o.id == owner).map_or(-1, |o| o.owner_player);
+            let flags = objflags::INFANTRY | if crate::names::is_zombie(template) { objflags::ZOMBIE } else { 0 };
+            self.objects.borrow_mut().push(ObjInfo { id, owner_player, flags, pos, yaw, health: 1.0, max_health: 1.0, ..Default::default() });
+        }
         id
     }
     fn destroy(&self, id: u32) {
@@ -154,6 +169,15 @@ impl LogicHost for FakeHost {
     }
     fn smoke(&self, center: Vec3, radius: f32) {
         self.smoked.borrow_mut().push((center, radius));
+    }
+    fn order_attack(&self, id: u32, target: u32) {
+        self.orders.borrow_mut().push((id, target));
+    }
+    fn set_max_health(&self, id: u32, health: f32) {
+        self.healths.borrow_mut().push((id, health));
+    }
+    fn add_cash(&self, player: i32, amount: i32) {
+        self.cash.borrow_mut().push((player, amount));
     }
     fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
         self.options.borrow().clone()

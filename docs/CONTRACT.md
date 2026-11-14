@@ -1921,6 +1921,13 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   General, BO2's `meleedamage` as his share of BO2's player health. The bridge's damage hook
   (`Zhbo_ShieldDamage`) replaces the zombie weapon's own amount with it. The archive gains the
   zombie units' W3D art and their generated Object, Locomotor and Weapon INIs (`hud::VERSION` 94).
+* The Zombies round engine (`sim::zombies`): `ZhboLogicApi` gains `order_attack(id, target)`,
+  `set_max_health(id, health)` and `add_cash(player, amount)` after `surface_at`
+  (`ZHBO_LOGIC_API_FIELDS`/`LOGIC_API_FIELDS` 24 → 27, asserted on both sides). These are logic
+  calls: `aiAttackObject`, `setMaxHealth(FULLY_HEAL)`, and `Money::deposit`/`withdraw` with no
+  sound. `ZHBO_OBJ_SPAWNER = 1u << 16` marks a `ZHBO_ZM_Spawner` object. The free function
+  `zhbo_load_zombie_rules(text)` installs the archive's `Data\ConquerOps\zombiemode.csv`
+  (`names::ZOMBIE_RULES_PATH`). The sim's state gains `Sim::rounds`, hashed in the world part.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change. Host patches are now 0001–0034.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

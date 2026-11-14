@@ -139,6 +139,8 @@ impl Sim {
             deployed: self.deployed.clone(),
             drops: self.drops.clone(),
             packs: self.packs.clone(),
+            // The round engine runs after the seats: a player's step never reads it.
+            rounds: super::zombies::Rounds::default(),
             kills: self.kills.clone(),
             blows: self.blows.clone(),
             combat_seen: 0,

@@ -449,7 +449,7 @@ fn populated_sim() -> Sim {
 /// Change the `n`-th leaf of the hashed state (the parts [`Sim::fingerprint`] streams).
 fn perturb_state(sim: &mut Sim, n: &mut usize) -> bool {
     use crate::statehash::StateHash;
-    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.packs.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
+    sim.frame.perturb(n) || sim.players.perturb(n) || sim.chosen.perturb(n) || sim.projectiles.perturb(n) || sim.equipment.perturb(n) || sim.smokes.perturb(n) || sim.deployed.perturb(n) || sim.drops.perturb(n) || sim.packs.perturb(n) || sim.rounds.perturb(n) || sim.kills.perturb(n) || sim.score.perturb(n) || sim.history.perturb(n)
 }
 
 /// Sensitivity: every leaf of the state (every scalar, string and definition of every player

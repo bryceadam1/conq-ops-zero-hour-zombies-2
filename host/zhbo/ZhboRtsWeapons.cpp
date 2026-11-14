@@ -115,6 +115,11 @@ Bool isZombie(const Object *obj)
 	return obj && zhbo_names::isZombie(obj->getTemplate()->getName().str());
 }
 
+Bool isZombieSpawner(const Object *obj)
+{
+	return obj && zhbo_names::isZombieSpawner(obj->getTemplate()->getName().str());
+}
+
 Int rtsOrderAction(const CommandButton *button)
 {
 	if (!button)

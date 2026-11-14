@@ -192,6 +192,8 @@ impl Sim {
         self.score.note_generals(&self.players);
         let t = crate::tuning::get();
         for h in hits {
+            // Zombies: a hit on a zombie pays its player (`sim/zombies.rs`).
+            self.zombie_points(host, h.shooter, h.victim, h.kill, h.blow.how);
             // A player's General: a seat's record holds him (first person or overhead), or held
             // him this step (his seat may have been stepped after the blow that killed him).
             let Some(victim_seat) = self.score.seat_of(&self.players, h.victim) else { continue };
@@ -337,6 +339,15 @@ impl LogicHost for Tally<'_> {
     }
     fn destroy(&self, id: u32) {
         self.host.destroy(id)
+    }
+    fn order_attack(&self, id: u32, target: u32) {
+        self.host.order_attack(id, target)
+    }
+    fn set_max_health(&self, id: u32, health: f32) {
+        self.host.set_max_health(id, health)
+    }
+    fn add_cash(&self, player: i32, amount: i32) {
+        self.host.add_cash(player, amount)
     }
     fn disable(&self, id: u32, kind: i32, seconds: f32) {
         self.host.disable(id, kind, seconds)

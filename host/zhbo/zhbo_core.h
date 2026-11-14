@@ -16,7 +16,7 @@
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
-#define ZHBO_LOGIC_API_FIELDS 24u
+#define ZHBO_LOGIC_API_FIELDS 27u
 #define ZHBO_CLIENT_API_FIELDS 22u
 
 #ifdef __cplusplus
@@ -43,6 +43,7 @@ enum ZhboObjFlags
 	ZHBO_OBJ_GENERAL    = 1u << 13, /* a General (ZHBO_General_*): BO2's player, who takes a BO2 hit as its share of playerMaxHealth (pending for the next ABI bump) */
 	ZHBO_OBJ_SURVIVOR   = 1u << 14, /* a survivor General (ZHBO_General_Survivor_*): BO2 Zombies' player (pending for the next ABI bump) */
 	ZHBO_OBJ_ZOMBIE     = 1u << 15, /* a BO2 zombie (ZHBO_Zombie*) (pending for the next ABI bump) */
+	ZHBO_OBJ_SPAWNER    = 1u << 16, /* a Zombies map's zombie spawner (ZHBO_ZM_Spawner) (pending for the next ABI bump) */
 };
 
 /* What a shot hit (zhbo_core::impacts::Surface). The sim classifies an object hit from its kind
@@ -289,6 +290,13 @@ typedef struct ZhboLogicApi
 	   bounce scales by the surface), so logic data only: never TheTerrainVisual (CONTRACT.md
 	   "Multiplayer"). */
 	int32_t (*surface_at)(float x, float y);
+	/* Pending for the next ABI bump (the Zombies round engine, zhbo_core::sim::zombies): order id
+	   to attack target as the AI would; set id's maximum and current health; add (negative: take)
+	   amount to player's money (Zombies points and Zero Hour cash are one wallet). Sim calls:
+	   logic state only, the same on every peer. */
+	void (*order_attack)(uint32_t id, uint32_t target);
+	void (*set_max_health)(uint32_t id, float health);
+	void (*add_cash)(int32_t player, int32_t amount);
 } ZhboLogicApi;
 
 /* The damage kinds of ZhboLogicApi.damage (zhbo_core::damage::ZH_DAMAGE_TYPES): Zero Hour's
@@ -614,6 +622,8 @@ int32_t zhbo_load_impacts(const char *text);
 /* Load the third-person shots' layer rows (Data\ConquerOps\sound_layers.txt; see soundlayers.rs);
    returns the number of layers, -1 for null. Without it others' shots play the close mix. */
 int32_t zhbo_load_sound_layers(const char *text);
+/* Zombies' rule table (names ZOMBIE_RULES_PATH; pending for the next ABI bump): its row count. */
+int32_t zhbo_load_zombie_rules(const char *text);
 /* Load the BO2 font metrics (see lui/font.rs); empty text leaves the engine font in use. */
 void zhbo_load_fonts(const char *text);
 /* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */

@@ -178,6 +178,9 @@ impl Client {
             | EventKind::ClassChosen { .. }
             | EventKind::ClassAtNextSpawn { .. }
             | EventKind::FieldComputerOpened
+            | EventKind::ZombieRound { .. }
+            | EventKind::ZombieRoundOver { .. }
+            | EventKind::ZombiePoints { .. }
             | EventKind::ReturnedToRts { .. }
             | EventKind::HitMarker { .. }
             | EventKind::PerkFeedback { .. }
@@ -429,6 +432,8 @@ impl Client {
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
+                // Zombies' round and points: the Zombies HUD reads them from the sim.
+                EventKind::ZombieRound { .. } | EventKind::ZombieRoundOver { .. } | EventKind::ZombiePoints { .. } => {}
                 // His death animation is the third person's (`remote`).
                 EventKind::KilledBy { .. } => {}
                 EventKind::ClassChosen { .. } => {

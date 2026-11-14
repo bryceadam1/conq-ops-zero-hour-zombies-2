@@ -17,6 +17,10 @@ pub const SURVIVORS: [(&str, char, &str); 4] = [
     ("ZHBO_General_Survivor_Russman", 'R', "RUS"),
     ("ZHBO_General_Survivor_Stuhlinger", 'S', "STU"),
 ];
+/// A Zombies map's zombie spawn point (`objflags::SPAWNER`; `zhbo_assets::zombies` writes it).
+pub const ZOMBIE_SPAWNER: &str = "ZHBO_ZM_Spawner";
+/// Zombies' rule table in the archive (the install's `mp/zombiemode.csv`, `zombies::RuleTable`).
+pub const ZOMBIE_RULES_PATH: &str = "Data\\ConquerOps\\zombiemode.csv";
 /// Prefix of every zombie object (`ZHBO_Zombie_Walk`; `zhbo_assets::zombies` writes them).
 pub const ZOMBIE_PREFIX: &str = "ZHBO_Zombie";
 /// Suffix marking a no-shadow copy of a texture (engine patch 0009 strips the shadow pass for it).
@@ -292,6 +296,14 @@ inline bool isZombie(const char *name)
 {
 	return name && strncmp(name, ZOMBIE_PREFIX, strlen(ZOMBIE_PREFIX)) == 0;
 }
+// A Zombies map's zombie spawn point (the round engine's, zhbo_core::sim::zombies).
+inline constexpr const char *ZOMBIE_SPAWNER = "ZHBO_ZM_Spawner";
+inline bool isZombieSpawner(const char *name)
+{
+	return name && strcmp(name, ZOMBIE_SPAWNER) == 0;
+}
+// Zombies' rule table in the archive (the install's mp/zombiemode.csv).
+inline constexpr const char *ZOMBIE_RULES_PATH = "Data\\ConquerOps\\zombiemode.csv";
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).
 inline void worldMesh(char *out, size_t cap, int vm, int k)
 {

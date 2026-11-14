@@ -151,6 +151,15 @@ impl LogicHost for Witness<'_> {
     fn destroy(&self, id: u32) {
         self.host.destroy(id)
     }
+    fn order_attack(&self, id: u32, target: u32) {
+        self.host.order_attack(id, target)
+    }
+    fn set_max_health(&self, id: u32, health: f32) {
+        self.host.set_max_health(id, health)
+    }
+    fn add_cash(&self, player: i32, amount: i32) {
+        self.host.add_cash(player, amount)
+    }
     fn disable(&self, id: u32, kind: i32, seconds: f32) {
         self.host.disable(id, kind, seconds)
     }

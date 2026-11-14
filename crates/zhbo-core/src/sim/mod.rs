@@ -27,6 +27,7 @@ mod plant;
 mod rts;
 pub mod score;
 mod spawn;
+pub mod zombies;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
 /// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
@@ -152,6 +153,12 @@ pub enum EventKind {
     /// `MP_CHANGE_CLASS_NEXT_SPAWN`; every General is picked for, `spawn.rs`).
     ClassAtNextSpawn { general: u32, class: ClassName },
     FieldComputerOpened,
+    /// Zombies: round `round` began (BO2's round chalk counts up; `sim/zombies.rs`).
+    ZombieRound { round: u8 },
+    /// Zombies: round `round`'s last zombie died; the wait before the next began.
+    ZombieRoundOver { round: u8 },
+    /// Zombies: a hit or kill on a zombie paid this seat `points` (`player_add_points`).
+    ZombiePoints { points: u16 },
     ReturnedToRts { general: u32 },
     /// `left`: the dual-wield left gun's shot (BO2's `EV_FIRE_WEAPON_LEFT`). `spread`: the cone it
     /// flew in, degrees (`weapons::aim_spread`).
@@ -622,6 +629,8 @@ pub struct Sim {
     pub drops: Vec<drops::Dropped>,
     /// Scavenger packs lying in the world (`sim/scavenger.rs`).
     pub packs: Vec<scavenger::Pack>,
+    /// BO2 Zombies' round engine (`sim/zombies.rs`), off but on a Zombies map.
+    pub rounds: zombies::Rounds,
     /// Kills of seat Generals not yet read by their death, and whether each was friendly (a
     /// suicide or a teammate's: no drop).
     pub kills: Vec<drops::Kill>,
@@ -681,6 +690,7 @@ impl Sim {
             deployed: Vec::new(),
             drops: Vec::new(),
             packs: Vec::new(),
+            rounds: zombies::Rounds::default(),
             kills: Vec::new(),
             blows: Vec::new(),
             combat_seen: 0,
@@ -826,6 +836,7 @@ impl Sim {
         self.step_deployed(host);
         self.step_drops(host);
         self.step_packs(host);
+        self.step_zombies(host);
         let (frame, smoke) = (self.frame, self.smoke);
         self.smokes.retain(|s| s.stands(frame, &smoke));
         for s in &self.smokes {
@@ -1431,6 +1442,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
             format!("player {}'s General {general} keeps his kit; the {class} class comes in at the next spawn (\"{}\")", e.player, event_hint(&e.kind).map_or("", hint_text))
         }
         FieldComputerOpened => format!("player {} opened the field computer", e.player),
+        ZombieRound { round } => format!("player {} sees zombies round {round} begin", e.player),
+        ZombieRoundOver { round } => format!("player {} sees zombies round {round} end", e.player),
+        ZombiePoints { points } => format!("player {} scored {points} zombie points", e.player),
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
         GeneralDied { general } => format!("player {}'s General {general} died", e.player),
         Assist { level, tactical } => format!("player {} scored an assist ({})", e.player, tactical.map_or_else(|| (level as u32 * 25).to_string(), |t| format!("{t:?}").to_ascii_lowercase())),

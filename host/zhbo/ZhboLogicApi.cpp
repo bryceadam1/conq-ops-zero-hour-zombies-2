@@ -96,6 +96,7 @@ void fillInfo(const Object *obj, const Object *viewer, ZhboObjInfo *out)
 	if (isGeneral(obj)) flags |= ZHBO_OBJ_GENERAL;
 	if (isSurvivor(obj)) flags |= ZHBO_OBJ_SURVIVOR;
 	if (isZombie(obj)) flags |= ZHBO_OBJ_ZOMBIE;
+	if (isZombieSpawner(obj)) flags |= ZHBO_OBJ_SPAWNER;
 	if (viewer && viewer != obj)
 	{
 		const Relationship rel = viewer->getRelationship(obj);
@@ -456,6 +457,33 @@ void cbFx(const char *name, const ZhboVec3 *pos)
 // to Zero Hour's units is the engine's own (host patch 0024 asks the core's mirror: no unit
 // acquires or keeps a target the screen hides, and paths go around it); this only logs it, the
 // test's oracle (at most once a second).
+void cbOrderAttack(uint32_t id, uint32_t target)
+{
+	Object *obj = TheGameLogic->findObjectByID((ObjectID)id);
+	Object *victim = TheGameLogic->findObjectByID((ObjectID)target);
+	if (obj && victim && obj->getAIUpdateInterface())
+		obj->getAIUpdateInterface()->aiAttackObject(victim, NO_MAX_SHOTS_LIMIT, CMD_FROM_AI);
+}
+
+void cbSetMaxHealth(uint32_t id, float health)
+{
+	Object *obj = TheGameLogic->findObjectByID((ObjectID)id);
+	if (obj && obj->getBodyModule() && health > 0.0f)
+		obj->getBodyModule()->setMaxHealth(health, FULLY_HEAL);
+}
+
+// Zombies points and Zero Hour cash are one wallet. No cash sound: a hit pays every few frames.
+void cbAddCash(int32_t player, int32_t amount)
+{
+	Player *p = ThePlayerList ? ThePlayerList->getNthPlayer(player) : nullptr;
+	if (!p || !p->getMoney() || amount == 0)
+		return;
+	if (amount > 0)
+		p->getMoney()->deposit((UnsignedInt)amount, FALSE);
+	else
+		p->getMoney()->withdraw((UnsignedInt)-amount, FALSE);
+}
+
 void cbSmoke(const ZhboVec3 *at, float radius)
 {
 	const UnsignedInt frame = TheGameLogic->getFrame();

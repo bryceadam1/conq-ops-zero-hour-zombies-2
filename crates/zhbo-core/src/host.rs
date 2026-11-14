@@ -37,6 +37,9 @@ pub mod objflags {
     pub const SURVIVOR: u32 = 1 << 14;
     /// A BO2 zombie (`ZHBO_Zombie*`): Zombies' neutral threat, on a Zombies map only.
     pub const ZOMBIE: u32 = 1 << 15;
+    /// A Zombies map's zombie spawn point (`ZHBO_ZM_Spawner`, BO2's `zombie_spawn_locations`): the
+    /// round engine runs while a map has them, and its zombies join the spawner's side.
+    pub const SPAWNER: u32 = 1 << 16;
 }
 
 /// The ABI's damage kinds that the shield hook reports back (`zhbo_logic_shield_damage`): the first
@@ -165,6 +168,14 @@ pub trait LogicHost {
     fn capture(&self, id: u32, new_owner: u32);
     /// A smoke screen this frame: nothing shoots into or out of the circle.
     fn smoke(&self, center: Vec3, radius: f32);
+    /// Order `id` to attack `target` as Zero Hour's AI would (a zombie at its player). A host
+    /// that only reads the world (the prediction's sandbox) does nothing.
+    fn order_attack(&self, _id: u32, _target: u32) {}
+    /// Set `id`'s maximum and current health (Zero Hour units): a zombie's health for its round.
+    fn set_max_health(&self, _id: u32, _health: f32) {}
+    /// Add `amount` (negative: take) to Zero Hour player `player`'s money: Zombies points and
+    /// Zero Hour cash are one wallet.
+    fn add_cash(&self, _player: i32, _amount: i32) {}
     /// The structures `general` can build (his build menu), with whether each can be placed now.
     fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
         Vec::new()
@@ -301,6 +312,12 @@ pub struct LogicApi {
     /// the ground under it comes from the map grid (`zhbo_terrain_load`). An older bridge that
     /// answers the tile class itself still works: any non-default answer is taken as it is.
     pub surface_at: Option<extern "C" fn(x: f32, y: f32) -> i32>,
+    /// Pending for the next ABI bump (the Zombies round engine): order `id` to attack `target` as
+    /// the AI would; set `id`'s maximum and current health; add (or, negative, take) `amount` to
+    /// player `player`'s money, the one wallet Zombies points and Zero Hour cash share.
+    pub order_attack: Option<extern "C" fn(id: u32, target: u32)>,
+    pub set_max_health: Option<extern "C" fn(id: u32, health: f32)>,
+    pub add_cash: Option<extern "C" fn(player: i32, amount: i32)>,
 }
 
 #[repr(C)]
@@ -442,6 +459,24 @@ impl LogicHost for CLogicHost {
 
     fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32 {
         self.0.spawn.map_or(0, |f| f(cstring(template).as_ptr(), owner, &pos, yaw))
+    }
+
+    fn order_attack(&self, id: u32, target: u32) {
+        if let Some(f) = self.0.order_attack {
+            f(id, target);
+        }
+    }
+
+    fn set_max_health(&self, id: u32, health: f32) {
+        if let Some(f) = self.0.set_max_health {
+            f(id, health);
+        }
+    }
+
+    fn add_cash(&self, player: i32, amount: i32) {
+        if let Some(f) = self.0.add_cash {
+            f(player, amount);
+        }
     }
 
     fn destroy(&self, id: u32) {

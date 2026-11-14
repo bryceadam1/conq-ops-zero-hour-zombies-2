@@ -197,7 +197,7 @@ pub const ABI_VERSION: u32 = 36;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
-pub const LOGIC_API_FIELDS: u64 = 24;
+pub const LOGIC_API_FIELDS: u64 = 27;
 pub const CLIENT_API_FIELDS: u64 = 22;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
@@ -397,6 +397,20 @@ pub unsafe extern "C" fn zhbo_load_sound_layers(text: *const c_char) -> i32 {
     // The same file carries the third-person torso table (`torso`).
     crate::torso::install(&text);
     crate::soundlayers::install(&text) as i32
+}
+
+/// Load Zombies' rule table (`names::ZOMBIE_RULES_PATH`, the install's `mp/zombiemode.csv` the
+/// converter shipped; `zombies::install_rules`). Returns its row count (-1 for a null text).
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_zombie_rules(text: *const c_char) -> i32 {
+    if text.is_null() {
+        return -1;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::zombies::install_rules(&text) as i32
 }
 
 /// Load the class preset list (`Data/ConquerOps/classes.ini`, read by the bridge's

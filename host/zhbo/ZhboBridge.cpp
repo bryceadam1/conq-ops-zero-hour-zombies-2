@@ -237,6 +237,8 @@ void readConfig()
 	s_config.autopilot_general = getenv("ZHBO_AUTOPILOT_GENERAL");
 	if (const char *v = getenv("ZHBO_AUTOPILOT_ZOMBIES"))
 		s_config.autopilot_zombies = atoi(v);
+	if (const char *v = getenv("ZHBO_AUTOPILOT_SPAWNERS"))
+		s_config.autopilot_spawners = atoi(v);
 	if (const char *v = getenv("ZHBO_SHOWCASE_ZOOM"))
 		s_config.showcase_zoom = (Real)atof(v);
 	if (const char *v = getenv("ZHBO_SHOWCASE_PITCH"))
@@ -448,6 +450,9 @@ void Zhbo_Init()
 		.work = cbWork,
 		.choose_class = cbChooseClass,
 		.surface_at = cbSurfaceAt,
+		.order_attack = cbOrderAttack,
+		.set_max_health = cbSetMaxHealth,
+		.add_cash = cbAddCash,
 	};
 	static const ZhboClientApi clientApi = {
 		.screen_size = cbScreenSize,
@@ -519,6 +524,10 @@ void Zhbo_Init()
 	if (!layers.empty())
 		logf("sound layers: %d BO2 third-person layers installed", (int)zhbo_load_sound_layers(layers.c_str()));
 	zhbo_load_fonts(readTextFile(zhbo_names::FONTS_PATH).c_str());
+	// Zombies' rule table (the install's mp/zombiemode.csv): the round engine's numbers.
+	const std::string zombieRules = readTextFile(zhbo_names::ZOMBIE_RULES_PATH);
+	if (!zombieRules.empty())
+		logf("zombies: %d rule table rows installed", (int)zhbo_load_zombie_rules(zombieRules.c_str()));
 	// The player's create-a-class profile: a small text file next to the mod's log, in the game's
 	// user-data directory (see zhbo_core::profile). Its custom classes join the pick screen's list.
 	zhbo_load_profile(readProfileFile().c_str());

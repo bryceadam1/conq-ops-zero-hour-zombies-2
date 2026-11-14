@@ -32,6 +32,14 @@ inline bool isZombie(const char *name)
 {
 	return name && strncmp(name, ZOMBIE_PREFIX, strlen(ZOMBIE_PREFIX)) == 0;
 }
+// A Zombies map's zombie spawn point (the round engine's, zhbo_core::sim::zombies).
+inline constexpr const char *ZOMBIE_SPAWNER = "ZHBO_ZM_Spawner";
+inline bool isZombieSpawner(const char *name)
+{
+	return name && strcmp(name, ZOMBIE_SPAWNER) == 0;
+}
+// Zombies' rule table in the archive (the install's mp/zombiemode.csv).
+inline constexpr const char *ZOMBIE_RULES_PATH = "Data\\ConquerOps\\zombiemode.csv";
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).
 inline void worldMesh(char *out, size_t cap, int vm, int k)
 {
