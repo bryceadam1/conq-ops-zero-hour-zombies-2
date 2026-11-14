@@ -7,12 +7,14 @@
 */
 
 use super::*;
+use crate::weapons::actionslot::Equipment;
 
 impl Sim {
     pub(super) fn step_building(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, input: &FpsInput) -> bool {
         // In hand at the start of the frame: its input (the click that placed, say) is not the gun's.
         let had_hammer = p.hammer.is_some();
-        if input.pressed & buttons::HAMMER != 0 {
+        // The build tool is equipment in an action slot (`weapons::actionslot`): its slot's key.
+        if p.action_slots.pressed(Equipment::BuildTool, input.pressed) {
             p.hammer = match p.hammer {
                 Some(_) => None,
                 None => Some(Hammer::default()),

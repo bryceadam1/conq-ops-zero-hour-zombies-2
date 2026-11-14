@@ -38,8 +38,11 @@ pub struct Bindings {
     pub scoreboard: Key,
     /// BO2's action slot 3: the weapon's alt mode (select fire, grenade launcher, second optic).
     pub alt_mode: Key,
-    /// The builder's hammer (the use key builds at a site).
-    pub hammer: Key,
+    /// BO2's action slots 1, 2 and 4 (`+actionslot n`; slot 3 is `alt_mode`). A General's build
+    /// tool is in slot 2 (the use key builds at a site).
+    pub action_slot_1: Key,
+    pub action_slot_2: Key,
+    pub action_slot_4: Key,
     /// The first-person command menu (docs/COMMANDS.md section 8).
     pub command_menu: Key,
     /// Held to speak a command (docs/COMMANDS.md section 11).
@@ -69,7 +72,9 @@ impl Default for Bindings {
             map: Key::M,
             scoreboard: Key::Tab,
             alt_mode: Key::Key3,
-            hammer: Key::B,
+            action_slot_1: Key::Key4,
+            action_slot_2: Key::B,
+            action_slot_4: Key::Key5,
             command_menu: Key::Z,
             voice: Key::T,
         }
@@ -718,7 +723,9 @@ impl Client {
             (b.lethal, buttons::LETHAL),
             (b.tactical, buttons::TACTICAL),
             (b.alt_mode, buttons::ALT_MODE),
-            (b.hammer, buttons::HAMMER),
+            (b.action_slot_1, buttons::ACTION_SLOT_1),
+            (b.action_slot_2, buttons::ACTION_SLOT_2),
+            (b.action_slot_4, buttons::ACTION_SLOT_4),
         ] {
             if down(key) {
                 held |= bit;

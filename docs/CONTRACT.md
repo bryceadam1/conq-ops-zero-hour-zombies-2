@@ -1901,6 +1901,10 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   table, SDL's `SDL_SCANCODE_MINUS`, Windows' `VK_OEM_MINUS`). The `KeySet` size is unchanged.
 * The tuning pack's `[Commands]` keys `CommandNearRadius`, `CommandOffsetDistance`,
   `CommandClusterLink` and `CommandCentralShare` (the content CRC's tuning part moves with them).
+* `FpsInput`'s button bits: `buttons::HAMMER` (bit 13) is now `ACTION_SLOT_2`, and
+  `ACTION_SLOT_1` (bit 16) and `ACTION_SLOT_4` (bit 17) are new (`buttons::ALL` 16 → 18 bits). The
+  message still carries the same two u32s; no struct moves. The sim's state gains
+  `PlayerSim::action_slots` (`weapons::actionslot`), in the lockstep hash.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change. Host patches are now 0001–0034.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

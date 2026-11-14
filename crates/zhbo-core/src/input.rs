@@ -18,12 +18,15 @@ pub mod buttons {
     pub const TACTICAL: u32 = 1 << 11;
     /// Toggle the weapon's alt mode (select fire, under-barrel launcher, second optic).
     pub const ALT_MODE: u32 = 1 << 12;
-    /// Bring the hammer up or put it away (building).
-    pub const HAMMER: u32 = 1 << 13;
+    /// BO2's action slot 2 (`+actionslot 2`): a General's build tool (`weapons::actionslot`).
+    pub const ACTION_SLOT_2: u32 = 1 << 13;
     /// With the hammer up: turn the structure being placed (the mouse wheel; ADS picks the next one).
     pub const ROTATE_LEFT: u32 = 1 << 14;
     pub const ROTATE_RIGHT: u32 = 1 << 15;
-    pub const ALL: u32 = (1 << 16) - 1;
+    /// BO2's action slots 1 and 4 (`+actionslot 1`, `+actionslot 4`; slot 3 is [`ALT_MODE`]).
+    pub const ACTION_SLOT_1: u32 = 1 << 16;
+    pub const ACTION_SLOT_4: u32 = 1 << 17;
+    pub const ALL: u32 = (1 << 18) - 1;
 }
 
 #[repr(C)]

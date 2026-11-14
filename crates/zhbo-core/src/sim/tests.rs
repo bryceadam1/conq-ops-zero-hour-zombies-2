@@ -131,9 +131,9 @@ fn identical_inputs_are_deterministic() {
                 // back to the RTS view (the retake at 470 brings first person up again).
                 395 => pressed |= buttons::FIELD_COMPUTER,
                 // Bring the hammer up, place a structure, put it away (single-frame presses).
-                520 => pressed |= buttons::HAMMER,
+                520 => pressed |= buttons::ACTION_SLOT_2,
                 545 => pressed |= buttons::FIRE,
-                565 => pressed |= buttons::HAMMER,
+                565 => pressed |= buttons::ACTION_SLOT_2,
                 _ => {}
             }
             script.push(FpsInput {
@@ -592,7 +592,7 @@ fn the_hammer_and_field_computer_work_unarmed() {
     wait_until_ready(&mut sim, &host);
     assert!(sim.player(0).unwrap().arsenal.is_unarmed());
     let look = |held: u32, pressed: u32| FpsInput { held, pressed, pitch: -0.5, ..Default::default() };
-    run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
+    run(&mut sim, &host, 0, 1, look(buttons::ACTION_SLOT_2, buttons::ACTION_SLOT_2), 1);
     run(&mut sim, &host, 0, 1, look(0, 0), frames(crate::building::HAMMER_RAISE));
     run(&mut sim, &host, 0, 1, look(buttons::FIRE, buttons::FIRE), 1);
     assert!(events(&sim).contains(&EventKind::BuildPlaced { template: 7 }), "{:?}", events(&sim));
@@ -1661,7 +1661,7 @@ fn the_hammer_places_a_structure_and_holding_use_builds_it() {
     wait_until_ready(&mut sim, &host);
     let ammo = sim.player(0).unwrap().arsenal.current().ammo;
     let look = |held: u32, pressed: u32| FpsInput { held, pressed, pitch: -0.5, ..Default::default() };
-    run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
+    run(&mut sim, &host, 0, 1, look(buttons::ACTION_SLOT_2, buttons::ACTION_SLOT_2), 1);
     assert!(sim.player(0).unwrap().hammer.is_some());
     // ADS picks the next structure, and does not aim the gun.
     run(&mut sim, &host, 0, 1, look(buttons::ADS, buttons::ADS), 1);
@@ -1677,13 +1677,13 @@ fn the_hammer_places_a_structure_and_holding_use_builds_it() {
     assert!(sim.player(0).unwrap().hammer.is_none());
     assert!(events(&sim).contains(&EventKind::Hammer { up: false }));
     // Up again, on the same spot: no room.
-    run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
+    run(&mut sim, &host, 0, 1, look(buttons::ACTION_SLOT_2, buttons::ACTION_SLOT_2), 1);
     run(&mut sim, &host, 0, 1, look(0, 0), frames(crate::building::HAMMER_RAISE));
     sim.events.clear();
     run(&mut sim, &host, 0, 1, look(buttons::FIRE, buttons::FIRE), 1);
     assert!(events(&sim).contains(&EventKind::BuildRefused { status: crate::building::status::BLOCKED }));
     assert!(sim.player(0).unwrap().hammer.is_some(), "refused: still in hand");
-    run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
+    run(&mut sim, &host, 0, 1, look(buttons::ACTION_SLOT_2, buttons::ACTION_SLOT_2), 1);
 
     // Up to the site: the use key builds it (not the field computer), only while held.
     host.sites.borrow_mut()[0].at = Vec3::new(25.0, 0.0, 0.0);
@@ -1711,13 +1711,36 @@ fn the_hammer_refuses_what_he_cannot_afford_and_puts_away_for_a_weapon() {
     let mut sim = Sim::new();
     spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
-    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::HAMMER, ..Default::default() }, 1);
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ACTION_SLOT_2, ..Default::default() }, 1);
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::building::HAMMER_RAISE));
     sim.events.clear();
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
     assert!(events(&sim).contains(&EventKind::BuildRefused { status: crate::building::status::NO_MONEY }));
     assert!(host.sites.borrow().is_empty());
     run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+    assert!(sim.player(0).unwrap().hammer.is_none());
+}
+
+#[test]
+fn the_build_tool_answers_the_key_of_the_action_slot_that_holds_it() {
+    use crate::weapons::actionslot::{ActionSlot, ActionSlots, Equipment};
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.options.borrow_mut().push(option(7, crate::building::status::OK));
+    let mut sim = Sim::new();
+    spawn(&mut sim, &host, 0, 1);
+    wait_until_ready(&mut sim, &host);
+    // Moved to slot 1: slot 2's key no longer raises it, slot 1's does.
+    sim.players[0].as_mut().unwrap().action_slots = ActionSlots { slots: [ActionSlot::Equipment { item: Equipment::BuildTool }, ActionSlot::Empty, ActionSlot::AltMode, ActionSlot::Empty] };
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ACTION_SLOT_2, ..Default::default() }, 1);
+    assert!(sim.player(0).unwrap().hammer.is_none());
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ACTION_SLOT_1, ..Default::default() }, 1);
+    assert!(sim.player(0).unwrap().hammer.is_some());
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ACTION_SLOT_1, ..Default::default() }, 1);
+    assert!(sim.player(0).unwrap().hammer.is_none(), "its key again puts it away");
+    // Carried by no slot: no key raises it.
+    sim.players[0].as_mut().unwrap().action_slots = ActionSlots::default();
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ALL, ..Default::default() }, 1);
     assert!(sim.player(0).unwrap().hammer.is_none());
 }
 
@@ -1729,7 +1752,7 @@ fn the_wheel_turns_the_structure_being_placed() {
     let mut sim = Sim::new();
     spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
-    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::HAMMER, ..Default::default() }, 1);
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ACTION_SLOT_2, ..Default::default() }, 1);
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::building::HAMMER_RAISE));
     let facing = sim.player(0).unwrap().hammer.unwrap().angle;
     run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ROTATE_LEFT, ..Default::default() }, 1);

@@ -15203,3 +15203,29 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   player alive on his holes too; the new `--defeat` leg destroys what stands until nothing does.
 - **Verified:** `scripts/autotest-mac.sh --defeat`: buildings destroyed (the Command Center, then
   its hole); with the General alive `defeated=0`; after he is killed `defeated=1`.
+
+## The build tool is action-slot equipment (2026-11-14)
+
+- **What:** BO2 gives every player four action slots, filled by script with
+  `setactionslot( n, kind, weapon )` and pressed with `+actionslot n`
+  (`buttons_default.cfg`: d-pad up/down/left/right = slots 1/2/3/4). The Zombies HUD draws them on
+  its d-pad (`huddpadareazombie.lua` `UpdateActionSlots`). What BO2 puts where: slot 1 holds
+  Zombies equipment (`_zm_equipment.gsc:270`) and the buildables' part (`_zm_buildables.gsc:2158`);
+  slot 3 the alt mode in both modes (`_class.gsc:602`, `_zm.gsc:1320`); slot 4 Zombies' claymores
+  (`_zm_weap_claymore.gsc:205`). MP scorestreaks fill 4, 2, 1 (`_class.gsc` `actionslotorder`).
+- **Mod:** `weapons::actionslot` models the slots (`ActionSlots`, `ActionSlot::{Empty, AltMode,
+  Equipment}`); `PlayerSim::action_slots` is hashed. A General's build tool (the hammer) is
+  equipment in slot 2, the slot Zombies leaves free (user ruling 2026-11-14), and answers that
+  slot's key: `buttons::HAMMER` became `ACTION_SLOT_2`, and `ACTION_SLOT_1`/`_4` exist for the
+  Zombies equipment and claymores to come. The MP HUD's build box shows only while a slot holds
+  the tool.
+- **Deliberate break:** the field computer is not a slot. It stays the General's own key (F), since
+  it leaves first person (the user picked this over sharing slot 2 or moving claymores to lethal).
+- **Keys:** slot 2 stays on B (the hammer's old key) and slot 3 on 3 (the alt mode's). Slots 1
+  and 4 get 4 and 5 for now. BO2's own PC binds (1/2/3/5 → slots 1/2/4/3) collide with the mod's
+  older choices (weapon swap on 1, alt mode on 3), so they are not ported.
+- **Verified:** `cargo test -p zhbo-core` (1047, including
+  `the_build_tool_answers_the_key_of_the_action_slot_that_holds_it`, the HUD's
+  `the_build_slot_shows_only_while_an_action_slot_holds_the_build_tool`, and the lockstep
+  perturbation test over the new field); clippy clean; `scripts/autotest-mac.sh --build`: every
+  check passes, and the capture shows the build box in the column.

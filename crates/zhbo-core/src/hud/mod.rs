@@ -360,9 +360,10 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             let panel = spectate::Panel { name: &name, prev_key: crate::input::key_name(Key::MouseLeft), next_key: crate::input::key_name(Key::MouseRight), view_key: crate::input::key_name(b.field_computer) };
             spectate::draw(&l, prims, &panel);
         } else {
-            // The scorestreak column is the player's own commands (the tablet, the hammer).
-            let can_build = !host.build_options(p.general).is_empty();
-            rewards::draw(&l, prims, tablet_up, p.hammer.is_some(), can_build, st.weapon_ms());
+            // The scorestreak column is the player's own commands: the tablet, and the build tool
+            // when an action slot holds it.
+            let build = p.action_slots.holds(crate::weapons::actionslot::Equipment::BuildTool).then(|| !host.build_options(p.general).is_empty());
+            rewards::draw(&l, prims, tablet_up, p.hammer.is_some(), build, st.weapon_ms());
         }
         let alt_key = crate::input::key_name(client.cfg.bindings.alt_mode);
         ammo::draw(&l, prims, p, st.weapon_ms(), st.clock, alt_key);

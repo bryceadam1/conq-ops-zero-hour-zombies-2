@@ -438,7 +438,7 @@ impl Autopilot {
         let frame = |at: f32| (at / crate::units::LOGIC_DT).round() as i64;
         let wheel = if frame(t) == frame(3.6) { 1.0 } else { 0.0 };
         if (2.6..2.7).contains(&t) {
-            keys.set_down(b.hammer, true);
+            keys.set_down(b.action_slot_2, true);
         }
         if (4.0..4.1).contains(&t) {
             keys.set_down(b.fire, true);

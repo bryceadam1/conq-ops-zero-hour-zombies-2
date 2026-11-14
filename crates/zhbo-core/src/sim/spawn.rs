@@ -160,6 +160,7 @@ impl Sim {
             very_hurt: false,
             hack: None,
             rts: RtsState::default(),
+            action_slots: crate::weapons::actionslot::ActionSlots::GENERAL,
             hammer: None,
             site: None,
             building: false,

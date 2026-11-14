@@ -73,6 +73,8 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   and hold breath), `gunpos.rs` (the client-side gun position: offsets, bob, sway), `loadout.rs`, `rng.rs` (xorshift),
   `pickup.rs` (a weapon off a player, `Carried`, with the options it wears, `WeaponOptions`; which
   weapon a death drops, the ammo a walk-over takes, the use key's swap — BO2's item rules),
+  `actionslot.rs` (BO2's four action slots, `setactionslot`: what each holds — the alt mode in 3,
+  the General's build tool as equipment in 2 — and the key each answers),
   `weapon_state.rs` (one weapon's WeaponState: ammo, fire-cycle timers, the Reload in
   progress, the dual-wield hands), `arsenal.rs` (Offhand, Arsenal with HasSpecialty and the
   perk-timed weapon states, WeaponAction).

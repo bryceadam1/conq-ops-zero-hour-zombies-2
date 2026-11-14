@@ -79,10 +79,13 @@ pub fn draw_name(l: &Lui, prims: &mut Vec<Prim>, name: &str, since_ms: f32) {
 }
 
 /// The column: reward 3 (the bottom slot) is the field computer, always usable; reward 2 is the
-/// build menu, usable while the General can build. Reward 1 and the inventory slot stay empty.
-pub(super) fn draw(l: &Lui, prims: &mut Vec<Prim>, tablet_up: bool, hammer_up: bool, can_build: bool, since_ms: f32) {
+/// build tool (action slot 2's equipment) when he carries it (`can_build`: `Some(usable)`, usable
+/// while the General can build). Reward 1 and the inventory slot stay empty.
+pub(super) fn draw(l: &Lui, prims: &mut Vec<Prim>, tablet_up: bool, hammer_up: bool, can_build: Option<bool>, since_ms: f32) {
     let build = crate::strings::text("HUD:ZHBO_Build");
-    draw_slot(l, prims, 2, sprites::BUILD_ICON, &build, can_build, hammer_up);
+    if let Some(usable) = can_build {
+        draw_slot(l, prims, 2, sprites::BUILD_ICON, &build, usable, hammer_up);
+    }
     draw_slot(l, prims, 3, sprites::STREAK_VSAT, &crate::strings::text("HUD:ZHBO_FieldComputerShort"), true, tablet_up);
     if tablet_up {
         draw_name(l, prims, &crate::strings::text("HUD:ZHBO_FieldComputer"), since_ms);
@@ -107,10 +110,22 @@ mod tests {
     fn the_field_computer_slot_is_lit_and_bracketed_in_use() {
         let l = Lui::new(1280.0, 720.0);
         let mut prims = Vec::new();
-        draw(&l, &mut prims, true, false, true, 0.0);
+        draw(&l, &mut prims, true, false, Some(true), 0.0);
         let names: Vec<_> = prims.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.as_str()) } else { None }).collect();
         assert_eq!(names.iter().filter(|n| **n == "ZHBO_Mat_hud_mp_vis_ks_dpad_box_back_lit").count(), 2);
         assert!(names.contains(&"ZHBO_Mat_hud_mp_vis_ks_dpad_bracket"));
         assert!(names.contains(&sprites::STREAK_VSAT));
+    }
+
+    #[test]
+    fn the_build_slot_shows_only_while_an_action_slot_holds_the_build_tool() {
+        let l = Lui::new(1280.0, 720.0);
+        let images = |build| {
+            let mut prims = Vec::new();
+            draw(&l, &mut prims, false, false, build, 0.0);
+            prims.iter().filter(|p| matches!(p, Prim::Image { name, .. } if name == sprites::BUILD_ICON)).count()
+        };
+        assert_eq!(images(Some(false)), 1, "carried, even when nothing can be built now (unlit)");
+        assert_eq!(images(None), 0, "not carried: no slot");
     }
 }
