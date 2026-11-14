@@ -15167,3 +15167,23 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   every floor. 11% of commands are 1–3 words; adjectives are on 14% (38% with the old rate). The
   old `sample` step still reproduces `tools/voice` byte for byte: with no focus and the default
   adjective rate, the draws are unchanged.
+
+## Voice: spot GPU machines with guardrails (2026-11-13)
+
+- `tools/voice/cloud/cloud.py`: `launch`, `push`, `ssh`, `watch`, `status`, `terminate`.
+  - One-time spot in the cheapest zone, with a $1/h ceiling; terminate on shutdown.
+  - A `shutdown -h +<lifetime>` scheduled by user data at boot; the disk is deleted with the
+    machine; IMDSv2.
+  - SSH only, from the Mac's public address.
+  - `watch` pulls finished output with rsync and terminates at `~/job/DONE`, at the cost cap
+    (hours at the higher of the launch and current spot price, plus gp3 disk), or at the
+    lifetime.
+- **Account setup:**
+  - AWS access is the IAM user `conquerops-gpu` (profile `conquerops`), also used by the
+    `aws-mcp` server through `AWS_PROFILE`.
+  - Quota: 4 GPU vCPUs, so one `g5.xlarge` at a time.
+  - Budget `conquerops-monthly-25`: email alerts only; the user found the budget-action role
+    setup too awkward.
+- **Gotcha: security group and rule descriptions refuse apostrophes.**
+- **Dry run:** `launch --dry-run` passed with EC2's own validation (g5.xlarge spot in
+  us-west-2b at $0.58/h, DLAMI PyTorch 2.7 Ubuntu 22.04 of 2026-04-27, 150 GB).

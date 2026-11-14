@@ -652,6 +652,19 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   game; the fetch uses the system's `curl` into `<name>.part`, checks size and hash, and renames,
   so a file under its own name is whole. Without the models the game plays as before and the
   push-to-talk key says voice is off.
+- **Cloud machines (built, `tools/voice/cloud/cloud.py`).** TTS generation and training run on
+  one AWS spot GPU machine at a time (profile `conquerops`, `us-west-2`), with guardrails built
+  in:
+  - one-time spot with a price ceiling, so an interruption terminates it;
+  - a maximum lifetime enforced on the machine itself (a shutdown scheduled at boot), and
+    shutting down terminates it;
+  - SSH only, from the owner's address;
+  - `watch` pulls the job's finished output with rsync every few minutes (the generated data
+    is kept: it is at least half the cost), then terminates the machine at its `DONE` marker,
+    its cost cap or its lifetime.
+
+  `launch --dry-run` has EC2 validate the whole request without starting anything. The account
+  has a $25-a-month budget alert.
 - **Training data (built, `tools/voice/`):**
   1. **The sampler** (`command::sample`) draws canonical commands, each over its own invented
      vocabulary (made-up unit, place, team and power names; the real class words), weighted toward
