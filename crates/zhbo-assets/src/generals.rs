@@ -483,6 +483,12 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     ));
     match crate::zombies::Zombies::rule_table(bo2_dir) {
         Ok(csv) => {
+            // TranZit's zombie as Zero Hour units, its health from the same table.
+            let rules = zhbo_core::zombies::RuleTable::parse(&csv);
+            match crate::zombies::zombie_unit(&survivor_zone, &[&zm.pool.patch, &zm.pool.map], &paks, &mut out, &rules) {
+                Ok(s) => summary.push(s),
+                Err(e) => summary.push(format!("zombies: no zombie units: {e}")),
+            }
             out.insert(crate::zombies::RULES_PATH.to_string(), csv.into_bytes());
         }
         Err(e) => summary.push(format!("zombies: no rule table: {e}")),

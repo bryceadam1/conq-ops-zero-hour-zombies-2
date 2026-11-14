@@ -42,6 +42,7 @@ enum ZhboObjFlags
 	ZHBO_OBJ_FIRING     = 1u << 12, /* firing a weapon right now */
 	ZHBO_OBJ_GENERAL    = 1u << 13, /* a General (ZHBO_General_*): BO2's player, who takes a BO2 hit as its share of playerMaxHealth (pending for the next ABI bump) */
 	ZHBO_OBJ_SURVIVOR   = 1u << 14, /* a survivor General (ZHBO_General_Survivor_*): BO2 Zombies' player (pending for the next ABI bump) */
+	ZHBO_OBJ_ZOMBIE     = 1u << 15, /* a BO2 zombie (ZHBO_Zombie*) (pending for the next ABI bump) */
 };
 
 /* What a shot hit (zhbo_core::impacts::Surface). The sim classifies an object hit from its kind
@@ -888,6 +889,9 @@ int32_t zhbo_content_versus(uint32_t theirs, char *out, int32_t cap);
 /* The nearest the first-person hammer places a structure whose footprint has bounding radius
    `radius` (building::place_near: PLACE_MIN, or PLACE_CLEAR clear of the footprint). ABI 30. */
 float zhbo_hammer_place_near(float radius);
+/* A zombie's swipe on a General of Zero Hour health max_health: BO2's meleedamage as his share
+   (pending for the next ABI bump). */
+float zhbo_zombie_hit_damage(float max_health);
 /* The smoke screens (smoke.rs; host patch 0024), from a lock-free mirror of the sim's screens
    written after each logic step, so every peer's engine gets the same answers. Lock-free (safe
    inside any core callback and from the UI). ABI 31.

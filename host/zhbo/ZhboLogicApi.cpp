@@ -95,6 +95,7 @@ void fillInfo(const Object *obj, const Object *viewer, ZhboObjInfo *out)
 	if (obj->testStatus(OBJECT_STATUS_IS_FIRING_WEAPON)) flags |= ZHBO_OBJ_FIRING;
 	if (isGeneral(obj)) flags |= ZHBO_OBJ_GENERAL;
 	if (isSurvivor(obj)) flags |= ZHBO_OBJ_SURVIVOR;
+	if (isZombie(obj)) flags |= ZHBO_OBJ_ZOMBIE;
 	if (viewer && viewer != obj)
 	{
 		const Relationship rel = viewer->getRelationship(obj);

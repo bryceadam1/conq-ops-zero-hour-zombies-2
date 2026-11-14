@@ -15358,3 +15358,45 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - The hip-fire leg's own checks expect the MP default class, so that leg fails with a survivor
     by design.
 - **Bump:** `hud::VERSION` 91 → 92.
+
+## BO2's zombie as a Zero Hour unit (2026-11-14)
+
+- **Art:** TranZit's classic zombie (`character/c_zom_zombie1_01.gsc`): `c_zom_zombie1_body01` plus
+  the first head of `xmodelalias/c_zom_zombie_head_als` (`c_zom_zombie_head_k`).
+  - The head skins onto the body's own bones by name, as BO2's `attach( head, "", 1 )` does.
+  - One W3D model, `ZHBO_ZOM_SKN`, on the zombie's own "base" skeleton (`self.skeleton = "base"`).
+  - Clips from the animtree (`aitype/zm_transit_basic_01.gsc`): idle `ai_zombie_idle_v1_delta`,
+    walk `_walk_v1`, run `_run_v2`, sprint `_sprint_v1`, attack `_attack_v1`.
+- **Deliberate break, deaths:** BO2's ordinary zombie deaths are ragdolls, and the mod has none.
+  The unit plays the animtree's standing `ch_dazed_a_death` instead.
+- **Speeds, from BO2's own data:** a zombie moves by its clip's root motion, which the xanim reader
+  didn't decode. `zhbo_formats::xanim::root_motion` now reads the delta part's translation
+  (OpenAssetTools' `XAnimPartTrans` layout, already in the generated layouts; bounds-checked).
+  - The clips move 37.6, 108.3 and 142.1 in/s (walk, run, sprint).
+  - At the General's drawn scale those are Zero Hour speeds of 7.2, 20.8 and 27.2 (Burton runs
+    at 30).
+  - Each run cycle (BO2's `set_zombie_run_cycle`) is its own object, `ZHBO_Zombie_{Walk,Run,Sprint}`,
+    with its own locomotor.
+- **Health:** `zombie_health_start` (rule table, "original" column, 150; `_zm_spawner.gsc:225`)
+  times `BO2_TO_ZH_DAMAGE`, so BO2's weapons kill a zombie in BO2's shots. The round engine will
+  raise it.
+- **Swipe:** `self.meleedamage = 60` (`_zm_spawner.gsc:257`), dealt whole by
+  `player_damage_override` (`_zm.gsc:4100-4109`); a survivor has 100 health (`_zm_perks.gsc:2091-2101`).
+  - The Zero Hour weapon deals 60 × the exchange rate to units and structures.
+  - On a General the bridge's damage hook replaces the amount with `zhbo_zombie_hit_damage`:
+    60% of his health, so two swipes down him, as in BO2.
+  - Reach: 64 inches, the IW engines' `ai_meleeRange` default (the dogs set the same,
+    `dog_init.gsc:60`); not yet traced in t6zm.
+  - Cadence: one swipe per attack clip.
+- **Gotcha: Zero Hour's `IdleAnimation` must be `ONCE`** (W3DModelDraw throws "Idle Anims should
+  always use ONCE"; the engine re-picks to loop). The INI error names only the block's first line;
+  the cue was that the zombie's `DisplayName` was never fetched, so the parse failed inside the
+  Draw module.
+- **Verified:**
+  - `cargo test --workspace`, clippy clean (but the voice session's example).
+  - The converter writes 4 meshes and 6 clips.
+  - In game (`ZHBO_AUTOPILOT_GENERAL=…Misty ZHBO_AUTOPILOT_ZOMBIES=3`, the hip-fire scene), the
+    three zombies charge with their own run cycles; the run and sprint zombies reach her first,
+    each swipe deals 900.1 of her 1500, and the second kills her (`MOD_MELEE`). The capture shows
+    two zombies closing in while she reloads the M1911.
+- **Bump:** `hud::VERSION` 92 → 94.

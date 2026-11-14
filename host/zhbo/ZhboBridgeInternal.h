@@ -97,6 +97,7 @@ struct ZhboConfig
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	const char *autopilot_general = nullptr; // ZHBO_AUTOPILOT_GENERAL: the General template the scene spawns (a survivor, say)
+	Int autopilot_zombies = 0; // ZHBO_AUTOPILOT_ZOMBIES: how many BO2 zombies the scene sends at the General
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
 	Bool has_showcase_pitch = FALSE;	   // ZHBO_SHOWCASE_PITCH (radians)
 	Real showcase_pitch = 0.0f;
@@ -220,6 +221,8 @@ void rtsWeapons(UnsignedInt frame);
 Bool isGeneral(const Object *obj);
 /// A survivor General (ZHBO_General_Survivor_*, a General too): BO2 Zombies' player.
 Bool isSurvivor(const Object *obj);
+/// A BO2 zombie (ZHBO_Zombie*).
+Bool isZombie(const Object *obj);
 /// The order a General's command button gives (ZHBO_ACTION_LETHAL/_TACTICAL/_MELEE/_RELOAD), or -1.
 Int rtsOrderAction(const CommandButton *button);
 /// Tell every client what each selected General is ordered to do (MSG_ZHBO_TAKE_CONTROL).

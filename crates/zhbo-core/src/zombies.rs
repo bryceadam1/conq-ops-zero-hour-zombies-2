@@ -139,6 +139,29 @@ pub fn parse_survivor_kit(text: &str) -> crate::weapons::Loadout {
     kit
 }
 
+/// A `zombies.ini` text's `[Zombie]` `MeleeDamage` (BO2's `self.meleedamage`), or 0 when missing.
+pub fn parse_melee_damage(text: &str) -> f32 {
+    let mut in_section = false;
+    for line in text.lines() {
+        let line = line.split(';').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            in_section = line.eq_ignore_ascii_case("[Zombie]");
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=').filter(|_| in_section) {
+            if k.trim() == "MeleeDamage" {
+                return v.trim().parse().unwrap_or(0.0);
+            }
+        }
+    }
+    0.0
+}
+
+/// A zombie's swipe on a player, BO2 health (the shipped `[Zombie]` `MeleeDamage`).
+pub fn melee_damage() -> f32 {
+    parse_melee_damage(SHIPPED)
+}
+
 /// The shipped survivor kit.
 pub fn survivor_kit() -> crate::weapons::Loadout {
     parse_survivor_kit(SHIPPED)
@@ -176,7 +199,9 @@ mod tests {
     #[test]
     fn the_shipped_roster_parses_every_row() {
         let r = roster();
-        let lines = SHIPPED.lines().filter(|l| { let l = l.trim(); !l.is_empty() && !l.starts_with(';') && !l.starts_with('[') }).count();
+        let weapons = SHIPPED.split("[Weapons]").nth(1).unwrap_or("");
+        let weapons = weapons.split("\n[").next().unwrap_or("");
+        let lines = weapons.lines().filter(|l| { let l = l.trim(); !l.is_empty() && !l.starts_with(';') }).count();
         assert_eq!(r.len(), lines, "a row the parser skipped");
         let ray = r.iter().find(|w| w.id == "ray_gun_zm").unwrap();
         assert!(ray.in_box);
@@ -194,6 +219,15 @@ mod tests {
         assert_eq!((kit.lethal.as_str(), kit.lethal_count), ("frag_grenade_zm", Some(0)));
         assert_eq!((kit.tactical.as_str(), kit.melee.as_str()), ("", "knife_zm"));
         assert!(!kit.held_knife, "Zombies gives no held knife");
+    }
+
+    #[test]
+    fn a_zombies_swipe_is_bo2s_sixty() {
+        assert_eq!(melee_damage(), 60.0);
+        // On a General it is that share of BO2's player health of his own (damage::general_zh).
+        let t = crate::tuning::Tuning::default();
+        let hit = crate::damage::general_zh(&t, melee_damage(), 300.0);
+        assert!(hit > 0.6 * 300.0 && hit < 0.61 * 300.0, "{hit}");
     }
 
     #[test]

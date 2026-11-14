@@ -17,6 +17,8 @@ pub const SURVIVORS: [(&str, char, &str); 4] = [
     ("ZHBO_General_Survivor_Russman", 'R', "RUS"),
     ("ZHBO_General_Survivor_Stuhlinger", 'S', "STU"),
 ];
+/// Prefix of every zombie object (`ZHBO_Zombie_Walk`; `zhbo_assets::zombies` writes them).
+pub const ZOMBIE_PREFIX: &str = "ZHBO_Zombie";
 /// Suffix marking a no-shadow copy of a texture (engine patch 0009 strips the shadow pass for it).
 pub const NO_SHADOW_SUFFIX: &str = "_nsg";
 
@@ -209,6 +211,10 @@ pub fn general(faction: &str) -> String {
 pub fn is_general(name: &str) -> bool {
     name.starts_with(GENERAL_PREFIX)
 }
+/// Whether `name` is a zombie object.
+pub fn is_zombie(name: &str) -> bool {
+    name.starts_with(ZOMBIE_PREFIX)
+}
 /// Whether `name` is a survivor General object.
 pub fn is_survivor(name: &str) -> bool {
     name.starts_with(SURVIVOR_PREFIX)
@@ -279,6 +285,12 @@ inline constexpr const char *SURVIVOR_PREFIX = "ZHBO_General_Survivor_";
 inline bool isSurvivor(const char *name)
 {
 	return name && strncmp(name, SURVIVOR_PREFIX, strlen(SURVIVOR_PREFIX)) == 0;
+}
+// Prefix of every zombie object (written by the converter); the glue's isZombie checks it.
+inline constexpr const char *ZOMBIE_PREFIX = "ZHBO_Zombie";
+inline bool isZombie(const char *name)
+{
+	return name && strncmp(name, ZOMBIE_PREFIX, strlen(ZOMBIE_PREFIX)) == 0;
 }
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).
 inline void worldMesh(char *out, size_t cap, int vm, int k)

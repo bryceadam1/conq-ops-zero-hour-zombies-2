@@ -35,6 +35,8 @@ pub mod objflags {
     /// A survivor General (`ZHBO_General_Survivor_*`, also `GENERAL`): BO2 Zombies' player, on a
     /// Zombies map only ([`crate::zombies`]).
     pub const SURVIVOR: u32 = 1 << 14;
+    /// A BO2 zombie (`ZHBO_Zombie*`): Zombies' neutral threat, on a Zombies map only.
+    pub const ZOMBIE: u32 = 1 << 15;
 }
 
 /// The ABI's damage kinds that the shield hook reports back (`zhbo_logic_shield_damage`): the first

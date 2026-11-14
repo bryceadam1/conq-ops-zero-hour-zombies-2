@@ -235,6 +235,8 @@ void readConfig()
 	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
 	s_config.autopilot_general = getenv("ZHBO_AUTOPILOT_GENERAL");
+	if (const char *v = getenv("ZHBO_AUTOPILOT_ZOMBIES"))
+		s_config.autopilot_zombies = atoi(v);
 	if (const char *v = getenv("ZHBO_SHOWCASE_ZOOM"))
 		s_config.showcase_zoom = (Real)atof(v);
 	if (const char *v = getenv("ZHBO_SHOWCASE_PITCH"))
@@ -810,6 +812,13 @@ void Zhbo_ShieldDamage(Object *obj, DamageInfo *info)
 	if (!s_ready || obj == nullptr || info == nullptr || info->in.m_kill || info->in.m_amount <= 0.0f)
 		return;
 	const Object *src = TheGameLogic->findObjectByID(info->in.m_sourceID);
+	// A zombie's swipe deals BO2's own damage to a General: its meleedamage as his share of BO2's
+	// player health (zhbo_zombie_hit_damage), not the zombie weapon's Zero Hour amount.
+	if (src && isZombie(src) && isGeneral(obj) && obj->getBodyModule())
+	{
+		info->in.m_amount = zhbo_zombie_hit_damage(obj->getBodyModule()->getMaxHealth());
+		logf("zombie %u swiped General %u for %.1f of %.1f", (unsigned)src->getID(), (unsigned)obj->getID(), info->in.m_amount, obj->getBodyModule()->getMaxHealth());
+	}
 	const Coord3D *from = src ? src->getPosition() : nullptr;
 	const float height = src ? src->getGeometryInfo().getMaxHeightAbovePosition() : 0.0f;
 	const float scale = zhbo_logic_shield_damage((uint32_t)obj->getID(), (uint32_t)info->in.m_sourceID,

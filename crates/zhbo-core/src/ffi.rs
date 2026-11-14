@@ -1327,6 +1327,15 @@ pub extern "C" fn zhbo_hammer_place_near(radius: f32) -> f32 {
     crate::building::place_near(radius)
 }
 
+/// A zombie's swipe landing on a General whose Zero Hour health is `max_health`: BO2's
+/// `self.meleedamage` (`zombies::melee_damage`) as that share of BO2's player health of his own
+/// (`damage::general_zh`), as `player_damage_override` deals it whole (`_zm.gsc:4100-4109`). The
+/// bridge's damage hook replaces the zombie weapon's own amount with it.
+#[no_mangle]
+pub extern "C" fn zhbo_zombie_hit_damage(max_health: f32) -> f32 {
+    crate::damage::general_zh(&crate::tuning::get(), crate::zombies::melee_damage(), max_health)
+}
+
 /// The first-person FXList names for the weapon on viewmodel `vm`: its muzzle flash (`viewFlashEffect`)
 /// and shell eject (`viewShellEjectEffect`). Returns 0 if no weapon uses that viewmodel.
 ///

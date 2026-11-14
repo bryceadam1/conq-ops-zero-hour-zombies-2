@@ -643,6 +643,22 @@ void autopilotSpawn()
 				rebel->getAIUpdateInterface()->aiAttackObject(general, NO_MAX_SHOTS_LIMIT, CMD_FROM_AI);
 		}
 	}
+	// ZHBO_AUTOPILOT_ZOMBIES=n: n BO2 zombies (the walk, run and sprint cycles in turn) 120 ahead
+	// on the enemy side, each ordered onto the General.
+	if (enemy && s_config.autopilot_zombies > 0)
+	{
+		static const char *const cycles[] = { "ZHBO_Zombie_Walk", "ZHBO_Zombie_Run", "ZHBO_Zombie_Sprint" };
+		for (Int i = 0; i < s_config.autopilot_zombies; ++i)
+		{
+			const Real side = (Real)(i - s_config.autopilot_zombies / 2) * 20.0f;
+			Coord3D z;
+			z.set(pos.x + c * 120.0f - s * side, pos.y + s * 120.0f + c * side, 0.0f);
+			Object *zombie = spawnAt(cycles[i % 3], enemy->getDefaultTeam(), z, yaw + PI);
+			if (zombie && zombie->getAIUpdateInterface())
+				zombie->getAIUpdateInterface()->aiAttackObject(general, NO_MAX_SHOTS_LIMIT, CMD_FROM_AI);
+			logf("autopilot: zombie %u (%s) sent at the General", zombie ? (unsigned)zombie->getID() : 0u, cycles[i % 3]);
+		}
+	}
 	// ZHBO_AUTOPILOT=equipment: an enemy Sentry Drone in front for the Black Hat, and two rocket
 	// troopers firing at the General for the Trophy System.
 	if (enemy && s_config.autopilot_equipment)

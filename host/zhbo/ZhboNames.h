@@ -26,6 +26,12 @@ inline bool isSurvivor(const char *name)
 {
 	return name && strncmp(name, SURVIVOR_PREFIX, strlen(SURVIVOR_PREFIX)) == 0;
 }
+// Prefix of every zombie object (written by the converter); the glue's isZombie checks it.
+inline constexpr const char *ZOMBIE_PREFIX = "ZHBO_Zombie";
+inline bool isZombie(const char *name)
+{
+	return name && strncmp(name, ZOMBIE_PREFIX, strlen(ZOMBIE_PREFIX)) == 0;
+}
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).
 inline void worldMesh(char *out, size_t cap, int vm, int k)
 {

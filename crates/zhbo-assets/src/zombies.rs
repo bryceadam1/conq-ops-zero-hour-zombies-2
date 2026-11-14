@@ -96,6 +96,130 @@ impl Zombies {
     }
 }
 
+/// TranZit's zombie as Zero Hour units (`ZHBO_Zombie_{Walk,Run,Sprint}`): BO2's classic zombie
+/// (`character/c_zom_zombie1_01.gsc`: `c_zom_zombie1_body01` with the first head of
+/// `xmodelalias/c_zom_zombie_head_als`, attached on the body's own bones as `attach( head, "", 1 )`
+/// does) skinned as one W3D model, with the clips of its animtree (`aitype/zm_transit_basic_01.gsc`).
+/// BO2 moves a zombie by its clip's root motion, so each run cycle's Zero Hour speed is its clip's
+/// (`zhbo_formats::xanim::root_motion`, at the General's drawn scale). BO2's zombies die as
+/// ragdolls; the mod has none, so they play the animtree's standing `ch_dazed_a_death`.
+pub mod unit {
+    /// The body, its head and the W3D names (at most 15 characters).
+    pub const BODY: &str = "c_zom_zombie1_body01";
+    pub const HEAD: &str = "c_zom_zombie_head_k";
+    pub const HIERARCHY: &str = "ZHBO_ZOM_SKL";
+    pub const MODEL: &str = "ZHBO_ZOM_SKN";
+    /// Each clip: its W3D name and BO2's.
+    pub const IDLE: (&str, &str) = ("ZHBO_ZOM_IDL", "ai_zombie_idle_v1_delta");
+    pub const ATTACK: (&str, &str) = ("ZHBO_ZOM_ATK", "ai_zombie_attack_v1");
+    pub const DEATH: (&str, &str) = ("ZHBO_ZOM_DTH", "ch_dazed_a_death");
+    /// The run cycles BO2's `set_zombie_run_cycle` picks between ("walk", "run", "sprint"): the
+    /// object, its locomotor, and its clip.
+    pub const CYCLES: [(&str, &str, (&str, &str)); 3] = [
+        ("ZHBO_Zombie_Walk", "ZHBO_ZombieWalkLocomotor", ("ZHBO_ZOM_WLK", "ai_zombie_walk_v1")),
+        ("ZHBO_Zombie_Run", "ZHBO_ZombieRunLocomotor", ("ZHBO_ZOM_RUN", "ai_zombie_run_v2")),
+        ("ZHBO_Zombie_Sprint", "ZHBO_ZombieSprintLocomotor", ("ZHBO_ZOM_SPR", "ai_zombie_sprint_v1")),
+    ];
+    pub const WEAPON: &str = "ZHBO_ZombieSwipe";
+    /// The archive's generated INIs.
+    pub const OBJECT_INI: &str = "Data\\INI\\Object\\ZZZ_ZHBO_Zombie.ini";
+    pub const LOCOMOTOR_INI: &str = "Data\\INI\\Locomotor\\ZZZ_ZHBO_Zombie.ini";
+    pub const WEAPON_INI: &str = "Data\\INI\\Weapon\\ZZZ_ZHBO_Zombie.ini";
+    /// BO2's AI melee reach (`ai_meleeRange`'s 64 inches, the IW engines' default; the dogs set
+    /// the same, `animscripts/dog_init.gsc:60`).
+    pub const MELEE_RANGE: f32 = 64.0;
+}
+
+/// The horizontal speed of clip `name`'s root motion, inches a second (0 without root motion).
+fn root_speed(zone: &zhbo_formats::t6zone::Zone, name: &str) -> Result<f32, String> {
+    let anim = zhbo_formats::xanim::find(zone, name).map_err(|e| e.to_string())?;
+    let keys = zhbo_formats::xanim::root_motion(zone, name).map_err(|e| e.to_string())?;
+    let (Some(a), Some(b)) = (keys.first(), keys.last()) else { return Ok(0.0) };
+    let secs = (b.0 - a.0) as f32 / anim.frame_rate.max(1.0);
+    if secs <= 0.0 {
+        return Ok(0.0);
+    }
+    Ok(((b.1[0] - a.1[0]).powi(2) + (b.1[1] - a.1[1]).powi(2)).sqrt() / secs)
+}
+
+/// The zombie units' art and INIs into `out`; returns a summary. `zone` holds the classic mode's
+/// characters and clips (`generals::SURVIVOR_ZONE`), `materials` the zones its materials resolve
+/// in.
+pub(crate) fn zombie_unit(
+    zone: &zhbo_formats::t6zone::Zone,
+    materials: &[&zhbo_formats::t6zone::Zone],
+    paks: &crate::paks::Paks,
+    out: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    rules: &zhbo_core::zombies::RuleTable,
+) -> Result<String, String> {
+    use crate::character::{self, Rig};
+    use zhbo_formats::{w3d, xanim, xmodel};
+    let mut body = xmodel::find(zone, unit::BODY).map_err(|e| e.to_string())?;
+    let mut head = xmodel::find(zone, unit::HEAD).map_err(|e| e.to_string())?;
+    let mut pool = vec![zone];
+    pool.extend_from_slice(materials);
+    crate::viewmodels::resolve_materials(&pool, &mut body);
+    crate::viewmodels::resolve_materials(&pool, &mut head);
+    let rig = Rig::new(&body, &[]);
+    let mut looks = crate::textures::Looks::default();
+    let body_tex = crate::textures::textures(&body, paks, out, &mut looks);
+    let head_tex = crate::textures::textures(&head, paks, out, &mut looks);
+    let mut meshes = character::skin(&rig, &body, "B", &body_tex);
+    meshes.extend(character::skin(&rig, &head, "H", &head_tex));
+    crate::textures::finish(&mut meshes, &looks);
+    out.insert(format!("Art\\W3D\\{}.w3d", unit::MODEL), w3d::skin_model_with_box(unit::MODEL, unit::HIERARCHY, &meshes, None));
+    out.insert(format!("Art\\W3D\\{}.w3d", unit::HIERARCHY), rig.hierarchy_file(unit::HIERARCHY));
+    let mut clips: Vec<(&str, &str)> = vec![unit::IDLE, unit::ATTACK, unit::DEATH];
+    clips.extend(unit::CYCLES.iter().map(|c| c.2));
+    let mut attack_ms = 0.0;
+    for (w3d_name, bo2_name) in &clips {
+        let anim = xanim::find(zone, bo2_name).map_err(|e| e.to_string())?;
+        if *bo2_name == unit::ATTACK.1 {
+            attack_ms = anim.num_frames as f32 / anim.frame_rate.max(1.0) * 1000.0;
+        }
+        let (frames, channels) = character::animate(&rig, &anim);
+        let fps = anim.frame_rate.round().max(1.0) as u32;
+        out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, unit::HIERARCHY, frames, fps, &channels));
+    }
+    // Health: BO2's round-one zombie (`zombie_health_start`, the rule table's "original" column,
+    // `_zm_spawner.gsc:225`) at the exchange rate BO2 weapons hit Zero Hour units by, so BO2's own
+    // shots kill it; the round engine raises it per round.
+    let health = rules.int("zombie_health_start", 2).unwrap_or(0) as f32 * zhbo_core::units::BO2_TO_ZH_DAMAGE;
+    let mut locos = String::from("; Conquer Ops - the zombies' locomotors, written by zhbo_assets::zombies::zombie_unit.\n");
+    let mut objects = String::from("; Conquer Ops - BO2's zombies as Zero Hour units, written by zhbo_assets::zombies::zombie_unit.\n");
+    let mut speeds = Vec::new();
+    for (object, loco, (clip, bo2_clip)) in unit::CYCLES {
+        let speed = root_speed(zone, bo2_clip)? * zhbo_core::units::DRAWN_ZH_PER_INCH;
+        speeds.push(format!("{object} {speed:.1}"));
+        locos.push_str(&format!(
+            "\nLocomotor {loco}\n  Surfaces = GROUND RUBBLE\n  Speed = {speed:.2}\n  SpeedDamaged = {speed:.2}\n  TurnRate = 500\n  TurnRateDamaged = 500\n  Acceleration = 100\n  AccelerationDamaged = 100\n  Braking = 100\n  MinTurnSpeed = 0\n  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n  Appearance = TWO_LEGS\n  StickToGround = Yes\nEnd\n"
+        ));
+        objects.push_str(&format!(
+            "\nObject {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = No\n    DefaultConditionState\n      Model = {model}\n      IdleAnimation = {h}.{idle}\n      AnimationMode = ONCE\n    End\n    ConditionState = MOVING\n      Animation = {h}.{clip}\n      AnimationMode = LOOP\n      Flags = RANDOMSTART\n    End\n    ConditionState = FIRING_A\n      Animation = {h}.{atk}\n      AnimationMode = ONCE\n    End\n    AliasConditionState = MOVING FIRING_A\n    ConditionState = DYING\n      Animation = {h}.{dth}\n      AnimationMode = ONCE\n    End\n  End\n  DisplayName = OBJECT:ZHBO_Zombie\n  Side = Civilian\n  EditorSorting = INFANTRY\n  VisionRange = 400\n  ShroudClearingRange = 0\n  WeaponSet\n    Conditions = None\n    Weapon = PRIMARY {weapon}\n  End\n  ArmorSet\n    Conditions = None\n    Armor = HumanArmor\n  End\n  KindOf = CAN_ATTACK INFANTRY SCORE\n  Body = ActiveBody ModuleTag_02\n    MaxHealth = {health:.1}\n    InitialHealth = {health:.1}\n  End\n  Behavior = AIUpdateInterface ModuleTag_03\n    AutoAcquireEnemiesWhenIdle = Yes\n  End\n  Locomotor = SET_NORMAL {loco}\n  Behavior = PhysicsBehavior ModuleTag_04\n    Mass = 5.0\n  End\n  Behavior = SlowDeathBehavior ModuleTag_05\n    DeathTypes = ALL\n    SinkDelay = 3000\n    SinkRate = 0.5\n    DestructionDelay = 8000\n  End\n  Geometry = CYLINDER\n  GeometryMajorRadius = 10.0\n  GeometryMinorRadius = 10.0\n  GeometryHeight = 14.0\n  Scale = {scale}\n  GeometryIsSmall = Yes\n  Shadow = SHADOW_DECAL\n  ShadowSizeX = 14\n  ShadowSizeY = 14\n  ShadowTexture = ShadowI\nEnd\n",
+            model = unit::MODEL,
+            h = unit::HIERARCHY,
+            idle = unit::IDLE.0,
+            atk = unit::ATTACK.0,
+            dth = unit::DEATH.0,
+            weapon = unit::WEAPON,
+            scale = zhbo_core::units::GENERAL_SCALE,
+        ));
+    }
+    // The swipe: BO2's meleedamage at the exchange rate on Zero Hour's units and structures (on a
+    // General the bridge deals BO2's own, `zhbo_zombie_hit_damage`), one per attack clip.
+    let weapon = format!(
+        "; Conquer Ops - the zombies' swipe, written by zhbo_assets::zombies::zombie_unit.\n\nWeapon {}\n  PrimaryDamage = {:.1}\n  PrimaryDamageRadius = 0\n  AttackRange = {:.1}\n  DamageType = MELEE\n  DeathType = NORMAL\n  WeaponSpeed = 99999.0\n  ProjectileObject = NONE\n  RadiusDamageAffects = ENEMIES\n  DelayBetweenShots = {:.0}\n  ClipSize = 0\n  AcceptableAimDelta = 180\nEnd\n",
+        unit::WEAPON,
+        zhbo_core::zombies::melee_damage() * zhbo_core::units::BO2_TO_ZH_DAMAGE,
+        unit::MELEE_RANGE * zhbo_core::units::DRAWN_ZH_PER_INCH,
+        attack_ms
+    );
+    out.insert(unit::OBJECT_INI.to_string(), objects.into_bytes());
+    out.insert(unit::LOCOMOTOR_INI.to_string(), locos.into_bytes());
+    out.insert(unit::WEAPON_INI.to_string(), weapon.into_bytes());
+    Ok(format!("zombie units: {} meshes, {} clips, speeds {}", meshes.len(), clips.len(), speeds.join(" ")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,3 +259,22 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod root_motion_probe {
+    /// Over the player's install: the zombie clips' root motion decodes, forward and steady.
+    #[test]
+    #[ignore]
+    fn the_zombie_clips_carry_root_motion() {
+        let bo2 = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR"));
+        let zone = crate::paks::load_zone(&bo2, crate::generals::SURVIVOR_ZONE).unwrap();
+        for name in ["ai_zombie_walk_v1", "ai_zombie_run_v2", "ai_zombie_sprint_v1", "ai_zombie_attack_v1", "ai_zombie_idle_v1_delta"] {
+            let anim = zhbo_formats::xanim::find(&zone, name).unwrap();
+            let keys = zhbo_formats::xanim::root_motion(&zone, name).unwrap();
+            let secs = anim.num_frames as f32 / anim.frame_rate;
+            let (first, last) = (keys.first().map(|k| k.1).unwrap_or_default(), keys.last().map(|k| k.1).unwrap_or_default());
+            let d = [last[0] - first[0], last[1] - first[1], last[2] - first[2]];
+            eprintln!("{name}: {} frames at {} fps, delta {}, {} keys, moved {d:?} = {:.1} in/s", anim.num_frames, anim.frame_rate, anim.delta, keys.len(), (d[0] * d[0] + d[1] * d[1]).sqrt() / secs);
+        }
+    }
+}

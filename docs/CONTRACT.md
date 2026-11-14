@@ -1916,6 +1916,11 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   such a General Zombies' spawn kit instead of a class (`Sim::new_record`). No struct moves. The
   bridge's faction table gains the four survivors (letters M, E, R, S; no player side), so their
   arms and body follow the General object.
+* `ZHBO_OBJ_ZOMBIE = 1u << 15` (`objflags::ZOMBIE`), set for a `ZHBO_Zombie*` object
+  (`isZombie`), and the free function `zhbo_zombie_hit_damage(max_health)`: a zombie's swipe on a
+  General, BO2's `meleedamage` as his share of BO2's player health. The bridge's damage hook
+  (`Zhbo_ShieldDamage`) replaces the zombie weapon's own amount with it. The archive gains the
+  zombie units' W3D art and their generated Object, Locomotor and Weapon INIs (`hud::VERSION` 94).
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change. Host patches are now 0001–0034.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

@@ -13,7 +13,7 @@
 //! Layout and decoding from OpenAssetTools (`T6_Assets.h`, `XAnimParts.txt`, `FlatXAnimReader.cpp`,
 //! GPL-3.0). The delta part (root motion) is not decoded; the bone tracks are.
 
-use crate::t6zone::layouts::XAnimParts;
+use crate::t6zone::layouts::{XAnimDeltaPart, XAnimPartTrans, XAnimPartTransFrames, XAnimParts};
 use crate::t6zone::Zone;
 use crate::FormatError;
 
@@ -276,6 +276,58 @@ pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
         }
     }
     Ok(Anim { name, num_frames, frame_rate, looping, delta, asset_type, bones, notifies })
+}
+
+/// The root motion of the animation named `name`: its delta part's translation at each key
+/// (`XAnimDeltaPart::trans`, inches in the clip's own frame, keyed by frame). Empty for a clip
+/// without root motion. The layout is OpenAssetTools' (`XAnimPartTrans`): `size` keys after the
+/// first (0: one constant `frame0`), each `mins + value * size` with `value` a byte or a short per
+/// axis (`smallTrans`), the key frames inline after the frames pointer, bytes for a clip under 256
+/// frames.
+pub fn root_motion(zone: &Zone, name: &str) -> Result<Vec<(u16, [f32; 3])>, FormatError> {
+    let asset = zone
+        .find(crate::fastfile::ASSET_XANIM, name)
+        .ok_or_else(|| FormatError::Corrupt(format!("no animation named {name} in zone {}", zone.name)))?;
+    let z = zone;
+    let h = asset.addr;
+    let num_frames = z.try_u16(h + XAnimParts::numframes)?;
+    let part = z.try_u32(h + XAnimParts::deltaPart)?;
+    if part == 0 {
+        return Ok(Vec::new());
+    }
+    let trans = z.try_u32(part + XAnimDeltaPart::trans)?;
+    if trans == 0 {
+        return Ok(Vec::new());
+    }
+    let vec3 = |at: u32| -> Result<[f32; 3], FormatError> { Ok([z.try_f32(at)?, z.try_f32(at + 4)?, z.try_f32(at + 8)?]) };
+    let keys = z.try_u16(trans + XAnimPartTrans::size)? as usize;
+    let small = z.try_u8(trans + XAnimPartTrans::smallTrans)? != 0;
+    let u = trans + XAnimPartTrans::u;
+    if keys == 0 {
+        return Ok(vec![(0, vec3(u)?)]);
+    }
+    let n = keys + 1;
+    if n > num_frames as usize + 1 {
+        return Err(FormatError::Corrupt(format!("animation {name}: {n} root motion keys over {num_frames} frames")));
+    }
+    let mins = vec3(u + XAnimPartTransFrames::mins)?;
+    let scale = vec3(u + XAnimPartTransFrames::size)?;
+    let at = u + XAnimPartTransFrames::indices;
+    let frames: Vec<u16> = if num_frames < 256 {
+        z.try_bytes(at, n)?.iter().map(|&b| b as u16).collect()
+    } else {
+        let b = z.try_bytes(at, 2 * n)?;
+        (0..n).map(|k| u16_at(b, 2 * k)).collect()
+    };
+    let data = z.try_u32(u + XAnimPartTransFrames::frames)?;
+    let values: Vec<[f32; 3]> = if small {
+        let v = z.try_bytes(data, 3 * n)?;
+        (0..n).map(|k| [0, 1, 2].map(|c| mins[c] + v[3 * k + c] as f32 * scale[c])).collect()
+    } else {
+        let v = z.try_bytes(data, 6 * n)?;
+        (0..n).map(|k| [0, 1, 2].map(|c| mins[c] + u16_at(v, 2 * (3 * k + c)) as f32 * scale[c])).collect()
+    };
+    Ok(frames.into_iter().zip(values).collect())
 }
 
 fn sample<T: Copy>(track: &Track<T>, frame: f32, lerp: impl Fn(T, T, f32) -> T) -> T {
