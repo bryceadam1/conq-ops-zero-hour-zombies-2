@@ -47,6 +47,20 @@ impl Install {
     /// `"%s_patch%s"`), then `patch_mp` (flag 2). `DB_LinkXAssetEntry` (`FUN_00597000`) keeps the
     /// asset of the zone whose flag ranks higher in `FUN_00596e60` (0x36 < 0x37 < 0x41), so a later
     /// zone here replaces an earlier one; a `,name` reference stub never replaces a real asset.
+    /// TranZit's install: its weapon pool (`zm_transit` under its title update `zm_transit_patch`,
+    /// with Zombies' common zone) and the Zombies strings, as the converter reads them.
+    pub fn open_zm(dir: &Path) -> Result<Install, String> {
+        let [patch, map] = zhbo_formats::weapon::ZM_TRANSIT_POOL.map(|name| load(dir, name));
+        const ZM_STRINGS: &[&str] = &["code_post_gfx_mp", "ui_mp", "common_mp", "patch_mp", "code_post_gfx_zm", "common_zm", "ui_zm", "zm_transit", "so_zclassic_zm_transit", "patch_zm", "patch_ui_zm"];
+        Ok(Install {
+            common: map?,
+            common_patch: load(dir, "common_zm")?,
+            patch: patch?,
+            patch_ui: load(dir, "patch_ui_zm")?,
+            strings: zhbo_formats::localize::install_strings(dir, ZM_STRINGS),
+        })
+    }
+
     fn pool(&self) -> [&Zone; 3] {
         [&self.common, &self.common_patch, &self.patch]
     }

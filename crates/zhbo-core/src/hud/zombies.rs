@@ -193,7 +193,9 @@ pub fn ammo_pulse(clock: f32) -> f32 {
 /// Hidden for a melee weapon (`ShouldHideAmmoCounter`).
 pub fn draw_ammo(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, clock: f32) {
     let w = p.arsenal.current();
-    if w.def.class == crate::weapons::Class::Melee || p.arsenal.is_unarmed() {
+    // `ShouldHideAmmoCounter`: a melee weapon, or an item (inventory type 1 or 2: the scripts' bottles,
+    // knuckle crack and syrette).
+    if w.def.class == crate::weapons::Class::Melee || p.arsenal.is_unarmed() || p.zm_item.is_some() {
         return;
     }
     let mut text = format!("{}/{}", w.ammo, w.reserve);

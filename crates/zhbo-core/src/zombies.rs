@@ -178,6 +178,8 @@ pub struct WallBuy {
     pub model: String,
     pub cost: Option<u32>,
     pub hint: Option<String>,
+    /// A melee buy's flourish weapon (`give_melee_weapon`).
+    pub flourish: Option<String>,
 }
 
 impl WallBuy {
@@ -229,7 +231,7 @@ impl WallBuys {
                 ("[wallbuys]", "UpgradedAmmoCost") => w.upgraded_ammo_cost = value.parse().unwrap_or(0),
                 ("[wallbuys]", _) => {
                     let f: Vec<&str> = value.split(',').map(str::trim).collect();
-                    w.buys.push(WallBuy { weapon: key.to_string(), model: f[0].to_string(), cost: f.get(1).and_then(|c| c.parse().ok()), hint: f.get(2).map(|h| h.to_string()) });
+                    w.buys.push(WallBuy { weapon: key.to_string(), model: f[0].to_string(), cost: f.get(1).and_then(|c| c.parse().ok()), hint: f.get(2).map(|h| h.to_string()), flourish: f.get(3).map(|h| h.to_string()) });
                 }
                 ("[layout]", "WallBuyRing") => w.ring = value.parse().unwrap_or(0.0),
                 _ => {}
@@ -363,6 +365,8 @@ pub struct Perk {
     pub solo_cost: Option<u32>,
     pub hint: String,
     pub icon: String,
+    /// The bottle he drinks it from (`machine_assets`' weapon).
+    pub bottle: String,
 }
 
 /// The perks (`zombies.ini` `[Perks]`, `_zm_perks.gsc`).
@@ -407,6 +411,7 @@ impl Perks {
                         solo_cost: f[2].parse().ok(),
                         hint: f[3].to_string(),
                         icon: f[4].to_string(),
+                        bottle: f.get(5).map_or(String::new(), |b| b.to_string()),
                     });
                 }
             }
@@ -425,6 +430,52 @@ impl Perks {
     }
 }
 
+/// Tombstone's grave (`zombies.ini` `[Tombstone]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Tombstone {
+    pub model: String,
+    /// In BO2 inches.
+    pub height: f32,
+    pub grab_delay: f32,
+    /// In BO2 inches.
+    pub grab_range: f32,
+    pub life: f32,
+    pub blink_time: f32,
+}
+
+impl Tombstone {
+    pub fn parse(text: &str) -> Tombstone {
+        let mut t = Tombstone::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[Tombstone]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "Model" => t.model = value.to_string(),
+                "Height" => t.height = num(),
+                "GrabDelay" => t.grab_delay = num(),
+                "GrabRange" => t.grab_range = num(),
+                "Life" => t.life = num(),
+                "BlinkTime" => t.blink_time = num(),
+                _ => {}
+            }
+        }
+        t
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static Tombstone {
+        static T: std::sync::OnceLock<Tombstone> = std::sync::OnceLock::new();
+        T.get_or_init(|| Tombstone::parse(SHIPPED))
+    }
+}
+
 /// Pack-a-Punch (`zombies.ini` `[PackAPunch]`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PackAPunch {
@@ -434,6 +485,7 @@ pub struct PackAPunch {
     pub model: String,
     pub upgrade_time: f32,
     pub take_time: f32,
+    pub knuckle_crack: String,
 }
 
 impl PackAPunch {
@@ -456,6 +508,7 @@ impl PackAPunch {
                 "Model" => p.model = value.to_string(),
                 "UpgradeTime" => p.upgrade_time = num(),
                 "TakeTime" => p.take_time = num(),
+                "KnuckleCrack" => p.knuckle_crack = value.to_string(),
                 _ => {}
             }
         }
@@ -467,6 +520,18 @@ impl PackAPunch {
         static P: std::sync::OnceLock<PackAPunch> = std::sync::OnceLock::new();
         P.get_or_init(|| PackAPunch::parse(SHIPPED))
     }
+}
+
+/// The weapons TranZit's scripts hand a survivor for a moment, besides the roster: the perk
+/// bottles, Pack-a-Punch's knuckle crack and the reviver's syrette. The converter converts them
+/// with the roster; the survivors' arms carry them.
+pub fn script_weapons() -> Vec<String> {
+    let mut out: Vec<String> = Perks::get().perks.iter().map(|p| p.bottle.clone()).collect();
+    out.push(PackAPunch::get().knuckle_crack.clone());
+    out.push(LastStand::get().revive_tool.clone());
+    out.extend(WallBuys::get().buys.iter().filter_map(|b| b.flourish.clone()));
+    out.retain(|w| !w.is_empty());
+    out
 }
 
 /// The Mystery Box (`zombies.ini` `[MagicBox]`, `_zm_magicbox.gsc`).
@@ -564,11 +629,12 @@ pub struct LastStand {
     pub revive_facing: f32,
     pub pistol: String,
     pub pistol_values: Vec<String>,
+    pub revive_tool: String,
 }
 
 impl LastStand {
     pub fn parse(text: &str) -> LastStand {
-        let mut ls = LastStand { bleedout_time: 0.0, revive_time: 0.0, revive_radius: 0.0, revive_facing: 1.0, pistol: String::new(), pistol_values: Vec::new() };
+        let mut ls = LastStand { bleedout_time: 0.0, revive_time: 0.0, revive_radius: 0.0, revive_facing: 1.0, pistol: String::new(), pistol_values: Vec::new(), revive_tool: String::new() };
         let mut in_section = false;
         for line in text.lines() {
             let line = line.split(';').next().unwrap_or("").trim();
@@ -585,6 +651,7 @@ impl LastStand {
                 "ReviveRadius" => ls.revive_radius = num(),
                 "ReviveFacing" => ls.revive_facing = num(),
                 "Pistol" => ls.pistol = value.to_string(),
+                "ReviveTool" => ls.revive_tool = value.to_string(),
                 "PistolValues" => ls.pistol_values = value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
                 _ => {}
             }
@@ -659,6 +726,43 @@ pub fn rules() -> RuleTable {
     RULES.read().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
 }
 
+/// `[Rounds]` `GrenadeAward`: `share:count` steps, then the full count.
+fn grenade_award(text: &str) -> ([(f32, u16); 2], u16) {
+    let mut in_section = false;
+    for line in text.lines() {
+        let line = line.split(';').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            in_section = line.eq_ignore_ascii_case("[Rounds]");
+            continue;
+        }
+        let Some(("GrenadeAward", value)) = line.split_once('=').filter(|_| in_section).map(|(k, v)| (k.trim(), v.trim())) else { continue };
+        let mut steps = [(0.0, 0); 2];
+        let mut n = 0;
+        let mut full = 0;
+        for part in value.split(',').map(str::trim) {
+            match part.split_once(':') {
+                Some((share, count)) if n < steps.len() => {
+                    steps[n] = (share.parse().unwrap_or(0.0), count.parse().unwrap_or(0));
+                    n += 1;
+                }
+                Some(_) => {}
+                None => full = part.parse().unwrap_or(0),
+            }
+        }
+        return (steps, full);
+    }
+    ([(0.0, 0); 2], 0)
+}
+
+impl Vars {
+    /// `award_grenades_for_survivors`: the lethal count a survivor holding `count` of `max` gets.
+    pub fn grenades_awarded(&self, count: u16, max: u16) -> u16 {
+        let share = if max == 0 { 0.0 } else { count as f32 / max as f32 };
+        let (steps, full) = &self.grenade_award;
+        steps.iter().find(|(s, _)| share < *s).map_or(*full, |(_, c)| *c)
+    }
+}
+
 /// A `[Rounds]` key of a `zombies.ini` text.
 fn rounds_value(text: &str, key: &str) -> Option<f32> {
     let mut in_section = false;
@@ -708,6 +812,9 @@ pub struct Vars {
     /// `penalty_downed`: the share of his points a player loses going down (`player_reduce_points`,
     /// `_zm_score.gsc:292-296`, rounded up to ten).
     pub penalty_downed: f32,
+    /// `award_grenades_for_survivors`' rule: `(share of max ammo, count)` steps, then the count held
+    /// at or past the last share (`[Rounds]` `GrenadeAward`).
+    pub grenade_award: ([(f32, u16); 2], u16),
     /// `zombie_score_start_<n>p` (`_zm.gsc:936-945`): a game of n players' starting points,
     /// which the first power-up threshold counts (`watch_for_drop`).
     pub score_start: [i32; 8],
@@ -744,6 +851,7 @@ impl Vars {
             respawn_floor_round: rounds_value(ini, "RespawnFloorRound").unwrap_or(6.0) as u32,
             respawn_floor_points: rounds_value(ini, "RespawnFloorPoints").unwrap_or(1500.0) as i32,
             penalty_downed: float("penalty_downed", 0.05, column),
+            grenade_award: grenade_award(ini),
             score_start: std::array::from_fn(|i| int(&format!("zombie_score_start_{}p", i + 1), if i > 3 { 3000 } else { 500 }, column)),
         }
     }
@@ -869,12 +977,18 @@ mod tests {
     fn the_perks_are_tranzits_with_bo2s_prices() {
         let p = Perks::get();
         let names: Vec<&str> = p.perks.iter().map(|k| k.specialty.as_str()).collect();
-        assert_eq!(names, vec!["specialty_fastreload", "specialty_longersprint", "specialty_armorvest", "specialty_rof", "specialty_quickrevive"]);
+        assert_eq!(names, vec!["specialty_fastreload", "specialty_longersprint", "specialty_armorvest", "specialty_rof", "specialty_quickrevive", "specialty_scavenger"]);
+        let t = Tombstone::get();
+        assert_eq!((t.model.as_str(), t.grab_range, t.life), ("ch_tombstone1", 64.0, 48.5));
         let jugg = &p.perks[p.index("specialty_armorvest").unwrap()];
         assert_eq!((jugg.cost, jugg.hint.as_str()), (2500, "ZOMBIE_PERK_JUGGERNAUT"));
         let qr = &p.perks[p.index("specialty_quickrevive").unwrap()];
         assert_eq!((qr.cost, qr.solo_cost), (1500, Some(500)));
         assert_eq!((p.limit, p.jugg_health, p.solo_lives), (4, 160.0, 3));
+        assert_eq!(jugg.bottle, "zombie_perk_bottle_jugg");
+        let script = script_weapons();
+        assert_eq!(script.len(), 10);
+        assert!(script.contains(&"zombie_knuckle_crack".to_string()) && script.contains(&"syrette_zm".to_string()));
     }
 
     #[test]
@@ -923,6 +1037,8 @@ mod tests {
         assert_eq!(ls.best_pistol(&[("python_zm", 0)]), "m1911_zm", "an empty pistol is passed over");
         assert_eq!(ls.best_pistol(&[("ray_gun_zm", 20), ("judge_zm", 5)]), "ray_gun_zm");
         assert!((Vars::get().penalty_downed - 0.05).abs() < 1e-6);
+        let v = Vars::get();
+        assert_eq!((v.grenades_awarded(0, 4), v.grenades_awarded(1, 4), v.grenades_awarded(3, 4)), (2, 3, 4), "BO2's round grenades");
     }
 
     #[test]

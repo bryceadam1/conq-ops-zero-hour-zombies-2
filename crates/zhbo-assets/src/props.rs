@@ -225,6 +225,14 @@ pub(crate) fn pack_a_punch(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut B
     format!("Pack-a-Punch{note}")
 }
 
+/// Tombstone's grave (`zhbo_core::zombies::Tombstone`): its model as `names::tombstone_object`.
+/// Returns the summary line.
+pub(crate) fn tombstone(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTreeMap<String, Vec<u8>>) -> String {
+    let items = [(zhbo_core::names::tombstone_object(), zhbo_core::zombies::Tombstone::get().model.clone())];
+    let note = named_props(pool, paks, out, &items, zhbo_core::names::tombstone_model, false, "Data\\INI\\Object\\ZHBO_ZM_Tombstone.ini");
+    format!("the tombstone{note}")
+}
+
 /// The power-ups (`zhbo_core::zombies::PowerUps`): each one's model (`zombies.ini` `[PowerUps]`)
 /// as the Zero Hour object `names::powerup_object`, upright as it floats. Returns the summary line.
 pub(crate) fn powerups(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTreeMap<String, Vec<u8>>) -> String {

@@ -134,8 +134,15 @@ impl Sim {
         let mut downed = Downed { general, player, pos: info.pos, bleed: ls.bleedout_time, revive: 0.0, reviver: 0, revived_by: 0, saved: None, given: 0, self_revive };
         if let Some(idx) = self.seat_of(general) {
             if let Some(mut p) = self.players[idx].take() {
+                // A drink (or knuckle crack, or syrette) ends with him going down, no perk.
+                Self::end_item(&mut p);
                 let (down, given) = pistol_arsenal(&p.arsenal, ls);
                 let mut saved = std::mem::replace(&mut p.arsenal, down);
+                // Tombstone: what he carries goes into a grave (`tombstone_laststand`).
+                if self.rounds.perks.has(general, "specialty_scavenger") {
+                    let perks = self.rounds.perks.of(general).to_vec();
+                    self.dig_grave(host, general, player, info.pos, &saved, &perks);
+                }
                 // `perk_think`: his perks go as he goes down.
                 self.lose_perks(general, &mut saved);
                 downed.saved = Some(saved);
@@ -204,7 +211,7 @@ impl Sim {
 
     /// The use key held over a downed survivor (`is_reviving`): `p` revives him this frame, with his
     /// gun down and the press kept from the field computer. True when he is reviving.
-    pub(super) fn revive_input(&mut self, p: &PlayerSim, input: &mut FpsInput) -> bool {
+    pub(super) fn revive_input(&mut self, p: &mut PlayerSim, input: &mut FpsInput) -> bool {
         if (input.held | input.pressed) & buttons::FIELD_COMPUTER == 0 {
             return false;
         }
@@ -313,7 +320,7 @@ mod tests {
     use crate::weapons::WeaponState;
 
     fn rules() -> LastStand {
-        LastStand { bleedout_time: 45.0, revive_time: 3.0, revive_radius: 75.0, revive_facing: 0.9, pistol: "fnp45_mp".into(), pistol_values: vec!["fnp45_mp".into(), "fiveseven_mp".into()] }
+        LastStand { bleedout_time: 45.0, revive_time: 3.0, revive_radius: 75.0, revive_facing: 0.9, pistol: "fnp45_mp".into(), pistol_values: vec!["fnp45_mp".into(), "fiveseven_mp".into()], revive_tool: String::new() }
     }
 
     fn kit(guns: &[(&str, u16, u16)]) -> Arsenal {

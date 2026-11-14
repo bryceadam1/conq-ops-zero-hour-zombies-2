@@ -91,7 +91,10 @@
 #                                      a survivor stands for each player, the round engine stands the
 #                                      wall buys and starts round 1; the local survivor goes into
 #                                      first person, walks to the nearest gun his starting points buy
-#                                      and buys it (ZHBO_AUTOPILOT=wallbuy). Needs a Skirmish.ini (play
+#                                      and buys it (ZHBO_AUTOPILOT=wallbuy). With --shop he starts with
+#                                      20000 points and goes on: Pack-a-Punches the gun (knuckle crack,
+#                                      takes the upgrade), drinks Jugger-Nog from its bottle, pulls the
+#                                      Mystery Box and takes its weapon. Needs a Skirmish.ini (play
 #                                      one skirmish first); back it up, the leg rewrites its map
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
@@ -132,6 +135,7 @@ mode=autopilot
 [[ "${1:-}" == "--command" ]] && mode=command
 [[ "${1:-}" == "--defeat" ]] && mode=defeat
 [[ "${1:-}" == "--zombies" ]] && mode=zombies
+[[ "${1:-}" == "--shop" ]] && { mode=zombies; shop=1; }
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -953,6 +957,10 @@ if [[ "$mode" == "zombies" ]]; then
     [[ -f "$userdata/Skirmish.ini" ]] || { echo "the zombies leg needs a Skirmish.ini (play one skirmish first)" >&2; exit 1; }
     sed -i '' "s|^Map = .*|Map = $(echo "$map" | tr 'A-Z' 'a-z')|" "$userdata/Skirmish.ini"
     export ZHBO_AUTOPILOT=wallbuy ZHBO_AUTOTEST_SKIRMISH=1 GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-45}
+    export GGC_BGFX_SCREENSHOT_AFTER=60 GGC_BGFX_SCREENSHOT_INTERVAL=${SHOT_INTERVAL:-30} GGC_BGFX_SCREENSHOT_PATH="$out/shot.bmp"
+    if [[ "${shop:-0}" == 1 ]]; then
+        export ZHBO_AUTOPILOT_ZOMBIE_POINTS=20000 GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS_SHOP:-90}
+    fi
     "$dist/conquerops" -win -xres 1280 -yres 720 -quickstart >"$out/stdout.txt" 2>&1
     wait_for_log "autopilot zombies: survivor" 120 || { echo "no survivor went into first person; see $log" >&2; exit 1; }
     for _ in $(seq 90); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
@@ -969,6 +977,15 @@ if [[ "$mode" == "zombies" ]]; then
     check "the survivor in first person" "General [0-9]+ entered first-person control"
     check "reached a wall buy" "autopilot wallbuy: at the wall buy"
     check "bought from it" "zombies: General [0-9]+ bought [a-z0-9_]+ for [0-9]+"
+    if [[ "${shop:-0}" == 1 ]]; then
+        check "Pack-a-Punch took the gun" "zombies: General [0-9]+ packs [a-z0-9_]+ into [a-z0-9_]+_upgraded_zm"
+        check "...and gave the upgrade" "zombies: General [0-9]+ took [a-z0-9_]+upgraded_zm$"
+        check "bought Jugger-Nog" "zombies: General [0-9]+ bought specialty_armorvest"
+        check "...and drank it" "zombies: General [0-9]+ drank specialty_armorvest"
+        check "pulled the Mystery Box" "zombies: General [0-9]+ pulls the Mystery Box"
+        check "...and took its weapon" "zombies: General [0-9]+ took [a-z0-9_]+ from the box|the teddy bear"
+    fi
+    for f in "$out"/shot.*.bmp; do [[ -f "$f" ]] && sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null && rm "$f"; done
     grep -E "zombies|autopilot" "$l" | head -20
     echo "screenshots and log: $out"
     exit $ok

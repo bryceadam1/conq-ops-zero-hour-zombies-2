@@ -28,6 +28,8 @@ const MAPPED_IMAGES: &str = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini"
 /// The faction whose viewmodel manifest is read: the arms are Zero Hour's and excluded, so any
 /// faction's manifest lists the same weapon parts.
 const FACTION: char = 'U';
+/// The survivor faction read for TranZit's weapons (Misty's arms).
+const SURVIVOR_FACTION: char = 'M';
 
 /// What the conversion shipped, opened once.
 pub struct Shipped {
@@ -63,10 +65,15 @@ impl Shipped {
         // The converter's sound events for the shipped defs (`weapons::sounds_and_fx`, the step
         // `generals::files` ran; deterministic over the same inputs).
         let mp = crate::paks::MpPool::load(bo2_dir)?;
-        let (bo2, atts) = mp.weapons()?;
+        let (mut bo2, atts) = mp.weapons()?;
         let crate::paks::MpPool { patch, common, .. } = mp;
         let mut defs = zhbo_core::weapons::parse_full_table(&text)?.weapons;
-        let (events, _) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
+        // TranZit's weapons with the MP ones, as `generals::files` hands them to `sounds_and_fx`.
+        let mut converted = crate::weapons::converted(&patch, &bo2);
+        let zm = crate::zombies::Zombies::load(bo2_dir)?;
+        bo2.extend(zm.weapons.iter().filter(|w| zm.ids.contains(&w.name)).cloned());
+        converted.extend(zm.ids.iter().cloned());
+        let (events, _) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &converted);
         let fire_fx = |ini: &str| {
             let mut out = HashMap::new();
             let mut current = None;
@@ -125,7 +132,8 @@ impl Shipped {
     }
 
     fn viewmodel(&self, vm: i32) -> Option<Viewmodel> {
-        let bytes = self.files.get(&zhbo_native::viewmodel_path(vm, FACTION))?;
+        // TranZit's weapons ship under the survivors' arms only (`generals::Faction::carries`).
+        let bytes = self.files.get(&zhbo_native::viewmodel_path(vm, FACTION)).or_else(|| self.files.get(&zhbo_native::viewmodel_path(vm, SURVIVOR_FACTION)))?;
         Viewmodel::from_bytes(bytes).ok()
     }
 
@@ -192,6 +200,9 @@ struct Job {
     requires: Vec<&'static str>,
     /// The row is an alt mode (BO2's `WEAPINVENTORY_ALTMODE`).
     alt: bool,
+    /// The melee weapon a gun strikes with: the class's (`knife_mp`) unless set (a survivor's,
+    /// `knife_zm`).
+    melee: Option<&'static WeaponDef>,
 }
 
 /// The attachment shorts in `eAttachment` order (an unknown short last, by name).
@@ -254,7 +265,7 @@ fn jobs() -> Vec<Job> {
                     continue;
                 }
                 let requires = if set.len() > base_cap { vec![card] } else { Vec::new() };
-                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.cac_class()).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
+                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.cac_class()).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false, melee: None });
                 if def.alt.is_empty() {
                     continue;
                 }
@@ -262,7 +273,7 @@ fn jobs() -> Vec<Job> {
                     let alt_base = crate::generals::base_id(&def.alt).to_string();
                     if seen.insert((alt_base.clone(), combo.clone())) {
                         let vm_def = if alt.viewmodel >= 0 { alt } else { def };
-                        out.push(Job { weapon: alt_base, combo, def: alt, vm_def, group: String::new(), slot: String::new(), requires, alt: true });
+                        out.push(Job { weapon: alt_base, combo, def: alt, vm_def, group: String::new(), slot: String::new(), requires, alt: true, melee: None });
                     }
                 }
             }
@@ -272,10 +283,50 @@ fn jobs() -> Vec<Job> {
     for melee in [weapons::Loadout::default().melee, weapons::CLASS_MELEE.to_string()] {
         let Some(def) = cat.get(&melee) else { continue };
         if seen.insert((melee.clone(), Vec::new())) {
-            out.push(Job { weapon: melee, combo: Vec::new(), def, vm_def: def, group: String::new(), slot: String::new(), requires: Vec::new(), alt: false });
+            out.push(Job { weapon: melee, combo: Vec::new(), def, vm_def: def, group: String::new(), slot: String::new(), requires: Vec::new(), alt: false, melee: None });
         }
     }
     out
+}
+
+/// TranZit's converted weapons: the roster's, the scripts' (bottles, knuckle crack, syrette,
+/// flourishes) and what they reach (alt modes, spawned grenades), as the shipped table has them.
+pub fn zm_ids() -> Vec<String> {
+    let script = zhbo_core::zombies::script_weapons();
+    let mut ids: Vec<String> = weapons::catalog().all().iter().map(|d| d.id.clone()).filter(|id| !id.contains('+') && !id.contains('~') && (id.ends_with("_zm") || script.contains(id))).collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// The actual rows of the weapons `ids` as they are (the Zombies weapon table): an id another one
+/// names as its alt weapon is that one's alt mode.
+pub fn rows_for(shipped: &Shipped, schema: &Schema, ids: &[String]) -> Result<Vec<Row>, String> {
+    let cat = weapons::catalog();
+    let mut out = Vec::new();
+    let mut errors = Vec::new();
+    for id in ids {
+        let Some(def) = cat.get(id) else {
+            errors.push(format!("{id}: not in the shipped table"));
+            continue;
+        };
+        let parent = ids.iter().filter_map(|o| cat.get(o)).find(|d| d.id != *id && crate::generals::base_id(&d.alt) == id.as_str());
+        let vm_def = match parent {
+            Some(p) if def.viewmodel < 0 => p,
+            _ => def,
+        };
+        let melee = cat.get(&zhbo_core::zombies::survivor_kit().melee);
+        let j = Job { weapon: id.clone(), combo: Vec::new(), def, vm_def, group: String::new(), slot: String::new(), requires: Vec::new(), alt: parent.is_some(), melee };
+        match row(shipped, schema, &j) {
+            Ok(r) => out.push(r),
+            Err(e) => errors.push(e),
+        }
+    }
+    if errors.is_empty() {
+        Ok(out)
+    } else {
+        Err(errors.join("\n"))
+    }
 }
 
 /// Every actual row.
@@ -382,7 +433,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // weapon (the held knife when the table has none); the strike lands its `melee_delay` after the
     // press (`Arsenal::step`).
     let held_knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
-    let knife = weapons::melee_weapon(d, cat.get(weapons::CLASS_MELEE).unwrap_or(held_knife));
+    let knife = weapons::melee_weapon(d, j.melee.or(cat.get(weapons::CLASS_MELEE)).unwrap_or(held_knife));
     // Timing.
     let t = &d.timing;
     for (c, v) in [

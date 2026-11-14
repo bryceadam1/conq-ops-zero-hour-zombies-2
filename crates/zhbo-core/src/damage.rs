@@ -70,6 +70,9 @@ pub struct Blow {
     pub how: MeansOfDeath,
     pub weapon: Option<&'static WeaponDef>,
     pub dir: crate::math::Vec3,
+    /// The `hitLocation_t` a round struck (`crate::hitloc`; 0, none: anything but a round on a
+    /// soldier). Zombies' kill bonus reads it (`player_add_points_kill_bonus`).
+    pub location: u8,
 }
 
 impl PartialEq for Blow {
@@ -82,7 +85,13 @@ impl PartialEq for Blow {
 impl Blow {
     /// A blow by `weapon` travelling along `dir`.
     pub fn new(how: MeansOfDeath, weapon: &'static WeaponDef, dir: crate::math::Vec3) -> Blow {
-        Blow { how, weapon: Some(weapon), dir }
+        Blow { how, weapon: Some(weapon), dir, location: 0 }
+    }
+
+    /// The blow struck at hit location `location`.
+    pub fn at(mut self, location: u8) -> Blow {
+        self.location = location;
+        self
     }
 
     /// A blow by `weapon` from `from` into a victim at `to` (BO2's radius damage: `vDir` is the
@@ -93,7 +102,7 @@ impl Blow {
 
     /// A blow by no weapon, from no direction (tests, and hosts that read only the means).
     pub fn bare(how: MeansOfDeath) -> Blow {
-        Blow { how, weapon: None, dir: crate::math::Vec3::ZERO }
+        Blow { how, weapon: None, dir: crate::math::Vec3::ZERO, location: 0 }
     }
 }
 

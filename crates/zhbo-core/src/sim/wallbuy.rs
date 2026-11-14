@@ -66,8 +66,13 @@ fn is_melee(def: &crate::weapons::WeaponDef) -> bool {
 /// What `b` offers `p` (`wall_weapon_update_prompt`, `weapon_spawn_think`).
 pub fn offer(p: &PlayerSim, b: &WallBuy) -> Offer {
     let Some(def) = crate::weapons::weapon_or_none(&b.weapon) else { return Offer::Nothing };
+    // `trigger_hide_all`: a melee weapon bought, every melee buy is hidden from him.
+    let melee_bought = WallBuys::get().buys.iter().any(|m| m.flourish.is_some() && p.arsenal.class_melee.id == m.weapon);
     let has = if is_melee(def) {
-        p.arsenal.class_melee.id == b.weapon
+        if melee_bought {
+            return Offer::Nothing;
+        }
+        false
     } else if def.class == crate::weapons::Class::Lethal {
         p.arsenal.lethal.def.id == b.weapon
     } else if def.class == crate::weapons::Class::Equipment || def.class == crate::weapons::Class::Tactical {
@@ -138,7 +143,7 @@ impl Sim {
     /// map's neutral side).
     pub(super) fn place_wall_buys(&mut self, host: &dyn LogicHost, owner: u32) {
         let w = WallBuys::get();
-        let starts: Vec<Vec3> = self.living_survivors(host).iter().map(|o| o.pos).collect();
+        let starts = self.survivor_starts(host);
         if starts.is_empty() || !self.rounds.wall_buys.is_empty() {
             return;
         }
@@ -195,7 +200,11 @@ impl Sim {
         let money = host.money(player).max(0) as u32;
         let (cost, bought) = match offer(p, b) {
             Offer::Weapon { cost } if money >= cost => {
-                give(p, def);
+                // A melee buy flourishes first (`give_melee_weapon`).
+                let flourished = b.flourish.as_deref().is_some_and(|f| Self::start_item(p, super::items::ItemKind::Flourish { weapon: b.weapon.clone() }, f, false));
+                if !flourished {
+                    give(p, def);
+                }
                 (cost, true)
             }
             Offer::Ammo { cost } if money >= cost => match held(p, b) {
@@ -218,11 +227,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_buy_offers_the_weapon_then_its_ammo_and_a_melee_buy_only_once() {
+    fn a_buy_offers_the_weapon_then_its_ammo() {
         let mut sim = Sim::new();
         let mut p = sim.new_record(1, Mode::Fps, None);
         p.arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { primary: "fnp45_mp".into(), held_knife: false, ..crate::weapons::Loadout::unarmed() });
-        let gun = WallBuy { weapon: "an94_mp".into(), model: String::new(), cost: Some(1200), hint: None };
+        let gun = WallBuy { weapon: "an94_mp".into(), model: String::new(), cost: Some(1200), hint: None, flourish: None };
         assert_eq!(offer(&p, &gun), Offer::Weapon { cost: 1200 });
         give(&mut p, crate::weapons::weapon("an94_mp"));
         assert_eq!(p.arsenal.weapons.len(), 2, "a second gun beside the first");
@@ -237,11 +246,6 @@ mod tests {
         // A third gun takes the place of the one up.
         give(&mut p, crate::weapons::weapon("mp7_mp"));
         assert_eq!(p.arsenal.weapons.iter().map(|w| w.main.id.as_str()).collect::<Vec<_>>(), vec!["fnp45_mp", "mp7_mp"]);
-        let knife = WallBuy { weapon: "knife_mp".into(), model: String::new(), cost: Some(3000), hint: None };
-        if crate::weapons::weapon_or_none("knife_mp").is_some_and(is_melee) {
-            give(&mut p, crate::weapons::weapon("knife_mp"));
-            assert_eq!(offer(&p, &knife), Offer::Nothing);
-        }
         sim.players[0] = Some(p);
     }
 }

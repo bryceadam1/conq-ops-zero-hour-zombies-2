@@ -89,7 +89,7 @@ impl Sim {
     pub(super) fn place_magic_box(&mut self, host: &dyn LogicHost) {
         let ring = crate::zombies::WallBuys::get().ring;
         let step = std::f32::consts::TAU / crate::zombies::WallBuys::get().buys.len().max(1) as f32;
-        let starts: Vec<Vec3> = self.living_survivors(host).iter().map(|o| o.pos).collect();
+        let starts = self.survivor_starts(host);
         if starts.is_empty() || !self.rounds.magic_box.places.is_empty() {
             return;
         }

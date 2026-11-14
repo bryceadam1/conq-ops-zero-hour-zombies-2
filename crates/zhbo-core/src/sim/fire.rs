@@ -182,7 +182,7 @@ impl Sim {
         // A friendly (a teammate, his soldiers and vehicles, his and the shooter's own structures)
         // stops the round and takes nothing: BO2's core modes have no friendly fire.
         let friendly = victim.is_some_and(|v| v.has(objflags::ALLY));
-        let kill = !friendly && host.damage(p.general, id, amount, crate::damage::Blow::new(how, def, dir));
+        let kill = !friendly && host.damage(p.general, id, amount, crate::damage::Blow::new(how, def, dir).at(if infantry { location } else { 0 }));
         // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
         // surface comes from what was hit.
         let surface = Surface::of_object(victim.as_ref());

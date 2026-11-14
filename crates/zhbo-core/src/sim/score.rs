@@ -193,7 +193,7 @@ impl Sim {
         let t = crate::tuning::get();
         for h in hits {
             // Zombies: a hit on a zombie pays its player (`sim/zombies.rs`).
-            self.zombie_points(host, h.shooter, h.victim, h.kill, h.blow.how);
+            self.zombie_points(host, h.shooter, h.victim, h.kill, h.blow.how, h.blow.location);
             // A player's General: a seat's record holds him (first person or overhead), or held
             // him this step (his seat may have been stepped after the blow that killed him).
             let Some(victim_seat) = self.score.seat_of(&self.players, h.victim) else { continue };
@@ -409,7 +409,7 @@ mod tests {
     fn hit(sim: &mut Sim, host: &FakeHost, shooter: u32, victim: u32, bo2_damage: f32) {
         // A General takes a BO2 hit as its share of his health (`damage::to_zh`).
         let amount = host.object(victim, shooter).map_or(bo2_damage * crate::units::BO2_TO_ZH_DAMAGE, |o| crate::damage::to_zh(&crate::tuning::get(), &o, bo2_damage));
-        let blow = crate::damage::Blow { how: crate::damage::MeansOfDeath::RifleBullet, weapon: None, dir: Vec3::new(1.0, 0.0, 0.0) };
+        let blow = crate::damage::Blow { how: crate::damage::MeansOfDeath::RifleBullet, weapon: None, dir: Vec3::new(1.0, 0.0, 0.0), location: 0 };
         let kill = host.damage(shooter, victim, amount, blow);
         sim.score_hits(host, &[Hit { shooter, victim, amount, kill, blow }]);
     }

@@ -134,6 +134,14 @@ pub fn pack_a_punch_object() -> String {
 pub fn pack_a_punch_model(n: u16) -> String {
     format!("ZPP{n:03}_SKN")
 }
+/// The Zero Hour object Tombstone's grave stands as (`zombies.ini` `[Tombstone]`'s model).
+pub fn tombstone_object() -> String {
+    "ZHBO_ZM_Tombstone".to_string()
+}
+/// The W3D model of the converter's grave prop.
+pub fn tombstone_model(n: u16) -> String {
+    format!("ZTS{n:03}_SKN")
+}
 /// The Zero Hour object the Mystery Box stands as: its model (`zombies.ini` `[MagicBox]`), made by
 /// the converter.
 pub fn magic_box_object() -> String {

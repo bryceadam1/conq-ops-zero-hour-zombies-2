@@ -73,13 +73,15 @@ pub struct Rounds {
     pub perks: super::perks::PerkState,
     /// The Pack-a-Punch machines (`sim::packapunch`).
     pub pack_a_punch: Vec<super::packapunch::PapAt>,
+    /// Tombstone's graves (`sim::tombstone`).
+    pub graves: Vec<super::tombstone::Grave>,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box, perks, pack_a_punch });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box, perks, pack_a_punch, graves });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default(), perks: Default::default(), pack_a_punch: Vec::new() }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default(), perks: Default::default(), pack_a_punch: Vec::new(), graves: Vec::new() }
     }
 }
 
@@ -89,6 +91,21 @@ fn random_int_range(rng: &mut crate::weapons::Rng, lo: i32, hi: i32) -> i32 {
         return lo;
     }
     lo + (rng.next_u32() % (hi - lo) as u32) as i32
+}
+
+/// `player_add_points_kill_bonus` (`_zm_score.gsc:232-275`): melee's bonus, else the hit
+/// location's: the head or helmet, the neck, the upper or lower torso (not the middle), else none.
+pub fn kill_bonus(vars: &Vars, how: crate::damage::MeansOfDeath, location: u8) -> i32 {
+    use crate::hitloc::NAMES;
+    if how == crate::damage::MeansOfDeath::Melee {
+        return vars.score_bonus_melee;
+    }
+    match NAMES.get(location as usize).copied() {
+        Some("head" | "helmet") => vars.score_bonus_head,
+        Some("neck") => vars.score_bonus_neck,
+        Some("torso_upper" | "torso_lower") => vars.score_bonus_torso,
+        _ => 0,
+    }
 }
 
 impl Sim {
@@ -104,6 +121,15 @@ impl Sim {
         host.query((lo + hi) * 0.5, (hi - lo).length() * 0.5, 0, &mut objs);
         objs.retain(|o| o.has(objflags::SURVIVOR) && !o.has(objflags::DEAD));
         objs
+    }
+
+    /// The survivors' places as the structures are stood, in player order (every machine the same;
+    /// the first player's start gets the box first, as BO2's `start_chest` is where the players
+    /// start).
+    pub(super) fn survivor_starts(&self, host: &dyn LogicHost) -> Vec<Vec3> {
+        let mut living = self.living_survivors(host);
+        living.sort_by_key(|o| (o.owner_player, o.id));
+        living.iter().map(|o| o.pos).collect()
     }
 
     /// Note every player with a living survivor as in the game.
@@ -147,6 +173,7 @@ impl Sim {
             return;
         }
         self.step_last_stand(host);
+        self.step_graves(host);
         let vars = Vars::get();
         let scan = self.frame.is_multiple_of(SCAN_FRAMES);
         if matches!(self.rounds.phase, Phase::Off) {
@@ -221,6 +248,19 @@ impl Sim {
         self.rounds.phase = Phase::Fighting;
         // `powerup_round_start`.
         self.rounds.powerups.drop_count = 0;
+        // `award_grenades_for_survivors`: every survivor's lethal topped up.
+        for idx in 0..self.players.len() {
+            let Some(mut p) = self.players[idx].take() else { continue };
+            if p.survivor {
+                let downed = self.rounds.downed.iter_mut().find(|d| d.general == p.general).and_then(|d| d.saved.as_mut());
+                let a = downed.unwrap_or(&mut p.arsenal);
+                if !a.lethal.def.id.is_empty() {
+                    let max = a.lethal.def.max_reserve.max(a.lethal.def.start_reserve);
+                    a.lethal.count = vars.grenades_awarded(a.lethal.count, max);
+                }
+            }
+            self.players[idx] = Some(p);
+        }
         host.log(&format!("zombies: round {round}: {} zombies at {} health", self.rounds.to_spawn, vars.health(round)));
         self.emit_all(EventKind::ZombieRound { round: round as u8 });
     }
@@ -289,7 +329,7 @@ impl Sim {
     /// hit that leaves it standing, `"death"` with the kill bonus for the killing one (melee's,
     /// `player_add_points_kill_bonus`). Hit locations' bonuses need the hit's location, which the
     /// step's hit record does not carry yet.
-    pub(super) fn zombie_points(&mut self, host: &dyn LogicHost, shooter: u32, victim: u32, kill: bool, how: crate::damage::MeansOfDeath) {
+    pub(super) fn zombie_points(&mut self, host: &dyn LogicHost, shooter: u32, victim: u32, kill: bool, how: crate::damage::MeansOfDeath, location: u8) {
         if !host.object(victim, victim).is_some_and(|o| o.has(objflags::ZOMBIE)) {
             return;
         }
@@ -301,8 +341,7 @@ impl Sim {
         let insta = !kill && self.insta_kill_on();
         let kill = kill || insta;
         let points = if kill {
-            let bonus = if how == crate::damage::MeansOfDeath::Melee { vars.score_bonus_melee } else { 0 };
-            vars.score_kill[players - 1] + bonus
+            vars.score_kill[players - 1] + kill_bonus(&vars, how, location)
         } else {
             vars.score_damage
         };
@@ -424,15 +463,28 @@ mod tests {
     }
 
     #[test]
+    fn a_kill_pays_bo2s_location_bonus() {
+        use crate::damage::MeansOfDeath as M;
+        let v = Vars::get();
+        let at = |name: &str| crate::hitloc::NAMES.iter().position(|n| *n == name).unwrap() as u8;
+        assert_eq!(kill_bonus(&v, M::HeadShot, at("head")), 50);
+        assert_eq!(kill_bonus(&v, M::RifleBullet, at("neck")), 20);
+        assert_eq!(kill_bonus(&v, M::RifleBullet, at("torso_upper")), 10);
+        assert_eq!(kill_bonus(&v, M::RifleBullet, at("torso_mid")), 0, "BO2 pays the middle of the torso nothing");
+        assert_eq!(kill_bonus(&v, M::RifleBullet, at("left_foot")), 0);
+        assert_eq!(kill_bonus(&v, M::Melee, at("head")), 80, "melee's bonus whatever the location");
+    }
+
+    #[test]
     fn a_kill_and_a_hit_on_a_zombie_pay_the_shooters_player() {
         let (mut sim, host) = zombies_map();
         host.add(ObjInfo { id: 90, owner_player: 7, flags: objflags::INFANTRY | objflags::ZOMBIE, ..Default::default() });
-        sim.zombie_points(&host, 1, 90, false, crate::damage::MeansOfDeath::RifleBullet);
-        sim.zombie_points(&host, 1, 90, true, crate::damage::MeansOfDeath::Melee);
+        sim.zombie_points(&host, 1, 90, false, crate::damage::MeansOfDeath::RifleBullet, 0);
+        sim.zombie_points(&host, 1, 90, true, crate::damage::MeansOfDeath::Melee, 0);
         let vars = Vars::get();
         assert_eq!(*host.cash.borrow(), vec![(0, vars.score_damage), (0, vars.score_kill[0] + vars.score_bonus_melee)]);
         // A hit on anything else pays nothing.
-        sim.zombie_points(&host, 1, 50, true, crate::damage::MeansOfDeath::RifleBullet);
+        sim.zombie_points(&host, 1, 50, true, crate::damage::MeansOfDeath::RifleBullet, 0);
         assert_eq!(host.cash.borrow().len(), 2);
     }
 }

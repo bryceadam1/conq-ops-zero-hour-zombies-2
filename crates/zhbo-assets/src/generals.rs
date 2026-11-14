@@ -53,7 +53,9 @@ impl Faction {
     /// Whether this faction's arms hold converted weapon `id`: a survivor carries the Zombies
     /// weapons (`_zm`), the MP factions the rest.
     pub fn carries(&self, id: &str) -> bool {
-        self.zombies == crate::viewmodels::base_id(id).ends_with("_zm")
+        let base = crate::viewmodels::base_id(id);
+        let zombies = base.ends_with("_zm") || zhbo_core::zombies::script_weapons().iter().any(|w| w == base);
+        self.zombies == zombies
     }
 }
 
@@ -736,6 +738,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     summary.push(crate::props::magic_box(&zm_props, &paks, &mut out));
     summary.push(crate::props::perk_machines(&zm_props, &paks, &mut out));
     summary.push(crate::props::pack_a_punch(&zm_props, &paks, &mut out));
+    summary.push(crate::props::tombstone(&zm_props, &paks, &mut out));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

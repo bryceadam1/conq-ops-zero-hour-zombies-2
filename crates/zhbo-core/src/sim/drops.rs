@@ -235,6 +235,11 @@ impl Sim {
         if friendly || self.in_grace_period() {
             return;
         }
+        // BO2 Zombies drops nothing for a death: `dropweaponfordeath` is multiplayer's
+        // (`_globallogic_player.gsc`); Zombies' bleed-out takes the weapons with him (`bleed_out`).
+        if p.survivor {
+            return;
+        }
         let Some(at) = at.or_else(|| p.is_first_person().then_some(p.body.pos)) else { return };
         let Some(i) = p.arsenal.death_drop() else { return };
         let w = &p.arsenal.weapons[i];

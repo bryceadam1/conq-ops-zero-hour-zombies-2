@@ -14,3 +14,4 @@ pub mod csv;
 pub mod diff;
 pub mod schema;
 pub mod weapons;
+pub mod zombies;

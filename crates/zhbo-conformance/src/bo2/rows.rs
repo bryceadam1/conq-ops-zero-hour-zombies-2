@@ -59,12 +59,21 @@ pub struct Expected<'a> {
     variants: BTreeMap<String, Variant<'a>>,
     default_att: Option<Attachment<'a>>,
     materials: std::cell::RefCell<HashMap<String, String>>,
+    /// The melee weapon a gun strikes with: MP's class knife, or a survivor's (`with_melee`).
+    class_melee: &'static str,
 }
 
 impl<'a> Expected<'a> {
     pub fn new(install: &'a Install) -> Expected<'a> {
         let atts = install.attachments();
-        Expected { install, variants: install.variants(), default_att: atts.get("defaultattachment").copied(), materials: Default::default() }
+        Expected { install, variants: install.variants(), default_att: atts.get("defaultattachment").copied(), materials: Default::default(), class_melee: "knife_mp" }
+    }
+
+    /// The same with `melee` the weapon a gun strikes with (Zombies' `zombie_melee_weapon_player_init`,
+    /// TranZit's `knife_zm`, `zm_transit.gsc:1853`).
+    pub fn with_melee(mut self, melee: &'static str) -> Expected<'a> {
+        self.class_melee = melee;
+        self
     }
 
     /// The third-person parts as the DObj links them (`FUN_00783290`): each part's tag is looked up
@@ -151,6 +160,23 @@ impl<'a> Expected<'a> {
     }
 
     /// Every expected row under `schema` (the weapons schema).
+    /// The rows of the weapons `ids` as they are (no combination; TranZit's weapons carry their
+    /// attachments built in), an id another one names as its alt weapon being that one's alt mode.
+    pub fn rows_for(&self, schema: &Schema, ids: &[String]) -> Result<Vec<Row>, String> {
+        let weapons: Vec<(String, Weapon<'a>)> = ids.iter().filter_map(|id| self.variants.get(id).and_then(|v| Weapon::new(*v, &[])).map(|w| (id.clone(), w))).collect();
+        let missing: Vec<&String> = ids.iter().filter(|id| !weapons.iter().any(|(w, _)| w == *id)).collect();
+        if !missing.is_empty() {
+            return Err(format!("not in the install's pool: {missing:?}"));
+        }
+        let mut out = Vec::new();
+        for (id, w) in &weapons {
+            let parent = weapons.iter().find(|(other, ow)| other != id && alt_weapon(ow).as_deref() == Some(id.as_str())).map(|(_, ow)| *ow);
+            let j = Job { w: *w, parent, key: String::new(), group: String::new(), slot: String::new(), requires: Vec::new() };
+            out.push(self.row(schema, &j)?);
+        }
+        Ok(out)
+    }
+
     pub fn rows(&self, schema: &Schema) -> Result<Vec<Row>, String> {
         let jobs = self.jobs()?;
         let mut out = Vec::with_capacity(jobs.len());
@@ -196,7 +222,7 @@ impl<'a> Expected<'a> {
         // MP melee is the class's melee weapon whatever is held: every class gets `knife_mp`
         // (`_class.gsc:586`) and every `MOD_MELEE` kill but the riot shield's is a stab
         // (`_scoreevents.gsc:375`). A melee or riot-shield weapon melees with itself.
-        let md = if d.weap_type() == 7 || d.weap_type() == 8 { d } else { self.variants.get("knife_mp").and_then(|k| k.def()).unwrap_or(d) };
+        let md = if d.weap_type() == 7 || d.weap_type() == 8 { d } else { self.variants.get(self.class_melee).and_then(|k| k.def()).unwrap_or(d) };
 
         // Timing.
         let ms = |b: &mut RowBuilder, c: &str, x: i32| {

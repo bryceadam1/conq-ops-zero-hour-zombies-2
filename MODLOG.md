@@ -15916,3 +15916,88 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     - The default leg: 22/22.
     - `--replay`: 5/5.
 - **Bump:** `hud::VERSION` → 104.
+
+## Zombies: the drinks and hand animations, Tombstone, the round's grenades, the kill bonus; parity gates (2026-11-14)
+
+- **The drinking animation was there: it's a weapon.** BO2 plays every Zombies hand animation as a
+  weapon the script gives and takes, and the animation is that weapon's raise:
+  - `perk_give_bottle_begin` switches to the perk's bottle (`machine_assets`' `zombie_perk_bottle_*`,
+    `_zm_perks.gsc:134-263`). The perk comes on `weapon_change_complete`
+    (`vending_trigger_post_think`, `:1890-1903`), and `perk_give_bottle_end` takes the bottle back.
+  - Pack-a-Punch cracks the knuckles with `zombie_knuckle_crack` in the place of the gun it took
+    (`upgrade_knuckle_crack_begin`, `:863-900`).
+  - The reviver holds `syrette_zm` (`level.revive_tool`, `_zm_laststand.gsc:30`).
+  - A melee buy raises its flourish (`zombie_bowie_flourish`, `zombie_tazer_flourish`;
+    `give_melee_weapon`, `_zm_melee_weapon.gsc:497-517`).
+  - The converter now converts these script weapons with the roster
+    (`zhbo_core::zombies::script_weapons`, named in `zombies.ini`), and the survivors' arms carry
+    them.
+  - The sim raises them (`Arsenal::raise_item`; `sim::items`): the drink ends when the bottle's
+    raise is done, then the perk is given and the gun comes back. Meanwhile he can't aim, sprint,
+    go prone, melee, fire, throw, switch or use (`disable_player_move_states`, `is_drinking`).
+    Going down mid-drink, no perk.
+  - Seen in game: the Jugger-Nog bottle in hand; the drink took 2.83 s (85 frames) before the perk
+    came. The knuckle crack was armed in the gun's slot.
+- **Tombstone** (`_zm_tombstone.gsc`), the gap the new gate found:
+  - The machine: 2000 points (`zombie_perk_cost`; the price switch doesn't list it).
+  - Going down with it saves his guns with their stock and the one up, his lethal count and his
+    other perks, under `ch_tombstone1` 40 inches over where he fell. A revive takes it away.
+  - Bled out and back next round, he alone can take it within 64 inches, from 1 s for 48.5 s plus
+    11.5 s of blinking. In co-op the guns (full clips, saved stock) and grenades come back; in any
+    game the perks come back, Quick Revive not when solo.
+- **The round's grenades** (`award_grenades_for_survivors`, `_zm.gsc:3533-3563`, at every round's
+  start, round 1 included): the lethal's clip goes to 2 under a quarter of its max ammo, 3 under
+  half, else 4. So survivors start round 1 with two frags, as in BO2 (they had none).
+- **The kill bonus** (`player_add_points_kill_bonus`, `_zm_score.gsc:232-275`): head or helmet 50,
+  neck 20, upper or lower torso 10, none for the middle of the torso or the limbs, melee 80
+  whatever it struck. The round's hit location now rides the blow (`Blow::location`).
+- **Melee buys exclude each other:** once he has bought one, every melee buy is hidden from him
+  (`trigger_hide_all`, `_zm_melee_weapon.gsc:515`).
+- **Bugs the shopping leg found, fixed:**
+  - A survivor's death dropped his gun on the ground. That's MP's `dropweaponfordeath`; Zombies
+    drops nothing.
+  - The perk prompt stayed up while drinking; no prompt shows while a script weapon is in hand.
+  - The ammo counter read 0/0 for the bottle; `ShouldHideAmmoCounter` hides it for items.
+  - The box and machines were placed by the order the engine's query returned the survivors, and
+    the box stood at the AI's base. They're now in player order (the first player's start gets the
+    box, like `start_chest`).
+- **Found, not fixed:** the W3D *fallback* viewmodels of the survivors' arms aren't built
+  (`viewmodel: no model ZV<vm>M_SKN` for every Zombies weapon). The native BO2 viewmodel draws them,
+  as every capture shows, so this matters only when the native pass is off.
+- **Parity gates** (`docs/TESTING.md`):
+  - `zombies` table (`zombies_conformance`): the expected side reads only the install. It takes
+    TranZit's map entities (now readable: `zhbo_formats::mapents`; in a map zone the entity string
+    hangs off the collision map, `clipMap_t::mapEnts`). It filters the wall buys and perk machines
+    as `init_spawnable_weapon_upgrade` and `perk_machine_spawn_init` do, each with its model. The
+    rules come from `mp/zombiemode.csv` with `set_zombie_var`'s defaults, through BO2's formulas
+    written out on their own: each round's health and spawn delay (rounds 1–60), each round's total
+    for 1–4 players (rounds 1–30), the points. The actual side is the core's own code and data.
+    - First run: 271 of the mod's rows matched cell for cell. The one row only BO2 had was
+      `perk/specialty_scavenger` (Tombstone). Now 0 gaps.
+  - `zm_weapons` table (`zm_weapons_conformance`): every converted TranZit weapon through the weapon
+    schema, expected from the install's own definitions (`Install::open_zm`,
+    `Expected::rows_for`), actual from the shipped table (`actual::rows_for`).
+  - The `--shop` leg: the scripted run with 20000 points goes on to the box, Pack-a-Punch and
+    Jugger-Nog.
+- **Bump:** `hud::VERSION` → 107 (the script weapons, the tombstone prop and icon).
+- **Follow-up, same day: the parity gates' first findings.**
+  - The `--shop` leg passes all 12 checks in game: the wall buy, Jugger-Nog (bought and drunk from
+    its bottle), the Mystery Box (FN FAL offered and taken) and Pack-a-Punch (FN FAL into its
+    upgrade). Jugger-Nog moved to second: it keeps the scripted survivor up for the rest.
+  - The `zm_weapons` gate runs: 89 TranZit weapons on each side, no missing rows.
+    - Its first 8551 differing cells were mostly the harness. The actual side read only faction
+      `U`'s manifests (TranZit weapons ship under the survivors' arms only). It re-derived sounds
+      and effects from the MP pool alone. Both sides took MP's class melee `knife_mp`, where a
+      survivor strikes with `knife_zm`. All fixed; 406 cells remain.
+    - The remaining cells are a real conversion backlog, next:
+      - TranZit guns carry their attachments in the variant, and the converter drops their parts:
+        the upgraded M16's launcher has 0 rounds and plays MP's `m16a1_grenadier` clips; magazine
+        and scope parts are missing.
+      - The dual-wield pistols (Mustang & Sally, the dual Five-sevens) lost their left gun.
+      - The HUD, kill and d-pad icons are empty for 45/36/21 weapons.
+      - The item weapons' type, default dry-fire sounds, the Python's shell eject, the jetgun and
+        the shield.
+    - The gate fails until they close: no allowlist.
+  - Verified: `cargo test --workspace` 1501 passed; clippy clean (all features); in game `--shop`
+    12/12, `--zombies`, the default leg 22/22, the multiplayer leg (state hash agrees on all 2933
+    common frames); the `zombies` gate 0 gaps.

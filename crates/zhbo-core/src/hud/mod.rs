@@ -384,7 +384,8 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             let use_key = crate::input::key_name(b.field_computer);
             let name = |player: i32| host.player_name(player).unwrap_or_default();
             zombies::draw_last_stand(&l, prims, sim, p, use_key, &name, &|at| panels::project(client, w, h, at));
-            if sim.revive_target(p).is_none() && !zombies::draw_magic_box(&l, prims, sim, p, use_key) && !zombies::draw_perk_machine(&l, prims, sim, p, use_key)
+            // No prompt while a script weapon is in hand (BO2's triggers ignore a drinking player).
+            if p.zm_item.is_none() && sim.revive_target(p).is_none() && !zombies::draw_magic_box(&l, prims, sim, p, use_key) && !zombies::draw_perk_machine(&l, prims, sim, p, use_key)
                 && !zombies::draw_pack_a_punch(&l, prims, sim, p, use_key)
             {
                 zombies::draw_wall_buy(&l, prims, sim, p, use_key);

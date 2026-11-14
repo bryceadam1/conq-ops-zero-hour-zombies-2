@@ -1968,6 +1968,12 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
 * Pack-a-Punch (`sim::packapunch`): the archive gains its prop (`names::pack_a_punch_object`,
   `Data\INI\Object\ZHBO_ZM_PackAPunch.ini`) and its two prompts (`hud::VERSION` 104). The sim's
   state gains `Rounds::pack_a_punch`. No ABI change.
+* The scripts' weapons, Tombstone, the round's grenades (`sim::items`, `sim::tombstone`): the
+  archive gains TranZit's script weapons (the perk bottles, the knuckle crack, the syrette, the melee
+  flourishes) with their viewmodels, the tombstone prop and its icon (`hud::VERSION` 107). The sim's
+  state gains `PlayerSim::zm_item`, `Rounds::graves`, and `Blow::location` (the round's hit location)
+  rides the blow. The bridge reads `ZHBO_AUTOPILOT_ZOMBIE_POINTS` (the shopping test's starting
+  points; autopilot only). No ABI change.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

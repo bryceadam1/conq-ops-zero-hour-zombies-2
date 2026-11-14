@@ -177,6 +177,7 @@ impl Sim {
             rts: RtsState::default(),
             survivor: false,
             action_slots: crate::weapons::actionslot::ActionSlots::GENERAL,
+            zm_item: None,
             hammer: None,
             site: None,
             building: false,

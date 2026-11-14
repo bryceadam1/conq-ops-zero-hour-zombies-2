@@ -75,7 +75,7 @@ impl Sim {
     pub(super) fn place_perk_machines(&mut self, host: &dyn LogicHost) {
         let w = crate::zombies::WallBuys::get();
         let step = std::f32::consts::TAU / w.buys.len().max(1) as f32;
-        let starts: Vec<Vec3> = self.living_survivors(host).iter().map(|o| o.pos).collect();
+        let starts = self.survivor_starts(host);
         if starts.is_empty() || !self.rounds.perks.machines.is_empty() {
             return;
         }
@@ -142,6 +142,23 @@ impl Sim {
         host.add_cash(player, -(cost as i32));
         let k = self.rounds.perks.machines[i].perk;
         let perk = &perks.perks[k as usize];
+        self.emit(idx, EventKind::ZombiePurchase { cost: cost.min(u16::MAX as u32) as u16 });
+        host.log(&format!("zombies: General {} bought {} for {cost}", p.general, perk.specialty));
+        // He drinks it (`vending_trigger_post_think`): the perk comes when the bottle's raise is
+        // done (`sim::items`); with no bottle in the table, at once.
+        if !Self::start_item(p, super::items::ItemKind::Drink { perk: k }, &perk.bottle, false) {
+            self.grant_perk(host, p, k);
+        }
+        true
+    }
+
+    /// `give_perk`: perk `k` is `p`'s.
+    pub(super) fn grant_perk(&mut self, host: &dyn LogicHost, p: &mut PlayerSim, k: u8) {
+        let perks = Perks::get();
+        let Some(perk) = perks.perks.get(k as usize) else { return };
+        if self.rounds.perks.of(p.general).contains(&k) {
+            return;
+        }
         match self.rounds.perks.owned.iter_mut().find(|(g, _)| *g == p.general) {
             Some((_, list)) => list.push(k),
             None => self.rounds.perks.owned.push((p.general, vec![k])),
@@ -152,9 +169,7 @@ impl Sim {
         if perk.solo_cost.is_some() && self.rounds.players.len() <= 1 {
             self.rounds.perks.solo_lives_given += 1;
         }
-        self.emit(idx, EventKind::ZombiePurchase { cost: cost.min(u16::MAX as u32) as u16 });
-        host.log(&format!("zombies: General {} bought {} for {cost}", p.general, perk.specialty));
-        true
+        host.log(&format!("zombies: General {} drank {}", p.general, perk.specialty));
     }
 
     /// `perk_think`: every perk of `general` gone (he went down), from `arsenal` too.
@@ -209,7 +224,7 @@ mod tests {
     #[test]
     fn a_machine_sells_its_perk_once_and_four_at_most() {
         let (mut sim, host) = survivor(2);
-        assert_eq!(sim.rounds.perks.machines.len(), 5);
+        assert_eq!(sim.rounds.perks.machines.len(), crate::zombies::Perks::get().perks.len());
         assert!(buy(&mut sim, &host, "specialty_fastreload"));
         assert!(sim.players[0].as_ref().unwrap().arsenal.has_specialty(crate::weapons::Specialty::FastReload));
         assert!(!buy(&mut sim, &host, "specialty_fastreload"), "not twice");

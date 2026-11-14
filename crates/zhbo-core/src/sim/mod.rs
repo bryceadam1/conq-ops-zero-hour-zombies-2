@@ -34,6 +34,8 @@ pub mod powerups;
 pub mod magicbox;
 pub mod perks;
 pub mod packapunch;
+pub mod items;
+pub mod tombstone;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
 /// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
@@ -381,6 +383,9 @@ pub struct PlayerSim {
     pub survivor: bool,
     /// BO2's action slots: what each holds (`weapons::actionslot`; the build tool's).
     pub action_slots: crate::weapons::actionslot::ActionSlots,
+    /// Zombies: the script weapon in hand for a moment (a perk's bottle, the knuckle crack, the
+    /// syrette; `sim::items`).
+    pub zm_item: Option<items::ItemUse>,
     /// The build tool (the hammer), when it is out.
     pub hammer: Option<Hammer>,
     /// The structure under construction in reach (the use key builds it instead of opening the
@@ -411,7 +416,7 @@ pub struct PlayerSim {
 crate::statehash::state_hash!(struct PlayerSim {
     general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
     view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, very_hurt, hack,
-    rts, survivor, action_slots, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, taser, combat, spawned,
+    rts, survivor, action_slots, zm_item, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, taser, combat, spawned,
 });
 
 impl PlayerSim {
@@ -565,6 +570,7 @@ impl PlayerSim {
             rts: RtsState::default(),
             survivor: false,
             action_slots: crate::weapons::actionslot::ActionSlots::GENERAL,
+            zm_item: None,
             hammer: None,
             site: None,
             building: false,
@@ -1134,9 +1140,18 @@ impl Sim {
                 movement::step(&mut p.body, &idle, MoveModifiers::default(), &self.tuning, &world, LOGIC_DT);
             }
             Mode::Fps => {
+                // A script weapon in hand (a drink, the knuckle crack, the syrette): done, or holding
+                // back what it blocks (`items`).
+                self.step_item(host, p, &mut input);
                 // The use key held over a downed survivor revives him, before anything else takes
-                // it (`laststand`).
-                self.revive_input(p, &mut input);
+                // it (`laststand`), the syrette in hand.
+                let reviving = self.revive_input(p, &mut input);
+                let syrette = p.zm_item.as_ref().is_some_and(|u| u.kind == items::ItemKind::Syrette);
+                if reviving && p.zm_item.is_none() {
+                    Self::start_item(p, items::ItemKind::Syrette, &crate::zombies::LastStand::get().revive_tool, false);
+                } else if !reviving && syrette {
+                    Self::end_item(p);
+                }
                 // The use key on a wall buy buys from it (`wallbuy`).
                 self.wall_buy_input(host, idx, p, &mut input);
                 // The use key on the Mystery Box pulls it, or takes its weapon (`magicbox`).

@@ -170,6 +170,8 @@ pub struct Autopilot {
     pub(crate) wall_aim: Option<(f32, f32, f32)>,
     pub(crate) wall_in_reach: bool,
     pub(crate) wall_used: Option<f32>,
+    /// The shopping run's step ([`SHOP_STEPS`]), set back to the wall buy for each run.
+    pub(crate) shop_step: usize,
     /// The classpick script's next action and whether the previous key still needs a release frame
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
@@ -294,6 +296,12 @@ pub const COMMAND_LINES: [(f32, &str); 10] = [
     (38.0, "Everyone, follow me!"),
     (40.0, "rangers in my group stop"),
 ];
+
+/// The shopping run's steps: what it walks to, when (after the first press) it presses again to
+/// take what waits, and when it goes on: the wall buy, Jugger-Nog (the drink; it also keeps him up
+/// for the rest), the Mystery Box (the weapon floats after 4 s), Pack-a-Punch (the gun comes out
+/// after 3.35 s).
+pub const SHOP_STEPS: [(&str, Option<f32>, f32); 4] = [("wall buy", None, 3.0), ("Jugger-Nog", None, 5.0), ("Mystery Box", Some(4.6), 6.5), ("Pack-a-Punch", Some(4.2), 6.0)];
 
 impl Autopilot {
     /// The same run, its state cleared (a new game).
@@ -1008,29 +1016,40 @@ impl Autopilot {
         Scripted { keys, look, class_pick: pick, ..Default::default() }
     }
 
-    /// The wall buy run: a second in, face the nearest gun his starting points buy and walk to it; in his use list,
-    /// press the use key once; two seconds later fire for a second (the bought gun, or the pistol
-    /// short of points).
+    /// The shopping run, one [`SHOP_STEPS`] step after another: a second in, face the step's
+    /// target (the client sets where it is and whether it is in his use list) and walk to it; in
+    /// reach, press the use key; a second press later for what must be taken (Pack-a-Punch's gun,
+    /// the box's weapon); then the next step. After the wall buy he fires the gun for a second.
+    /// Short of points (500 at the start) only the wall buy goes through.
     pub fn wallbuy_input(&mut self, b: &Bindings) -> Scripted {
         let t = self.t;
         let mut keys = KeySet::default();
         let mut look = None;
+        let Some(&(name, take_after, next_after)) = SHOP_STEPS.get(self.shop_step) else { return Scripted::default() };
         if t >= 1.0 && self.wall_used.is_none() {
             if let Some((yaw, pitch, _)) = self.wall_aim {
                 look = Some((yaw, pitch));
                 if self.wall_in_reach {
                     self.wall_used = Some(t);
-                    self.log.push(format!("autopilot wallbuy: at the wall buy at t {t:.1}, pressing use"));
+                    self.log.push(format!("autopilot wallbuy: at the {name} at t {t:.1}, pressing use"));
                 } else {
                     keys.set_down(b.forward, true);
                 }
             }
         }
-        if self.wall_used.is_some_and(|u| t < u + 0.1) {
-            keys.set_down(b.field_computer, true);
-        }
-        if self.wall_used.is_some_and(|u| (u + 2.0..u + 3.0).contains(&t)) {
-            keys.set_down(b.fire, true);
+        if let Some(u) = self.wall_used {
+            look = self.wall_aim.map(|(y, p, _)| (y, p));
+            let take = take_after.is_some_and(|a| (u + a..u + a + 0.1).contains(&t));
+            if t < u + 0.1 || take {
+                keys.set_down(b.field_computer, true);
+            }
+            if self.shop_step == 0 && (u + 1.0..u + 2.0).contains(&t) {
+                keys.set_down(b.fire, true);
+            }
+            if t >= u + next_after {
+                self.shop_step += 1;
+                self.wall_used = None;
+            }
         }
         Scripted { keys, look, ..Default::default() }
     }

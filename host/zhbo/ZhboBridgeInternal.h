@@ -91,6 +91,7 @@ struct ZhboConfig
 	Bool autopilot_splash = FALSE;	  // =splash: an enemy armour group and infantry for the SMAW's blast
 	Bool autopilot_flicker = FALSE;	  // =flicker: no enemies, a still scene for the flicker diff
 	Bool autopilot_drops = FALSE;	  // =drops: a General killed where he stands, the next one swaps for his rifle
+	Int autopilot_zombie_points = 0;	  // ZHBO_AUTOPILOT_ZOMBIE_POINTS: a Zombies map's starting points for the shopping run
 	Bool autopilot_hipfire = FALSE;	  // =hipfire: hip fire at the ground ahead with no enemy about (nothing hurts him)
 	Bool autopilot_command = FALSE;	  // =command: typed first-person commands to his Rangers (docs/COMMANDS.md)
 	Bool autopilot_defeat = FALSE;	  // =defeat: every building destroyed, then the General: defeat only after both (patch 0034)

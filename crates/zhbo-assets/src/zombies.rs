@@ -42,6 +42,13 @@ impl Zombies {
         // TranZit's attachments are its own (no Create-a-Class): its weapons carry theirs built in.
         let (weapons, _) = pool.weapons()?;
         let mut ids: Vec<String> = zhbo_core::zombies::roster().into_iter().map(|w| w.id).filter(|id| weapons.iter().any(|w| &w.name == id)).collect();
+        // The weapons the scripts hand a survivor for a moment (the perk bottles, the knuckle crack,
+        // the syrette): converted with the roster for their view models' raise.
+        for id in zhbo_core::zombies::script_weapons() {
+            if weapons.iter().any(|w| w.name == id) && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
         // The alt modes their attachments add (the Pack-a-Punched M16's launcher) and the grenades
         // their projectiles become, as the MP table reaches them (`weapons::table_with_metadata`).
         let mut k = 0;

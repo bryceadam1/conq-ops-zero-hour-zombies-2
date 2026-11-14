@@ -244,6 +244,8 @@ void readConfig()
 	s_config.autopilot_general = getenv("ZHBO_AUTOPILOT_GENERAL");
 	if (const char *v = getenv("ZHBO_AUTOPILOT_ZOMBIES"))
 		s_config.autopilot_zombies = atoi(v);
+	if (const char *v = getenv("ZHBO_AUTOPILOT_ZOMBIE_POINTS"))
+		s_config.autopilot_zombie_points = atoi(v);
 	if (const char *v = getenv("ZHBO_AUTOPILOT_SPAWNERS"))
 		s_config.autopilot_spawners = atoi(v);
 	if (const char *v = getenv("ZHBO_SHOWCASE_ZOOM"))
@@ -1403,11 +1405,14 @@ AsciiString Zhbo_ZombiesStartObject(Int slotNum, Player *player)
 	if (!isZombiesMap() || !player || !ThePlayerList)
 		return AsciiString::TheEmptyString;
 	// BO2's starting points (level.player_starting_points) in the one wallet, not the skirmish's
-	// starting cash.
+	// starting cash. The autopilot's shopping run may start richer (ZHBO_AUTOPILOT_ZOMBIE_POINTS).
+	Int points = (Int)zhbo_zombie_start_points();
+	if (s_config.autopilot_enabled && s_config.autopilot_zombie_points > 0)
+		points = s_config.autopilot_zombie_points;
 	if (Money *money = player->getMoney())
 	{
 		money->withdraw(money->countMoney(), FALSE);
-		money->deposit((UnsignedInt)std::max(0, (int)zhbo_zombie_start_points()), FALSE, FALSE);
+		money->deposit((UnsignedInt)std::max(0, (int)points), FALSE, FALSE);
 	}
 	// The zombies are the neutral side's (they join their spawn point's): it and the player are
 	// enemies both ways, so the zombies attack him and his units fight them.
@@ -1418,7 +1423,7 @@ AsciiString Zhbo_ZombiesStartObject(Int slotNum, Player *player)
 		player->setPlayerRelationship(neutral, ENEMIES);
 	}
 	const char *survivor = survivorOfSlot(slotNum);
-	logf("zombies map: player slot %d starts as %s, no buildings, %d points", (int)slotNum, survivor, (int)zhbo_zombie_start_points());
+	logf("zombies map: player slot %d starts as %s, no buildings, %d points", (int)slotNum, survivor, (int)points);
 	return AsciiString(survivor);
 }
 

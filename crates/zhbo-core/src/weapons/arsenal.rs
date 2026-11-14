@@ -616,6 +616,54 @@ impl Arsenal {
         self.since_sprint >= self.current().def.sprint_out_time
     }
 
+    /// A script weapon for a moment (Zombies' perk bottle, knuckle crack, syrette): given and
+    /// switched to (`giveweapon` + `switchtoweapon`), its first raise to play. With `replace`, it
+    /// takes the place of the weapon up, which is gone (Pack-a-Punch's `takeweapon` first).
+    pub fn raise_item(&mut self, def: &'static WeaponDef, replace: bool) {
+        let mut item = WeaponState::new(def);
+        item.raised_once = false;
+        if replace {
+            let i = self.active;
+            self.current_mut().interrupt();
+            self.weapons[i] = item;
+            self.weapons[i].raised_once = true;
+            (self.raise_left, self.raise_kind) = (def.first_raise_time, RaiseKind::First);
+            self.raise_total = self.raise_left;
+            self.drop_left = 0.0;
+            self.drop_total = 0.0;
+            self.ads = 0.0;
+        } else {
+            self.weapons.push(item);
+            self.switch_to(self.weapons.len() - 1);
+        }
+    }
+
+    /// Whether the script weapon `def` is up and done raising (BO2's `weapon_change_complete`).
+    pub fn item_raised(&self, def: &WeaponDef) -> bool {
+        self.current().main.id == def.id && self.raise_left <= 0.0 && self.drop_left <= 0.0
+    }
+
+    /// Take the script weapon `def` back (`takeweapon`) and bring `back` up (by id), or the first
+    /// weapon, or the melee weapon held when nothing is left.
+    pub fn drop_item(&mut self, def: &WeaponDef, back: &str) {
+        let Some(i) = self.weapons.iter().position(|w| w.main.id == def.id) else { return };
+        if self.weapons.len() == 1 {
+            let mut knife = WeaponState::new(self.class_melee);
+            knife.raised_once = true;
+            self.weapons[0] = knife;
+        } else {
+            self.weapons.remove(i);
+        }
+        self.active = self.weapons.iter().position(|w| w.main.id == back).unwrap_or(0);
+        self.previous = self.active;
+        self.current_mut().raised_once = true;
+        (self.raise_left, self.raise_kind) = (self.current().def.raise_time, RaiseKind::Normal);
+        self.raise_total = self.raise_left;
+        self.drop_left = 0.0;
+        self.drop_total = 0.0;
+        self.ads = 0.0;
+    }
+
     /// Take the weapon up away (BO2's `takeweapon` on the current weapon, as Pack-a-Punch takes
     /// it): the next weapon comes up, or the melee weapon held when it was the only one.
     pub fn take_current(&mut self) -> WeaponState {

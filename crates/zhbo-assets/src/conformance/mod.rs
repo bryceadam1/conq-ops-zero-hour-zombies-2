@@ -7,6 +7,7 @@
 
 pub mod actual;
 pub mod cac;
+pub mod zombies;
 
 use std::path::{Path, PathBuf};
 use zhbo_conformance::{csv, diff, schema::Schema};
@@ -78,7 +79,25 @@ pub fn run(bo2_dir: &Path, out_dir: &Path) -> Result<Vec<Table>, String> {
     let shipped = actual::Shipped::convert(bo2_dir)?;
     let actual = actual::rows(&shipped, &weapons)?;
     let actual_cac = cac::rows(&shipped, bo2_dir, &cac_schema)?;
-    Ok(vec![table(out_dir, "weapons", &weapons, &expected, &actual)?, table(out_dir, "cac", &cac_schema, &expected_cac, &actual_cac)?])
+    let mut tables = vec![table(out_dir, "weapons", &weapons, &expected, &actual)?, table(out_dir, "cac", &cac_schema, &expected_cac, &actual_cac)?];
+    let ids = actual::zm_ids();
+    let expected_zm = zhbo_conformance::bo2::zm_weapon_rows(bo2_dir, &ids)?;
+    let actual_zm = actual::rows_for(&shipped, &weapons, &ids)?;
+    tables.push(table(out_dir, "zm_weapons", &weapons, &expected_zm, &actual_zm)?);
+    tables.push(zombies_table(bo2_dir, out_dir)?);
+    Ok(tables)
+}
+
+/// The Zombies table alone (`zombies-*.csv`): TranZit's facts from the install against the mod's.
+pub fn zombies_table(bo2_dir: &Path, out_dir: &Path) -> Result<Table, String> {
+    if inside_repo(out_dir) {
+        return Err(format!("{} is inside the repository", out_dir.display()));
+    }
+    std::fs::create_dir_all(out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
+    let schema = zhbo_conformance::zombies::schema();
+    let expected = zhbo_conformance::zombies::expected(bo2_dir)?;
+    let actual = zombies::rows(bo2_dir, &schema)?;
+    table(out_dir, "zombies", &schema, &expected, &actual)
 }
 
 /// One line per table, for the CLI and the test's failure message.
@@ -123,5 +142,34 @@ mod tests {
         let tables = run(Path::new(&bo2), &out).expect("the conformance run completes");
         let gaps: usize = tables.iter().map(|t| t.report.gap_count()).sum();
         assert_eq!(gaps, 0, "BO2 parity gaps:\n{}", summary(&tables, &out));
+    }
+
+    /// TranZit's weapons alone: every converted Zombies weapon's facts, from the install's own
+    /// definitions (its pool), against the shipped table.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install (ZHBO_BO2_DIR); converts it in memory (~80 s release)"]
+    fn zm_weapons_conformance() {
+        let bo2 = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR to the Black Ops II install");
+        let out = std::env::var("ZHBO_CONFORMANCE_OUT").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("zhbo-conformance"));
+        std::fs::create_dir_all(&out).unwrap();
+        let schema = zhbo_conformance::weapons::schema();
+        let shipped = actual::Shipped::convert(Path::new(&bo2)).expect("the conversion");
+        let ids = actual::zm_ids();
+        assert!(ids.len() > 70, "TranZit's weapons in the table: {}", ids.len());
+        let expected = zhbo_conformance::bo2::zm_weapon_rows(Path::new(&bo2), &ids).expect("the expected rows");
+        let actual = actual::rows_for(&shipped, &schema, &ids).expect("the actual rows");
+        let t = table(&out, "zm_weapons", &schema, &expected, &actual).expect("the diff");
+        assert_eq!(t.report.gap_count(), 0, "TranZit weapon gaps:\n{}", summary(std::slice::from_ref(&t), &out));
+    }
+
+    /// The Zombies gate alone: TranZit's map (wall buys, perk machines) and rules (each round's
+    /// health, total and spawn delay; the points) from the install against what the mod plays.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install (ZHBO_BO2_DIR)"]
+    fn zombies_conformance() {
+        let bo2 = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR to the Black Ops II install");
+        let out = std::env::var("ZHBO_CONFORMANCE_OUT").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("zhbo-conformance"));
+        let t = zombies_table(Path::new(&bo2), &out).expect("the Zombies conformance run completes");
+        assert_eq!(t.report.gap_count(), 0, "TranZit parity gaps:\n{}", summary(std::slice::from_ref(&t), &out));
     }
 }

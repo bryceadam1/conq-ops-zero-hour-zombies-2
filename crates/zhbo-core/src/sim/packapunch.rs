@@ -59,7 +59,7 @@ impl Sim {
     pub(super) fn place_pack_a_punch(&mut self, host: &dyn LogicHost) {
         let w = crate::zombies::WallBuys::get();
         let step = std::f32::consts::TAU / w.buys.len().max(1) as f32;
-        let starts: Vec<Vec3> = self.living_survivors(host).iter().map(|o| o.pos).collect();
+        let starts = self.survivor_starts(host);
         if starts.is_empty() || !self.rounds.pack_a_punch.is_empty() {
             return;
         }
@@ -112,8 +112,15 @@ impl Sim {
                     return true;
                 }
                 host.add_cash(player, -(rules.cost as i32));
-                let taken = p.arsenal.take_current();
-                host.log(&format!("zombies: General {} packs {} into {upgrade}", p.general, taken.main.id));
+                host.log(&format!("zombies: General {} packs {} into {upgrade}", p.general, p.arsenal.current().main.id));
+                // The machine takes the gun and he cracks his knuckles in its place
+                // (`upgrade_knuckle_crack_begin`); with no knuckle crack in the table, the gun just goes.
+                if !Self::start_item(p, super::items::ItemKind::KnuckleCrack, &rules.knuckle_crack, true) {
+                    p.arsenal.take_current();
+                } else if let Some(u) = p.zm_item.as_mut() {
+                    // The gun is gone: the next one comes up after.
+                    u.back.clear();
+                }
                 self.rounds.pack_a_punch[i].phase = PapPhase::Upgrading { user: p.general, weapon: upgrade, t: 0.0 };
                 self.emit(idx, EventKind::ZombiePurchase { cost: rules.cost.min(u16::MAX as u32) as u16 });
                 true
