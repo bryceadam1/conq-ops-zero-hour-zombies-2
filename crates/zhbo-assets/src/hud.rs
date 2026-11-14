@@ -18,7 +18,7 @@ use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive. The weapon table is
 /// archive content: the attachment stacking fix changes its synthesized variant lines.
-pub const VERSION: u32 = 102;
+pub const VERSION: u32 = 103;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -364,7 +364,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             Source::Dynamic(material) => {
                 // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`, the
                 // smoke grenade's icon only in `code_post_gfx`.
-                for zone in ["code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend", "code_post_gfx", "common_zm", "patch_zm", "ui_zm", "code_post_gfx_zm"] {
+                for zone in ["code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend", "code_post_gfx", "common_zm", "patch_zm", "ui_zm", "code_post_gfx_zm", "zm_transit"] {
                     if !zones.contains_key(zone) {
                         if let Ok(z) = crate::generals::load_zone(bo2_dir, zone) {
                             zones.insert(zone, z);
@@ -376,8 +376,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 // asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons). `code_post_gfx`
                 // (the shared post-gfx zone) last: the only zone that loads the smoke grenade's
                 // `hud_willy_pete` in full.
-                // The Zombies zones last: the Zombies HUD's art (`hud_chalk_*`), MP's names first.
-                let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend", "code_post_gfx", "common_zm", "patch_zm", "ui_zm", "code_post_gfx_zm"];
+                // The Zombies zones last: the Zombies HUD's art (`hud_chalk_*`), MP's names first;
+                // TranZit's own zone holds the perks' icons.
+                let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend", "code_post_gfx", "common_zm", "patch_zm", "ui_zm", "code_post_gfx_zm", "zm_transit"];
                 // The material's first image; a `,name` reference stub (no stream hash) is resolved
                 // by name in the image pool, as BO2 does: `hud_willy_pete` in `common_mp` points at
                 // `,hud_us_smokegrenade`, whose full image is `patch_mp`'s.

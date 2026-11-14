@@ -53,9 +53,11 @@ pub struct Downed {
     /// (BO2's `stored_weapon_info[ pistol ].given_amt`).
     pub saved: Option<Arsenal>,
     pub given: u32,
+    /// Alone with Quick Revive: seconds until he revives himself (`wait_and_revive`; 0: none).
+    pub self_revive: f32,
 }
 
-crate::statehash::state_hash!(struct Downed { general, player, pos, bleed, revive, reviver, revived_by, saved, given });
+crate::statehash::state_hash!(struct Downed { general, player, pos, bleed, revive, reviver, revived_by, saved, given, self_revive });
 
 /// A weapon's rounds: its clip, a dual-wield's left clip and its stock.
 fn total(w: &crate::weapons::WeaponState) -> u32 {
@@ -128,11 +130,15 @@ impl Sim {
         if lost > 0 {
             host.add_cash(player, -(lost as i32));
         }
-        let mut downed = Downed { general, player, pos: info.pos, bleed: ls.bleedout_time, revive: 0.0, reviver: 0, revived_by: 0, saved: None, given: 0 };
+        let self_revive = if self.self_revives(general) { crate::zombies::Perks::get().solo_revive_time } else { 0.0 };
+        let mut downed = Downed { general, player, pos: info.pos, bleed: ls.bleedout_time, revive: 0.0, reviver: 0, revived_by: 0, saved: None, given: 0, self_revive };
         if let Some(idx) = self.seat_of(general) {
             if let Some(mut p) = self.players[idx].take() {
                 let (down, given) = pistol_arsenal(&p.arsenal, ls);
-                downed.saved = Some(std::mem::replace(&mut p.arsenal, down));
+                let mut saved = std::mem::replace(&mut p.arsenal, down);
+                // `perk_think`: his perks go as he goes down.
+                self.lose_perks(general, &mut saved);
+                downed.saved = Some(saved);
                 downed.given = given;
                 p.body.stance = Stance::Prone;
                 p.charge = None;
@@ -226,7 +232,8 @@ impl Sim {
         self.rounds.downed = downed;
         let living = self.living_survivors(host);
         self.rounds.up = living.iter().filter(|o| !self.is_downed(o.id)).count() as u32;
-        if self.rounds.up == 0 && !self.rounds.downed.is_empty() {
+        // Alone with Quick Revive he waits on himself (`wait_and_revive`), not the end.
+        if self.rounds.up == 0 && !self.rounds.downed.is_empty() && self.rounds.downed.iter().all(|d| d.self_revive <= 0.0) {
             host.log("zombies: no survivor is up; the downed die with the last");
             for d in std::mem::take(&mut self.rounds.downed) {
                 host.kill(d.general);
@@ -236,6 +243,16 @@ impl Sim {
         let mut i = 0;
         while i < self.rounds.downed.len() {
             let d = &mut self.rounds.downed[i];
+            // Alone with Quick Revive he gets up by himself (`wait_and_revive`).
+            if d.self_revive > 0.0 {
+                d.self_revive -= LOGIC_DT;
+                if d.self_revive <= 0.0 {
+                    let mut d = self.rounds.downed.remove(i);
+                    d.revived_by = d.general;
+                    self.revive(host, d);
+                    continue;
+                }
+            }
             d.revived_by = d.reviver;
             d.reviver = 0;
             if d.revived_by != 0 {
@@ -243,7 +260,11 @@ impl Sim {
             } else {
                 d.revive = 0.0;
             }
-            if d.revived_by != 0 && d.revive >= ls.revive_time {
+            // `revive_do_revive`: a reviver with Quick Revive takes half the time.
+            let reviver_qr = d.revived_by != 0 && self.rounds.perks.has(d.revived_by, "specialty_quickrevive");
+            let revive_time = ls.revive_time * if reviver_qr { crate::zombies::Perks::get().revive_scale } else { 1.0 };
+            let d = &mut self.rounds.downed[i];
+            if d.revived_by != 0 && d.revive >= revive_time {
                 let d = self.rounds.downed.remove(i);
                 self.revive(host, d);
                 continue;
@@ -418,6 +439,25 @@ mod tests {
             step(&mut sim, &host, 1);
         }
         assert_eq!(sim.rounds.downed.len(), 1, "his back to him: no revive");
+    }
+
+    #[test]
+    fn alone_quick_revive_gets_him_up_after_ten_seconds_and_is_spent() {
+        let host = FakeHost::default();
+        host.add(ObjInfo { flags: objflags::INFANTRY | objflags::GENERAL | objflags::SURVIVOR, ..general(1, 0) });
+        let mut sim = Sim::new();
+        sim.rounds.zombies_map = true;
+        sim.take_control(&host, 0, 1);
+        sim.rounds.players = vec![0];
+        let qr = crate::zombies::Perks::get().index("specialty_quickrevive").unwrap() as u8;
+        sim.rounds.perks.owned.push((1, vec![qr]));
+        sim.go_down(&host, 1);
+        assert!(sim.rounds.perks.of(1).is_empty(), "his perks go as he goes down");
+        step(&mut sim, &host, (9.8 / LOGIC_DT) as u32);
+        assert_eq!(sim.rounds.downed.len(), 1, "alone and down, but not dead");
+        assert!(host.killed.borrow().is_empty());
+        step(&mut sim, &host, 10);
+        assert!(sim.rounds.downed.is_empty(), "up again by himself");
     }
 
     #[test]

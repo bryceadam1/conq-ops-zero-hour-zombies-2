@@ -27,6 +27,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 static DOWNED: [AtomicU32; MAX_PLAYERS] = [const { AtomicU32::new(0) }; MAX_PLAYERS];
 /// Survivors alive and not downed.
 static UP: AtomicU32 = AtomicU32::new(0);
+/// The survivors with Jugger-Nog, and those whom going down alone revives (Quick Revive, solo).
+static JUGG: [AtomicU32; MAX_PLAYERS] = [const { AtomicU32::new(0) }; MAX_PLAYERS];
+static SELF_REVIVE: [AtomicU32; MAX_PLAYERS] = [const { AtomicU32::new(0) }; MAX_PLAYERS];
+/// Jugger-Nog's share of each blow: the player's health over his (`player_max_health` / `JuggHealth`).
+static JUGG_SCALE: AtomicU32 = AtomicU32::new(0);
 /// The downs decided since the last step, in order.
 static QUEUE: [AtomicU32; MAX_PLAYERS] = [const { AtomicU32::new(0) }; MAX_PLAYERS];
 static COUNT: AtomicU32 = AtomicU32::new(0);
@@ -38,6 +43,19 @@ pub fn publish(sim: &Sim) {
         slot.store(ids.next().unwrap_or(0), Ordering::Relaxed);
     }
     UP.store(sim.rounds.up, Ordering::Relaxed);
+    let (jugg, solo) = sim.perk_mirror();
+    for (slots, ids) in [(&JUGG, jugg), (&SELF_REVIVE, solo)] {
+        let mut ids = ids.into_iter();
+        for slot in slots {
+            slot.store(ids.next().unwrap_or(0), Ordering::Relaxed);
+        }
+    }
+    let scale = crate::tuning::get().player_max_health / crate::zombies::Perks::get().jugg_health.max(1.0);
+    JUGG_SCALE.store(scale.to_bits(), Ordering::Relaxed);
+}
+
+fn listed(slots: &[AtomicU32; MAX_PLAYERS], id: u32) -> bool {
+    slots.iter().any(|s| s.load(Ordering::Relaxed) == id)
 }
 
 /// Hand the queued downs to the sim (before its step), in the engine's order.
@@ -59,7 +77,9 @@ pub extern "C" fn zhbo_logic_survivor_damage(victim: u32, amount: f32, health: f
     if victim == 0 || is_downed(victim) {
         return if victim == 0 { amount } else { 0.0 };
     }
-    if amount < health || UP.load(Ordering::Relaxed) <= 1 {
+    // Jugger-Nog: his health is `JuggHealth` of the player's, so each blow does that share.
+    let amount = if listed(&JUGG, victim) { amount * f32::from_bits(JUGG_SCALE.load(Ordering::Relaxed)) } else { amount };
+    if amount < health || (UP.load(Ordering::Relaxed) <= 1 && !listed(&SELF_REVIVE, victim)) {
         return amount;
     }
     let i = COUNT.load(Ordering::Relaxed) as usize;
@@ -77,7 +97,7 @@ pub extern "C" fn zhbo_logic_survivor_damage(victim: u32, amount: f32, health: f
 
 #[cfg(test)]
 pub(crate) fn reset_for_tests() {
-    for s in DOWNED.iter().chain(&QUEUE) {
+    for s in DOWNED.iter().chain(&QUEUE).chain(&JUGG).chain(&SELF_REVIVE) {
         s.store(0, Ordering::Relaxed);
     }
     COUNT.store(0, Ordering::Relaxed);
@@ -101,6 +121,21 @@ mod tests {
         assert_eq!(zhbo_logic_survivor_damage(8, 900.0, 100.0), 900.0, "the last one up dies");
         assert_eq!(COUNT.load(Ordering::Relaxed), 1);
         assert_eq!(QUEUE[0].load(Ordering::Relaxed), 7);
+        reset_for_tests();
+    }
+
+    /// Jugger-Nog takes its share off each blow; alone, Quick Revive downs instead of killing.
+    #[test]
+    fn jugger_nog_softens_blows_and_solo_quick_revive_downs() {
+        let _g = crate::ffi::state_lock();
+        reset_for_tests();
+        JUGG[0].store(7, Ordering::Relaxed);
+        JUGG_SCALE.store((100.0f32 / 160.0).to_bits(), Ordering::Relaxed);
+        UP.store(1, Ordering::Relaxed);
+        assert!((zhbo_logic_survivor_damage(7, 60.0, 100.0) - 37.5).abs() < 1e-4);
+        assert_eq!(zhbo_logic_survivor_damage(8, 900.0, 100.0), 900.0, "alone without Quick Revive: dead");
+        SELF_REVIVE[0].store(8, Ordering::Relaxed);
+        assert_eq!(zhbo_logic_survivor_damage(8, 900.0, 100.0), 99.0, "alone with it: down");
         reset_for_tests();
     }
 }

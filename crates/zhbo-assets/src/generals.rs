@@ -482,6 +482,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     keys.extend(zhbo_core::zombies::WallBuys::get().buys.iter().filter_map(|b| b.hint()));
     let mystery_box = zhbo_core::zombies::MagicBox::get();
     keys.extend([mystery_box.hint.clone(), mystery_box.take_hint.clone()]);
+    keys.extend(zhbo_core::zombies::Perks::get().perks.iter().map(|p| p.hint.clone()));
+    keys.push("ZOMBIE_PERK_QUICKREVIVE_SOLO".to_string());
     for key in keys {
         if let Some(text) = zm_names.get(&key) {
             if !table.ui_text.iter().any(|u| u.key == key) {
@@ -730,6 +732,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     summary.push(crate::props::wall_buys(&zm_props, &paks, &mut out));
     summary.push(crate::props::powerups(&zm_props, &paks, &mut out));
     summary.push(crate::props::magic_box(&zm_props, &paks, &mut out));
+    summary.push(crate::props::perk_machines(&zm_props, &paks, &mut out));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

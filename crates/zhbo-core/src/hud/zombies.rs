@@ -96,7 +96,15 @@ pub const NUKE_FLASH: (f32, f32, f32, f32) = (0.8, 0.2, 0.5, 1.0);
 pub const MAX_AMMO_TEXT_480: (f32, f32, f32) = (290.0, 270.0, 2.0);
 pub const MAX_AMMO_TIMES: (f32, f32) = (0.5, 1.5);
 
-/// The materials this module draws (for `lui::materials::MATERIALS`).
+/// `CoD.Perks` (`hudperkszombie.lua`, not a DLC map): the owned perks' icons, `IconSize` square and
+/// `Spacing` apart from 10 in at the left, their top `TopStart` up from the bottom.
+pub const PERK_ICON: f32 = 36.0;
+pub const PERK_SPACING: f32 = 8.0;
+pub const PERK_TOP: f32 = -140.0;
+pub const PERK_LEFT: f32 = 10.0;
+
+/// The materials this module draws (for `lui::materials::MATERIALS`); the perks' icons are
+/// `zombies.ini`'s (`[Perks]`).
 pub const MATERIALS: [&str; 13] = [CHALKS[0], CHALKS[1], CHALKS[2], CHALKS[3], CHALKS[4], BLOOD, CIRCLE, SCORE_BAR, BAR_FILL, BAR_BACK, REVIVE_ICON_MAT, POWERUP_ICONS[0].1, POWERUP_ICONS[1].1];
 
 /// The chalk a round shows at rest (`UpdateRoundsPlayed`/`StartNewRound`): one to five its tally
@@ -365,6 +373,25 @@ pub fn draw_powerups(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, clock_frames: f3
     }
 }
 
+/// The perks `p` owns, in the order bought (`hudperkszombie.lua`'s slots).
+pub fn draw_perks(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim) {
+    let perks = crate::zombies::Perks::get();
+    for (i, &k) in sim.rounds.perks.of(p.general).iter().enumerate() {
+        let Some(perk) = perks.perks.get(k as usize) else { continue };
+        let x = PERK_LEFT + (PERK_ICON + PERK_SPACING) * i as f32;
+        let r = Place::new((true, false, x, x + PERK_ICON), (false, true, PERK_TOP, PERK_TOP + PERK_ICON)).resolve(l.screen());
+        l.image(prims, r, &perk.icon, (1.0, 1.0, 1.0), 1.0, Vec::new());
+    }
+}
+
+/// The perk machine in `p`'s use list: its prompt with its price (`reset_vending_hint_string`).
+pub fn draw_perk_machine(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, use_key: &str) -> bool {
+    let Some(i) = sim.perk_machine_target(p) else { return false };
+    let Some((cost, key)) = sim.perk_offer(p, i) else { return true };
+    super::pickup::draw_runs(l, prims, &trigger_prompt(crate::sim::hint_text(key), use_key, cost));
+    true
+}
+
 /// A Zombies trigger's prompt from its localized text: `[{+activate}]` is the use key and `&&1`
 /// the price (`sethintstring( hint, cost )`), as coloured runs.
 pub fn trigger_prompt(text: &str, use_key: &str, cost: u32) -> Vec<(String, (f32, f32, f32))> {
@@ -511,7 +538,7 @@ mod tests {
         sim.players[1] = Some(reviver.clone());
         let downed = sim.new_record(1, crate::sim::Mode::Fps, None);
         sim.players[0] = Some(downed.clone());
-        sim.rounds.downed.push(Downed { general: 1, player: 0, pos: crate::math::Vec3::ZERO, bleed: 40.0, revive: 1.5, reviver: 0, revived_by: 2, saved: None, given: 0 });
+        sim.rounds.downed.push(Downed { general: 1, player: 0, pos: crate::math::Vec3::ZERO, bleed: 40.0, revive: 1.5, reviver: 0, revived_by: 2, saved: None, given: 0, self_revive: 0.0 });
         let l = Lui::new(1280.0, 720.0);
         let name = |pl: i32| format!("P{pl}");
         let mut prims = Vec::new();
@@ -526,6 +553,13 @@ mod tests {
         draw_last_stand(&l, &mut prims, &sim, &downed, "F", &name, &|_| None);
         // Without the converted table the line is its key (the install's has `&&1 is reviving you`).
         assert!(prims.iter().any(|p| matches!(p, Prim::Text { text, .. } if text.contains("ZOMBIE_PLAYER_IS_REVIVING_YOU"))), "tells him he is being revived");
+    }
+
+    #[test]
+    fn every_perk_icon_is_a_converted_material() {
+        for perk in &crate::zombies::Perks::get().perks {
+            assert!(crate::lui::materials::MATERIALS.iter().any(|(m, _)| *m == perk.icon), "{} in lui::materials", perk.icon);
+        }
     }
 
     #[test]

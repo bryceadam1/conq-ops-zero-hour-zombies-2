@@ -68,6 +68,9 @@ pub const MATERIALS: &[(&str, u32)] = &[
     ("progress_bar_fill", 128), ("progress_bar_bg", 128), ("waypoint_revive_zm", 64),
     // The timed power-ups' icons (`hud::zombies::draw_powerups`, `common_zm`).
     ("specialty_instakill_zombies", 64), ("specialty_doublepoints_zombies", 64),
+    // The perks' icons (`hud::zombies::draw_perks`; `zombies.ini` `[Perks]` names them).
+    ("specialty_fastreload_zombies", 32), ("specialty_marathon_zombies", 32), ("specialty_juggernaut_zombies", 32),
+    ("specialty_doubletap_zombies", 32), ("specialty_quickrevive_zombies", 32),
 ];
 
 /// A [`MATERIALS`] name ending in this is its base material mirrored top to bottom (LUI draws an

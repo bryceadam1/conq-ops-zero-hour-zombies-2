@@ -69,13 +69,15 @@ pub struct Rounds {
     pub powerups: super::powerups::PowerUpState,
     /// The Mystery Box (`sim::magicbox`).
     pub magic_box: super::magicbox::BoxState,
+    /// The perk machines and the perks owned (`sim::perks`).
+    pub perks: super::perks::PerkState,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box, perks });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default() }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default(), perks: Default::default() }
     }
 }
 
@@ -161,6 +163,7 @@ impl Sim {
                     self.place_wall_buys(host, owner);
                     self.powerups_start();
                     self.place_magic_box(host);
+                    self.place_perk_machines(host);
                     self.start_round(host, &vars, vars.start_round.max(1));
                 }
             }

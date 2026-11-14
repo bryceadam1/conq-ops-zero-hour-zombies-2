@@ -15847,3 +15847,44 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     leg passes.
   - Not yet seen in game: a pull (950 points is more than the scripted run has).
 - **Bump:** `hud::VERSION` → 102.
+
+## Zombies: perks (2026-11-14)
+
+- **Which:** TranZit classic's machines (`zm_perk_machine` entities for `zclassic_perks_transit`):
+  Speed Cola, Stamin-Up, Jugger-Nog, Double Tap and Quick Revive, plus Tombstone (not ported yet).
+  Each stands on the wall-buy ring around every start, in the half steps after the box's. Every
+  machine is on: the Zombies map has no power switch.
+- **Buying** (`vending_trigger_think`): the use key and the machine's price
+  (`_zm_perks.gsc:1692-1730`: 3000, 2000, 2500, 2000, 1500). The player must have fewer than 4
+  perks (`perk_purchase_limit`, `:23`) and not that one. Alone, Quick Revive costs 500 at most 3
+  times (`give_perk`'s `solo_lives_given`, `:2017-2032`).
+- **Effects:**
+  - Speed Cola, Double Tap and Stamin-Up are the engine's `fastreload`, `rof` and `longersprint`.
+    The arsenal already plays these with the tuning pack's multipliers; they now come from
+    `Arsenal::granted` as well as the class.
+  - Jugger-Nog: health 160 of the player's 100 (`zombie_perk_juggernaut_health`, `:69`;
+    `perk_set_max_health_if_jugg`). The damage hook takes 100/160 off each blow rather than raising
+    the engine's max health, which would also grow the zombie's swipe (a share of max health).
+    Three swipes down him, as in BO2.
+  - Quick Revive: his revives of others take half the time (`revive_do_revive`). Alone, going down
+    with it revives him after 10 s instead of ending the game (`player_damage_override`,
+    `wait_and_revive`).
+- **Lost going down** (`perk_think`), out of the saved weapons too, so a revive doesn't bring them
+  back.
+- **HUD:** the owned perks' icons (`hudperkszombie.lua`: 36 square, 8 apart, from 10 in at the left,
+  140 up from the bottom, in the order bought). The machine's prompt is
+  `reset_vending_hint_string`'s key with the price (`ZOMBIE_PERK_QUICKREVIVE_SOLO` alone).
+- **Not ported:** the drinking bottle (the perk comes at once), Tombstone, and the machines'
+  jingles and lights.
+- **Verified:**
+  - `cargo test -p zhbo-core`: 1100 passed. New tests:
+    - the `[Perks]` parse and prices;
+    - each machine sells once, four at most, granting the specialty;
+    - solo Quick Revive's 500 and three lives;
+    - going down loses every perk;
+    - the hook's Jugger-Nog share and solo Quick Revive down;
+    - Quick Revive alone gets him up after 10 s;
+    - every perk icon is a converted material.
+  - In game: "10 perk machines stood"; the converter made the five props, and the archive has
+    529 images with none missing. The `--zombies` leg passes.
+- **Bump:** `hud::VERSION` → 103.

@@ -116,6 +116,16 @@ impl Specialty {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Specialties(pub u64);
 
+impl crate::statehash::StateHash for Specialties {
+    fn hash(&self, h: &mut crate::statehash::Hasher) {
+        self.0.hash(h);
+    }
+    #[cfg(test)]
+    fn perturb(&mut self, n: &mut usize) -> bool {
+        self.0.perturb(n)
+    }
+}
+
 impl Specialties {
     pub const NONE: Specialties = Specialties(0);
 

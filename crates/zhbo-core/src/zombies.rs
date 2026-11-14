@@ -352,6 +352,79 @@ impl PowerUps {
     }
 }
 
+/// One perk machine (`zombies.ini` `[Perks]`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Perk {
+    /// Its specialty (`specialty_armorvest`).
+    pub specialty: String,
+    pub model: String,
+    pub cost: u32,
+    /// Its price alone (Quick Revive's).
+    pub solo_cost: Option<u32>,
+    pub hint: String,
+    pub icon: String,
+}
+
+/// The perks (`zombies.ini` `[Perks]`, `_zm_perks.gsc`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Perks {
+    pub perks: Vec<Perk>,
+    pub limit: u32,
+    pub jugg_health: f32,
+    pub revive_scale: f32,
+    pub solo_revive_time: f32,
+    pub solo_lives: u32,
+}
+
+impl Perks {
+    pub fn parse(text: &str) -> Perks {
+        let mut p = Perks::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[Perks]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "PerkLimit" => p.limit = num() as u32,
+                "JuggHealth" => p.jugg_health = num(),
+                "ReviveScale" => p.revive_scale = num(),
+                "SoloReviveTime" => p.solo_revive_time = num(),
+                "SoloLives" => p.solo_lives = num() as u32,
+                specialty => {
+                    let f: Vec<&str> = value.split(',').map(str::trim).collect();
+                    if f.len() < 5 {
+                        continue;
+                    }
+                    p.perks.push(Perk {
+                        specialty: specialty.to_string(),
+                        model: f[0].to_string(),
+                        cost: f[1].parse().unwrap_or(0),
+                        solo_cost: f[2].parse().ok(),
+                        hint: f[3].to_string(),
+                        icon: f[4].to_string(),
+                    });
+                }
+            }
+        }
+        p
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static Perks {
+        static P: std::sync::OnceLock<Perks> = std::sync::OnceLock::new();
+        P.get_or_init(|| Perks::parse(SHIPPED))
+    }
+
+    pub fn index(&self, specialty: &str) -> Option<usize> {
+        self.perks.iter().position(|p| p.specialty == specialty)
+    }
+}
+
 /// The Mystery Box (`zombies.ini` `[MagicBox]`, `_zm_magicbox.gsc`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MagicBox {
@@ -741,6 +814,18 @@ impl RunCycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_perks_are_tranzits_with_bo2s_prices() {
+        let p = Perks::get();
+        let names: Vec<&str> = p.perks.iter().map(|k| k.specialty.as_str()).collect();
+        assert_eq!(names, vec!["specialty_fastreload", "specialty_longersprint", "specialty_armorvest", "specialty_rof", "specialty_quickrevive"]);
+        let jugg = &p.perks[p.index("specialty_armorvest").unwrap()];
+        assert_eq!((jugg.cost, jugg.hint.as_str()), (2500, "ZOMBIE_PERK_JUGGERNAUT"));
+        let qr = &p.perks[p.index("specialty_quickrevive").unwrap()];
+        assert_eq!((qr.cost, qr.solo_cost), (1500, Some(500)));
+        assert_eq!((p.limit, p.jugg_health, p.solo_lives), (4, 160.0, 3));
+    }
 
     #[test]
     fn the_box_costs_950_and_its_teddy_follows_bo2s_odds() {

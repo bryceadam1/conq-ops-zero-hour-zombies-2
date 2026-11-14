@@ -116,6 +116,15 @@ pub const SCAVENGER_PACK_OBJECT: &str = "ZHBO_ScavengerPack";
 pub fn drop_object(base: &str) -> String {
     format!("ZHBO_Drop_{base}")
 }
+/// The Zero Hour object a Zombies perk machine of specialty `specialty` stands as (its model,
+/// `zombies.ini` `[Perks]`), made by the converter (`ZHBO_ZM_Perk_specialty_armorvest`).
+pub fn perk_machine_object(specialty: &str) -> String {
+    format!("ZHBO_ZM_Perk_{specialty}")
+}
+/// The W3D model of the converter's `n`-th perk machine prop.
+pub fn perk_machine_model(n: u16) -> String {
+    format!("ZPK{n:03}_SKN")
+}
 /// The Zero Hour object the Mystery Box stands as: its model (`zombies.ini` `[MagicBox]`), made by
 /// the converter.
 pub fn magic_box_object() -> String {

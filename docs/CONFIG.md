@@ -141,6 +141,10 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
 - **Mystery Box:** `zombies.ini` `[MagicBox]` holds `_zm_magicbox.gsc`'s numbers (950 a pull, the
   spin, the 12 s offer, the move's wait, the teddy's odds) and its model and prompts. Each player
   start gets a place for it on the wall-buy ring; it stands at one at a time.
+- **Perks:** `zombies.ini` `[Perks]` lists TranZit classic's machines (Speed Cola, Stamin-Up,
+  Jugger-Nog, Double Tap, Quick Revive): each one's model, price (Quick Revive's solo price), prompt
+  and HUD icon. It also holds the perk limit, Jugger-Nog's health, Quick Revive's revive scale and
+  its solo revive time and lives. They stand on the wall-buy ring around each start, all powered.
 - **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
   45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
   last-stand pistol and BO2's ranking of the pistols a downed player may hold

@@ -200,6 +200,8 @@ pub struct Arsenal {
     /// weapon, its fuse the grenade's time left): the lethal offhand use in progress is this
     /// grenade, not the slot's item, until it leaves the hand ([`Arsenal::throw_back`]).
     pub throwback: Option<&'static WeaponDef>,
+    /// Specialties given outside the class (Zombies' perks, `sim::perks`).
+    pub granted: Specialties,
     /// The tuning pack's perk multipliers, taken when the kit was made (the pack is loaded once at
     /// init, identically on every client).
     pub tuning: Tuning,
@@ -210,7 +212,7 @@ pub struct Arsenal {
 crate::statehash::state_hash!(struct Arsenal {
     loadout, weapons, active, lethal, tactical, melee, class_melee, raise_left, raise_total, raise_kind, drop_left,
     drop_total, previous, alt_pending, ads, sights, since_sprint, melee_left, melee_recover_left, melee_delay_left, offhand,
-    plant_ok, aim_spread, spread_in, shot_scale, swaps_pending, held_last, since_reload_press, cooked, throwback,
+    plant_ok, aim_spread, spread_in, shot_scale, swaps_pending, held_last, since_reload_press, cooked, throwback, granted,
 } skip { tuning });
 
 /// One of BO2's weapon-state families, each of which a specialty speeds up (Ghidra G3,
@@ -279,6 +281,7 @@ impl Arsenal {
             since_reload_press: 10.0,
             cooked: 0.0,
             throwback: None,
+            granted: Specialties::NONE,
             tuning: crate::tuning::get(),
         }
     }
@@ -370,6 +373,7 @@ impl Arsenal {
             since_reload_press: 10.0,
             cooked: 0.0,
             throwback: None,
+            granted: Specialties::NONE,
             tuning: crate::tuning::get(),
         }
     }
@@ -398,7 +402,7 @@ impl Arsenal {
 
     /// The specialties the class's perks grant.
     pub fn class_specialties(&self) -> Specialties {
-        self.loadout.perks.iter().fold(Specialties::NONE, |s, p| s.union(p.specialties()))
+        self.loadout.perks.iter().fold(self.granted, |s, p| s.union(p.specialties()))
     }
 
     /// BO2's current weapon for the specialty test (`FUN_008ddfe0`): the offhand while it is in

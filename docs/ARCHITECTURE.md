@@ -94,7 +94,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   (BO2 Zombies' wall buys: the round engine stands them; the use key buys the weapon, or its
   ammo, by `weapon_spawn_think`), `powerups.rs` (BO2 Zombies' power-ups: the drop threshold, the
   drop on a player's kill, the grab, nuke, insta-kill, double points and max ammo), `magicbox.rs`
-  (BO2 Zombies' Mystery Box: the pull, the weapon pick, the teddy and the move), `rts.rs` (the overhead General:
+  (BO2 Zombies' Mystery Box: the pull, the weapon pick, the teddy and the move), `perks.rs` (BO2
+  Zombies' perk machines: buying, the engine specialties they grant, Jugger-Nog and Quick Revive,
+  losing them going down), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`, `fire_round` (one bullet, to its end and through penetration),
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
