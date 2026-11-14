@@ -85,7 +85,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   the swap, and the step's kill witness that tells a suicide or team kill, which drops nothing, and
   hands each kill's killer, means and place to the Scavenger rule), `scavenger.rs` (BO2's Scavenger
   pack: the drop where the victim fell, its fall, the walk-over that refills a Scavenger General,
-  the item cap it shares with the dropped weapons), `rts.rs` (the overhead General:
+  the item cap it shares with the dropped weapons), `zombies.rs` (BO2 Zombies' round engine on a
+  map with zombie spawn points: each round's total, health, spawn delay and run cycles by `_zm.gsc`'s
+  rules, the zombies sent at the nearest survivor, and the points a hit or kill pays into the shared
+  wallet), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`, `fire_round` (one bullet, to its end and through penetration),
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
