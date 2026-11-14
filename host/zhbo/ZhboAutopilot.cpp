@@ -9,6 +9,7 @@
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridgeInternal.h"
 #include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/VictoryConditions.h"
 namespace
 {
 void findCommandCenter(Object *obj, void *userData)
@@ -629,7 +630,7 @@ void autopilotSpawn()
 	// scene places its own units around the screen once it stands; the flicker scene stays still; the
 	// hip-fire run wants nobody shooting him (a hurt opens BO2's spread scale).
 	if (enemy && !s_autopilot.build && !s_config.autopilot_smoke && !s_config.autopilot_splash && !s_config.autopilot_drops &&
-		!s_config.autopilot_flicker && !s_config.autopilot_hipfire && !s_config.autopilot_command)
+		!s_config.autopilot_flicker && !s_config.autopilot_hipfire && !s_config.autopilot_command && !s_config.autopilot_defeat)
 	{
 		for (Int i = -1; i <= 1; ++i)
 		{
@@ -733,6 +734,89 @@ static Object *smokeSceneVictim(Object *obj)
 // the line between them through its centre: neither may attack the other (or the General) while it
 // stands, and one must once it clears. A Ranger ordered across it, its straight line through the
 // centre, must walk round it (a neutral one, whom nobody shoots on the way).
+static void killStructure(Object *obj, void *count)
+{
+	if (obj->isKindOf(KINDOF_STRUCTURE) && !obj->isEffectivelyDead())
+	{
+		obj->kill();
+		++*static_cast<Int *>(count);
+	}
+}
+
+static Int countStructures(const Player *player)
+{
+	struct Counter
+	{
+		static void note(Object *obj, void *n)
+		{
+			if (obj->isKindOf(KINDOF_STRUCTURE) && !obj->isEffectivelyDead())
+			{
+				++*static_cast<Int *>(n);
+				logf("autopilot: defeat: standing %s %u (counts for victory %d)", obj->getTemplate()->getName().str(), (unsigned)obj->getID(),
+					(int)obj->isKindOf(KINDOF_MP_COUNT_FOR_VICTORY));
+			}
+		}
+	};
+	Int n = 0;
+	player->iterateObjects(Counter::note, &n);
+	return n;
+}
+
+// ZHBO_AUTOPILOT=defeat (host patch 0034): 5 s after the General stands, every building of the
+// local player is destroyed (again every 5 s while any stands: rebuild holes); 5 s after the last,
+// Zero Hour must not count him defeated (his General lives).
+// Then the General is killed, and 5 s later he must be.
+void defeatAutopilotFrame(UnsignedInt frame)
+{
+	Autopilot &a = s_autopilot;
+	Player *local = ThePlayerList ? ThePlayerList->getLocalPlayer() : nullptr;
+	if (!local || !TheVictoryConditions)
+		return;
+	const UnsignedInt wait = 5 * LOGICFRAMES_PER_SECOND;
+	if (a.defeatPhase == 0)
+	{
+		Object *general = TheGameLogic->findObjectByID(a.general);
+		if (!general || a.defeatFrame == 0)
+		{
+			a.defeatFrame = general ? frame : 0;
+			return;
+		}
+		if (frame - a.defeatFrame < wait)
+			return;
+		Int killed = 0;
+		local->iterateObjects(killStructure, &killed);
+		logf("autopilot: defeat: destroyed %d buildings; General %u alive", killed, (unsigned)a.general);
+		a.defeatPhase = 1;
+		a.defeatFrame = frame;
+	}
+	else if (a.defeatPhase == 1 && frame - a.defeatFrame >= wait)
+	{
+		// A GLA building leaves its rebuild hole, itself a building that counts for victory (as in
+		// Zero Hour's own rule): destroy what stands again until nothing does.
+		Int killed = 0;
+		local->iterateObjects(killStructure, &killed);
+		if (killed > 0)
+		{
+			logf("autopilot: defeat: destroyed %d more buildings", killed);
+			a.defeatFrame = frame;
+			return;
+		}
+		logf("autopilot: defeat: buildings left %d, General alive %d: defeated=%d", countStructures(local),
+			(int)Zhbo_HasLivingGeneral(local), (int)TheVictoryConditions->hasSinglePlayerBeenDefeated(local));
+		if (Object *general = TheGameLogic->findObjectByID(a.general))
+			general->kill();
+		logf("autopilot: defeat: killed the General %u", (unsigned)a.general);
+		a.defeatPhase = 2;
+		a.defeatFrame = frame;
+	}
+	else if (a.defeatPhase == 2 && frame - a.defeatFrame >= wait)
+	{
+		logf("autopilot: defeat: buildings left %d, General alive %d: defeated=%d", countStructures(local),
+			(int)Zhbo_HasLivingGeneral(local), (int)TheVictoryConditions->hasSinglePlayerBeenDefeated(local));
+		a.defeatPhase = 3;
+	}
+}
+
 void smokeAutopilotFrame(UnsignedInt frame)
 {
 	Autopilot &a = s_autopilot;

@@ -12,6 +12,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | Thing | Owner | Notes |
 |---|---|---|
 | The General `Object` (health, armor, death, veterancy, selection) | Zero Hour | It is a normal `INFANTRY HERO` object; enemies target and damage it like any unit. |
+| Defeat | Zero Hour (`VictoryConditions`), with the mod's rule | Zero Hour's multiplayer condition is "no buildings" (`VICTORY_NOBUILDINGS`, which counts GLA rebuild holes). Host patch 0034 adds "and no living General": `hasSinglePlayerBeenDefeated` asks the bridge's `Zhbo_HasLivingGeneral` (a `ZHBO_General_*` object of the player's that is not effectively dead). Engine-side and logic-side, so every machine decides alike; no ABI. A deliberate break from Zero Hour, not from BO2. |
 | The General's position and facing while first-person | zhbo-core | `AIUpdateInterface::update` and `PhysicsBehavior::update` return early while `zhbo_logic_is_controlled(id)`. |
 | The General's position while under RTS control (field computer up) | Zero Hour AI | Control returns through `set_controlled(id, false)`, which issues `aiIdle`. |
 | A stun (concussion, flashbang, Shock Charge, EMP) on a General | zhbo-core: a shellshock on the first-person General (`crate::shellshock`: slower run and look; presented as the renderer's blur/grab/white layer, the camera's view kick and the ringing loop — see "The shellshock's presentation"); Zero Hour: `disable(PARALYZED)` on everything else (its units, a General under RTS control) | The first-person General never receives `disable(PARALYZED)`: Zero Hour's paralysis froze the player outright. `sim::guard` intercepts it and the sim plays BO2's shock instead. |
@@ -1900,6 +1901,8 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   table, SDL's `SDL_SCANCODE_MINUS`, Windows' `VK_OEM_MINUS`). The `KeySet` size is unchanged.
 * The tuning pack's `[Commands]` keys `CommandNearRadius`, `CommandOffsetDistance`,
   `CommandClusterLink` and `CommandCentralShare` (the content CRC's tuning part moves with them).
+* Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
+  engine-only, no ABI change. Host patches are now 0001–0034.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)
   and the object flag `ZHBO_OBJ_GENERAL` (bit 13).
 

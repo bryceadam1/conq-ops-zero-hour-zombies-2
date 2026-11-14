@@ -93,6 +93,7 @@ struct ZhboConfig
 	Bool autopilot_drops = FALSE;	  // =drops: a General killed where he stands, the next one swaps for his rifle
 	Bool autopilot_hipfire = FALSE;	  // =hipfire: hip fire at the ground ahead with no enemy about (nothing hurts him)
 	Bool autopilot_command = FALSE;	  // =command: typed first-person commands to his Rangers (docs/COMMANDS.md)
+	Bool autopilot_defeat = FALSE;	  // =defeat: every building destroyed, then the General: defeat only after both (patch 0034)
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
@@ -349,6 +350,9 @@ struct Autopilot
 	// dropped rifle (0: not yet), and whether he was ordered into first person.
 	UnsignedInt dropsNextFrame;
 	Bool dropsTaken;
+	// ZHBO_AUTOPILOT=defeat (defeatAutopilotFrame): its phase and when the phase began.
+	Int defeatPhase;
+	UnsignedInt defeatFrame;
 };
 extern Autopilot s_autopilot;
 void autopilotFrame();
@@ -358,6 +362,8 @@ void rtsAutopilotWave(UnsignedInt frame);
 /// ZHBO_AUTOPILOT=smoke: the scene around the General's smoke screen (in the logic step).
 void smokeAutopilotFrame(UnsignedInt frame);
 void commandAutopilotFrame(UnsignedInt frame);
+/// ZHBO_AUTOPILOT=defeat: the player's buildings destroyed, then his General (in the logic step).
+void defeatAutopilotFrame(UnsignedInt frame);
 // The command run: an attack order went out (cbIssueOrder tells the scene).
 void autopilotCommandAttackOrdered();
 /// cbSmoke's report to the smoke scene: a screen stands this frame.

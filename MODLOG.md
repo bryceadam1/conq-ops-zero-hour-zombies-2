@@ -15187,3 +15187,19 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - **Gotcha: security group and rule descriptions refuse apostrophes.**
 - **Dry run:** `launch --dry-run` passed with EC2's own validation (g5.xlarge spot in
   us-west-2b at $0.58/h, DLAMI PyTorch 2.7 Ubuntu 22.04 of 2026-04-27, 150 GB).
+
+## Defeat needs the General gone too (2026-11-14)
+
+- **Rule (deliberate break from Zero Hour, user's request):** a player is out only when every
+  building *and* his General are gone. Zero Hour's multiplayer condition is
+  `VICTORY_NOBUILDINGS` (`GameLogic.cpp` sets it at game start), decided in
+  `VictoryConditions::hasSinglePlayerBeenDefeated` from `Player::hasAnyBuildings(MP_COUNT_FOR_VICTORY)`.
+  Host patch 0034 adds `&& !Zhbo_HasLivingGeneral(player)` (bridge: a `ZHBO_General_*` object of
+  the player's that is not effectively dead). Engine-side logic, so every machine agrees; no ABI.
+  A General lost while the buildings stand is rebuilt at the Command Center as before; without a
+  Command Center he can't be, so losing him then ends the game.
+- **Gotcha: GLA rebuild holes are buildings.** Killing a GLA Command Center leaves
+  `GLAHoleCommandCenter`, a `STRUCTURE` that counts for victory. Vanilla Zero Hour keeps a GLA
+  player alive on his holes too; the new `--defeat` leg destroys what stands until nothing does.
+- **Verified:** `scripts/autotest-mac.sh --defeat`: buildings destroyed (the Command Center, then
+  its hole); with the General alive `defeated=0`; after he is killed `defeated=1`.

@@ -83,6 +83,10 @@
 #                                      running string at the ground ahead. Every shot's logged offset must
 #                                      sit inside its cone with BO2's linear radius (mean r near 0.5), the
 #                                      taps fly in the stance minimum and the running string at the maximum
+#   scripts/autotest-mac.sh --defeat   the lose condition (host patch 0034): no enemies; the bridge
+#                                      destroys every building of the player's; with his General alive
+#                                      Zero Hour must not count him defeated; then the General is
+#                                      killed, and it must
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -120,6 +124,7 @@ mode=autopilot
 [[ "${1:-}" == "--flicker" ]] && mode=flicker
 [[ "${1:-}" == "--hipfire" ]] && mode=hipfire
 [[ "${1:-}" == "--command" ]] && mode=command
+[[ "${1:-}" == "--defeat" ]] && mode=defeat
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -908,6 +913,29 @@ EOF
     fi
     grep -E "command|voice" "$l" | head -70
     echo "screenshots and log: $out"
+    exit $ok
+fi
+
+if [[ "$mode" == "defeat" ]]; then
+    # The bridge's defeat scene (ZhboAutopilot.cpp defeatAutopilotFrame) logs Zero Hour's own
+    # verdict (VictoryConditions::hasSinglePlayerBeenDefeated) after each loss.
+    rm -f "$userdata/ConquerOps.profile"
+    export ZHBO_AUTOPILOT=defeat GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-40}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "autopilot: defeat: killed the General" 120 || { echo "the defeat scene never reached the General; see $log" >&2; exit 1; }
+    for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    l="$out/ConquerOps.log"
+    check() { # name, pattern
+        if grep -qE "$2" "$l"; then printf '%-34s PASS\n' "$1"; else printf '%-34s FAIL\n' "$1"; ok=1; fi
+    }
+    check "buildings destroyed" "autopilot: defeat: destroyed [1-9][0-9]* buildings"
+    check "General alive: still in" "autopilot: defeat: buildings left 0, General alive 1: defeated=0"
+    check "General dead: defeated" "autopilot: defeat: buildings left 0, General alive 0: defeated=1"
+    grep -E "defeat" "$l" | head -20
+    echo "log: $out"
     exit $ok
 fi
 

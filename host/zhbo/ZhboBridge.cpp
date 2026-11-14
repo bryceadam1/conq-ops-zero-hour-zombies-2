@@ -230,6 +230,7 @@ void readConfig()
 	s_config.autopilot_drops = s_config.autopilot_enabled && strcmp(autopilot, "drops") == 0;
 	s_config.autopilot_hipfire = s_config.autopilot_enabled && strcmp(autopilot, "hipfire") == 0;
 	s_config.autopilot_command = s_config.autopilot_enabled && strcmp(autopilot, "command") == 0;
+	s_config.autopilot_defeat = s_config.autopilot_enabled && strcmp(autopilot, "defeat") == 0;
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
 	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
@@ -720,6 +721,8 @@ void Zhbo_LogicStep(UnsignedInt frame)
 		smokeAutopilotFrame(frame);
 	if (s_config.autopilot_command && s_autopilot.spawned)
 		commandAutopilotFrame(frame);
+	if (s_config.autopilot_defeat && s_autopilot.spawned)
+		defeatAutopilotFrame(frame);
 	rtsWeapons(frame);
 	trackGeneralBuilds(frame);
 	trackIdleGenerals();
@@ -1271,6 +1274,22 @@ void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button)
 	// Take Control: the class set (if it was up) hands the bar back to the General's own commands.
 	zhboCloseClassSet(obj);
 	Zhbo_RequestTakeControl(obj);
+}
+
+static void noteLivingGeneral(Object *obj, void *found)
+{
+	if (isGeneral(obj) && !obj->isEffectivelyDead())
+		*static_cast<Bool *>(found) = TRUE;
+}
+
+Bool Zhbo_HasLivingGeneral(const Player *player)
+{
+	// Not gated on s_ready: the rule is the mod's whether or not the core came up, and it reads
+	// only the engine's own objects.
+	Bool found = FALSE;
+	if (player)
+		player->iterateObjects(noteLivingGeneral, &found);
+	return found;
 }
 
 Real Zhbo_WorkRate(const Object *builder)

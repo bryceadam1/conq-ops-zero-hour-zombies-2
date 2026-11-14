@@ -1,0 +1,24 @@
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/VictoryConditions.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/VictoryConditions.cpp
+index ab34ddf75..4a5bfd989 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/VictoryConditions.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/VictoryConditions.cpp
+@@ -27,6 +27,7 @@
+ // Author: Matthew D. Campbell, February 2002
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/AudioEventRTS.h"
+ #include "Common/GameAudio.h"
+@@ -346,7 +347,10 @@ Bool VictoryConditions::hasSinglePlayerBeenDefeated(Player *player)
+ 	}
+ 	else if ( ISSET(NOBUILDINGS) )
+ 	{
+-		if ( !player->hasAnyBuildings(mask) )
++		// ZHBO: a player whose buildings are all gone is still in the game while his General
++		// lives. He is out once both are gone (he can rebuild the General at a Command Center
++		// only while he has one).
++		if ( !player->hasAnyBuildings(mask) && !Zhbo_HasLivingGeneral(player) )
+ 		{
+ 			return true;
+ 		}

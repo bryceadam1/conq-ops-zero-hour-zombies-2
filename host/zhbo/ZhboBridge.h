@@ -40,6 +40,11 @@ void Zhbo_OnSwitchWeaponButton(const CommandButton *command);
 /// Lethal, Tactical and Melee orders tell every client what his third slot does first.
 void Zhbo_OnFireWeaponCommand(const CommandButton *command);
 
+class Player;
+/// Whether the player owns a General that is not dead or dying (patch 0034: losing every building
+/// defeats a player only once his General is gone too). Logic-side: every machine answers alike.
+Bool Zhbo_HasLivingGeneral(const Player *player);
+
 /// Startup, after every subsystem and INI file is loaded (end of GameEngine::init).
 void Zhbo_Init();
 /// New game, loaded game, or back to the shell.
