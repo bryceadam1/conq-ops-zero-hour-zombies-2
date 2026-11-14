@@ -733,8 +733,8 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      Audio8 0.171 and 0.967, Fish 0.185 and 0.963. Fish S2-Pro through SGLang-Omni on an L40S
      (`tools/voice/tts/fish_sglang.sh`, `fish_bench.py`) makes 13.5 seconds of speech a second at
      16 requests in flight; the million sentences are about 4.2M seconds, about $155 of GPU, so
-     the audio is a Fish subset (about 75k clips, about $8) for voice variety plus Kokoro on the
-     Mac for the bulk.
+     the audio is a Fish subset (about 50k clips for $8 at the measured 13.5×; 75k if more
+     requests in flight reach 20×) for voice variety plus Kokoro on the Mac for the bulk.
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
   the heard rows, with a prompt that carries the match's names (`--prompt
