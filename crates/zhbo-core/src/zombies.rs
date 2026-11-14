@@ -352,6 +352,91 @@ impl PowerUps {
     }
 }
 
+/// The Mystery Box (`zombies.ini` `[MagicBox]`, `_zm_magicbox.gsc`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MagicBox {
+    pub cost: u32,
+    pub hint: String,
+    pub take_hint: String,
+    pub model: String,
+    pub spin_time: f32,
+    /// In BO2 inches.
+    pub float_height: f32,
+    pub offer_time: f32,
+    pub close_time: f32,
+    pub move_time: f32,
+    pub min_move_usage: u32,
+    pub joker_first_move_at: u32,
+    pub joker_early: u32,
+    pub joker_mid: u32,
+    pub joker_late: u32,
+}
+
+impl MagicBox {
+    pub fn parse(text: &str) -> MagicBox {
+        let mut b = MagicBox::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[MagicBox]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "Cost" => b.cost = num() as u32,
+                "Hint" => b.hint = value.to_string(),
+                "TakeHint" => b.take_hint = value.to_string(),
+                "Model" => b.model = value.to_string(),
+                "SpinTime" => b.spin_time = num(),
+                "FloatHeight" => b.float_height = num(),
+                "OfferTime" => b.offer_time = num(),
+                "CloseTime" => b.close_time = num(),
+                "MoveTime" => b.move_time = num(),
+                "MinMoveUsage" => b.min_move_usage = num() as u32,
+                "JokerFirstMoveAt" => b.joker_first_move_at = num() as u32,
+                "JokerEarly" => b.joker_early = num() as u32,
+                "JokerMid" => b.joker_mid = num() as u32,
+                "JokerLate" => b.joker_late = num() as u32,
+                _ => {}
+            }
+        }
+        b
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static MagicBox {
+        static B: std::sync::OnceLock<MagicBox> = std::sync::OnceLock::new();
+        B.get_or_init(|| MagicBox::parse(SHIPPED))
+    }
+
+    /// `treasure_chest_weapon_spawn`'s teddy test: whether the box flies away on a pull, with
+    /// `accessed` pulls since it last moved, `moves` moves so far and `random` its `randomint( 100 )`.
+    pub fn joker(&self, accessed: u32, moves: u32, random: u32) -> bool {
+        if accessed < self.min_move_usage {
+            return false;
+        }
+        let mut chance = accessed as i32 + 20;
+        if moves == 0 && accessed >= self.joker_first_move_at {
+            chance = 100;
+        }
+        if (self.min_move_usage..self.joker_first_move_at).contains(&accessed) {
+            chance = if random < self.joker_early { 100 } else { -1 };
+        }
+        if moves > 0 {
+            if (self.joker_first_move_at..13).contains(&accessed) {
+                chance = if random < self.joker_mid { 100 } else { -1 };
+            }
+            if accessed >= 13 {
+                chance = if random < self.joker_late { 100 } else { -1 };
+            }
+        }
+        chance > random as i32
+    }
+}
+
 /// A survivor's last stand (`zombies.ini` `[LastStand]`, `_zm_laststand.gsc`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LastStand {
@@ -656,6 +741,18 @@ impl RunCycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_box_costs_950_and_its_teddy_follows_bo2s_odds() {
+        let b = MagicBox::get();
+        assert_eq!((b.cost, b.hint.as_str(), b.offer_time), (950, "ZOMBIE_RANDOM_WEAPON_950", 12.0));
+        assert!((b.spin_time - 4.0).abs() < 1e-6);
+        assert!(!b.joker(3, 0, 0), "never before four pulls");
+        assert!(b.joker(5, 0, 14) && !b.joker(5, 0, 15), "15 in 100 from four to eight");
+        assert!(b.joker(8, 0, 99), "certain at eight if it never moved");
+        assert!(b.joker(9, 1, 29) && !b.joker(9, 1, 30), "30 in 100 after a move");
+        assert!(b.joker(13, 1, 49) && !b.joker(13, 1, 50));
+    }
 
     #[test]
     fn the_power_ups_are_tranzits_with_four_that_drop() {

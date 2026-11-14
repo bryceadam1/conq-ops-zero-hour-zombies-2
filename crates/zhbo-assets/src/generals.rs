@@ -480,6 +480,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // buys' prompts (`zhbo_core::zombies::WallBuy::hint`).
     let mut keys: Vec<String> = zhbo_core::weapons::ZOMBIES_UI_TEXT_KEYS.iter().map(|k| k.to_string()).collect();
     keys.extend(zhbo_core::zombies::WallBuys::get().buys.iter().filter_map(|b| b.hint()));
+    let mystery_box = zhbo_core::zombies::MagicBox::get();
+    keys.extend([mystery_box.hint.clone(), mystery_box.take_hint.clone()]);
     for key in keys {
         if let Some(text) = zm_names.get(&key) {
             if !table.ui_text.iter().any(|u| u.key == key) {
@@ -727,6 +729,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let zm_props: [&Zone; 7] = [&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone, &common_zm];
     summary.push(crate::props::wall_buys(&zm_props, &paks, &mut out));
     summary.push(crate::props::powerups(&zm_props, &paks, &mut out));
+    summary.push(crate::props::magic_box(&zm_props, &paks, &mut out));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

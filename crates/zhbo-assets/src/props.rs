@@ -201,6 +201,14 @@ pub(crate) fn wall_buys(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTre
     format!("wall buys{note}")
 }
 
+/// The Mystery Box (`zhbo_core::zombies::MagicBox`): its model as `names::magic_box_object`.
+/// Returns the summary line.
+pub(crate) fn magic_box(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTreeMap<String, Vec<u8>>) -> String {
+    let items = [(zhbo_core::names::magic_box_object(), zhbo_core::zombies::MagicBox::get().model.clone())];
+    let note = named_props(pool, paks, out, &items, zhbo_core::names::magic_box_model, false, "Data\\INI\\Object\\ZHBO_ZM_MagicBox.ini");
+    format!("the Mystery Box{note}")
+}
+
 /// The power-ups (`zhbo_core::zombies::PowerUps`): each one's model (`zombies.ini` `[PowerUps]`)
 /// as the Zero Hour object `names::powerup_object`, upright as it floats. Returns the summary line.
 pub(crate) fn powerups(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTreeMap<String, Vec<u8>>) -> String {

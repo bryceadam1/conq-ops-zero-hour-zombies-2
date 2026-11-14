@@ -1957,6 +1957,9 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
 * Power-ups (`sim::powerups`): the archive gains a prop per power-up (`names::powerup_object`,
   `Data\INI\Object\ZHBO_ZM_PowerUps.ini`, from `common_zm`), two HUD materials and the max ammo
   string (`hud::VERSION` 101). The sim's state gains `Rounds::powerups`. No ABI change.
+* The Mystery Box (`sim::magicbox`): the archive gains its prop (`names::magic_box_object`,
+  `Data\INI\Object\ZHBO_ZM_MagicBox.ini`) and its two prompts (`hud::VERSION` 102). The sim's
+  state gains `Rounds::magic_box`. No ABI change.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

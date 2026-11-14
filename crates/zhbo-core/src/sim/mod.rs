@@ -31,6 +31,7 @@ pub mod zombies;
 pub mod laststand;
 pub mod wallbuy;
 pub mod powerups;
+pub mod magicbox;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
 /// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
@@ -1136,6 +1137,8 @@ impl Sim {
                 self.revive_input(p, &mut input);
                 // The use key on a wall buy buys from it (`wallbuy`).
                 self.wall_buy_input(host, idx, p, &mut input);
+                // The use key on the Mystery Box pulls it, or takes its weapon (`magicbox`).
+                self.magic_box_input(host, idx, p, &mut input);
                 // The use key works (builds or repairs) at a structure in reach, held, instead of
                 // opening the field computer.
                 p.site = host.work_site(p.general, p.body.pos, building::REACH);

@@ -15809,3 +15809,41 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - **Bump:** `hud::VERSION` → 101.
 - **Not ported:** the power-ups' glow FX and blinking, their announcer lines, the fire sale and
   Death Machine (not in classic TranZit's drops).
+
+## Zombies: the Mystery Box (2026-11-14)
+
+- **Where:** TranZit's box is the zbarrier `zmcore_MagicBox` at six chest structs. On our map each
+  player start gets a place on the wall-buy ring, half a step from the first wall buy (the mod's
+  own layout). As in BO2 the box stands at one place at a time. Its prop is the zbarrier's model
+  `p6_anim_zm_magic_box` (`props::magic_box`).
+- **A pull** (`treasure_chest_think`, `_zm_magicbox.gsc:380-632`): the use key and 950 points
+  (`zombie_cost`, `:72`). The box spins 4 s: 40 cycles of 20 × 0.05 + 10 × 0.1 + 5 × 0.2 + 3 ×
+  0.3 s, then 0.1 s (`:1078-1112`).
+- **The weapon pick** (`treasure_chest_chooseweightedrandomweapon`, `:911-933`): the first, in a
+  shuffled roster, that the box offers, the buyer hasn't got (nor its upgrade), and is under its
+  limit across the other players (`limited_weapon_below_quota`). TranZit sets no
+  `customrandomweaponweights`, so the roster's weighting column plays no part.
+- **The teddy bear** (`:1136-1185`), only with more than one place:
+  - Never before 4 pulls since the last move.
+  - From 4 to 8 pulls: 15 in 100.
+  - At 8 pulls: certain if the box never moved.
+  - After a move: 30 in 100 from 8 to 12 pulls, 50 in 100 from 13.
+  - The buyer gets his points back, uncounted as earned (`add_to_player_score( user_cost, 0 )`,
+    `:490-491`). The box shows at the next place 12.1 s later (`treasure_chest_move`: 0.1 s, then
+    7 + 5 s with no fire sale; `default_box_move_logic`).
+- **The offer:** the weapon floats 40 inches over the box for 12 s (`treasure_chest_timeout`). Only
+  the buyer can take it, with the use key (`weapon_give`, as a wall buy gives a gun). Taken or
+  timed out, the pull counts toward the teddy (`level.chest_accessed`), and the box closes for 1 s
+  after its lid.
+- **Prompts:** `ZOMBIE_RANDOM_WEAPON_950`, and `ZOMBIE_TRADE_WEAPON` for the buyer while it floats
+  (`boxstub_update_prompt`).
+- **Not timed:** the lid's and the teddy's animations (their clips are not read), so the close
+  and move times leave them out.
+- **Verified:**
+  - `cargo test -p zhbo-core`: 1093 passed. New tests: the parse and the teddy's odds, a place per
+    start with the box at the first, the spin, the teddy's refund and move, and an offer timing
+    out as a pull.
+  - In game: "the Mystery Box stands at place 1 of 2"; the converter made its prop. The `--zombies`
+    leg passes.
+  - Not yet seen in game: a pull (950 points is more than the scripted run has).
+- **Bump:** `hud::VERSION` → 102.

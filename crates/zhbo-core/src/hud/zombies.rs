@@ -372,6 +372,13 @@ pub fn trigger_prompt(text: &str, use_key: &str, cost: u32) -> Vec<(String, (f32
     super::pickup::coloured_runs(&text, "")
 }
 
+/// The Mystery Box's prompt to `p` (`boxstub_update_prompt`): the pull's, or the buyer's take.
+pub fn draw_magic_box(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, use_key: &str) -> bool {
+    let Some(key) = sim.magic_box_prompt(p) else { return false };
+    super::pickup::draw_runs(l, prims, &trigger_prompt(crate::sim::hint_text(key), use_key, crate::zombies::MagicBox::get().cost));
+    true
+}
+
 /// The wall buy in `p`'s use list: its prompt (`wall_weapon_update_prompt`): the weapon's own hint
 /// with its price without it, `ZOMBIE_WEAPONAMMOONLY` with the ammo price with it, nothing for a
 /// melee weapon he has.

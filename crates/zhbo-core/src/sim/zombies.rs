@@ -67,13 +67,15 @@ pub struct Rounds {
     pub wall_buys: Vec<super::wallbuy::WallBuyAt>,
     /// The power-ups (`sim::powerups`).
     pub powerups: super::powerups::PowerUpState,
+    /// The Mystery Box (`sim::magicbox`).
+    pub magic_box: super::magicbox::BoxState,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default() }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default() }
     }
 }
 
@@ -158,12 +160,14 @@ impl Sim {
                     self.note_players(host);
                     self.place_wall_buys(host, owner);
                     self.powerups_start();
+                    self.place_magic_box(host);
                     self.start_round(host, &vars, vars.start_round.max(1));
                 }
             }
             return;
         }
         self.step_powerups(host);
+        self.step_magic_box(host);
         // The round's dead and the vanished leave the list.
         let mut alive = std::mem::take(&mut self.rounds.alive);
         alive.retain(|&id| host.object(id, id).is_some_and(|o| !o.has(objflags::DEAD)));
