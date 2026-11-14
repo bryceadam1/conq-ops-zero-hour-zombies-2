@@ -128,6 +128,11 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
 - **Rounds:** `zombies.ini` `[Rounds]` holds what `_zm.gsc` hard-codes (`zombie_ai_limit` 24, the 10 s
   between rounds, the spawn delay's floor and decay, the difficulty whose column `set_zombie_var` reads).
   Everything else comes from the rule table by `set_zombie_var`'s rule (`zhbo_core::zombies::Vars`).
+- **Wall buys:** `zombies.ini` `[WallBuys]` lists TranZit classic's wall buys from its map entities:
+  each weapon and the model on its wall. The two melee buys also give their own cost and prompt.
+  `UpgradedAmmoCost` is the price of ammo for a Pack-a-Punched weapon. The roster's seventh column is
+  each weapon's prompt key. `[Layout]` `WallBuyRing` is where the Zombies map stands them (the mod's
+  own layout): dealt to the player starts in turn, on a ring this many Zero Hour units from each.
 - **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
   45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
   last-stand pistol and BO2's ranking of the pistols a downed player may hold

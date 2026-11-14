@@ -384,6 +384,9 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             let use_key = crate::input::key_name(b.field_computer);
             let name = |player: i32| host.player_name(player).unwrap_or_default();
             zombies::draw_last_stand(&l, prims, sim, p, use_key, &name, &|at| panels::project(client, w, h, at));
+            if sim.revive_target(p).is_none() {
+                zombies::draw_wall_buy(&l, prims, sim, p, use_key);
+            }
         } else {
             // The scorestreak column is the player's own commands: the tablet, and the build tool
             // when an action slot holds it.

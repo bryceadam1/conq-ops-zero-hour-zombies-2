@@ -63,13 +63,15 @@ pub struct Rounds {
     pub downed: Vec<super::laststand::Downed>,
     /// Survivors alive and not downed, as last counted (the damage hook's mirror reads it).
     pub up: u32,
+    /// The wall buys stood on the map (`sim::wallbuy`).
+    pub wall_buys: Vec<super::wallbuy::WallBuyAt>,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0 }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new() }
     }
 }
 
@@ -149,8 +151,10 @@ impl Sim {
                 let spawners: Vec<u32> = objs.iter().filter(|o| o.has(objflags::SPAWNER) && !o.has(objflags::DEAD)).map(|o| o.id).collect();
                 if !spawners.is_empty() {
                     host.log(&format!("zombies: {} spawn points; round {} begins", spawners.len(), vars.start_round));
+                    let owner = spawners[0];
                     self.rounds.spawners = spawners;
                     self.note_players(host);
+                    self.place_wall_buys(host, owner);
                     self.start_round(host, &vars, vars.start_round.max(1));
                 }
             }
@@ -339,7 +343,7 @@ mod tests {
         let total = vars.zombie_total(1, 1);
         // One every spawn delay.
         step(&mut sim, &host, (vars.spawn_delay / LOGIC_DT) as u32 * total + 2);
-        let spawned = host.spawned.borrow().clone();
+        let spawned: Vec<(u32, String)> = host.spawned.borrow().iter().filter(|(_, t)| t.starts_with(crate::names::ZOMBIE_PREFIX)).cloned().collect();
         assert_eq!(spawned.len() as u32, total);
         assert!(host.spawn_owners.borrow().iter().all(|&o| o == 50 || o == 51), "at the spawn points, on their side");
         assert!(spawned.iter().all(|(_, t)| t == "ZHBO_Zombie_Walk"), "round 1: speed 8, every draw under 35 walks");
@@ -347,6 +351,18 @@ mod tests {
         assert!(host.healths.borrow().iter().all(|&(_, h)| h == health), "the round's health");
         assert!(host.orders.borrow().iter().all(|&(_, target)| target == 1), "at the survivor");
         assert_eq!(sim.rounds.to_spawn, 0);
+    }
+
+    #[test]
+    fn the_round_engine_stands_the_wall_buys_round_the_start_once() {
+        let (mut sim, host) = zombies_map();
+        step(&mut sim, &host, SCAN_FRAMES * 3);
+        let w = crate::zombies::WallBuys::get();
+        let walls: Vec<String> = host.spawned.borrow().iter().map(|(_, t)| t.clone()).filter(|t| t.starts_with("ZHBO_ZM_WallBuy_")).collect();
+        assert_eq!(walls.len(), w.buys.len(), "each once");
+        assert_eq!(walls[0], crate::names::wall_buy_object(&w.buys[0].weapon));
+        let start = host.get(1).pos;
+        assert!(sim.rounds.wall_buys.iter().all(|b| ((b.pos - start).length_xy() - w.ring).abs() < 1e-2), "on the ring");
     }
 
     #[test]

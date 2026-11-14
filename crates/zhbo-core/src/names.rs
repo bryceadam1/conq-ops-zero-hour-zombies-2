@@ -116,6 +116,15 @@ pub const SCAVENGER_PACK_OBJECT: &str = "ZHBO_ScavengerPack";
 pub fn drop_object(base: &str) -> String {
     format!("ZHBO_Drop_{base}")
 }
+/// The W3D model of the converter's `n`-th Zombies wall buy prop.
+pub fn wall_buy_model(n: u16) -> String {
+    format!("ZWB{n:03}_SKN")
+}
+/// The Zero Hour object a Zombies wall buy of weapon `weapon` stands as: its wall model
+/// (`zombies.ini` `[WallBuys]`), made by the converter (`ZHBO_ZM_WallBuy_m14_zm`).
+pub fn wall_buy_object(weapon: &str) -> String {
+    format!("ZHBO_ZM_WallBuy_{weapon}")
+}
 /// The Zero Hour projectile object for weapon `id`.
 pub fn projectile_object(id: &str) -> String {
     format!("ZHBO_Proj_{id}")

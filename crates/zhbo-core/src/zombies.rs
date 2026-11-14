@@ -26,6 +26,8 @@ pub struct ZmWeapon {
     pub limit: Option<u32>,
     /// The box's weighting: 1 (`default_weighting_func`) or 0.5 (`less_than_normal`).
     pub box_weight: f32,
+    /// `add_zombie_weapon`'s hint: its wall buy's prompt key (`ZOMBIE_WEAPON_M14`).
+    pub hint: Option<String>,
 }
 
 /// BO2's `round_up_to_ten` (`_zm_utility.gsc`): the next multiple of ten, a multiple staying.
@@ -89,7 +91,7 @@ pub fn parse(text: &str) -> Vec<ZmWeapon> {
         }
         let Some((id, rest)) = line.split_once('=') else { continue };
         let f: Vec<&str> = rest.split(',').collect();
-        if f.len() != 6 {
+        if f.len() != 6 && f.len() != 7 {
             continue;
         }
         let Some(in_box) = field::<u8>(f[0]) else { continue };
@@ -101,6 +103,7 @@ pub fn parse(text: &str) -> Vec<ZmWeapon> {
             script_ammo_cost: field(f[3]),
             limit: field(f[4]),
             box_weight: field(f[5]).unwrap_or(1.0),
+            hint: f.get(6).and_then(|h| field::<String>(h)),
         });
     }
     out
@@ -165,6 +168,81 @@ pub fn melee_damage() -> f32 {
 /// The shipped survivor kit.
 pub fn survivor_kit() -> crate::weapons::Loadout {
     parse_survivor_kit(SHIPPED)
+}
+
+/// One wall buy: its weapon, the model shown on its wall, and the cost and prompt a melee buy names
+/// itself (the rest are the roster's).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WallBuy {
+    pub weapon: String,
+    pub model: String,
+    pub cost: Option<u32>,
+    pub hint: Option<String>,
+}
+
+impl WallBuy {
+    /// Its price (the melee buy's own, else the roster's with the rule table's override).
+    pub fn cost(&self) -> u32 {
+        self.cost.or_else(|| roster().into_iter().find(|w| w.id == self.weapon).and_then(|w| w.cost(&rules()))).unwrap_or(0)
+    }
+
+    /// Its ammo price: the roster's, with the rule table's override.
+    pub fn ammo_cost(&self) -> u32 {
+        roster().into_iter().find(|w| w.id == self.weapon).and_then(|w| w.ammo_cost(&rules())).unwrap_or(0)
+    }
+
+    /// Its prompt's key (`wall_weapon_update_prompt`'s `get_weapon_hint`).
+    pub fn hint(&self) -> Option<String> {
+        self.hint.clone().or_else(|| roster().into_iter().find(|w| w.id == self.weapon).and_then(|w| w.hint))
+    }
+
+    /// The Pack-a-Punched weapon of its weapon (a held upgrade counts as having it).
+    pub fn upgrade(&self) -> Option<String> {
+        roster().into_iter().find(|w| w.id == self.weapon).and_then(|w| w.upgrade)
+    }
+}
+
+/// TranZit's wall buys (`zombies.ini` `[WallBuys]`) and where the Zombies map stands them
+/// (`[Layout]`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WallBuys {
+    /// The wall buys, in the map's order.
+    pub buys: Vec<WallBuy>,
+    pub upgraded_ammo_cost: u32,
+    /// Zero Hour units from each player start.
+    pub ring: f32,
+}
+
+impl WallBuys {
+    pub fn parse(text: &str) -> WallBuys {
+        let mut w = WallBuys { buys: Vec::new(), upgraded_ammo_cost: 0, ring: 0.0 };
+        let mut section = String::new();
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                section = line.to_ascii_lowercase();
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            match (section.as_str(), key) {
+                ("[wallbuys]", "UpgradedAmmoCost") => w.upgraded_ammo_cost = value.parse().unwrap_or(0),
+                ("[wallbuys]", _) => {
+                    let f: Vec<&str> = value.split(',').map(str::trim).collect();
+                    w.buys.push(WallBuy { weapon: key.to_string(), model: f[0].to_string(), cost: f.get(1).and_then(|c| c.parse().ok()), hint: f.get(2).map(|h| h.to_string()) });
+                }
+                ("[layout]", "WallBuyRing") => w.ring = value.parse().unwrap_or(0.0),
+                _ => {}
+            }
+        }
+        w
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static WallBuys {
+        static W: std::sync::OnceLock<WallBuys> = std::sync::OnceLock::new();
+        W.get_or_init(|| WallBuys::parse(SHIPPED))
+    }
 }
 
 /// A survivor's last stand (`zombies.ini` `[LastStand]`, `_zm_laststand.gsc`).
@@ -469,6 +547,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_wall_buys_are_tranzits_ten_with_their_prompts_and_prices() {
+        let w = WallBuys::get();
+        assert_eq!(w.buys.len(), 10);
+        assert_eq!((w.buys[3].weapon.as_str(), w.buys[3].model.as_str(), w.buys[3].cost()), ("m14_zm", "t6_wpn_ar_m14_world", 500));
+        assert_eq!(w.upgraded_ammo_cost, 4500);
+        assert!(w.ring > 0.0);
+        for b in &w.buys {
+            assert!(b.hint().is_some_and(|h| h.starts_with("ZOMBIE_WEAPON_")), "{}'s prompt", b.weapon);
+            assert!(b.cost() > 0, "{}'s price", b.weapon);
+        }
+        let bowie = w.buys.iter().find(|b| b.weapon == "bowie_knife_zm").unwrap();
+        assert_eq!((bowie.cost(), bowie.hint().as_deref()), (3000, Some("ZOMBIE_WEAPON_BOWIE_BUY")));
+    }
+
+    #[test]
     fn the_last_stand_reads_its_rules_and_picks_the_best_pistol_with_ammo() {
         let ls = LastStand::get();
         assert_eq!((ls.bleedout_time, ls.revive_time, ls.revive_radius, ls.pistol.as_str()), (45.0, 3.0, 75.0, "m1911_zm"));
@@ -537,7 +630,7 @@ mod tests {
     #[test]
     fn the_rule_table_overrides_the_scripts_cost_as_add_zombie_weapon_does() {
         let rules = RuleTable::parse("NAME,EASY,MEDIUM,HARD,VETERAN\npython_zm,2200,,,\nm16_zm,1195,605,,\n");
-        let w = |id: &str, cost: Option<u32>, ammo: Option<u32>| ZmWeapon { id: id.into(), in_box: true, upgrade: None, script_cost: cost, script_ammo_cost: ammo, limit: None, box_weight: 1.0 };
+        let w = |id: &str, cost: Option<u32>, ammo: Option<u32>| ZmWeapon { id: id.into(), in_box: true, upgrade: None, script_cost: cost, script_ammo_cost: ammo, limit: None, box_weight: 1.0, hint: None };
         assert_eq!(w("python_zm", Some(50), None).cost(&rules), Some(2200));
         assert_eq!(w("m16_zm", Some(1200), None).cost(&rules), Some(1200), "rounded up to ten");
         assert_eq!(w("m16_zm", Some(1200), None).ammo_cost(&rules), Some(610));

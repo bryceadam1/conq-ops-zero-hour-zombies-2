@@ -90,7 +90,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   rules, the zombies sent at the nearest survivor, and the points a hit or kill pays into the shared
   wallet), `laststand.rs` (BO2 Zombies' last stand: a survivor downed instead of killed while another
   is up, his pistol, the bleed-out, the revive and the end when nobody is up; the engine's damage hook
-  decides the down through the lock-free mirror in the crate's own `laststand.rs`), `rts.rs` (the overhead General:
+  decides the down through the lock-free mirror in the crate's own `laststand.rs`), `wallbuy.rs`
+  (BO2 Zombies' wall buys: the round engine stands them; the use key buys the weapon, or its
+  ammo, by `weapon_spawn_think`), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`, `fire_round` (one bullet, to its end and through penetration),
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:

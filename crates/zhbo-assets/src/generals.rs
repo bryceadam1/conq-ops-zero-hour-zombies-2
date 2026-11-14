@@ -474,10 +474,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             table.weapons.push(d);
         }
     }
-    // The Zombies strings the core draws (`zhbo_core::weapons::ZOMBIES_UI_TEXT_KEYS`).
-    for key in zhbo_core::weapons::ZOMBIES_UI_TEXT_KEYS {
-        if let Some(text) = zm_names.get(*key) {
-            table.ui_text.push(zhbo_core::weapons::UiText { key: key.to_string(), text: text.clone() });
+    // The Zombies strings the core draws (`zhbo_core::weapons::ZOMBIES_UI_TEXT_KEYS`) and the wall
+    // buys' prompts (`zhbo_core::zombies::WallBuy::hint`).
+    let mut keys: Vec<String> = zhbo_core::weapons::ZOMBIES_UI_TEXT_KEYS.iter().map(|k| k.to_string()).collect();
+    keys.extend(zhbo_core::zombies::WallBuys::get().buys.iter().filter_map(|b| b.hint()));
+    for key in keys {
+        if let Some(text) = zm_names.get(&key) {
+            if !table.ui_text.iter().any(|u| u.key == key) {
+                table.ui_text.push(zhbo_core::weapons::UiText { key, text: text.clone() });
+            }
         }
     }
     let zm_missing = zm.missing();
@@ -717,6 +722,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     summary.push(crate::props::projectiles(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
     crate::props::share_projectiles(&mut table.weapons);
     summary.push(crate::props::drops(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base));
+    summary.push(crate::props::wall_buys(&[&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone], &paks, &mut out));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

@@ -15709,3 +15709,43 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   `zhbo_logic_survivor_damage`.
 - **Not yet ported:** Quick Revive (solo self-revive, faster revives), the downed screen's vision and
   the bleed-out's red overlay, the last-stand crawl speed, suicide in co-op.
+
+## Zombies: wall buys (2026-11-14)
+
+- **Which:** TranZit classic's wall buys come from its map entities (`zm_transit.d3dbsp.ents`:
+  `weapon_upgrade`, `bowie_upgrade`, `tazer_upgrade` and `claymore_purchase`). The ones
+  `init_spawnable_weapon_upgrade` keeps for `zclassic_transit` are those with no
+  `script_noteworthy` or one naming it (`_zm_weapons.gsc:839-881`). That gives ten: Semtex,
+  Olympia, AK74u, M14, Remington 870 MCS, MP5K, M16, Claymore, Bowie Knife and Galvaknuckles. Each
+  is listed in `zombies.ini` `[WallBuys]` with the model its target struct shows (`:914-918`).
+  - The melee buys name their own price and prompt (`_zm_melee_weapon::init` from
+    `_zm_weap_bowie.gsc:11-16` and `_zm_weap_tazer_knuckles.gsc:17-23`: 3000 and 6000).
+  - The other prompts are `add_zombie_weapon`'s hint, now the roster's seventh column. It was
+    extracted from `zm_transit.gsc:1983-2025`, which shows the English prompt is each weapon's own
+    key (`wall_weapon_update_prompt`, `:1130-1134`).
+- **Where:** the Zombies map has no walls, so the round engine stands them as it starts. They are
+  dealt to the survivors' starts in turn and spread evenly on a ring 160 units from each (`[Layout]`,
+  the mod's own layout). Each is the converter's prop of its wall model, laid on the ground as a
+  dropped weapon lies (`props::wall_buys`, `names::wall_buy_object`).
+- **Buying** (`weapon_spawn_think`, `:1969-2181`): the use key on a wall buy in the use list (the
+  dropped weapons' rule: within `player_useRadius`, best of distance and facing).
+  - Without the weapon or its upgrade: its price, then `weapon_give` (`:2327-2476`). A gun comes
+    with its start ammo and is switched to, taking the place of the one up at two guns
+    (`Arsenal::pick_up`). A lethal takes the lethal slot, a melee weapon the melee.
+  - With it: ammo at its ammo price, 4500 for an upgrade (`get_upgraded_ammo_cost`).
+    `ammo_give`'s test is the stock against the whole start count (`weaponstartammo`, `:2523-2565`),
+    so as in BO2 a fresh wall gun can be topped up to its max at once.
+  - A melee buy sells nothing twice. Short of points, nothing happens.
+- **HUD:** the wall buy's prompt in the cursor hint's place. `[{+activate}]` is the use key and
+  `&&1` the price (`sethintstring( hint, cost )`), or `ZOMBIE_WEAPONAMMOONLY` with the ammo price.
+- **Deviation:** the Claymore goes in the tactical slot. BO2 keeps it in a placeable-mine slot of
+  its own, which the arsenal doesn't have.
+- **Verified:**
+  - `cargo test -p zhbo-core`: 1081 passed. New tests: the `[WallBuys]` parse (prices, prompts,
+    melee overrides), `weapon_give`/`ammo_give`/offers, the placement on the ring, and the prompt's
+    substitution.
+  - In game on the Zombies map: "10 wall buys around 2 starts, 10 with their props"; the converter
+    made all ten props.
+  - Not yet seen in game: a purchase, which needs first person on the Zombies map (the menu-started
+    game stays overhead).
+- **Bump:** `hud::VERSION` → 100.

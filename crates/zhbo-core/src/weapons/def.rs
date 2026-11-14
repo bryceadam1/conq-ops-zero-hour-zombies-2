@@ -892,7 +892,9 @@ pub const UI_TEXT_KEYS: &[&str] = &[
 
 /// The Zombies strings the core draws (the last stand's, `_zm_laststand.gsc`), from the install's
 /// Zombies language zones (`patch_zm`); the converter adds them to the table's UI text.
-pub const ZOMBIES_UI_TEXT_KEYS: &[&str] = &["ZOMBIE_BUTTON_TO_REVIVE_PLAYER", "ZOMBIE_REVIVING", "ZOMBIE_PLAYER_IS_REVIVING_YOU", "ZOMBIE_PLAYER_NEEDS_TO_BE_REVIVED"];
+/// The wall buys' prompts are the roster's own hint keys (`zombies::WallBuy::hint`), which the
+/// converter adds too.
+pub const ZOMBIES_UI_TEXT_KEYS: &[&str] = &["ZOMBIE_BUTTON_TO_REVIVE_PLAYER", "ZOMBIE_REVIVING", "ZOMBIE_PLAYER_IS_REVIVING_YOU", "ZOMBIE_PLAYER_NEEDS_TO_BE_REVIVED", "ZOMBIE_WEAPONAMMOONLY"];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BonusCard {

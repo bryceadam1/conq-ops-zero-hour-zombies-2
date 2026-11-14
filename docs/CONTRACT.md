@@ -1951,6 +1951,9 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   how many survivors are up). The sim's state gains `Rounds::downed` and `Rounds::up`. The weapon
   table's UI text gains the four Zombies strings of `weapons::ZOMBIES_UI_TEXT_KEYS`, and the archive
   three materials (`hud::VERSION` 99).
+* Wall buys (`sim::wallbuy`): the archive gains a prop object per TranZit wall buy
+  (`names::wall_buy_object`, `Data\INI\Object\ZHBO_ZM_WallBuys.ini`), and the UI text the wall
+  buys' prompt keys (`hud::VERSION` 100). The sim's state gains `Rounds::wall_buys`. No ABI change.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

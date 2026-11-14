@@ -29,6 +29,7 @@ pub mod score;
 mod spawn;
 pub mod zombies;
 pub mod laststand;
+pub mod wallbuy;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
 /// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
@@ -160,6 +161,8 @@ pub enum EventKind {
     ZombieRoundOver { round: u8 },
     /// Zombies: a hit or kill on a zombie paid this seat `points` (`player_add_points`).
     ZombiePoints { points: u16 },
+    /// Zombies: this seat bought from a wall for `cost` points (`sim/wallbuy.rs`).
+    ZombiePurchase { cost: u16 },
     /// Zombies: survivor `general` went down (last stand, `sim/laststand.rs`), losing `points`.
     Downed { general: u32, points: u16 },
     /// Zombies: survivor `general` was revived by General `by` (to both seats).
@@ -1128,6 +1131,8 @@ impl Sim {
                 // The use key held over a downed survivor revives him, before anything else takes
                 // it (`laststand`).
                 self.revive_input(p, &mut input);
+                // The use key on a wall buy buys from it (`wallbuy`).
+                self.wall_buy_input(host, idx, p, &mut input);
                 // The use key works (builds or repairs) at a structure in reach, held, instead of
                 // opening the field computer.
                 p.site = host.work_site(p.general, p.body.pos, building::REACH);
@@ -1459,6 +1464,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         ZombieRound { round } => format!("player {} sees zombies round {round} begin", e.player),
         ZombieRoundOver { round } => format!("player {} sees zombies round {round} end", e.player),
         ZombiePoints { points } => format!("player {} scored {points} zombie points", e.player),
+        ZombiePurchase { cost } => format!("player {} bought from a wall for {cost} points", e.player),
         Downed { general, points } => format!("player {}'s survivor {general} is down ({points} points lost)", e.player),
         Revived { general, by } => format!("player {} sees survivor {general} revived by {by}", e.player),
         BledOut { general } => format!("player {}'s survivor {general} bled out", e.player),

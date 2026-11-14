@@ -274,6 +274,27 @@ pub fn draw_last_stand(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim,
     }
 }
 
+/// A Zombies trigger's prompt from its localized text: `[{+activate}]` is the use key and `&&1`
+/// the price (`sethintstring( hint, cost )`), as coloured runs.
+pub fn trigger_prompt(text: &str, use_key: &str, cost: u32) -> Vec<(String, (f32, f32, f32))> {
+    let text = text.replace("[{+activate}]", use_key).replace("&&1", &cost.to_string());
+    super::pickup::coloured_runs(&text, "")
+}
+
+/// The wall buy in `p`'s use list: its prompt (`wall_weapon_update_prompt`): the weapon's own hint
+/// with its price without it, `ZOMBIE_WEAPONAMMOONLY` with the ammo price with it, nothing for a
+/// melee weapon he has.
+pub fn draw_wall_buy(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, use_key: &str) {
+    let Some(i) = sim.wall_buy_target(p) else { return };
+    let Some(b) = crate::zombies::WallBuys::get().buys.get(sim.rounds.wall_buys[i].index as usize) else { return };
+    let (key, cost) = match crate::sim::wallbuy::offer(p, b) {
+        crate::sim::wallbuy::Offer::Weapon { cost } => (b.hint().unwrap_or_default(), cost),
+        crate::sim::wallbuy::Offer::Ammo { cost } => ("ZOMBIE_WEAPONAMMOONLY".to_string(), cost),
+        crate::sim::wallbuy::Offer::Nothing => return,
+    };
+    super::pickup::draw_runs(l, prims, &trigger_prompt(crate::sim::hint_text(&key), use_key, cost));
+}
+
 /// What one slot shows: its icon (a MappedImage), the name drawn where the icon has no art, whether
 /// it can be used, and its key.
 pub struct Slot<'a> {
@@ -407,6 +428,14 @@ mod tests {
         draw_last_stand(&l, &mut prims, &sim, &downed, "F", &name, &|_| None);
         // Without the converted table the line is its key (the install's has `&&1 is reviving you`).
         assert!(prims.iter().any(|p| matches!(p, Prim::Text { text, .. } if text.contains("ZOMBIE_PLAYER_IS_REVIVING_YOU"))), "tells him he is being revived");
+    }
+
+    #[test]
+    fn a_trigger_prompt_names_the_key_and_the_price() {
+        let runs = trigger_prompt("Hold ^3[{+activate}]^7 for M14 [Cost: &&1]", "F", 500);
+        let text: String = runs.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(text, "Hold F for M14 [Cost: 500]");
+        assert_eq!(runs[1], ("F".to_string(), (1.0, 1.0, 0.0)), "the key in yellow");
     }
 
     #[test]
