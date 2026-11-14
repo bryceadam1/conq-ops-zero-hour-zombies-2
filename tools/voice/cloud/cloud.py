@@ -75,13 +75,13 @@ def ensure_group(c, vpc):
     return gid
 
 
-def cheapest_zone(c, itype):
+def zones_by_price(c, itype):
+    """The zones offering `itype` as spot, cheapest first, with their current price."""
     hist = c.describe_spot_price_history(InstanceTypes=[itype], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
     latest = {}
     for h in hist:
         latest.setdefault(h["AvailabilityZone"], float(h["SpotPrice"]))
-    zone = min(latest, key=latest.get)
-    return zone, latest[zone]
+    return sorted(latest.items(), key=lambda z: z[1])
 
 
 def spot_price(c, itype, zone):
@@ -115,8 +115,10 @@ def launch(args):
     ensure_key(c)
     vpc = c.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"][0]["VpcId"]
     group = ensure_group(c, vpc)
-    zone, price = cheapest_zone(c, args.type)
-    subnet = c.describe_subnets(Filters=[{"Name": "availability-zone", "Values": [zone]}, {"Name": "default-for-az", "Values": ["true"]}])["Subnets"][0]["SubnetId"]
+    zones = zones_by_price(c, args.type)
+    zone, price = zones[0]
+    subnet_of = lambda z: c.describe_subnets(Filters=[{"Name": "availability-zone", "Values": [z]}, {"Name": "default-for-az", "Values": ["true"]}])["Subnets"][0]["SubnetId"]
+    subnet = subnet_of(zone)
     images = c.describe_images(Owners=["amazon"], Filters=[{"Name": "name", "Values": [IMAGE]}, {"Name": "architecture", "Values": ["x86_64"]}, {"Name": "state", "Values": ["available"]}])["Images"]
     image = max(images, key=lambda i: i["CreationDate"])
     minutes = int(args.hours * 60)
@@ -131,7 +133,22 @@ def launch(args):
             code = e.response["Error"]["Code"]
             log("dry run: the launch would succeed" if code == "DryRunOperation" else f"dry run refused: {code}: {e.response['Error']['Message']}")
         return
-    r = c.run_instances(**request(args, image, subnet, group, user_data))
+    # Spot capacity varies by zone: try each, cheapest first.
+    r = None
+    for zone, price in zones:
+        if price > args.max_price:
+            continue
+        subnet = subnet_of(zone)
+        try:
+            r = c.run_instances(**request(args, image, subnet, group, user_data))
+            break
+        except c.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] not in ("InsufficientInstanceCapacity", "SpotMaxPriceTooLow", "Unsupported"):
+                raise
+            log(f"{zone}: {e.response['Error']['Code']}, trying the next zone")
+    if r is None:
+        sys.exit("no zone had spot capacity under the price ceiling; nothing was launched")
+    log(f"launched in {zone} at ${price:.3f}/h")
     iid = r["Instances"][0]["InstanceId"]
     c.get_waiter("instance_running").wait(InstanceIds=[iid])
     inst = c.describe_instances(InstanceIds=[iid])["Reservations"][0]["Instances"][0]

@@ -208,7 +208,6 @@ pub fn name_anchor(q: &PlayerSim) -> Vec3 {
 /// `FUN_004b2500` + `FUN_004b3690`: in front of the view (15 inches' leeway, then strictly) and
 /// nothing between the eye and his head (a friendly's trace must run clear; the viewer's own body
 /// is not in the way). BO2's `cg_overheadNamesMaxDist` cap is not applied ([`Nameplate`]).
-#[allow(clippy::too_many_arguments)]
 fn name_visible(eye: Vec3, dir: Vec3, at: Vec3, general: u32, viewer: u32, targets: &[crate::hitscan::Target], ground: &dyn Fn(f32, f32) -> f32) -> bool {
     let d = at - eye;
     let ahead = d.dot(dir);

@@ -133,6 +133,7 @@ pub fn name_scale(dist: f32) -> f32 {
 }
 
 /// Draw one General's name at screen point `(x, y)` (his head), `dist` away, in `color`, at `alpha`.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_name(prims: &mut Vec<Prim>, h: f32, x: f32, y: f32, dist: f32, name: &str, color: (f32, f32, f32), alpha: f32) {
     if alpha <= 0.0 || name.is_empty() {
         return;
