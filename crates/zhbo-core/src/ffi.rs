@@ -197,7 +197,7 @@ pub const ABI_VERSION: u32 = 36;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
-pub const LOGIC_API_FIELDS: u64 = 27;
+pub const LOGIC_API_FIELDS: u64 = 29;
 pub const CLIENT_API_FIELDS: u64 = 22;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
@@ -620,6 +620,13 @@ pub extern "C" fn zhbo_reset() {
 /// The map just loaded is a Zombies map (non-zero) or not: the bridge reads the map's objects for
 /// a zombie spawn point at the loading screen, the same on every machine. The round engine runs
 /// only on one (`Rounds::zombies_map`, sim state).
+/// Each player's points at a Zombies map's start (`level.player_starting_points`): the bridge sets
+/// his money to it as it stands his survivor.
+#[no_mangle]
+pub extern "C" fn zhbo_zombie_start_points() -> i32 {
+    crate::zombies::Vars::get().starting_points()
+}
+
 #[no_mangle]
 pub extern "C" fn zhbo_zombies_map_loaded(zombies_map: i32) {
     with_state(|s| s.sim.rounds.zombies_map = zombies_map != 0);

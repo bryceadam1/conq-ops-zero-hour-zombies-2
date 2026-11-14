@@ -1925,7 +1925,10 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   `set_max_health(id, health)` and `add_cash(player, amount)` after `surface_at`
   (`ZHBO_LOGIC_API_FIELDS`/`LOGIC_API_FIELDS` 24 → 27, asserted on both sides). These are logic
   calls: `aiAttackObject`, `setMaxHealth(FULLY_HEAL)`, and `Money::deposit`/`withdraw` with no
-  sound. `ZHBO_OBJ_SPAWNER = 1u << 16` marks a `ZHBO_ZM_Spawner` object. The free function
+  sound; then `spawn_survivor(player, pos, yaw)` (his slot's survivor) and `money(player)`
+  (29 fields). `zhbo_zombie_start_points()` gives a Zombies map's starting points, which the
+  bridge sets as each player's money; on a Zombies map no player is defeated while any survivor
+  lives (`Zhbo_HasLivingGeneral`). `ZHBO_OBJ_SPAWNER = 1u << 16` marks a `ZHBO_ZM_Spawner` object. The free function
   `zhbo_load_zombie_rules(text)` installs the archive's `Data\ConquerOps\zombiemode.csv`
   (`names::ZOMBIE_RULES_PATH`). The sim's state gains `Sim::rounds`, hashed in the world part.
 * Host patch 0035 (`0035-zombies-map-start.patch`): `placeNetworkBuildingsForPlayer` asks the

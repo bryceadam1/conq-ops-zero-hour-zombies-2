@@ -59,6 +59,8 @@ pub struct FakeHost {
     /// A spawn also stands an object of that id where it was made (on its owner's side), so the
     /// round engine sees its zombies (off: a spawn is only recorded).
     pub spawn_objects: std::cell::Cell<bool>,
+    /// The players whose survivor was stood again (`spawn_survivor`).
+    pub respawned: RefCell<Vec<i32>>,
 }
 
 impl FakeHost {
@@ -178,6 +180,10 @@ impl LogicHost for FakeHost {
     }
     fn add_cash(&self, player: i32, amount: i32) {
         self.cash.borrow_mut().push((player, amount));
+    }
+    fn spawn_survivor(&self, player: i32, _pos: Vec3, _yaw: f32) -> u32 {
+        self.respawned.borrow_mut().push(player);
+        0
     }
     fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
         self.options.borrow().clone()

@@ -16,7 +16,7 @@
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
-#define ZHBO_LOGIC_API_FIELDS 27u
+#define ZHBO_LOGIC_API_FIELDS 29u
 #define ZHBO_CLIENT_API_FIELDS 22u
 
 #ifdef __cplusplus
@@ -297,6 +297,10 @@ typedef struct ZhboLogicApi
 	void (*order_attack)(uint32_t id, uint32_t target);
 	void (*set_max_health)(uint32_t id, float health);
 	void (*add_cash)(int32_t player, int32_t amount);
+	/* Pending for the next ABI bump: stand player's survivor General (his slot's) at pos, its id or
+	   0 (BO2's spectators_respawn); player's money. */
+	uint32_t (*spawn_survivor)(int32_t player, const ZhboVec3 *pos, float yaw);
+	int32_t (*money)(int32_t player);
 } ZhboLogicApi;
 
 /* The damage kinds of ZhboLogicApi.damage (zhbo_core::damage::ZH_DAMAGE_TYPES): Zero Hour's
@@ -627,6 +631,8 @@ int32_t zhbo_load_zombie_rules(const char *text);
 /* The map just loaded is a Zombies map (its objects include a zombie spawn point): the round
    engine runs only on one (pending for the next ABI bump). */
 void zhbo_zombies_map_loaded(int32_t zombies_map);
+/* Each player's points at a Zombies map's start (pending for the next ABI bump). */
+int32_t zhbo_zombie_start_points(void);
 /* Load the BO2 font metrics (see lui/font.rs); empty text leaves the engine font in use. */
 void zhbo_load_fonts(const char *text);
 /* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */

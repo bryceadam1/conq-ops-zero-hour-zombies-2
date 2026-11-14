@@ -162,6 +162,8 @@ std::string readTextFile(const char *path)
 
 static void installZombieMaps();
 static Bool isZombiesMap();
+// The loaded map is a Zombies map (set at the loading screen, Zhbo_Preload).
+static Bool s_zombiesMap = FALSE;
 
 // A file of the mod's in the game's user-data directory. Several game instances on one machine
 // (the engine's multi-instance mode: the two-instance multiplayer test) share that directory; like
@@ -458,6 +460,8 @@ void Zhbo_Init()
 		.order_attack = cbOrderAttack,
 		.set_max_health = cbSetMaxHealth,
 		.add_cash = cbAddCash,
+		.spawn_survivor = cbSpawnSurvivor,
+		.money = cbMoney,
 	};
 	static const ZhboClientApi clientApi = {
 		.screen_size = cbScreenSize,
@@ -577,6 +581,7 @@ void Zhbo_Reset()
 	// MSG_NEW_GAME: pace it at the speed its message noted, else Zero Hour's 30.
 	zhboPaceStartingGame();
 	zhboTeamRingsReset();
+	s_zombiesMap = FALSE;
 	if (!s_ready)
 		return;
 	// The shell create-a-class screen never survives a game transition (a new game, a loaded game
@@ -620,7 +625,8 @@ void Zhbo_Preload()
 	// The map's ground surfaces, before the first logic step can ask for one.
 	EnsureSurfaceGrid();
 	// A Zombies map runs the core's round engine (and only one does: no map-wide scan elsewhere).
-	zhbo_zombies_map_loaded(isZombiesMap() ? 1 : 0);
+	s_zombiesMap = isZombiesMap();
+	zhbo_zombies_map_loaded(s_zombiesMap ? 1 : 0);
 	// The mod's objects (the Generals, their grenades, C4 and other equipment): what the engine's
 	// own preload does for KINDOF_PRELOAD things, which retail only runs with -preload.
 	int objects = 0;
@@ -1328,10 +1334,61 @@ static Bool isZombiesMap()
 	return FALSE;
 }
 
+// A slot's survivor template (Misty, Marlton, Russman, Stuhlinger by slot).
+static const char *survivorOfSlot(Int slot)
+{
+	const Int n = (Int)(sizeof(zhbo_names::SURVIVOR_OBJECTS) / sizeof(zhbo_names::SURVIVOR_OBJECTS[0]));
+	return zhbo_names::SURVIVOR_OBJECTS[(slot % n + n) % n];
+}
+
+// The game slot a player plays from ("player<slot>", GameLogic::startNewGame), or -1.
+static Int slotOfPlayer(const Player *player)
+{
+	for (Int i = 0; player && ThePlayerList && i < MAX_SLOTS; ++i)
+	{
+		AsciiString name;
+		name.format("player%d", i);
+		if (ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey(name)) == player)
+			return i;
+	}
+	return -1;
+}
+
+uint32_t cbSpawnSurvivor(int32_t playerIndex, const ZhboVec3 *pos, float yaw)
+{
+	Player *player = ThePlayerList ? ThePlayerList->getNthPlayer(playerIndex) : nullptr;
+	const Int slot = slotOfPlayer(player);
+	const ThingTemplate *tmpl = slot >= 0 && TheThingFactory ? TheThingFactory->findTemplate(survivorOfSlot(slot)) : nullptr;
+	if (!tmpl || !player->getDefaultTeam())
+		return 0;
+	Object *obj = TheThingFactory->newObject(tmpl, player->getDefaultTeam());
+	if (!obj)
+		return 0;
+	Coord3D p;
+	p.set(pos->x, pos->y, TheTerrainLogic ? TheTerrainLogic->getGroundHeight(pos->x, pos->y) : pos->z);
+	obj->setPosition(&p);
+	obj->setOrientation(yaw);
+	player->onUnitCreated(nullptr, obj);
+	return (uint32_t)obj->getID();
+}
+
+int32_t cbMoney(int32_t playerIndex)
+{
+	Player *player = ThePlayerList ? ThePlayerList->getNthPlayer(playerIndex) : nullptr;
+	return player && player->getMoney() ? (int32_t)player->getMoney()->countMoney() : 0;
+}
+
 AsciiString Zhbo_ZombiesStartObject(Int slotNum, Player *player)
 {
 	if (!isZombiesMap() || !player || !ThePlayerList)
 		return AsciiString::TheEmptyString;
+	// BO2's starting points (level.player_starting_points) in the one wallet, not the skirmish's
+	// starting cash.
+	if (Money *money = player->getMoney())
+	{
+		money->withdraw(money->countMoney(), FALSE);
+		money->deposit((UnsignedInt)std::max(0, (int)zhbo_zombie_start_points()), FALSE, FALSE);
+	}
 	// The zombies are the neutral side's (they join their spawn point's): it and the player are
 	// enemies both ways, so the zombies attack him and his units fight them.
 	Player *neutral = ThePlayerList->getNeutralPlayer();
@@ -1340,9 +1397,8 @@ AsciiString Zhbo_ZombiesStartObject(Int slotNum, Player *player)
 		neutral->setPlayerRelationship(player, ENEMIES);
 		player->setPlayerRelationship(neutral, ENEMIES);
 	}
-	const Int n = (Int)(sizeof(zhbo_names::SURVIVOR_OBJECTS) / sizeof(zhbo_names::SURVIVOR_OBJECTS[0]));
-	const char *survivor = zhbo_names::SURVIVOR_OBJECTS[(slotNum % n + n) % n];
-	logf("zombies map: player slot %d starts as %s, no buildings", (int)slotNum, survivor);
+	const char *survivor = survivorOfSlot(slotNum);
+	logf("zombies map: player slot %d starts as %s, no buildings, %d points", (int)slotNum, survivor, (int)zhbo_zombie_start_points());
 	return AsciiString(survivor);
 }
 
@@ -1400,6 +1456,14 @@ Bool Zhbo_HasLivingGeneral(const Player *player)
 	Bool found = FALSE;
 	if (player)
 		player->iterateObjects(noteLivingGeneral, &found);
+	// On a Zombies map the survivors stand together, as BO2's players do: a player whose survivor
+	// fell is back at the next round (the core's spectators_respawn) while any survivor lives, and
+	// the game is over when none does.
+	if (!found && player && s_zombiesMap && ThePlayerList)
+		for (Int i = 0; i < ThePlayerList->getPlayerCount() && !found; ++i)
+			if (const Player *other = ThePlayerList->getNthPlayer(i))
+				if (other != player && other->isPlayerActive())
+					other->iterateObjects(noteLivingGeneral, &found);
 	return found;
 }
 

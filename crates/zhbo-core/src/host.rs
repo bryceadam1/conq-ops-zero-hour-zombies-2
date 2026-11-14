@@ -176,6 +176,15 @@ pub trait LogicHost {
     /// Add `amount` (negative: take) to Zero Hour player `player`'s money: Zombies points and
     /// Zero Hour cash are one wallet.
     fn add_cash(&self, _player: i32, _amount: i32) {}
+    /// Stand Zero Hour player `player`'s survivor General (his slot's) at `pos`: BO2's
+    /// `spectators_respawn`. Its id, or 0.
+    fn spawn_survivor(&self, _player: i32, _pos: Vec3, _yaw: f32) -> u32 {
+        0
+    }
+    /// Zero Hour player `player`'s money (logic state: the one wallet).
+    fn money(&self, _player: i32) -> i32 {
+        0
+    }
     /// The structures `general` can build (his build menu), with whether each can be placed now.
     fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
         Vec::new()
@@ -318,6 +327,10 @@ pub struct LogicApi {
     pub order_attack: Option<extern "C" fn(id: u32, target: u32)>,
     pub set_max_health: Option<extern "C" fn(id: u32, health: f32)>,
     pub add_cash: Option<extern "C" fn(player: i32, amount: i32)>,
+    /// Pending for the next ABI bump: stand player `player`'s survivor General (his slot's, as a
+    /// Zombies map starts him) at `pos`; its id, or 0. And player `player`'s money.
+    pub spawn_survivor: Option<extern "C" fn(player: i32, pos: *const Vec3, yaw: f32) -> u32>,
+    pub money: Option<extern "C" fn(player: i32) -> i32>,
 }
 
 #[repr(C)]
@@ -477,6 +490,14 @@ impl LogicHost for CLogicHost {
         if let Some(f) = self.0.add_cash {
             f(player, amount);
         }
+    }
+
+    fn spawn_survivor(&self, player: i32, pos: Vec3, yaw: f32) -> u32 {
+        self.0.spawn_survivor.map_or(0, |f| f(player, &pos, yaw))
+    }
+
+    fn money(&self, player: i32) -> i32 {
+        self.0.money.map_or(0, |f| f(player))
     }
 
     fn destroy(&self, id: u32) {

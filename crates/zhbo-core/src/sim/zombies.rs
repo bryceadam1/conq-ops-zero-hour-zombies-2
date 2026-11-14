@@ -56,13 +56,16 @@ pub struct Rounds {
     /// The map is a Zombies map (its objects include a spawn point; the bridge says so as the map
     /// loads, `zhbo_zombies_map_loaded`). Off, the engine never looks for spawn points.
     pub zombies_map: bool,
+    /// The Zero Hour players in the game (BO2's `get_players()`): every owner of a survivor seen,
+    /// in the order first seen. A player whose survivor fell stays one: he is respawned.
+    pub players: Vec<i32>,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new() }
     }
 }
 
@@ -78,6 +81,50 @@ impl Sim {
     /// The survivors in the game: the seats whose General is a survivor (BO2's `get_players()`).
     fn survivors(&self) -> Vec<&PlayerSim> {
         self.players.iter().flatten().filter(|p| p.survivor).collect()
+    }
+
+    /// The living survivor Generals on the map (any player's, a seat's or not).
+    fn living_survivors(&self, host: &dyn LogicHost) -> Vec<ObjInfo> {
+        let (lo, hi) = host.extent();
+        let mut objs = Vec::new();
+        host.query((lo + hi) * 0.5, (hi - lo).length() * 0.5, 0, &mut objs);
+        objs.retain(|o| o.has(objflags::SURVIVOR) && !o.has(objflags::DEAD));
+        objs
+    }
+
+    /// Note every player with a living survivor as in the game.
+    fn note_players(&mut self, host: &dyn LogicHost) {
+        for o in self.living_survivors(host) {
+            if !self.rounds.players.contains(&o.owner_player) {
+                self.rounds.players.push(o.owner_player);
+            }
+        }
+    }
+
+    /// BO2's `spectators_respawn` (co-op only, `round_think`'s `1 != players.size`): each player in
+    /// the game without a living survivor gets his survivor back beside a living one, and past
+    /// `RespawnFloorRound` at least `RespawnFloorPoints` (`_zm.gsc:2543-2550`).
+    fn respawn_players(&mut self, host: &dyn LogicHost, vars: &Vars) {
+        if self.rounds.players.len() <= 1 {
+            return;
+        }
+        let living = self.living_survivors(host);
+        let Some(beside) = living.first() else { return };
+        for k in 0..self.rounds.players.len() {
+            let player = self.rounds.players[k];
+            if living.iter().any(|o| o.owner_player == player) {
+                continue;
+            }
+            let at = beside.pos + Vec3::new(20.0 * (k as f32 + 1.0), 0.0, 0.0);
+            let id = host.spawn_survivor(player, at, beside.yaw);
+            host.log(&format!("zombies: player {player}'s survivor {id} back for round {}", self.rounds.round));
+            if id != 0 && self.rounds.round > vars.respawn_floor_round {
+                let money = host.money(player);
+                if money < vars.respawn_floor_points {
+                    host.add_cash(player, vars.respawn_floor_points - money);
+                }
+            }
+        }
     }
 
     /// One logic frame of the round engine (after the seats have stepped).
@@ -96,9 +143,10 @@ impl Sim {
                 host.query((lo + hi) * 0.5, (hi - lo).length() * 0.5, 0, &mut objs);
                 let spawners: Vec<u32> = objs.iter().filter(|o| o.has(objflags::SPAWNER) && !o.has(objflags::DEAD)).map(|o| o.id).collect();
                 if !spawners.is_empty() {
-                    host.log(&format!("zombies: {} spawn points; round 1 begins", spawners.len()));
+                    host.log(&format!("zombies: {} spawn points; round {} begins", spawners.len(), vars.start_round));
                     self.rounds.spawners = spawners;
-                    self.start_round(host, &vars, 1);
+                    self.note_players(host);
+                    self.start_round(host, &vars, vars.start_round.max(1));
                 }
             }
             return;
@@ -114,6 +162,7 @@ impl Sim {
                 if left <= 0.0 {
                     let next = (self.rounds.round + 1).min(255);
                     self.start_round(host, &vars, next);
+                    self.respawn_players(host, &vars);
                 } else {
                     self.rounds.phase = Phase::Between { left };
                 }
@@ -127,6 +176,7 @@ impl Sim {
                     self.rounds.next_spawn = vars.spawn_delay_in(self.rounds.round);
                 }
                 if scan {
+                    self.note_players(host);
                     self.send_zombies(host);
                 }
                 if self.rounds.to_spawn == 0 && self.rounds.alive.is_empty() {
@@ -305,6 +355,20 @@ mod tests {
         assert!(matches!(sim.rounds.phase, Phase::Between { .. }));
         step(&mut sim, &host, (vars.between_rounds / LOGIC_DT) as u32 + 2);
         assert_eq!((sim.rounds.round, sim.rounds.phase), (2, Phase::Fighting));
+    }
+
+    #[test]
+    fn a_fallen_survivor_comes_back_at_the_next_round_in_co_op() {
+        let (mut sim, host) = zombies_map();
+        host.add(ObjInfo { id: 2, flags: objflags::INFANTRY | objflags::GENERAL | objflags::SURVIVOR, pos: Vec3::new(50.0, 0.0, 0.0), ..general(2, 1) });
+        let vars = Vars::get();
+        step(&mut sim, &host, SCAN_FRAMES + 1 + (vars.spawn_delay / LOGIC_DT) as u32 * vars.zombie_total(1, 2) + 2);
+        assert_eq!(sim.rounds.players, vec![0, 1]);
+        // Player 1's survivor falls, then the round's zombies.
+        host.objects.borrow_mut().iter_mut().filter(|o| o.id == 2 || o.has(objflags::ZOMBIE)).for_each(|o| o.flags |= objflags::DEAD);
+        step(&mut sim, &host, 2 + (vars.between_rounds / LOGIC_DT) as u32 + 2);
+        assert_eq!(sim.rounds.round, 2);
+        assert_eq!(*host.respawned.borrow(), vec![1], "player 1 back for round 2");
     }
 
     #[test]

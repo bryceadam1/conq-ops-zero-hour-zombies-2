@@ -179,6 +179,8 @@ void cbSmoke(const ZhboVec3 *at, float radius);
 void cbOrderAttack(uint32_t id, uint32_t target);
 void cbSetMaxHealth(uint32_t id, float health);
 void cbAddCash(int32_t player, int32_t amount);
+uint32_t cbSpawnSurvivor(int32_t player, const ZhboVec3 *pos, float yaw);
+int32_t cbMoney(int32_t player);
 void cbHeal(uint32_t id, float amount);
 int32_t cbBuildOptions(uint32_t general, ZhboBuildOption *out, int32_t cap);
 int32_t cbCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);

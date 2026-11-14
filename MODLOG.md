@@ -15567,3 +15567,23 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - The `--replay` leg passes all five checks again.
   - The multiplayer leg passes all 27 (state hash agrees on all 2757 common frames).
   - The Zombies map still starts its survivors and round 1.
+
+## Zombies: starting points and co-op survival (2026-11-14)
+
+- **Starting points:** BO2 starts each player at `level.player_starting_points = round_number * 500`
+  (`_zm.gsc:839`, given in `_zm_stats.gsc:184`), the start round being the game setting (default 1).
+  The bridge sets each player's money to it as it stands his survivor (`zhbo_zombie_start_points`),
+  replacing the skirmish's starting cash. Verified in game: both players start at 500.
+- **Respawn:** `spectators_respawn` (co-op only: `round_think` runs it when there is more than one
+  player, `:3485-3492`) brings the dead back.
+  - The round engine notes every player with a living survivor (`Rounds::players`, hashed).
+  - At each new round it stands a fallen player's survivor beside a living one (the new
+    `spawn_survivor`, his slot's survivor) and tops him up to 1500 points past round 6
+    (`:2543-2550`, the new `money`).
+  - Verified by `a_fallen_survivor_comes_back_at_the_next_round_in_co_op`. Not yet seen in game:
+    the scripted runs' survivors don't win a round.
+- **Game over:** on a Zombies map no player is defeated while any survivor lives (the bridge's
+  `Zhbo_HasLivingGeneral` looks across the players there), so the game ends when every survivor is
+  down, as BO2's does.
+- **Not yet ported:** last stand (downed, revive, Quick Revive); a solo player's death ends the game,
+  as BO2's does without Quick Revive.

@@ -193,6 +193,12 @@ impl LogicHost for Guarded<'_> {
     fn add_cash(&self, player: i32, amount: i32) {
         self.host.add_cash(player, amount)
     }
+    fn spawn_survivor(&self, player: i32, pos: Vec3, yaw: f32) -> u32 {
+        self.host.spawn_survivor(player, pos, yaw)
+    }
+    fn money(&self, player: i32) -> i32 {
+        self.host.money(player)
+    }
     fn disable(&self, id: u32, kind: i32, seconds: f32) {
         // The Shock Charge's zap skips a General with `proximityprotection`; the script tells the
         // two stuns apart by the weapon (`onweapondamage`'s `switch ( sweapon )`,

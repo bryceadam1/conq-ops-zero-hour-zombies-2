@@ -251,6 +251,10 @@ pub struct Vars {
     pub score_bonus_head: i32,
     pub score_bonus_neck: i32,
     pub score_bonus_torso: i32,
+    pub start_round: u32,
+    pub starting_points_per_round: i32,
+    pub respawn_floor_round: u32,
+    pub respawn_floor_points: i32,
 }
 
 impl Vars {
@@ -279,7 +283,16 @@ impl Vars {
             score_bonus_head: int("zombie_score_bonus_head", 50, 1),
             score_bonus_neck: int("zombie_score_bonus_neck", 20, 1),
             score_bonus_torso: int("zombie_score_bonus_torso", 10, 1),
+            start_round: rounds_value(ini, "StartRound").unwrap_or(1.0) as u32,
+            starting_points_per_round: rounds_value(ini, "StartingPointsPerRound").unwrap_or(500.0) as i32,
+            respawn_floor_round: rounds_value(ini, "RespawnFloorRound").unwrap_or(6.0) as u32,
+            respawn_floor_points: rounds_value(ini, "RespawnFloorPoints").unwrap_or(1500.0) as i32,
         }
+    }
+
+    /// Each player's points at the start (`level.player_starting_points`, `_zm.gsc:839`).
+    pub fn starting_points(&self) -> i32 {
+        self.start_round as i32 * self.starting_points_per_round
     }
 
     /// The vars over the installed rules and the shipped `zombies.ini`.
@@ -429,6 +442,8 @@ mod tests {
         assert_eq!((RunCycle::of(35), RunCycle::of(36), RunCycle::of(71)), (RunCycle::Walk, RunCycle::Run, RunCycle::Sprint));
         assert_eq!((v.score_kill[0], v.score_damage, v.score_bonus_melee), (50, 10, 80));
         assert_eq!(v.ai_limit, 24);
+        assert_eq!(v.starting_points(), 500);
+        assert_eq!((v.respawn_floor_round, v.respawn_floor_points), (6, 1500));
     }
 
     #[test]
