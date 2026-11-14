@@ -15514,3 +15514,47 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - Zone activation (`zombie_spawn_locations` limited to active zones): every spawn point is live.
   - Points for overhead (Zero Hour weapon) kills: only the sim's BO2 hits pay.
   - A 4-player base map.
+
+## Voice: the TTS bake-off and Fish S2-Pro's throughput (2026-11-14)
+
+- **Bake-off** (`tools/voice/tts/`, 100 lines in 10 LibriTTS-R reference voices, scored by
+  `score.py` with Whisper base.en):
+
+  | model | WER | names heard | voice match | compute per s of audio |
+  |---|---|---|---|---|
+  | Kokoro-82M (preset voices, Mac) | 0.160 | 0.39 | 0.749 | 0.17 s |
+  | Audio8-TTS | 0.171 | 0.39 | 0.967 | 1.60 s |
+  | Fish S2-Pro (fish-speech server) | 0.185 | 0.41 | 0.963 | 1.92 s |
+
+  All three are equally intelligible; Fish and Audio8 clone the reference voice, Kokoro cannot.
+  Fish S2-Pro was chosen as the primary voice for the corpus (cloning, and SGLang-Omni batches
+  it), Kokoro as the cheap second.
+- **Fish through SGLang-Omni** (`fish_sglang.sh`, `fish_bench.py`, one g6e.xlarge L40S spot):
+
+  | concurrency | clips | failed | × real time |
+  |---|---|---|---|
+  | 1 | 48 | 0 | 1.63 |
+  | 4 | 48 | 0 | 5.13 |
+  | 8 | 48 | 0 | 8.82 |
+  | 16 | 48 | 0 | 13.48 |
+
+  Still rising at 16, so the next run should try 32 and 64. The machine's first 20 minutes go
+  to pulling the 65 GB image.
+- **Gotchas, each a lost run (about $0.70 apiece):**
+  - The image's entrypoint git-pulls `/workspace/sglang-omni`; mounting a host checkout there
+    fails ("dubious ownership"). Let the entrypoint clone it and use the image's Python.
+  - The Deep Learning AMI's python3 has no `venv`: the client runs inside the server container.
+  - The server refuses reference URLs that resolve to loopback; copy the clips into the
+    container and pass file paths.
+  - At the default `mem_fraction_static` (0.85) the reference encoder, a separate process on the
+    same GPU, runs out of CUDA memory: 45 of 48 requests failed. `--mem-fraction-static 0.6`.
+  - A spot request can stay "active" after its instance is terminated and still count against
+    the one-instance spot quota (`MaxSpotInstanceCountExceeded`); `cloud.py terminate` now
+    cancels it. A g6e can also sit in "shutting-down" for 10 minutes, which blocks the next launch
+    the same way; `launch` retries.
+- **What a million clips would cost.** The spoken sentences average 10 words, about 4.2 s of
+  speech each, so 1M clips are about 4.2M s. At 13.5× that is 86 GPU-hours (about $155); even at
+  an optimistic 25× it is about $85, against the $25 month that must also pay for training.
+  Kokoro on the Mac at 0.17 s per second would take about 200 hours. The corpus's audio has to be
+  a subset: roughly 75k Fish clips for $8 of GPU at about 20×, plus Kokoro for more voices.
+- AWS so far: $6.20 (the bake-off $1.62, six Fish runs $4.58).
