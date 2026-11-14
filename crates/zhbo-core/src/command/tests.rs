@@ -539,7 +539,7 @@ fn a_command_splits_into_the_grammars_steps() {
     let mut rng = Rng::new(5);
     for _ in 0..300 {
         let iv = super::sample::invented_vocabulary(&mut rng);
-        let mut s = super::sample::Sampler { rng: Rng::new(rng.next_u32()), vocab: &iv };
+        let mut s = super::sample::Sampler::new(Rng::new(rng.next_u32()), &iv);
         let text = print(&s.command(), &iv);
         let steps = phrases(&text, &iv, &counts).unwrap_or_else(|| panic!("'{text}' did not split"));
         assert_eq!(steps.join(" "), text);

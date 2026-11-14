@@ -1,9 +1,18 @@
-//! The voice model's training set (docs/COMMANDS.md section 11), in two steps:
+//! The voice model's training set (docs/COMMANDS.md section 11):
 //!
 //! ```text
 //! cargo run -p zhbo-core --example voice_corpus -- sample <dir> <count> <batches> <seed>
 //! cargo run -p zhbo-core --example voice_corpus -- assemble <dir> <seed>
+//! cargo run --release -p zhbo-core --example voice_corpus -- corpus <dir> <count> <seed> [per vocabulary]
 //! ```
+//!
+//! `corpus` is the large, balanced draw (the scale-up, 200k commands): commands are accepted by
+//! `sample::Quotas` (each verb's and length's share, a floor for every rarer feature, the sampler
+//! aimed at whatever lags), over a fresh `sample::corpus_vocabulary` every `per vocabulary`
+//! commands (25), split 90/5/5 by vocabulary so the test set's names are never trained on. It
+//! writes `<dir>/canonical.tsv` (`id`, vocabulary id, split, canonical text, the names a
+//! paraphrase must keep), `<dir>/vocab.tsv` and `<dir>/corpus_stats.txt` (what was drawn of each
+//! verb, length and feature). Deterministic for its seed: the files need not be kept.
 //!
 //! `sample` draws `count` canonical commands, each over its own invented vocabulary
 //! (`command::sample`), and writes `<dir>/canonical.tsv` (`id`, canonical text, the names a
@@ -32,12 +41,75 @@ fn main() {
     let r = match args.first().map(String::as_str) {
         Some("sample") if args.len() == 5 => sample(Path::new(&args[1]), args[2].parse().unwrap(), args[3].parse().unwrap(), args[4].parse().unwrap()),
         Some("assemble") if args.len() == 3 => assemble(Path::new(&args[1]), args[2].parse().unwrap()),
-        _ => Err("usage: voice_corpus sample <dir> <count> <batches> <seed> | assemble <dir> <seed>".into()),
+        Some("corpus") if args.len() >= 4 => corpus(Path::new(&args[1]), args[2].parse().unwrap(), args[3].parse().unwrap(), args.get(4).and_then(|n| n.parse().ok()).unwrap_or(25)),
+        _ => Err("usage: voice_corpus sample <dir> <count> <batches> <seed> | assemble <dir> <seed> | corpus <dir> <count> <seed> [per vocabulary]".into()),
     };
     if let Err(e) = r {
         eprintln!("voice_corpus: {e}");
         std::process::exit(1);
     }
+}
+
+fn corpus(dir: &Path, count: usize, seed: u32, per_vocab: usize) -> Result<(), String> {
+    use zhbo_core::command::sample::{corpus_vocabulary, features, Quotas};
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let mut rng = Rng::new(seed);
+    let mut quotas = Quotas::new(count);
+    let (mut lines, mut vocabs): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    let mut seen = std::collections::BTreeSet::new();
+    let (mut tries, mut v, mut vocab_id, mut in_vocab) = (0usize, corpus_vocabulary(&mut rng), 0usize, 0usize);
+    vocabs.push(format!("v{vocab_id:05}\t{}", vocab_line(&v)));
+    while quotas.accepted < count {
+        tries += 1;
+        if tries > count * 400 {
+            return Err(format!("gave up after {tries} draws with {} accepted; short of {:?}", quotas.accepted, quotas.short()));
+        }
+        if in_vocab >= per_vocab {
+            v = corpus_vocabulary(&mut rng);
+            vocab_id += 1;
+            in_vocab = 0;
+            vocabs.push(format!("v{vocab_id:05}\t{}", vocab_line(&v)));
+        }
+        let mut s = Sampler::new(Rng::new(rng.next_u32()), &v);
+        // Aimed every other draw: plain draws keep the mix natural.
+        if tries % 2 == 0 {
+            s.focus = quotas.focus();
+        }
+        s.adjective_percent = 2;
+        let cmd = s.command();
+        let text = print(&cmd, &v);
+        if parse(&text, &v).ok().as_ref() != Some(&cmd) {
+            return Err(format!("'{text}' does not round-trip"));
+        }
+        if seen.contains(&text) || !quotas.offer(&features(&cmd), text.split(' ').count()) {
+            continue;
+        }
+        seen.insert(text.clone());
+        in_vocab += 1;
+        // The split by vocabulary: a test vocabulary's names are never in training.
+        let vid = format!("v{vocab_id:05}");
+        let h = vid.bytes().fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619)) % 100;
+        let split = match h {
+            0..=89 => "train",
+            90..=94 => "dev",
+            _ => "test",
+        };
+        lines.push(format!("c{:06}\t{vid}\t{split}\t{text}\t{}", lines.len(), names_in(&text, &v).join("|")));
+    }
+    fs::write(dir.join("canonical.tsv"), lines.join("\n") + "\n").map_err(|e| e.to_string())?;
+    fs::write(dir.join("vocab.tsv"), vocabs.join("\n") + "\n").map_err(|e| e.to_string())?;
+    let mut stats = format!("{} commands over {} vocabularies, {tries} draws\nlengths (1-3, 4-6, 7-10, 11-15, 16+ words): {:?}\nverbs:\n", lines.len(), vocabs.len(), quotas.length_counts);
+    for (verb, n) in &quotas.verb_counts {
+        stats.push_str(&format!("  {verb}: {n}\n"));
+    }
+    stats.push_str("features:\n");
+    for (f, n) in &quotas.feature_counts {
+        stats.push_str(&format!("  {f}: {n}\n"));
+    }
+    stats.push_str(&format!("short of floors: {:?}\n", quotas.short()));
+    fs::write(dir.join("corpus_stats.txt"), &stats).map_err(|e| e.to_string())?;
+    eprint!("{stats}");
+    Ok(())
 }
 
 fn sample(dir: &Path, count: usize, batches: usize, seed: u32) -> Result<(), String> {
@@ -48,7 +120,7 @@ fn sample(dir: &Path, count: usize, batches: usize, seed: u32) -> Result<(), Str
     let mut seen = std::collections::BTreeSet::new();
     while lines.len() < count {
         let v = invented_vocabulary(&mut rng);
-        let mut s = Sampler { rng: Rng::new(rng.next_u32()), vocab: &v };
+        let mut s = Sampler::new(Rng::new(rng.next_u32()), &v);
         let cmd = s.command();
         let text = print(&cmd, &v);
         // Canonical by construction; held to it anyway.

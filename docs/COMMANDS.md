@@ -689,6 +689,16 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      `heard*.tsv`, which the training script adds. A row stays only if the transcript still has
      every name of its label: where Whisper lost a name, the row taught the model to make one up.
      4,541 rows kept of 6,842 (a third of them English-named).
+  9. **The scale-up corpus** (`voice_corpus corpus <dir> <count> <seed>`, for the 200k canonical
+     commands and their 1M paraphrases; deterministic, so its files need not be kept). Commands
+     are accepted by `sample::Quotas`: each verb's share (the sampler's weights, no verb under
+     1%), each length's (most commands short), and a floor for every rarer feature (no
+     selection 15%, sequences 10%, places 8%, exclusions 6%, a building's facing 2%, walls 1%, …).
+     The sampler is aimed (`Sampler::focus`) at whatever lags, every other draw, and draws fewer
+     adjectives than the first set. Vocabularies (`sample::corpus_vocabulary`) change every 25
+     commands: about half renamed into English, some with a sound-alike pair, some with a digit
+     or acronym (`mk2 … tank`, `ecm tank`); the split is by vocabulary, so the test set's names
+     are never trained on. A 20,000-command draw meets every floor.
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
   the heard rows, with a prompt that carries the match's names (`--prompt

@@ -209,6 +209,303 @@ pub fn invented_vocabulary(rng: &mut Rng) -> Vocabulary {
     }
 }
 
+/// A vocabulary for the large training corpus: [`invented_vocabulary`] with more kinds of name.
+/// About half are renamed into English words ([`Renaming`]); some get a sound-alike pair (a type
+/// whose invented word differs from another's by one syllable, so the model must hear the
+/// difference); some carry a digit or a letter acronym (`mk2 korgor tank`, `ecm tank`), as mods'
+/// and real games' names do. Returned with the renaming applied, never with grammar collisions.
+pub fn corpus_vocabulary(rng: &mut Rng) -> Vocabulary {
+    loop {
+        let mut v = invented_vocabulary(rng);
+        // A sound-alike: one type's invented word with one syllable swapped, as another type.
+        if chance(rng, 50) {
+            if let Some(n) = v.types.iter().find(|n| n.singular.split(' ').any(is_invented)).cloned() {
+                let word = n.singular.split(' ').find(|w| is_invented(w)).unwrap_or("").to_string();
+                let syl: Vec<&str> = SYLLABLES.iter().copied().filter(|s| word.contains(s)).collect();
+                if let Some(from) = syl.first() {
+                    let to = pick(rng, &SYLLABLES);
+                    let alike = n.singular.replacen(from, to, 1);
+                    if alike != n.singular && !v.types.iter().any(|t| t.singular == alike) {
+                        v.types.push(Noun::new(&alike, &plural(&alike)));
+                    }
+                }
+            }
+        }
+        // A marked variant: a digit (`mk2`) or a letter acronym before a unit noun.
+        if chance(rng, 15) {
+            let mark = if chance(rng, 50) { format!("mk{}", 2 + below(rng, 3)) } else { ["ecm", "sam", "apc", "emp", "rpg"][below(rng, 5)].to_string() };
+            let name = format!("{mark} {}", pick(rng, &UNIT_NOUNS));
+            if !v.types.iter().any(|t| t.singular == name) {
+                v.types.push(Noun::new(&name, &plural(&name)));
+            }
+        }
+        if chance(rng, 50) {
+            let r = Renaming::english(rng, &v);
+            v = r.vocabulary(&v);
+        }
+        if v.problems().is_empty() {
+            return v;
+        }
+    }
+}
+
+/// What a command contains, as tags the corpus balances on: its verbs (`verb:<words>`), and
+/// `implied` (no selection), `multi` (several groups), `except`, `then`, `them`, `that`, `team`,
+/// `group`, `class`, `units`, `count`, `half`, `superlative`, `adjective`, `near`, `region`,
+/// `my group`, `place`, `me`, `there`, `offset`, `facing`, `line`, `thing count`, `name them`,
+/// `make group`, `enemy`, `own`, `allied`, `neutral`.
+pub fn features(cmd: &Command) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut tag = |t: &str| {
+        if !out.iter().any(|x| x == t) {
+            out.push(t.to_string());
+        }
+    };
+    fn query(q: &Query, tag: &mut dyn FnMut(&str)) {
+        match q.base {
+            Base::Class(_) => tag("class"),
+            Base::Units => tag("units"),
+            Base::Type(_) => {}
+        }
+        match q.quantity {
+            Quantity::Count(_) => tag("count"),
+            Quantity::Half => tag("half"),
+            _ => {}
+        }
+        if q.superlative.is_some() {
+            tag("superlative");
+        }
+        if !q.adjectives.is_empty() {
+            tag("adjective");
+        }
+        if let Some(p) = &q.filters.near {
+            tag("near");
+            point(p, tag);
+        }
+        if q.filters.region.is_some() {
+            tag("region");
+        }
+        if q.filters.my_group {
+            tag("my group");
+        }
+    }
+    fn point(p: &Point, tag: &mut dyn FnMut(&str)) {
+        match p {
+            Point::Me => tag("me"),
+            Point::There => tag("there"),
+            Point::Place(_) => tag("place"),
+            Point::Object(ObjectRef::That) => tag("that"),
+            Point::Object(ObjectRef::Query { relation, query: q }) => {
+                match relation {
+                    Relation::Enemy => tag("enemy"),
+                    Relation::Own => tag("own"),
+                    Relation::Allied => tag("allied"),
+                    Relation::Neutral | Relation::Civilian => tag("neutral"),
+                    Relation::Any => {}
+                }
+                query(q, tag);
+            }
+        }
+    }
+    match &cmd.selection {
+        None => tag("implied"),
+        Some(sel) => {
+            if sel.include.len() > 1 {
+                tag("multi");
+            }
+            if !sel.exclude.is_empty() {
+                tag("except");
+            }
+            for g in sel.include.iter().chain(&sel.exclude) {
+                match g {
+                    Group::Query(q) => query(q, &mut tag),
+                    Group::ControlGroup(_) => tag("group"),
+                    Group::Team(_) => tag("team"),
+                    Group::Them => tag("them"),
+                    Group::That => tag("that"),
+                }
+            }
+        }
+    }
+    if cmd.orders.len() > 1 {
+        tag("then");
+    }
+    for o in &cmd.orders {
+        match o {
+            Order::NameThem(_) => tag("name them"),
+            Order::MakeGroup(_) => tag("make group"),
+            Order::Verb { verb, thing, target } => {
+                tag(&format!("verb:{verb}"));
+                if thing.as_ref().is_some_and(|t| t.count > 1) {
+                    tag("thing count");
+                }
+                if let Some(t) = target {
+                    if t.location.offset.is_some() {
+                        tag("offset");
+                    }
+                    point(&t.location.point, &mut tag);
+                    if t.facing.is_some() {
+                        tag("facing");
+                    }
+                    if let Some(end) = &t.end {
+                        tag("line");
+                        point(&end.point, &mut tag);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The corpus's balance: each verb's share (the sampler's weights, but no verb under 1%), each
+/// length's share (in words, most commands short), and a floor for every rarer feature. A drawn
+/// command is accepted while its verb and length are under their share; near the end, only
+/// commands that bring a feature still under its floor.
+pub struct Quotas {
+    target: usize,
+    verbs: std::collections::BTreeMap<String, f64>,
+    lengths: [f64; 5],
+    floors: Vec<(&'static str, f64)>,
+    pub verb_counts: std::collections::BTreeMap<String, usize>,
+    pub length_counts: [usize; 5],
+    pub feature_counts: std::collections::BTreeMap<String, usize>,
+    pub accepted: usize,
+}
+
+impl Quotas {
+    pub fn new(target: usize) -> Quotas {
+        let verbs = fixed_verbs();
+        let total: f64 = verbs.iter().map(|v| verb_weight(&v.words) as f64).sum();
+        let mut shares: std::collections::BTreeMap<String, f64> = verbs.iter().map(|v| (v.words.clone(), (verb_weight(&v.words) as f64 / total).max(0.01))).collect();
+        let sum: f64 = shares.values().sum();
+        shares.values_mut().for_each(|s| *s /= sum);
+        Quotas {
+            target,
+            verbs: shares,
+            lengths: [0.15, 0.35, 0.30, 0.15, 0.05],
+            floors: vec![
+                ("implied", 0.15),
+                ("then", 0.10),
+                ("superlative", 0.10),
+                ("count", 0.08),
+                ("place", 0.08),
+                ("adjective", 0.08),
+                ("multi", 0.08),
+                ("except", 0.06),
+                ("group", 0.06),
+                ("them", 0.06),
+                ("that", 0.06),
+                ("near", 0.06),
+                ("offset", 0.06),
+                ("team", 0.04),
+                ("region", 0.04),
+                ("half", 0.03),
+                ("my group", 0.03),
+                ("facing", 0.02),
+                ("line", 0.01),
+                ("name them", 0.01),
+                ("make group", 0.01),
+            ],
+            verb_counts: Default::default(),
+            length_counts: [0; 5],
+            feature_counts: Default::default(),
+            accepted: 0,
+        }
+    }
+
+    fn bucket(words: usize) -> usize {
+        match words {
+            0..=3 => 0,
+            4..=6 => 1,
+            7..=10 => 2,
+            11..=15 => 3,
+            _ => 4,
+        }
+    }
+
+    /// Why a command with these `features` and `words` would be refused, if it would.
+    pub fn verdict(&self, features: &[String], words: usize) -> Result<(), &'static str> {
+        let left = self.target.saturating_sub(self.accepted);
+        if left == 0 {
+            return Err("full");
+        }
+        // A command bringing a feature still under its floor may overshoot its verb's and length's
+        // share (a building's facing is only ever `build`'s): floors come first.
+        let missing: Vec<&str> = self.floors.iter().filter(|(f, share)| (*self.feature_counts.get(*f).unwrap_or(&0) as f64) < share * self.target as f64).map(|(f, _)| *f).collect();
+        let helps = features.iter().any(|f| missing.contains(&f.as_str()));
+        let (verb_slack, length_slack) = if helps { (1.6, 1.3) } else { (1.05, 1.05) };
+        let b = Self::bucket(words);
+        if self.length_counts[b] as f64 >= self.lengths[b] * self.target as f64 * length_slack {
+            return Err("length");
+        }
+        for f in features.iter().filter_map(|f| f.strip_prefix("verb:")) {
+            let share = self.verbs.get(f).copied().unwrap_or(0.01);
+            if *self.verb_counts.get(f).unwrap_or(&0) as f64 >= share * self.target as f64 * verb_slack {
+                return Err("verb");
+            }
+        }
+        // Once what is still missing nears the room left, take only commands that help.
+        let deficit: f64 = self.floors.iter().map(|(f, share)| (share * self.target as f64 - *self.feature_counts.get(*f).unwrap_or(&0) as f64).max(0.0)).sum();
+        if deficit >= left as f64 * 0.5 && !helps {
+            return Err("floors");
+        }
+        Ok(())
+    }
+
+    /// Whether to keep a command with these `features` and `words` (and count it if so).
+    pub fn offer(&mut self, features: &[String], words: usize) -> bool {
+        if self.verdict(features, words).is_err() {
+            return false;
+        }
+        let b = Self::bucket(words);
+        self.accepted += 1;
+        self.length_counts[b] += 1;
+        for f in features {
+            match f.strip_prefix("verb:") {
+                Some(v) => *self.verb_counts.entry(v.to_string()).or_default() += 1,
+                None => *self.feature_counts.entry(f.clone()).or_default() += 1,
+            }
+        }
+        true
+    }
+
+    /// The feature the sampler should aim for next (`Sampler::focus`): of those it can aim for,
+    /// the one furthest behind its floor's pace (its count against its share of what has been
+    /// accepted so far), if any is behind.
+    pub fn focus(&self) -> Vec<String> {
+        let pace = |f: &str| -> f64 {
+            let share = self.floors.iter().find(|(g, _)| *g == f).map_or(0.0, |(_, s)| *s);
+            let want = share * (self.accepted.max(20)) as f64;
+            *self.feature_counts.get(f).unwrap_or(&0) as f64 / want.max(1e-9)
+        };
+        // Short commands lag behind their length's share as plain draws seldom make them; once
+        // their length is full, aiming at them would only be refused.
+        let short_full = self.length_counts[0] as f64 >= self.lengths[0] * self.target as f64;
+        let short_pace = if short_full { f64::INFINITY } else { self.length_counts[0] as f64 / (self.lengths[0] * self.accepted.max(20) as f64) };
+        ["facing", "line", "name them", "make group", "then", "place"]
+            .iter()
+            .map(|f| (pace(f), *f))
+            .chain(std::iter::once((short_pace, "short")))
+            .filter(|(p, _)| *p < 0.9)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, f)| vec![f.to_string()])
+            .unwrap_or_default()
+    }
+
+    /// The floors not met, as `feature have/want`.
+    pub fn short(&self) -> Vec<String> {
+        self.floors
+            .iter()
+            .filter_map(|(f, share)| {
+                let have = *self.feature_counts.get(*f).unwrap_or(&0);
+                let want = (share * self.target as f64) as usize;
+                (have < want).then(|| format!("{f} {have}/{want}"))
+            })
+            .collect()
+    }
+}
+
 /// How often each verb is drawn (out of the sum), the common orders first.
 fn verb_weight(words: &str) -> u32 {
     match words {
@@ -229,9 +526,23 @@ fn verb_weight(words: &str) -> u32 {
 pub struct Sampler<'a> {
     pub rng: Rng,
     pub vocab: &'a Vocabulary,
+    /// Features to aim for (`facing`, `line`, `name them`, `make group`, `then`, `place`): verbs that take them
+    /// and better odds for them, when a corpus is short of them. Empty, the draws are as always.
+    pub focus: Vec<String>,
+    /// The chance, in percent, that a query carries each adjective (6 by default; the corpus
+    /// draws fewer: real commands rarely stack `idle damaged veteran`).
+    pub adjective_percent: u32,
 }
 
-impl Sampler<'_> {
+impl<'a> Sampler<'a> {
+    pub fn new(rng: Rng, vocab: &'a Vocabulary) -> Sampler<'a> {
+        Sampler { rng, vocab, focus: Vec::new(), adjective_percent: 6 }
+    }
+
+    fn focused(&self, feature: &str) -> bool {
+        self.focus.iter().any(|f| f == feature)
+    }
+
     fn chance(&mut self, percent: u32) -> bool {
         chance(&mut self.rng, percent)
     }
@@ -241,15 +552,70 @@ impl Sampler<'_> {
     }
 
     pub fn command(&mut self) -> Command {
+        if self.focused("short") {
+            return self.short();
+        }
         let selection = self.chance(75).then(|| self.selection());
         let first = self.order();
         let mut orders = vec![first];
-        if self.chance(12) {
+        if self.focused("then") || self.chance(12) {
             // Mostly a queued move after the first (the resolver queues moves only).
             let next = if self.chance(70) { self.verb_order(&fixed_verbs().into_iter().find(|v| v.words == "move").unwrap()) } else { self.order() };
             orders.push(next);
         }
         Command { selection, orders }
+    }
+
+    /// A short command, as players give most: no selection or a bare one, a verb, at most a
+    /// plain target (`tanks attack that`, `stop`, `units move to me`).
+    fn short(&mut self) -> Command {
+        let selection = (!self.chance(40)).then(|| {
+            let g = match self.below(10) {
+                0..=5 => {
+                    let n = &self.vocab.types[self.below(self.vocab.types.len())];
+                    let _ = n;
+                    Group::Query(Query {
+                        quantity: Quantity::All,
+                        superlative: None,
+                        adjectives: Vec::new(),
+                        base: if self.chance(70) { Base::Type(self.vocab.types[self.below(self.vocab.types.len())].singular.clone()) } else { Base::Units },
+                        filters: Filters::default(),
+                    })
+                }
+                6 => Group::Them,
+                7 => Group::That,
+                _ => Group::ControlGroup(self.below(10) as u8),
+            };
+            Selection { include: vec![g], exclude: Vec::new() }
+        });
+        let verbs: Vec<VerbDef> = fixed_verbs().into_iter().filter(|v| v.thing.is_none() && v.target.is_none_or(|t| !t.line)).collect();
+        let total: u32 = verbs.iter().map(|v| verb_weight(&v.words)).sum();
+        let mut roll = self.rng.next_u32() % total.max(1);
+        let verb = verbs
+            .iter()
+            .find(|v| {
+                let w = verb_weight(&v.words);
+                if roll < w {
+                    true
+                } else {
+                    roll -= w;
+                    false
+                }
+            })
+            .unwrap_or(&verbs[0])
+            .clone();
+        let target = verb.target.and_then(|slot| {
+            if !slot.required && self.chance(50) {
+                return None;
+            }
+            let point = match self.below(3) {
+                0 if slot.point => Point::Me,
+                1 if slot.point => Point::There,
+                _ => Point::Object(ObjectRef::That),
+            };
+            Some(Box::new(Target { location: Location { offset: None, point }, facing: None, end: None }))
+        });
+        Command { selection, orders: vec![Order::Verb { verb: verb.words.clone(), thing: None, target }] }
     }
 
     fn selection(&mut self) -> Selection {
@@ -317,7 +683,8 @@ impl Sampler<'_> {
         if relation == Relation::Own && mass && quantity == Quantity::One && superlative.is_none() {
             superlative = Some(Superlative::Nearest);
         }
-        let adjectives = Adjective::ALL.iter().copied().filter(|_| chance(&mut self.rng, 6)).collect();
+        let percent = self.adjective_percent;
+        let adjectives = Adjective::ALL.iter().copied().filter(|_| chance(&mut self.rng, percent)).collect();
         let mut f = Filters::default();
         if filters {
             if self.chance(8) {
@@ -345,17 +712,29 @@ impl Sampler<'_> {
         match roll {
             0..=21 => Point::Me,
             22..=43 if there => Point::There,
+            _ if self.focused("place") && !self.vocab.places.is_empty() => Point::Place(self.vocab.places[self.below(self.vocab.places.len())].clone()),
             44..=55 if !self.vocab.places.is_empty() => Point::Place(self.vocab.places[self.below(self.vocab.places.len())].clone()),
             _ => Point::Object(self.object(filters)),
         }
     }
 
     fn order(&mut self) -> Order {
+        if self.focused("name them") {
+            return Order::NameThem(format!("{} {}", word(&mut self.rng), pick(&mut self.rng, &TEAM_NOUNS)));
+        }
+        if self.focused("make group") {
+            return Order::MakeGroup(self.below(10) as u8);
+        }
         match self.below(100) {
             0..=1 => Order::NameThem(format!("{} {}", word(&mut self.rng), pick(&mut self.rng, &TEAM_NOUNS))),
             2..=3 => Order::MakeGroup(self.below(10) as u8),
             _ => {
-                let verbs: Vec<VerbDef> = fixed_verbs().into_iter().filter(|v| v.thing.is_none_or(|(list, _)| !self.vocab.things(list).is_empty())).collect();
+                let (facing, line) = (self.focused("facing"), self.focused("line"));
+                let verbs: Vec<VerbDef> = fixed_verbs()
+                    .into_iter()
+                    .filter(|v| v.thing.is_none_or(|(list, _)| !self.vocab.things(list).is_empty()))
+                    .filter(|v| (!facing || v.target.is_some_and(|t| t.facing)) && (!line || v.target.is_some_and(|t| t.line)))
+                    .collect();
                 let total: u32 = verbs.iter().map(|v| verb_weight(&v.words)).sum();
                 let mut roll = self.rng.next_u32() % total;
                 let verb = verbs.iter().find(|v| {
@@ -380,10 +759,11 @@ impl Sampler<'_> {
             Thing { name, count }
         });
         let target = verb.target.and_then(|slot| {
-            if !slot.required && self.chance(45) {
+            let (facing, line) = (self.focused("facing"), self.focused("line"));
+            if !slot.required && !(facing || line) && self.chance(45) {
                 return None;
             }
-            if slot.line && self.chance(5) {
+            if slot.line && self.chance(if line { 70 } else { 5 }) {
                 let start = Location { offset: None, point: self.point(true, true) };
                 let end = Location { offset: None, point: self.point(true, true) };
                 return Some(Box::new(Target { location: start, facing: None, end: Some(end) }));
@@ -404,7 +784,7 @@ impl Sampler<'_> {
                 let point = if self.chance(15) { Point::Me } else { Point::Object(self.object(true)) };
                 Location { offset: None, point }
             };
-            let facing = (slot.facing && self.chance(10)).then(|| Direction::ALL[self.below(8)]);
+            let facing = (slot.facing && self.chance(if facing { 70 } else { 10 })).then(|| Direction::ALL[self.below(8)]);
             Some(Box::new(Target { location, facing, end: None }))
         });
         Order::Verb { verb: verb.words.clone(), thing, target }
@@ -477,7 +857,7 @@ mod tests {
             let r = Renaming::english(&mut rng, &v);
             let e = r.vocabulary(&v);
             assert!(e.problems().is_empty(), "#{i}: {:?}", e.problems());
-            let mut s = Sampler { rng: Rng::new(rng.next_u32()), vocab: &v };
+            let mut s = Sampler::new(Rng::new(rng.next_u32()), &v);
             let text = print(&s.command(), &v);
             let renamed = r.text(&text);
             let back = parse(&renamed, &e).unwrap_or_else(|err| panic!("#{i}: '{renamed}' (from '{text}'): {err}"));
@@ -488,6 +868,47 @@ mod tests {
                 assert_eq!(r.text(&said), format!("uh, {}, go there.", e.types[0].plural));
             }
         }
+    }
+
+    #[test]
+    fn corpus_vocabularies_have_the_new_name_styles() {
+        let mut rng = Rng::new(21);
+        let (mut english, mut marked, mut alike) = (0, 0, 0);
+        for _ in 0..200 {
+            let v = corpus_vocabulary(&mut rng);
+            assert!(v.problems().is_empty(), "{:?}", v.problems());
+            english += v.types.iter().all(|n| !n.singular.split(' ').any(is_invented)) as usize;
+            marked += v.types.iter().any(|n| n.singular.starts_with("mk") || ["ecm ", "sam ", "apc ", "emp ", "rpg "].iter().any(|m| n.singular.starts_with(m))) as usize;
+            alike += v.types.iter().enumerate().any(|(i, a)| v.types.iter().skip(i + 1).any(|b| a.singular.len() == b.singular.len() && a.singular.chars().zip(b.singular.chars()).filter(|(x, y)| x != y).count() <= 4 && a.singular != b.singular)) as usize;
+        }
+        assert!(english > 60 && marked > 10 && alike > 40, "english {english}, marked {marked}, alike {alike}");
+    }
+
+    #[test]
+    fn the_quotas_balance_a_draw() {
+        let mut rng = Rng::new(31);
+        let mut q = Quotas::new(3000);
+        let mut refused: std::collections::BTreeMap<(String, &str, bool), usize> = Default::default();
+        let mut tries = 0;
+        while q.accepted < 3000 && tries < 400_000 {
+            tries += 1;
+            let v = invented_vocabulary(&mut rng);
+            let mut s = Sampler::new(Rng::new(rng.next_u32()), &v);
+            s.focus = q.focus();
+            let focus = s.focus.clone();
+            let cmd = s.command();
+            let words = print(&cmd, &v).split(' ').count();
+            let f = features(&cmd);
+            if let (Some(want), Err(why)) = (focus.first(), q.verdict(&f, words)) {
+                *refused.entry((want.clone(), why, f.iter().any(|x| x == want))).or_insert(0usize) += 1;
+            }
+            q.offer(&f, words);
+        }
+        assert_eq!(q.accepted, 3000, "short of features: {:?}; focused draws refused (feature, why, had it): {refused:?}; lengths {:?}", q.short(), q.length_counts);
+        assert!(q.short().is_empty(), "{:?}", q.short());
+        // No verb dominates: the commonest is at most its share and a little.
+        let top = q.verb_counts.values().max().copied().unwrap_or(0);
+        assert!(top < 3000 / 6, "{:?}", q.verb_counts);
     }
 
     #[test]
@@ -518,7 +939,7 @@ mod tests {
         let mut verbs = std::collections::BTreeSet::new();
         for i in 0..3000 {
             let v = invented_vocabulary(&mut rng);
-            let mut s = Sampler { rng: Rng::new(rng.next_u32()), vocab: &v };
+            let mut s = Sampler::new(Rng::new(rng.next_u32()), &v);
             let cmd = s.command();
             let text = print(&cmd, &v);
             let back = parse(&text, &v).unwrap_or_else(|e| panic!("#{i}: '{text}' did not parse: {e}"));

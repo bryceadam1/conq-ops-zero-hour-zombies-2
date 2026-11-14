@@ -15144,3 +15144,26 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     the lexical gap whisper-t5-bridge reported.
 - **Kept:** the pipeline. The bridge route would be faster (about 75 ms for encoder and bridge,
   then the decoder) but is about 25 points short.
+
+## Voice: the scale-up corpus's sampler (2026-11-13)
+
+- **Built:** for the 200k canonical commands (then 1M paraphrases):
+  - `sample::Quotas`: verb and length shares, and floors for the rare features.
+  - `sample::features` tags what a command contains.
+  - `Sampler::focus`: verbs and odds aimed at a lagging feature, plus a short-command mode.
+  - `Sampler::adjective_percent`.
+  - `sample::corpus_vocabulary`: about half renamed into English, sound-alike pairs, digit and
+    acronym names.
+  - `voice_corpus corpus`: canonical.tsv with a vocabulary id and a split by vocabulary, and
+    `corpus_stats.txt`.
+- **Gotcha: floors against verb caps.** A building's facing and a wall's line are only ever
+  `build`'s, and `build`'s share filled early, so every aimed draw was refused (tallied by
+  `Quotas::verdict`). A command bringing a feature still under its floor may now overshoot its
+  verb's share by 60% and its length's by 30%.
+- **Gotcha: aiming must skip what would be refused.** Aiming at short commands after their
+  length was full stalled the draw: nothing was accepted, and the aim never changed. The focus
+  now skips full features, and the corpus aims only every other draw.
+- **Result:** a 20,000-command draw over 800 vocabularies (110k draws, about a minute) meets
+  every floor. 11% of commands are 1–3 words; adjectives are on 14% (38% with the old rate). The
+  old `sample` step still reproduces `tools/voice` byte for byte: with no focus and the default
+  adjective rate, the draws are unchanged.
