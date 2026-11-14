@@ -16001,3 +16001,36 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - Verified: `cargo test --workspace` 1501 passed; clippy clean (all features); in game `--shop`
     12/12, `--zombies`, the default leg 22/22, the multiplayer leg (state hash agrees on all 2933
     common frames); the `zombies` gate 0 gaps.
+- **Follow-up, same day: the `zm_weapons` gate's fixes, 8551 → 260 cells.**
+  - Real bugs it found, fixed:
+    - **TranZit's alt modes had no ammo of their own.** `Zombies::defs` skipped the MP table's
+      alt-mode rule (a launcher alt has its own grenades, counted in rounds; G16), so the upgraded
+      M16's launcher shared the rifle's magazine. The rule is now one function
+      (`weapons::alt_mode_ammo`) both tables use.
+    - **Dual wield was lost.** The pair's left gun (`szDualWieldWeaponName`: Mustang & Sally's,
+      the dual Five-sevens') wasn't in the set `Zombies::load` reaches, so the viewmodel converter
+      found no left rig. The left guns now come with their pairs.
+    - **TranZit's icons weren't packed.** The HUD art step gathered only MP weapons' HUD, kill,
+      indicator and d-pad icons, so the Zombies HUD's grenade icons and the obituary had no art.
+      TranZit's now go in too (552 images, none missing).
+    - **Dry-fire clicks:** an alias outside the five shared MP events fell back to the generic
+      click. Such an alias (`wpn_1911_dryfire_plr`, `wpn_fiveseven_dryfire_plr`,
+      `dryfire_pistol_plr`) now gets its own event (`own_dry_fire_event`).
+  - Harness corrections: an alt mode is decided by its inventory type (a TranZit alt names its gun
+    back as its own alt, which made the upgraded M16 look like an alt mode); a pair's left gun rides
+    in its pair's row, as MP's does.
+  - Open, so the gate still fails:
+    - The buildables (jetgun, riot shield): TranZit's build tables aren't ported, and their special
+      fire type and shield aren't converted for Zombies.
+    - The scripts' item weapons (bottles, syrette, knuckle crack, flourishes) and the Claymore:
+      BO2's weapon type `grenade` with an item class and the `specific_use` offhand slot, which the
+      mod's classes have no place for (they're typed as projectiles; a bogus world flash and a dry
+      fire). They never fire in the mod, but the facts differ.
+    - `shared_ammo` (15 weapons): BO2's shared ammo pools by ammo name. The mod has no pools; the
+      flag alone would be gaming the gate.
+    - Built-in attachment parts on 10 alt modes and the M16/Saiga magazines, three hide tags, the
+      Barrett's overlay, the Python's shell eject, the Ray Gun's reload sound, the upgraded M16
+      launcher's clips (MP's `m16a1_grenadier` where TranZit has `m16a2_gl_grenade`).
+  - Verified: `cargo test --workspace` 1501 passed; clippy clean; the `zombies` gate 0 gaps; the
+    TranZit install tests; in game `--shop` 12/12.
+  - **Bump:** `hud::VERSION` → 108 (the icons).

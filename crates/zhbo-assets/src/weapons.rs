@@ -26,8 +26,9 @@ pub fn short_name(attachment: &str) -> String {
     attachment.split('_').next().unwrap_or(attachment).to_string()
 }
 
-/// The converted event for BO2's `emptyFireSoundPlayer` alias. The shipped table carries five
-/// aliases; anything else falls back to the generic click.
+/// The converted event for BO2's `emptyFireSoundPlayer` alias: the shared events of the five MP
+/// aliases (anything unnamed falls back to the generic click). Another alias (TranZit's
+/// `wpn_1911_dryfire_plr`) gets its own event, [`own_dry_fire_event`].
 pub(crate) fn dry_fire_event(alias: Option<&str>) -> &'static str {
     match alias {
         Some("wpn_generic_dryfire_plr") => "ZHBO_BO2_DryFireGeneric",
@@ -37,6 +38,16 @@ pub(crate) fn dry_fire_event(alias: Option<&str>) -> &'static str {
         Some("wpn_beretta93r_dryfire_plr") => "ZHBO_BO2_DryFireBeretta",
         _ => "ZHBO_BO2_DryFireGeneric",
     }
+}
+
+/// The event of a dry-fire alias the shared events lack.
+pub(crate) fn own_dry_fire_event(alias: &str) -> String {
+    format!("ZHBO_BO2_DryFire_{alias}")
+}
+
+/// Whether `alias` is one of [`dry_fire_event`]'s shared ones.
+fn shared_dry_fire(alias: &str) -> bool {
+    dry_fire_event(Some(alias)) != "ZHBO_BO2_DryFireGeneric" || alias == "wpn_generic_dryfire_plr"
 }
 
 /// A combo's 2D ADS overlay (material, low-res material, reticle), BO2's way (`FUN_008ed570/5f0/670`,
@@ -457,17 +468,7 @@ pub fn table_with_metadata(
         }
         if let Some(w) = bo2.iter().find(|w| w.name == id) {
             let mut d = to_def(w, names);
-            if w.inventory == bo2::inventory::ALTMODE {
-                // A launcher alt mode has its own grenades; select fire and a second optic share
-                // the weapon's magazine.
-                d.alt_own_ammo = d.class == Class::Launcher;
-                // BO2 counts the alt launcher's grenades as rounds, not magazines: the start count
-                // includes the loaded one, the max is the spare cap (`FUN_005e08d0`; G16).
-                if d.alt_own_ammo {
-                    d.start_reserve = (w.start_ammo - w.clip_size).max(0) as u16;
-                    d.max_reserve = (w.max_ammo.max(0) as u16).max(d.start_reserve);
-                }
-            }
+            alt_mode_ammo(&mut d, w);
             weapons.push(d);
         }
     }
@@ -731,6 +732,21 @@ pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
 /// the class melee weapon the global swing. Each melee weapon gets its own swing. Sets each
 /// definition's `fire_sound`, `melee_swipe_sound` and `fx_weapon`; returns the events and the FX weapon
 /// INI.
+/// An alt mode's ammo (`WEAPINVENTORY_ALTMODE`): a launcher alt mode has its own grenades; select
+/// fire and a second optic share the weapon's magazine. BO2 counts the alt launcher's grenades as
+/// rounds, not magazines: the start count includes the loaded one, the max is the spare cap
+/// (`FUN_005e08d0`; G16).
+pub(crate) fn alt_mode_ammo(d: &mut WeaponDef, w: &Weapon) {
+    if w.inventory != bo2::inventory::ALTMODE {
+        return;
+    }
+    d.alt_own_ammo = d.class == Class::Launcher;
+    if d.alt_own_ammo {
+        d.start_reserve = (w.start_ammo - w.clip_size).max(0) as u16;
+        d.max_reserve = (w.max_ammo.max(0) as u16).max(d.start_reserve);
+    }
+}
+
 pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [WeaponDef], converted: &[String]) -> (Vec<crate::sfx::DynSfx>, String) {
     use crate::sfx::{DynSfx, Kind};
     let mut events = Vec::new();
@@ -750,7 +766,17 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
     for d in defs.iter_mut() {
         let base = crate::generals::base_id(&d.id);
         if let Some(w) = bo2.iter().find(|w| w.name == base) {
-            d.empty_fire_sound = dry_fire_event(w.empty_fire_sound_player.as_deref()).to_string();
+            d.empty_fire_sound = match w.empty_fire_sound_player.as_deref() {
+                // BO2's own click for the weapon (`emptyFireSoundPlayer`).
+                Some(alias) if !shared_dry_fire(alias) => {
+                    let event = own_dry_fire_event(alias);
+                    if !events.iter().any(|e: &DynSfx| e.event == event) {
+                        events.push(DynSfx { event: event.clone(), layers: vec![alias.to_string()], kind: Kind::Player, limit: 1 });
+                    }
+                    event
+                }
+                alias => dry_fire_event(alias).to_string(),
+            };
             if let Some(m) = class_melee.filter(|_| !matches!(w.weap_type, bo2::kind::MELEE | bo2::kind::RIOTSHIELD)) {
                 d.melee_swipe_sound = def_sound(&m.melee_swipe_sound_player);
                 d.melee_hit_sound = def_sound(&m.melee_hit_sound);

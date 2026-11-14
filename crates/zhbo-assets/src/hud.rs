@@ -18,7 +18,7 @@ use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive. The weapon table is
 /// archive content: the attachment stacking fix changes its synthesized variant lines.
-pub const VERSION: u32 = 107;
+pub const VERSION: u32 = 108;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -283,6 +283,24 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         }
         if let Some(icon) = &w.indicator_icon {
             wanted.push((zhbo_core::lui::materials::image(icon), w.indicator_icon_key.map_or_else(|| Source::Dynamic(icon.clone()), Source::Hash), 64));
+        }
+    }
+    // TranZit's weapons' icons, as the MP ones' above: the HUD icon (the Zombies HUD's offhand
+    // icons), the obituary and grenade-indicator icons, and the alt-fire slot's `dpadIcon`.
+    let zm = crate::zombies::Zombies::load(bo2_dir)?;
+    for w in zm.weapons.iter().filter(|w| zm.ids.contains(&w.name)) {
+        let keyed = |icon: &String, key: Option<zhbo_formats::ipak::ImageKey>| key.map_or_else(|| Source::Dynamic(icon.clone()), Source::Hash);
+        if let Some(icon) = &w.hud_icon {
+            wanted.push((zhbo_core::lui::materials::image(icon), keyed(icon, w.hud_icon_key), 64));
+        }
+        if let Some(icon) = &w.kill_icon {
+            wanted.push((zhbo_core::lui::materials::image(icon), keyed(icon, w.kill_icon_key), if w.kill_icon_ratio == 0 { 64 } else { 128 }));
+        }
+        if let Some(icon) = &w.indicator_icon {
+            wanted.push((zhbo_core::lui::materials::image(icon), keyed(icon, w.indicator_icon_key), 64));
+        }
+        if let Some(icon) = w.dpad_icon.as_ref().filter(|i| !i.is_empty()) {
+            wanted.push((zhbo_core::lui::materials::image(icon), keyed(icon, w.dpad_icon_key), 128));
         }
     }
     // The alt-fire slot's art (`zhbo_core::hud::ammo::alt_slot_icon`): each variant's `dpadIcon`

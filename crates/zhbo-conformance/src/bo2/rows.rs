@@ -170,7 +170,8 @@ impl<'a> Expected<'a> {
         }
         let mut out = Vec::new();
         for (id, w) in &weapons {
-            let parent = weapons.iter().find(|(other, ow)| other != id && alt_weapon(ow).as_deref() == Some(id.as_str())).map(|(_, ow)| *ow);
+            // An alt mode (`WEAPINVENTORY_ALTMODE`) is its gun's (a TranZit alt names its gun back).
+            let parent = (w.d.inventory() == ALTMODE).then(|| weapons.iter().find(|(other, ow)| other != id && alt_weapon(ow).as_deref() == Some(id.as_str())).map(|(_, ow)| *ow)).flatten();
             let j = Job { w: *w, parent, key: String::new(), group: String::new(), slot: String::new(), requires: Vec::new() };
             out.push(self.row(schema, &j)?);
         }

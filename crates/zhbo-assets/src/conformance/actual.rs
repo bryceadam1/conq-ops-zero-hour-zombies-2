@@ -293,7 +293,14 @@ fn jobs() -> Vec<Job> {
 /// flourishes) and what they reach (alt modes, spawned grenades), as the shipped table has them.
 pub fn zm_ids() -> Vec<String> {
     let script = zhbo_core::zombies::script_weapons();
-    let mut ids: Vec<String> = weapons::catalog().all().iter().map(|d| d.id.clone()).filter(|id| !id.contains('+') && !id.contains('~') && (id.ends_with("_zm") || script.contains(id))).collect();
+    // A dual-wield pair's left gun rides in its pair's row, as the MP table has it.
+    let mut ids: Vec<String> = weapons::catalog()
+        .all()
+        .iter()
+        .filter(|d| d.inventory != zhbo_core::weapons::Inventory::DwLeftHand)
+        .map(|d| d.id.clone())
+        .filter(|id| !id.contains('+') && !id.contains('~') && (id.ends_with("_zm") || script.contains(id)))
+        .collect();
     ids.sort();
     ids.dedup();
     ids
@@ -310,7 +317,9 @@ pub fn rows_for(shipped: &Shipped, schema: &Schema, ids: &[String]) -> Result<Ve
             errors.push(format!("{id}: not in the shipped table"));
             continue;
         };
-        let parent = ids.iter().filter_map(|o| cat.get(o)).find(|d| d.id != *id && crate::generals::base_id(&d.alt) == id.as_str());
+        // An alt mode (`WEAPINVENTORY_ALTMODE`) is its gun's: the gun names it as its alt (a TranZit
+        // alt names its gun back, so the inventory type decides which is which).
+        let parent = (def.inventory == zhbo_core::weapons::Inventory::AltMode).then(|| ids.iter().filter_map(|o| cat.get(o)).find(|d| d.id != *id && crate::generals::base_id(&d.alt) == id.as_str())).flatten();
         let vm_def = match parent {
             Some(p) if def.viewmodel < 0 => p,
             _ => def,

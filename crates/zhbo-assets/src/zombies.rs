@@ -49,14 +49,15 @@ impl Zombies {
                 ids.push(id);
             }
         }
-        // The alt modes their attachments add (the Pack-a-Punched M16's launcher) and the grenades
-        // their projectiles become, as the MP table reaches them (`weapons::table_with_metadata`).
+        // The alt modes their attachments add (the Pack-a-Punched M16's launcher), the grenades
+        // their projectiles become, as the MP table reaches them (`weapons::table_with_metadata`),
+        // and a dual-wield pair's left gun (Mustang & Sally's: `szDualWieldWeaponName`).
         let mut k = 0;
         while k < ids.len() {
             if let Some(w) = weapons.iter().find(|w| w.name == ids[k]) {
                 let d = crate::weapons::to_def(w, &HashMap::new());
                 let own_alt = (!d.alt.is_empty()).then(|| d.alt.clone());
-                for extra in d.alt_modes.iter().map(|(_, alt)| alt.clone()).chain(own_alt).chain((!d.spawns.is_empty()).then(|| d.spawns.clone())) {
+                for extra in d.alt_modes.iter().map(|(_, alt)| alt.clone()).chain(own_alt).chain((!d.spawns.is_empty()).then(|| d.spawns.clone())).chain(w.dual_wield_weapon.clone()) {
                     if !ids.contains(&extra) && weapons.iter().any(|w| w.name == extra) {
                         ids.push(extra);
                     }
@@ -92,7 +93,17 @@ impl Zombies {
     /// The core's definitions of the converted weapons, named from `names` (the Zombies strings
     /// over the multiplayer ones).
     pub(crate) fn defs(&self, names: &HashMap<String, String>) -> Vec<WeaponDef> {
-        self.ids.iter().filter_map(|id| self.weapons.iter().find(|w| &w.name == id)).map(|w| crate::weapons::to_def(w, names)).collect()
+        self.ids
+            .iter()
+            .filter_map(|id| self.weapons.iter().find(|w| &w.name == id))
+            .map(|w| {
+                // An alt mode's ammo by the MP table's rule (the upgraded M16's launcher has its own
+                // grenades).
+                let mut d = crate::weapons::to_def(w, names);
+                crate::weapons::alt_mode_ammo(&mut d, w);
+                d
+            })
+            .collect()
     }
 
     /// Zombies' rule table as the install has it (`mp/zombiemode.csv`, `common_zm`), back as CSV.
