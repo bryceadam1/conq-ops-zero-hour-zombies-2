@@ -1911,6 +1911,11 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   `Data\ConquerOps\zombiemode.csv` (the install's Zombies rule table). A weapon whose own
   definition names an alt weapon now carries it as `alt`; only Zombies' upgraded M16 has one, so
   no MP row changes.
+* `ZhboObjFlags` gains `ZHBO_OBJ_SURVIVOR = 1u << 14` (`objflags::SURVIVOR`), set by the bridge's
+  object fill for a `ZHBO_General_Survivor_*` object (`isSurvivor`; a General too). The core gives
+  such a General Zombies' spawn kit instead of a class (`Sim::new_record`). No struct moves. The
+  bridge's faction table gains the four survivors (letters M, E, R, S; no player side), so their
+  arms and body follow the General object.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change. Host patches are now 0001–0034.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

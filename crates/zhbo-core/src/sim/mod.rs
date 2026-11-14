@@ -353,6 +353,9 @@ pub struct PlayerSim {
     /// Under RTS control: the weapon lock, what the third slot does and the gun to go back to
     /// (`rts.rs`).
     pub rts: RtsState,
+    /// A survivor General (`objflags::SURVIVOR`): BO2 Zombies' player, who spawns with Zombies'
+    /// kit instead of a class ([`crate::zombies::survivor_kit`]) and wears the Zombies HUD.
+    pub survivor: bool,
     /// BO2's action slots: what each holds (`weapons::actionslot`; the build tool's).
     pub action_slots: crate::weapons::actionslot::ActionSlots,
     /// The build tool (the hammer), when it is out.
@@ -385,7 +388,7 @@ pub struct PlayerSim {
 crate::statehash::state_hash!(struct PlayerSim {
     general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
     view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, very_hurt, hack,
-    rts, action_slots, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, taser, combat, spawned,
+    rts, survivor, action_slots, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, taser, combat, spawned,
 });
 
 impl PlayerSim {
@@ -537,6 +540,7 @@ impl PlayerSim {
             very_hurt: false,
             hack: None,
             rts: RtsState::default(),
+            survivor: false,
             action_slots: crate::weapons::actionslot::ActionSlots::GENERAL,
             hammer: None,
             site: None,

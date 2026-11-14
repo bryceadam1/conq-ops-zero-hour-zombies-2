@@ -20,6 +20,12 @@ inline bool isGeneral(const char *name)
 {
 	return name && strncmp(name, GENERAL_PREFIX, strlen(GENERAL_PREFIX)) == 0;
 }
+// Prefix of every survivor General object (a General too); the glue's isSurvivor checks it.
+inline constexpr const char *SURVIVOR_PREFIX = "ZHBO_General_Survivor_";
+inline bool isSurvivor(const char *name)
+{
+	return name && strncmp(name, SURVIVOR_PREFIX, strlen(SURVIVOR_PREFIX)) == 0;
+}
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).
 inline void worldMesh(char *out, size_t cap, int vm, int k)
 {

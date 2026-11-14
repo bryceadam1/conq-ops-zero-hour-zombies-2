@@ -567,7 +567,7 @@ pub(crate) fn weapon_viewmodels(
         let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|(e, t)| native::model(&e.model, t, &looks)).collect();
         let mut native_factions: Vec<(char, zhbo_native::model::Model)> = Vec::new();
         let mut rig: Option<Rig> = None;
-        for (f, zone) in FACTIONS.iter().zip(zones) {
+        for (f, zone) in FACTIONS.iter().zip(zones).filter(|(f, _)| f.carries(id)) {
             let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
             let hands_tex = textures(&hands, paks, out, &mut looks);
             native_factions.push((f.letter, native::model(&hands, &hands_tex, &looks)));

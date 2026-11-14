@@ -96,6 +96,7 @@ struct ZhboConfig
 	Bool autopilot_defeat = FALSE;	  // =defeat: every building destroyed, then the General: defeat only after both (patch 0034)
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
+	const char *autopilot_general = nullptr; // ZHBO_AUTOPILOT_GENERAL: the General template the scene spawns (a survivor, say)
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
 	Bool has_showcase_pitch = FALSE;	   // ZHBO_SHOWCASE_PITCH (radians)
 	Real showcase_pitch = 0.0f;
@@ -140,6 +141,7 @@ struct ZhboFaction
 };
 const ZhboFaction *zhboFactionOfSide(const AsciiString &side);
 const ZhboFaction *zhboFactionOfGeneralName(const AsciiString &name);
+const ZhboFaction *zhboFactionOfLetter(char letter);
 
 // --- Logic API callbacks (ZhboLogicApi.cpp) ---------------------------------------------------
 void cbLog(const char *msg);
@@ -216,6 +218,8 @@ enum
 };
 void rtsWeapons(UnsignedInt frame);
 Bool isGeneral(const Object *obj);
+/// A survivor General (ZHBO_General_Survivor_*, a General too): BO2 Zombies' player.
+Bool isSurvivor(const Object *obj);
 /// The order a General's command button gives (ZHBO_ACTION_LETHAL/_TACTICAL/_MELEE/_RELOAD), or -1.
 Int rtsOrderAction(const CommandButton *button);
 /// Tell every client what each selected General is ordered to do (MSG_ZHBO_TAKE_CONTROL).

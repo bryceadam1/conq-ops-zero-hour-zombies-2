@@ -15314,3 +15314,47 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - The launcher's conversion: 79 TranZit weapons, the Mark II pair left out.
   - The default in-game leg, all 22 checks pass.
 - **Bump:** `hud::VERSION` 90 → 91.
+
+## Survivor Generals (2026-11-14)
+
+- **What:** TranZit's four survivors as Generals: `ZHBO_General_Survivor_{Misty,Marlton,Russman,Stuhlinger}`
+  (`zhbo_core::names::SURVIVORS`). Per the user's ruling they exist on Zombies maps only, so no
+  build button. A survivor:
+  - wears TranZit's own body (`c_zom_player_{farmgirl,engineer,oldman,reporter}_fb`, from
+    `so_zclassic_zm_transit`'s `character/c_transit_player_*.gsc`) and viewhands
+    (`c_zom_*_viewhands`);
+  - spawns with Zombies' kit instead of a class.
+- **BO2's spawn kit** (`spawned_player`, `_zm.gsc:1306-1313`): `level.start_weapon` `m1911_zm`
+  (:833), given with its start ammo and nothing else (`give_start_weapon`,
+  `_zm_utility.gsc:3524-3531`), `frag_grenade_zm` with 0 grenades, `knife_zm`, no tactical
+  (`zm_transit.gsc:1837-1853`). Transcribed in `zombies.ini` `[Survivor]`.
+- **New rule `Loadout::held_knife`:** MP's `giveloadout` adds the held knife to a one-gun class;
+  Zombies doesn't, so a survivor holds only the M1911.
+- **Core:**
+  - The bridge flags a survivor object (`objflags::SURVIVOR`, bit 14).
+  - `Sim::new_record` gives it the kit, the class id `zombies:survivor` and `PlayerSim::survivor`
+    (hashed), so no class screen opens.
+  - A class pick never lands on a survivor: `choose_class` ignores one, and `take_control`
+    rebuilds a record made before the flag was seen.
+- **Converter:** the survivors are `FACTIONS` entries with `zombies: true`.
+  - `Faction::carries`: their arms are converted for the `_zm` weapons, the MP factions' for the
+    rest, so no faction pays for the other's weapons.
+  - Their objects are generated from the USA General's INI block (`generals::survivor_objects`,
+    through `base_ini()`) instead of being copied four times.
+  - Their bodies resolve TranZit's materials; the survivor zone joins the image packs' names.
+  - Their emblem is skipped (no side).
+  - Their voices fall back to the first faction's for now (`VOICE_FACTIONS` lacks them;
+    BO2's survivor quotes are a follow-up).
+- **Bridge:** the faction table gains the survivors with no side (`zhboFactionOfSide` skips an
+  empty side), and the tablet/hammer preload looks codes up by letter (`zhboFactionOfLetter`).
+- **Verified:**
+  - `a_survivor_general_spawns_in_zombies_kit_without_a_class_pick` and
+    `a_survivor_spawns_with_the_start_weapon_alone_and_an_empty_lethal`.
+  - The workspace tests.
+  - The launcher converts the four bodies (261-267 meshes each).
+  - In game (`ZHBO_AUTOPILOT_GENERAL=ZHBO_General_Survivor_Misty`, the hip-fire leg's no-enemy
+    scene): Misty enters first person at once, fires `m1911_zm` under BO2's hip cone, and the
+    capture shows the M1911 in her own gloved hands, 7/24.
+  - The hip-fire leg's own checks expect the MP default class, so that leg fails with a survivor
+    by design.
+- **Bump:** `hud::VERSION` 91 → 92.

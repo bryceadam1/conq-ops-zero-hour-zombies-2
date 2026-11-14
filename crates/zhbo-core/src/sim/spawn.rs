@@ -26,6 +26,9 @@
 
 use super::*;
 
+/// The class id a survivor General wears ([`Sim::new_record`]): Zombies' spawn kit, not a class.
+pub const SURVIVOR_CLASS: &str = "zombies:survivor";
+
 /// A class a player chose (BO2's `pers["class"]`): its id, display name, kit and the custom
 /// class's per-slot options.
 #[derive(Clone, Debug, PartialEq)]
@@ -126,8 +129,20 @@ pub(crate) fn is_combat(kind: &EventKind) -> bool {
 
 impl Sim {
     /// A fresh record for `general`: unarmed and unclassed. Every General is picked for (the
-    /// module doc): the player's chosen class is only what his class screen opens on.
+    /// module doc): the player's chosen class is only what his class screen opens on. A survivor
+    /// General has no class to pick: he comes wearing Zombies' spawn kit
+    /// ([`crate::zombies::survivor_kit`]), so no class screen opens for him.
     pub(crate) fn new_record(&self, general: u32, mode: Mode, info: Option<&ObjInfo>) -> PlayerSim {
+        let mut p = self.unclassed_record(general, mode, info);
+        if info.is_some_and(|i| i.has(objflags::SURVIVOR)) {
+            p.survivor = true;
+            p.class = Some(SURVIVOR_CLASS.to_string());
+            p.arsenal = Arsenal::with_loadout(crate::zombies::survivor_kit());
+        }
+        p
+    }
+
+    fn unclassed_record(&self, general: u32, mode: Mode, info: Option<&ObjInfo>) -> PlayerSim {
         let (pos, yaw, health, max_health) = info.map_or((Vec3::ZERO, 0.0, 0.0, 0.0), |i| (i.pos, i.yaw, i.health, i.max_health));
         PlayerSim {
             general,
@@ -160,6 +175,7 @@ impl Sim {
             very_hurt: false,
             hack: None,
             rts: RtsState::default(),
+            survivor: false,
             action_slots: crate::weapons::actionslot::ActionSlots::GENERAL,
             hammer: None,
             site: None,
@@ -205,6 +221,9 @@ impl Sim {
         }
         let tuning = self.tuning;
         let mut state = match self.players[idx].take() {
+            // A record made before the object was seen (a class pick overhead) for a survivor:
+            // Zombies has no class, so he starts over with Zombies' kit.
+            Some(p) if p.general == general && info.has(objflags::SURVIVOR) && !p.survivor => self.new_record(general, Mode::Fps, Some(&info)),
             Some(mut p) if p.general == general => {
                 p.body = Body::new(info.pos, &tuning);
                 p.mode = Mode::Fps;
@@ -271,8 +290,9 @@ impl Sim {
             return;
         }
         let Some(chosen) = ChosenClass::decode(index, payload) else { return };
-        // The pick names the General under command; one naming another General is dropped.
-        if self.players[idx].as_ref().is_some_and(|p| p.general != general) {
+        // The pick names the General under command; one naming another General is dropped. A
+        // survivor has no class to change (Zombies has none): his kit is Zombies' own.
+        if self.players[idx].as_ref().is_some_and(|p| p.general != general || p.survivor) {
             return;
         }
         if self.chosen[idx].as_ref() == Some(&chosen) && self.players[idx].as_ref().is_some_and(|p| p.class.is_some()) {

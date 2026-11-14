@@ -1722,6 +1722,26 @@ fn the_hammer_refuses_what_he_cannot_afford_and_puts_away_for_a_weapon() {
 }
 
 #[test]
+fn a_survivor_general_spawns_in_zombies_kit_without_a_class_pick() {
+    let host = FakeHost::default();
+    host.add(ObjInfo { flags: objflags::INFANTRY | objflags::GENERAL | objflags::SURVIVOR, ..general(1, 0) });
+    let mut sim = Sim::new();
+    // A class picked overhead before he was ever taken: it does not stick to a survivor.
+    sim.choose_class(0, 1, 0, &[]);
+    sim.take_control(&host, 0, 1);
+    let p = sim.player(0).unwrap();
+    assert!(p.survivor);
+    assert_eq!(p.class.as_deref(), Some(crate::sim::spawn::SURVIVOR_CLASS));
+    assert!(p.spawned, "no class screen: he is in at once");
+    let kit = crate::zombies::survivor_kit();
+    assert_eq!(p.arsenal.lethal.count, 0, "the lethal starts empty");
+    assert!(!kit.held_knife);
+    // A class pick once in the field is ignored too.
+    sim.choose_class(0, 1, 0, &[]);
+    assert_eq!(sim.player(0).unwrap().class.as_deref(), Some(crate::sim::spawn::SURVIVOR_CLASS));
+}
+
+#[test]
 fn the_build_tool_answers_the_key_of_the_action_slot_that_holds_it() {
     use crate::weapons::actionslot::{ActionSlot, ActionSlots, Equipment};
     let host = FakeHost::default();

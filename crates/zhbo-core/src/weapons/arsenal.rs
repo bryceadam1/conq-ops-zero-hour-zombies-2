@@ -331,7 +331,8 @@ impl Arsenal {
         // == 0`). So a one-gun class switches between the gun and the knife, and a kit with no
         // resolvable gun is unarmed but never leaves `weapons` empty (every consumer reads
         // `current()`).
-        if weapons.len() < 2 {
+        // Zombies gives no held knife (`Loadout::held_knife`); the weapons are never left empty.
+        if (weapons.len() < 2 && loadout.held_knife) || weapons.is_empty() {
             let mut knife = WeaponState::new(melee);
             knife.raised_once = weapons.is_empty();
             weapons.push(knife);

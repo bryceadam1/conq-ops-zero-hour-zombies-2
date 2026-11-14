@@ -607,7 +607,8 @@ void autopilotSpawn()
 	const Coord3D *ccPos = cc->getPosition();
 	Coord3D pos;
 	pos.set(ccPos->x + c * 90.0f, ccPos->y + s * 90.0f, 0.0f);
-	Object *general = spawnAt(s_autopilot.showcase && s_config.showcase_object ? s_config.showcase_object : "ZHBO_General_USA", local->getDefaultTeam(), pos, yaw);
+	const char *generalName = s_config.autopilot_general ? s_config.autopilot_general : "ZHBO_General_USA";
+	Object *general = spawnAt(s_autopilot.showcase && s_config.showcase_object ? s_config.showcase_object : generalName, local->getDefaultTeam(), pos, yaw);
 	if (!general)
 		return;
 	s_autopilot.general = general->getID();

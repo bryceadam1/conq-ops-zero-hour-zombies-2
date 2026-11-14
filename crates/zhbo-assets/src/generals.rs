@@ -15,9 +15,11 @@ use zhbo_formats::{t6zone::Zone, xanim, xmodel};
 const BASE_INI: &str = include_str!("../../../data/Data/INI/Object/ZZZ_ZHBO_General.ini");
 const INI_PATH: &str = "Data\\INI\\Object\\ZZZ_ZHBO_General.ini";
 
-/// The hand-written General objects (`ZZZ_ZHBO_General.ini`) the converter fills in.
+/// The General objects the converter fills in: the hand-written ones (`ZZZ_ZHBO_General.ini`)
+/// and the survivors generated from them ([`survivor_objects`]).
 pub(crate) fn base_ini() -> &'static str {
-    BASE_INI
+    static INI: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    INI.get_or_init(|| survivor_objects(BASE_INI).expect("the USA General's block is in the shipped INI"))
 }
 pub(crate) const MAX_TEXTURE: u32 = 512;
 pub(crate) const TABLET_TAG: &str = "tag_inhand";
@@ -40,9 +42,24 @@ pub struct Faction {
     /// Letter in the weapon viewmodels' W3D names ([`vm_model`]).
     pub letter: char,
     /// The Zero Hour side (`PlayerTemplate` base side) of the General: its `<side>_Logo` is the
-    /// faction's weapon emblem (`emblems`).
+    /// faction's weapon emblem (`emblems`). Empty for a survivor, who belongs to no side.
     pub side: &'static str,
+    /// A TranZit survivor (`zhbo_core::names::SURVIVORS`, on a Zombies map only): its arms are
+    /// converted for the Zombies weapons, the MP factions' for the MP weapons ([`Faction::carries`]).
+    pub zombies: bool,
 }
+
+impl Faction {
+    /// Whether this faction's arms hold converted weapon `id`: a survivor carries the Zombies
+    /// weapons (`_zm`), the MP factions the rest.
+    pub fn carries(&self, id: &str) -> bool {
+        self.zombies == crate::viewmodels::base_id(id).ends_with("_zm")
+    }
+}
+
+/// The zone holding TranZit's survivor bodies and arms (`so_zclassic_zm_transit`, the classic
+/// mode's characters: `character/c_transit_player_*.gsc`).
+pub const SURVIVOR_ZONE: &str = "so_zclassic_zm_transit";
 
 pub const FACTIONS: &[Faction] = &[
     Faction {
@@ -54,6 +71,7 @@ pub const FACTIONS: &[Faction] = &[
         viewmodel: zhbo_core::names::FACTION_VIEWMODEL_USA,
         letter: 'U',
         side: "USA",
+        zombies: false,
     },
     Faction {
         object: "ZHBO_General_China",
@@ -64,6 +82,7 @@ pub const FACTIONS: &[Faction] = &[
         viewmodel: zhbo_core::names::FACTION_VIEWMODEL_CHN,
         letter: 'C',
         side: "China",
+        zombies: false,
     },
     Faction {
         object: "ZHBO_General_GLA",
@@ -74,8 +93,77 @@ pub const FACTIONS: &[Faction] = &[
         viewmodel: zhbo_core::names::FACTION_VIEWMODEL_GLA,
         letter: 'G',
         side: "GLA",
+        zombies: false,
+    },
+    // TranZit's survivors (`character/c_transit_player_{farmgirl,engineer,oldman,reporter}.gsc`):
+    // Misty, Marlton, Russman and Stuhlinger, letters and objects from `zhbo_core::names::SURVIVORS`.
+    Faction {
+        object: zhbo_core::names::SURVIVORS[0].0,
+        zone: SURVIVOR_ZONE,
+        body: "c_zom_player_farmgirl_fb",
+        model: "ZHBO_MIS_SKN",
+        hands: "c_zom_farmgirl_viewhands",
+        viewmodel: zhbo_core::names::FACTION_VIEWMODEL_MIS,
+        letter: zhbo_core::names::SURVIVORS[0].1,
+        side: "",
+        zombies: true,
+    },
+    Faction {
+        object: zhbo_core::names::SURVIVORS[1].0,
+        zone: SURVIVOR_ZONE,
+        body: "c_zom_player_engineer_fb",
+        model: "ZHBO_MAR_SKN",
+        hands: "c_zom_engineer_viewhands",
+        viewmodel: zhbo_core::names::FACTION_VIEWMODEL_MAR,
+        letter: zhbo_core::names::SURVIVORS[1].1,
+        side: "",
+        zombies: true,
+    },
+    Faction {
+        object: zhbo_core::names::SURVIVORS[2].0,
+        zone: SURVIVOR_ZONE,
+        body: "c_zom_player_oldman_fb",
+        model: "ZHBO_RUS_SKN",
+        hands: "c_zom_oldman_viewhands",
+        viewmodel: zhbo_core::names::FACTION_VIEWMODEL_RUS,
+        letter: zhbo_core::names::SURVIVORS[2].1,
+        side: "",
+        zombies: true,
+    },
+    Faction {
+        object: zhbo_core::names::SURVIVORS[3].0,
+        zone: SURVIVOR_ZONE,
+        body: "c_zom_player_reporter_fb",
+        model: "ZHBO_STU_SKN",
+        hands: "c_zom_reporter_viewhands",
+        viewmodel: zhbo_core::names::FACTION_VIEWMODEL_STU,
+        letter: zhbo_core::names::SURVIVORS[3].1,
+        side: "",
+        zombies: true,
     },
 ];
+
+/// The General objects with the survivors added: each a copy of the USA General's block under its
+/// own name and display name (`OBJECT:<object>`), so the four stay exactly the General but for
+/// their art (the body the loop below draws) and the core's survivor rules (`objflags::SURVIVOR`
+/// from the name). None has a build button: a Zombies map stands them for the players.
+pub fn survivor_objects(base: &str) -> Result<String, String> {
+    let usa = crate::toughness::object_block(base, "Object", FACTIONS[0].object).ok_or("the USA General's block")?;
+    let mut ini = base.to_string();
+    for f in FACTIONS.iter().filter(|f| f.zombies) {
+        ini.push_str(&format!("\n; TranZit's {} (generated from the USA General by zhbo_assets::generals::survivor_objects).\nObject {}\n", f.body, f.object));
+        for line in &usa {
+            if line.trim_start().starts_with("DisplayName") {
+                ini.push_str(&format!("  DisplayName           = OBJECT:{}\n", f.object));
+            } else {
+                ini.push_str(line);
+                ini.push('\n');
+            }
+        }
+        ini.push_str("End\n");
+    }
+    Ok(ini)
+}
 
 /// W3D names of weapon viewmodel `vm` (shared with `host/zhbo/ZhboViewmodel.cpp`): the hierarchy,
 /// each faction's arms holding the weapon, and the clip for each BO2 animation slot. The names
@@ -356,7 +444,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // MP's), and their zones join the pool below the MP zones.
     let mut zm = crate::zombies::Zombies::load(bo2_dir)?;
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
-    let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map])?;
+    // The survivors' zone streams their bodies' and arms' images by name too.
+    let survivor_zone = load_zone(bo2_dir, SURVIVOR_ZONE)?;
+    let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone])?;
     // A weapon whose art the install lacks stays out (the Ray Gun Mark II's definition is in
     // TranZit's title update, its view model only in a DLC map's zones).
     let lacking = {
@@ -539,12 +629,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let mut hidden: Vec<String> = held.iter().map(|m| m.name.clone()).filter(|n| !n.starts_with("W00")).collect();
     hidden.extend(tablet.iter().map(|m| m.name.clone()));
     let (set_names, set_convert) = set_anims(&body_sets.sets)?;
-    let mut ini = BASE_INI.to_string();
+    let mut ini = base_ini().to_string();
     for (f, zone) in FACTIONS.iter().zip(&zones) {
         let mut body = xmodel::find(zone, f.body).map_err(|e| e.to_string())?;
         // The faction zone loads after `common_mp` and references the shared eye, mouth and
         // datapad materials it defines.
-        viewmodels::resolve_materials(&[zone, &common], &mut body);
+        // A survivor's body references TranZit's shared materials.
+        if f.zombies {
+            viewmodels::resolve_materials(&[zone, &zm.pool.patch, &zm.pool.map], &mut body);
+        } else {
+            viewmodels::resolve_materials(&[zone, &common], &mut body);
+        }
         let body_tex = textures::textures(&body, &paks, &mut out, &mut looks);
         // Track R7: the same body as a native blob (skeleton, skin weights and surfaces), with the
         // clip of every movement state, for the renderer's native BO2 pass.
@@ -1220,16 +1315,17 @@ mod tests {
     #[test]
     fn replaces_only_the_named_draw_module() {
         let sets: Vec<[String; 5]> = (0..2).map(|k| SET_CLIPS.map(|c| set_anim(c, k))).collect();
+        let base = base_ini();
         for f in FACTIONS {
-            let out = replace_draw(BASE_INI, f.object, &draw_module(f.model, &["W0100".to_string()], (0, 1), &sets)).unwrap();
+            let out = replace_draw(base, f.object, &draw_module(f.model, &["W0100".to_string()], (0, 1), &sets)).unwrap();
             assert!(out.contains("WeaponFireFXBone    = PRIMARY ZF00") && out.contains("WeaponFireFXBone    = SECONDARY ZF01"));
             assert!(out.contains(&format!("Model               = {}", f.model)));
             // The rest of the object (weapons, body, locomotor) is untouched.
-            assert_eq!(out.matches("Object ZHBO_General_").count(), 3);
-            assert_eq!(out.matches("WeaponSet").count(), BASE_INI.matches("WeaponSet").count());
-            // Every Draw module (three Generals and their grenade) still closes before the
+            assert_eq!(out.matches("Object ZHBO_General_").count(), FACTIONS.len());
+            assert_eq!(out.matches("WeaponSet").count(), base.matches("WeaponSet").count());
+            // Every Draw module (the Generals and their grenade) still closes before the
             // object's other modules.
-            assert_eq!(out.matches("Draw = W3DModelDraw").count(), BASE_INI.matches("Draw = W3DModelDraw").count());
+            assert_eq!(out.matches("Draw = W3DModelDraw").count(), base.matches("Draw = W3DModelDraw").count());
         }
         assert!(FACTIONS.iter().all(|f| f.model.len() <= 15));
         assert!(ANIMS.iter().all(|a| a.0.len() <= 15) && HIERARCHY.len() <= 15);

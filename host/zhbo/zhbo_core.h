@@ -41,6 +41,7 @@ enum ZhboObjFlags
 	ZHBO_OBJ_SHROUDED   = 1u << 11, /* client queries: hidden from the local player by shroud or fog */
 	ZHBO_OBJ_FIRING     = 1u << 12, /* firing a weapon right now */
 	ZHBO_OBJ_GENERAL    = 1u << 13, /* a General (ZHBO_General_*): BO2's player, who takes a BO2 hit as its share of playerMaxHealth (pending for the next ABI bump) */
+	ZHBO_OBJ_SURVIVOR   = 1u << 14, /* a survivor General (ZHBO_General_Survivor_*): BO2 Zombies' player (pending for the next ABI bump) */
 };
 
 /* What a shot hit (zhbo_core::impacts::Surface). The sim classifies an object hit from its kind

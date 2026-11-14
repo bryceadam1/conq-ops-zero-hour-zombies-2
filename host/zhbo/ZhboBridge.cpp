@@ -234,6 +234,7 @@ void readConfig()
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
 	s_config.autotest_skirmish = getenv("ZHBO_AUTOTEST_SKIRMISH") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
+	s_config.autopilot_general = getenv("ZHBO_AUTOPILOT_GENERAL");
 	if (const char *v = getenv("ZHBO_SHOWCASE_ZOOM"))
 		s_config.showcase_zoom = (Real)atof(v);
 	if (const char *v = getenv("ZHBO_SHOWCASE_PITCH"))
@@ -260,12 +261,26 @@ static const ZhboFaction FACTIONS[] = {
 	{ "America", 'U', "USA", "ZHBO_General_USA" },
 	{ "China", 'C', "CHN", "ZHBO_General_China" },
 	{ "GLA", 'G', "GLA", "ZHBO_General_GLA" },
+	// TranZit's survivors (zhbo_core::names::SURVIVORS): Generals of no player side, on a Zombies
+	// map only; their arms and body follow the General object, never the player's side.
+	{ "", 'M', "MIS", "ZHBO_General_Survivor_Misty" },
+	{ "", 'E', "MAR", "ZHBO_General_Survivor_Marlton" },
+	{ "", 'R', "RUS", "ZHBO_General_Survivor_Russman" },
+	{ "", 'S', "STU", "ZHBO_General_Survivor_Stuhlinger" },
 };
 
 const ZhboFaction *zhboFactionOfSide(const AsciiString &side)
 {
 	for (const ZhboFaction &f : FACTIONS)
-		if (side == f.side)
+		if (f.side[0] && side == f.side) // a survivor has no player side
+			return &f;
+	return nullptr;
+}
+
+const ZhboFaction *zhboFactionOfLetter(char letter)
+{
+	for (const ZhboFaction &f : FACTIONS)
+		if (letter == f.letter)
 			return &f;
 	return nullptr;
 }

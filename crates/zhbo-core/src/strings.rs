@@ -65,6 +65,10 @@ fn intern(text: &str) -> &'static [u16] {
 
 const ENGLISH: &[(&str, &str)] = &[
     ("OBJECT:ZHBO_General", "General"),
+    ("OBJECT:ZHBO_General_Survivor_Misty", "Misty"),
+    ("OBJECT:ZHBO_General_Survivor_Marlton", "Marlton"),
+    ("OBJECT:ZHBO_General_Survivor_Russman", "Russman"),
+    ("OBJECT:ZHBO_General_Survivor_Stuhlinger", "Stuhlinger"),
     ("CONTROLBAR:ZHBO_ConstructGeneral", "Deploy &General"),
     (
         "CONTROLBAR:ToolTipZHBO_ConstructGeneral",

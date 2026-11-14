@@ -60,9 +60,13 @@ pub struct Loadout {
     /// (`_class.gsc:724`, the clip `setweaponammoclip` gives), one or two (a second tactical costs
     /// a point, `caceditclass.lua:506-566`). `None` gives the item's own start count.
     pub tactical_count: Option<u16>,
+    /// MP's `giveloadout` rule: a class with fewer than two guns also gets the held knife as a
+    /// weapon (`_class.gsc`). Zombies gives none (`give_start_weapon` gives the start weapon
+    /// alone, `_zm_utility.gsc:3524-3531`): a survivor with one gun holds just it.
+    pub held_knife: bool,
 }
 
-crate::statehash::state_hash!(struct Loadout { primary, secondary, lethal, tactical, melee, perks, reserve, lethal_count, tactical_count });
+crate::statehash::state_hash!(struct Loadout { primary, secondary, lethal, tactical, melee, perks, reserve, lethal_count, tactical_count, held_knife });
 
 impl Loadout {
     /// The converted viewmodels this kit can show: its guns and their alt modes, its offhands, its
@@ -101,6 +105,7 @@ impl Loadout {
             reserve: [None, None],
             lethal_count: None,
             tactical_count: None,
+            held_knife: true,
         }
     }
 }

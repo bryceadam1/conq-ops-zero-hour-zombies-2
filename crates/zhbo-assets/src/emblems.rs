@@ -74,7 +74,8 @@ pub(crate) fn crop(img: &Rgba, rect: [u32; 4]) -> Option<Rgba> {
 pub(crate) fn faction_emblems(zh_dir: &Path, files: &mut BTreeMap<String, Vec<u8>>) -> String {
     let bigs = archives(zh_dir);
     let mut missing = Vec::new();
-    for f in FACTIONS {
+    // A survivor has no side, so no emblem (the Zombies weapons wear none).
+    for f in FACTIONS.iter().filter(|f| !f.side.is_empty()) {
         let logo = format!("{}_Logo", f.side);
         match mapped_image(&bigs, &logo).and_then(|(texture, rect)| crop(&page(&bigs, &texture)?, rect)) {
             Some(img) => {
@@ -83,7 +84,7 @@ pub(crate) fn faction_emblems(zh_dir: &Path, files: &mut BTreeMap<String, Vec<u8
             None => missing.push(logo),
         }
     }
-    if missing.is_empty() { format!("{} faction emblems", FACTIONS.len()) } else { format!("faction emblems missing: {}", missing.join(" ")) }
+    if missing.is_empty() { format!("{} faction emblems", FACTIONS.iter().filter(|f| !f.side.is_empty()).count()) } else { format!("faction emblems missing: {}", missing.join(" ")) }
 }
 
 #[cfg(test)]
@@ -107,7 +108,7 @@ mod tests {
         let mut files = BTreeMap::new();
         let summary = faction_emblems(&zh, &mut files);
         assert_eq!(summary, "3 faction emblems");
-        for f in FACTIONS {
+        for f in FACTIONS.iter().filter(|f| !f.side.is_empty()) {
             let img = zhbo_native::tga::decode(&files[&zhbo_native::emblem_path(f.letter)]).unwrap();
             assert_eq!((img.width, img.height), (48, 48), "{}: the 48 x 48 logo", f.side);
             assert!(img.rgba.chunks(4).any(|p| p[3] > 128), "{}: not blank", f.side);

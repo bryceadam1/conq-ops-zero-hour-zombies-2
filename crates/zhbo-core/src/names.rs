@@ -6,6 +6,17 @@
 
 /// Prefix of every General object (`ZHBO_General_USA`, checked by the glue's `isGeneral`).
 pub const GENERAL_PREFIX: &str = "ZHBO_General_";
+/// Prefix of every survivor General object (also a General: `ZHBO_General_Survivor_Misty`).
+pub const SURVIVOR_PREFIX: &str = "ZHBO_General_Survivor_";
+/// TranZit's four survivors as Generals: the object, the viewmodel arms letter and the
+/// tablet/hammer model code (`ZHBO_VM<code>_TAB`), the same table the bridge's faction list and
+/// the converter's survivors carry.
+pub const SURVIVORS: [(&str, char, &str); 4] = [
+    ("ZHBO_General_Survivor_Misty", 'M', "MIS"),
+    ("ZHBO_General_Survivor_Marlton", 'E', "MAR"),
+    ("ZHBO_General_Survivor_Russman", 'R', "RUS"),
+    ("ZHBO_General_Survivor_Stuhlinger", 'S', "STU"),
+];
 /// Suffix marking a no-shadow copy of a texture (engine patch 0009 strips the shadow pass for it).
 pub const NO_SHADOW_SUFFIX: &str = "_nsg";
 
@@ -170,6 +181,11 @@ pub fn faction_viewmodel(faction: &str) -> String {
 pub const FACTION_VIEWMODEL_USA: &str = "ZHBO_VMUSA_SKN";
 pub const FACTION_VIEWMODEL_CHN: &str = "ZHBO_VMCHN_SKN";
 pub const FACTION_VIEWMODEL_GLA: &str = "ZHBO_VMGLA_SKN";
+/// The survivors' viewmodels ([`SURVIVORS`]' codes).
+pub const FACTION_VIEWMODEL_MIS: &str = "ZHBO_VMMIS_SKN";
+pub const FACTION_VIEWMODEL_MAR: &str = "ZHBO_VMMAR_SKN";
+pub const FACTION_VIEWMODEL_RUS: &str = "ZHBO_VMRUS_SKN";
+pub const FACTION_VIEWMODEL_STU: &str = "ZHBO_VMSTU_SKN";
 pub const GENERAL_USA: &str = "ZHBO_General_USA";
 pub const GENERAL_CHN: &str = "ZHBO_General_CHN";
 pub const GENERAL_GLA: &str = "ZHBO_General_GLA";
@@ -192,6 +208,10 @@ pub fn general(faction: &str) -> String {
 /// Whether `name` is a General object (the same test everywhere: the full prefix).
 pub fn is_general(name: &str) -> bool {
     name.starts_with(GENERAL_PREFIX)
+}
+/// Whether `name` is a survivor General object.
+pub fn is_survivor(name: &str) -> bool {
+    name.starts_with(SURVIVOR_PREFIX)
 }
 /// Zero Hour's heroes, by their stock objects: the General is as tough as they are against Zero
 /// Hour's own weapons (the tuning pack's `GeneralHeroToughness`; the converter reads their health
@@ -253,6 +273,12 @@ inline constexpr const char *GENERAL_PREFIX = "ZHBO_General_";
 inline bool isGeneral(const char *name)
 {
 	return name && strncmp(name, GENERAL_PREFIX, strlen(GENERAL_PREFIX)) == 0;
+}
+// Prefix of every survivor General object (a General too); the glue's isSurvivor checks it.
+inline constexpr const char *SURVIVOR_PREFIX = "ZHBO_General_Survivor_";
+inline bool isSurvivor(const char *name)
+{
+	return name && strncmp(name, SURVIVOR_PREFIX, strlen(SURVIVOR_PREFIX)) == 0;
 }
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).
 inline void worldMesh(char *out, size_t cap, int vm, int k)

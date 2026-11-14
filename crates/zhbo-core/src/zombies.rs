@@ -111,6 +111,39 @@ pub fn roster() -> Vec<ZmWeapon> {
     parse(SHIPPED)
 }
 
+/// A survivor General's kit at spawn, from a `zombies.ini` text's `[Survivor]` section (BO2's
+/// `spawned_player`): the start weapon alone (no second gun, no held knife), the lethal with
+/// its count, the melee weapon. A key the section lacks stays empty.
+pub fn parse_survivor_kit(text: &str) -> crate::weapons::Loadout {
+    let mut kit = crate::weapons::Loadout::unarmed();
+    kit.melee.clear();
+    kit.held_knife = false;
+    let mut in_section = false;
+    for line in text.lines() {
+        let line = line.split(';').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            in_section = line.eq_ignore_ascii_case("[Survivor]");
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+        let value = value.trim().to_string();
+        match key.trim() {
+            "StartWeapon" => kit.primary = value,
+            "Lethal" => kit.lethal = value,
+            "LethalCount" => kit.lethal_count = value.parse().ok(),
+            "Tactical" => kit.tactical = value,
+            "Melee" => kit.melee = value,
+            _ => {}
+        }
+    }
+    kit
+}
+
+/// The shipped survivor kit.
+pub fn survivor_kit() -> crate::weapons::Loadout {
+    parse_survivor_kit(SHIPPED)
+}
+
 /// BO2's `mp/zombiemode.csv` (`common_zm`): Zombies' rule table, a name per row then one value per
 /// difficulty (`NAME,EASY,MEDIUM,HARD,VETERAN`). Scripts read it with `tablelookup( table, 0,
 /// name, column )`.
@@ -152,6 +185,15 @@ mod tests {
         for w in r.iter().filter_map(|w| w.upgrade.as_ref()) {
             assert!(r.iter().any(|x| &x.id == w), "{w}");
         }
+    }
+
+    #[test]
+    fn a_survivor_spawns_with_the_start_weapon_alone_and_an_empty_lethal() {
+        let kit = survivor_kit();
+        assert_eq!((kit.primary.as_str(), kit.secondary.as_str()), ("m1911_zm", ""));
+        assert_eq!((kit.lethal.as_str(), kit.lethal_count), ("frag_grenade_zm", Some(0)));
+        assert_eq!((kit.tactical.as_str(), kit.melee.as_str()), ("", "knife_zm"));
+        assert!(!kit.held_knife, "Zombies gives no held knife");
     }
 
     #[test]

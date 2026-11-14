@@ -486,7 +486,10 @@ void ZhboViewmodel_Preload(char faction, const int *weapons, int count)
 	{
 		AsciiString name;
 		if (i < 0)
-			name.format("ZHBO_VM%s_%s", faction == 'C' ? "CHN" : faction == 'G' ? "GLA" : "USA", i == -1 ? "TAB" : "HAM");
+		{
+			const ZhboFaction *f = zhboFactionOfLetter(faction);
+			name.format("ZHBO_VM%s_%s", f ? f->code : "USA", i == -1 ? "TAB" : "HAM");
+		}
 		else
 			name.format("ZV%02d%c_SKN", weapons[i], faction);
 		// The asset manager keeps the prototype and the clips once loaded; these copies can go.

@@ -105,6 +105,11 @@ Bool isGeneral(const Object *obj)
 	return obj && zhbo_names::isGeneral(obj->getTemplate()->getName().str());
 }
 
+Bool isSurvivor(const Object *obj)
+{
+	return obj && zhbo_names::isSurvivor(obj->getTemplate()->getName().str());
+}
+
 Int rtsOrderAction(const CommandButton *button)
 {
 	if (!button)

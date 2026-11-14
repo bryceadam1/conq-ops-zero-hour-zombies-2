@@ -424,7 +424,7 @@ mod tests {
     fn props_are_drawn_at_the_generals_scale() {
         let general = crate::generals::base_ini();
         let scales: Vec<f32> = general.split("\nObject ").skip(1).map(ini_scale).collect();
-        assert_eq!(scales.len(), 3, "three Generals");
+        assert_eq!(scales.len(), crate::generals::FACTIONS.len(), "every General, the survivors too");
         assert!(scales.iter().all(|&s| s == zhbo_core::units::GENERAL_SCALE), "{scales:?}");
         assert_eq!(OBJECT_SCALE, zhbo_core::units::GENERAL_SCALE);
         assert_eq!(character::SCALE * OBJECT_SCALE, zhbo_core::units::DRAWN_ZH_PER_INCH);
