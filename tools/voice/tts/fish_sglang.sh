@@ -9,9 +9,6 @@ exec > >(tee -a ~/job/logs/fish_sglang.log) 2>&1
 finish() { echo "== $(date -u) finished: $1"; touch ~/job/DONE; exit 0; }
 echo "== $(date -u) on $(hostname)"; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
-# The reference clips over local HTTP (the server fetches references by URL).
-(cd ~/job/refs && nohup python3 -m http.server 9000 --bind 127.0.0.1 > ~/job/logs/refs_http.log 2>&1 &)
-
 IMAGE=hongccc/sglang-omni:dev
 sudo docker pull -q $IMAGE || finish "docker pull failed"
 echo "image digest: $(sudo docker image inspect --format '{{index .RepoDigests 0}}' $IMAGE)"
@@ -37,11 +34,12 @@ for i in $(seq 180); do
 done
 sudo docker logs --tail 15 s2pro
 
-# The client runs inside the server's container, which already has requests, numpy, soundfile and
-# torchaudio (the AMI's python3 has no venv module, so a host venv fails); host networking reaches
-# both the server and the reference clips' HTTP server.
-sudo docker cp ~/job/tts/fish_bench.py s2pro:/tmp/fish_bench.py && sudo docker cp ~/job/lines.tsv s2pro:/tmp/lines.tsv
-sudo docker exec s2pro python3 /tmp/fish_bench.py --lines /tmp/lines.tsv --out /tmp/fish_bench || echo "bench failed"
+# The client runs inside the server's container, which already has numpy, soundfile and torchaudio
+# (the AMI's python3 has no venv module, so a host venv fails); host networking reaches the server.
+# The server refuses reference URLs that resolve to loopback ("Remote media URL resolves to a
+# loopback address"), so the reference clips go into the container and are passed as file paths.
+sudo docker cp ~/job/tts/fish_bench.py s2pro:/tmp/fish_bench.py && sudo docker cp ~/job/lines.tsv s2pro:/tmp/lines.tsv && sudo docker cp ~/job/refs s2pro:/tmp/refs
+sudo docker exec s2pro python3 /tmp/fish_bench.py --refs-url /tmp/refs --lines /tmp/lines.tsv --out /tmp/fish_bench || echo "bench failed"
 mkdir -p ~/job/out && sudo docker cp s2pro:/tmp/fish_bench ~/job/out/ && sudo chown -R "$(id -u):$(id -g)" ~/job/out
 sudo docker logs --tail 40 s2pro > ~/job/logs/s2pro_tail.log 2>&1
 nvidia-smi --query-gpu=memory.used,utilization.gpu --format=csv,noheader
