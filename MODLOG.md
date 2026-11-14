@@ -15446,3 +15446,29 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - **Not yet verified in game:** points, because no scripted run aims at zombies yet; the unit
     test covers the payment.
 - **Bump:** `hud::VERSION` → 95 (the spawner object).
+
+## The Zombies HUD, first pass (2026-11-14)
+
+- **What:** a survivor General wears `hud::zombies` instead of the scorestreak column.
+  - **Round chalk** (`hudroundstatuszombie.lua`): `hud_chalk_1..5` 96 square from the safe area's
+    bottom-left (`ChalkTop` -96), in `DefaultColor` (0.21, 0, 0). One to five shows its tally; six to
+    ten a full five plus the rest (`StartNewRound`'s branches); past ten the number in Morris.
+  - **D-pad area** (`huddpadareazombie.lua`): the 300 × 150 `hud_dpad_blood` streak tinted
+    (0.21, 0, 0), 10 below the 128-unit `hud_lui_dpad_circle` at the bottom-right. The action
+    slots sit on its arms by `UpdateActionSlots` (1 up, 2 down, 3 left, 4 right; icons `CircleSize/4`
+    tall a quarter of the circle in), each with its PC key. The field computer's key prompt sits
+    under the circle (it's no slot, by the user's ruling).
+- **Converter:** the materials come from `common_zm`/`patch_zm`, now on the dynamic material
+  search after the MP zones.
+- **Not in the reference dump, so not ported:**
+  - BO2's classic points list and the Zombies ammo counter. `hud.lua` requires `AmmoAreaZombie`,
+    which the dump lacks, and the classic score is likely a `ui_zm` menuDef (names only in the
+    dump). The MP ammo area and score panel (cash, which is the points) stand in for them, and they
+    overlap the d-pad circle.
+  - **Request for the BO2-reference session:** a TranZit classic capture (solo, round 1 and a
+    round past 10), and the `AmmoAreaZombie`/score menuDef layout.
+- **Not yet ported:** the chalk's animations (the first round's fade and fall, a new round's pulse).
+- **Verified:** `hud::zombies::tests` (the chalk's rules, the slots on the circle's arms, the
+  tallies' order) and the HUD tests. A capture of a survivor shows round 1's chalk stroke
+  bottom-left and the blood streak bottom-right.
+- **Bump:** `hud::VERSION` → 96.

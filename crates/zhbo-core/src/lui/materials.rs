@@ -59,6 +59,10 @@ pub const MATERIALS: &[(&str, u32)] = &[
     // `tabmanagerlite.lua`'s `AddTab`: the current tab's plate and its right end cap.
     ("menu_mp_tab", 64),
     ("menu_mp_tab_end", 16),
+    // The Zombies HUD (`hud::zombies`): the round's chalk, the d-pad circle and its blood streak
+    // (`common_zm`, `patch_zm`).
+    ("hud_chalk_1", 128), ("hud_chalk_2", 128), ("hud_chalk_3", 128), ("hud_chalk_4", 128), ("hud_chalk_5", 128),
+    ("hud_lui_dpad_circle", 128), ("hud_dpad_blood", 512),
 ];
 
 /// A [`MATERIALS`] name ending in this is its base material mirrored top to bottom (LUI draws an

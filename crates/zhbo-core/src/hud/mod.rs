@@ -45,6 +45,7 @@ mod shapes;
 pub mod spectate;
 pub mod sprites;
 pub mod state;
+pub mod zombies;
 #[cfg(test)]
 mod tests;
 
@@ -359,6 +360,14 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             let b = &client.cfg.bindings;
             let panel = spectate::Panel { name: &name, prev_key: crate::input::key_name(Key::MouseLeft), next_key: crate::input::key_name(Key::MouseRight), view_key: crate::input::key_name(b.field_computer) };
             spectate::draw(&l, prims, &panel);
+        } else if p.survivor {
+            // A survivor wears the Zombies HUD (`hud::zombies`): the round's chalk and the d-pad
+            // area with his action slots, the field computer's key under it.
+            let b = &client.cfg.bindings;
+            let keys = [b.action_slot_1, b.action_slot_2, b.alt_mode, b.action_slot_4].map(crate::input::key_name);
+            let can_build = !host.build_options(p.general).is_empty();
+            zombies::draw_round(&l, prims, sim.rounds.round);
+            zombies::draw_dpad(&l, prims, &zombies::slots(p, can_build, keys), crate::input::key_name(b.field_computer));
         } else {
             // The scorestreak column is the player's own commands: the tablet, and the build tool
             // when an action slot holds it.
