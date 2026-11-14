@@ -423,7 +423,7 @@ mod tests {
         // Round 1 alone: 24 + int(0.5 * 6 * 1) = 27, a quarter of it.
         assert_eq!(v.zombie_total(1, 1), 6);
         assert_eq!(v.zombie_total(1, 4), 10, "24 + 3 * 6 = 42, a quarter");
-        assert_eq!(v.zombie_total(6, 1), 27 + 0, "round 6: multiplier 1.2: 24 + int(3.6) = 27, all of it");
+        assert_eq!(v.zombie_total(6, 1), 27, "round 6: multiplier 1.2: 24 + int(3.6) = 27, all of it");
         assert_eq!((v.move_speed(1), v.move_speed(2), v.move_speed(5)), (8, 8, 32));
         assert!((v.spawn_delay_in(1) - 2.0).abs() < 1e-6 && (v.spawn_delay_in(3) - 2.0 * 0.95 * 0.95).abs() < 1e-5);
         assert_eq!((RunCycle::of(35), RunCycle::of(36), RunCycle::of(71)), (RunCycle::Walk, RunCycle::Run, RunCycle::Sprint));
