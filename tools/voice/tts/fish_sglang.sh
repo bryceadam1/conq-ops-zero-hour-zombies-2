@@ -17,13 +17,16 @@ echo "image digest: $(sudo docker image inspect --format '{{index .RepoDigests 0
 # already has every dependency) and starts our command there. Mounting a host checkout at that path
 # breaks it (git refuses a repo owned by another user, "dubious ownership"): the first two runs died
 # on that. Only the Hugging Face cache comes from the host.
+# The engine's default mem_fraction_static (0.85) leaves the reference encoder, a separate process
+# on the same GPU, out of memory on a 48 GB L40S: 45 of 48 requests failed with CUDA OOM. 0.6 still
+# leaves the 5B model a large KV pool.
 sudo docker run -d --name s2pro --gpus all --ipc host --network host --shm-size 32g \
   -v ~/.cache/huggingface:/root/.cache/huggingface $IMAGE bash -c '
     set -ex
     git rev-parse --short HEAD
     python3 -c "import dac, audiotools" || python3 -m pip install "descript-audiotools==0.7.2" "descript-audio-codec==1.0.0"
     python3 -c "from huggingface_hub import snapshot_download; snapshot_download(\"fishaudio/s2-pro\")"
-    sgl-omni serve --model-path fishaudio/s2-pro --config examples/configs/s2pro_tts.yaml --port 8000
+    sgl-omni serve --model-path fishaudio/s2-pro --config examples/configs/s2pro_tts.yaml --port 8000 --mem-fraction-static 0.6
   ' || finish "container failed to start"
 
 echo "== waiting for the server"
