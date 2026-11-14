@@ -15888,3 +15888,31 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - In game: "10 perk machines stood"; the converter made the five props, and the archive has
     529 images with none missing. The `--zombies` leg passes.
 - **Bump:** `hud::VERSION` → 103.
+
+## Zombies: Pack-a-Punch (2026-11-14)
+
+- **Where:** TranZit's Pack-a-Punch is a buildable (`p6_anim_zm_buildable_pap`). The Zombies map
+  stands one built and on at each start, on the wall-buy ring after the perk machines.
+- **Upgrading** (`vending_weapon_upgrade`, `_zm_perks.gsc:481-681`): the use key while the weapon up
+  has an upgrade (`can_upgrade_weapon`: the roster's `upgrade_name`, and not an upgrade itself),
+  and 5000 points (`vending_weapon_upgrade_cost`, `:682-708`).
+  - The machine takes the weapon (`Arsenal::take_current`: the next weapon comes up, or the melee
+    weapon when it was the only gun).
+  - It works 3.35 s (`third_person_weapon_upgrade`'s 0.35 s and 3 s, `:383-392`).
+  - The upgraded weapon then waits 15 s for its buyer alone (`packapunch_timeout`,
+    `wait_for_player_to_take`). The use key gives it with its start ammo (`weapon_give`). Left, it
+    is lost.
+- **Prompts:** `ZOMBIE_PERK_PACKAPUNCH` with the price, and `ZOMBIE_GET_UPGRADED` for the buyer.
+- **Not ported:** packing an upgraded gun again for an attachment. TranZit allows it
+  (`zombiemode_reusing_pack_a_punch = 1`, `zm_transit.gsc:286`; 2000 points), but the converter
+  makes no attachment variants of the upgraded weapons. The machine's rollers, flag and jingle
+  aren't ported either.
+- **Verified (the whole Zombies work's ladder, as the round's integrator):**
+  - `cargo test --workspace` (`ZHBO_BO2_DIR` unset): 1492 passed, 0 failed.
+  - Clippy is clean on our crates, including `--features harness,renderer` and `autopilot`.
+  - In game:
+    - `--zombies`: all six checks pass; the Pack-a-Punch prop was made; 529 images, none missing.
+    - The multiplayer leg: state hash agrees on all 2922 common frames, no failures.
+    - The default leg: 22/22.
+    - `--replay`: 5/5.
+- **Bump:** `hud::VERSION` → 104.

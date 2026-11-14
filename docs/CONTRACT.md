@@ -1965,6 +1965,9 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   `zm_transit`) and their prompts (`hud::VERSION` 103). `zhbo_logic_survivor_damage` also scales a
   blow on a Jugger-Nog survivor and downs a solo survivor with Quick Revive, from the same
   mirror. The sim's state gains `Rounds::perks` and `Arsenal::granted`. No ABI change.
+* Pack-a-Punch (`sim::packapunch`): the archive gains its prop (`names::pack_a_punch_object`,
+  `Data\INI\Object\ZHBO_ZM_PackAPunch.ini`) and its two prompts (`hud::VERSION` 104). The sim's
+  state gains `Rounds::pack_a_punch`. No ABI change.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

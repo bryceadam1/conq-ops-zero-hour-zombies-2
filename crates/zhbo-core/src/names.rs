@@ -125,6 +125,15 @@ pub fn perk_machine_object(specialty: &str) -> String {
 pub fn perk_machine_model(n: u16) -> String {
     format!("ZPK{n:03}_SKN")
 }
+/// The Zero Hour object Pack-a-Punch stands as: its model (`zombies.ini` `[PackAPunch]`), made by
+/// the converter.
+pub fn pack_a_punch_object() -> String {
+    "ZHBO_ZM_PackAPunch".to_string()
+}
+/// The W3D model of the converter's Pack-a-Punch prop.
+pub fn pack_a_punch_model(n: u16) -> String {
+    format!("ZPP{n:03}_SKN")
+}
 /// The Zero Hour object the Mystery Box stands as: its model (`zombies.ini` `[MagicBox]`), made by
 /// the converter.
 pub fn magic_box_object() -> String {

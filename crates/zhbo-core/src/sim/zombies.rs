@@ -71,13 +71,15 @@ pub struct Rounds {
     pub magic_box: super::magicbox::BoxState,
     /// The perk machines and the perks owned (`sim::perks`).
     pub perks: super::perks::PerkState,
+    /// The Pack-a-Punch machines (`sim::packapunch`).
+    pub pack_a_punch: Vec<super::packapunch::PapAt>,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box, perks });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box, perks, pack_a_punch });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default(), perks: Default::default() }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default(), perks: Default::default(), pack_a_punch: Vec::new() }
     }
 }
 
@@ -164,6 +166,7 @@ impl Sim {
                     self.powerups_start();
                     self.place_magic_box(host);
                     self.place_perk_machines(host);
+                    self.place_pack_a_punch(host);
                     self.start_round(host, &vars, vars.start_round.max(1));
                 }
             }
@@ -171,6 +174,7 @@ impl Sim {
         }
         self.step_powerups(host);
         self.step_magic_box(host);
+        self.step_pack_a_punch(host);
         // The round's dead and the vanished leave the list.
         let mut alive = std::mem::take(&mut self.rounds.alive);
         alive.retain(|&id| host.object(id, id).is_some_and(|o| !o.has(objflags::DEAD)));

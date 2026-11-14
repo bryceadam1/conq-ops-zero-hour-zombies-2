@@ -145,6 +145,9 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
   Jugger-Nog, Double Tap, Quick Revive): each one's model, price (Quick Revive's solo price), prompt
   and HUD icon. It also holds the perk limit, Jugger-Nog's health, Quick Revive's revive scale and
   its solo revive time and lives. They stand on the wall-buy ring around each start, all powered.
+- **Pack-a-Punch:** `zombies.ini` `[PackAPunch]` holds its price (5000), prompts, model, the upgrade's
+  time and the 15 s the upgraded weapon waits. What a weapon becomes is the roster's `upgrade`
+  column. It stands on the ring after the perk machines, built and on.
 - **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
   45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
   last-stand pistol and BO2's ranking of the pistols a downed player may hold

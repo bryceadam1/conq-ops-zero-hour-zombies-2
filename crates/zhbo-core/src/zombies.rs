@@ -425,6 +425,50 @@ impl Perks {
     }
 }
 
+/// Pack-a-Punch (`zombies.ini` `[PackAPunch]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PackAPunch {
+    pub cost: u32,
+    pub hint: String,
+    pub take_hint: String,
+    pub model: String,
+    pub upgrade_time: f32,
+    pub take_time: f32,
+}
+
+impl PackAPunch {
+    pub fn parse(text: &str) -> PackAPunch {
+        let mut p = PackAPunch::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[PackAPunch]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "Cost" => p.cost = num() as u32,
+                "Hint" => p.hint = value.to_string(),
+                "TakeHint" => p.take_hint = value.to_string(),
+                "Model" => p.model = value.to_string(),
+                "UpgradeTime" => p.upgrade_time = num(),
+                "TakeTime" => p.take_time = num(),
+                _ => {}
+            }
+        }
+        p
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static PackAPunch {
+        static P: std::sync::OnceLock<PackAPunch> = std::sync::OnceLock::new();
+        P.get_or_init(|| PackAPunch::parse(SHIPPED))
+    }
+}
+
 /// The Mystery Box (`zombies.ini` `[MagicBox]`, `_zm_magicbox.gsc`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MagicBox {
@@ -814,6 +858,12 @@ impl RunCycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pack_a_punch_costs_5000_and_waits_15_seconds() {
+        let p = PackAPunch::get();
+        assert_eq!((p.cost, p.hint.as_str(), p.take_time), (5000, "ZOMBIE_PERK_PACKAPUNCH", 15.0));
+    }
 
     #[test]
     fn the_perks_are_tranzits_with_bo2s_prices() {

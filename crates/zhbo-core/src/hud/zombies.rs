@@ -384,6 +384,13 @@ pub fn draw_perks(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim) {
     }
 }
 
+/// Pack-a-Punch's prompt to `p`: its price with a weapon it takes up, or the buyer's take.
+pub fn draw_pack_a_punch(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, use_key: &str) -> bool {
+    let Some(key) = sim.pack_a_punch_prompt(p) else { return false };
+    super::pickup::draw_runs(l, prims, &trigger_prompt(crate::sim::hint_text(key), use_key, crate::zombies::PackAPunch::get().cost));
+    true
+}
+
 /// The perk machine in `p`'s use list: its prompt with its price (`reset_vending_hint_string`).
 pub fn draw_perk_machine(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, use_key: &str) -> bool {
     let Some(i) = sim.perk_machine_target(p) else { return false };

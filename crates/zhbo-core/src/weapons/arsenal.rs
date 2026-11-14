@@ -616,6 +616,27 @@ impl Arsenal {
         self.since_sprint >= self.current().def.sprint_out_time
     }
 
+    /// Take the weapon up away (BO2's `takeweapon` on the current weapon, as Pack-a-Punch takes
+    /// it): the next weapon comes up, or the melee weapon held when it was the only one.
+    pub fn take_current(&mut self) -> WeaponState {
+        let i = self.active;
+        if self.weapons.len() == 1 {
+            let mut knife = WeaponState::new(self.class_melee);
+            knife.raised_once = true;
+            return std::mem::replace(&mut self.weapons[0], knife);
+        }
+        let taken = self.weapons.remove(i);
+        self.active = 0;
+        self.previous = 0;
+        self.current_mut().raised_once = true;
+        (self.raise_left, self.raise_kind) = (self.current().def.raise_time, RaiseKind::Normal);
+        self.raise_total = self.raise_left;
+        self.drop_left = 0.0;
+        self.drop_total = 0.0;
+        self.ads = 0.0;
+        taken
+    }
+
     /// Raise and drop take the weapon's own times; `fastweaponswitch` runs them at its rate
     /// ([`Timing::Switch`]) rather than switching to the quick animations (G3). A weapon with an
     /// empty clip (`WeaponState::clip_empty`) drops over its `iEmptyDropTime` (`FUN_008db500`) and raises over its
