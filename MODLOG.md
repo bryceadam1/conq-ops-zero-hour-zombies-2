@@ -15472,3 +15472,45 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   tallies' order) and the HUD tests. A capture of a survivor shows round 1's chalk stroke
   bottom-left and the blood streak bottom-right.
 - **Bump:** `hud::VERSION` → 96.
+
+## The Zombies map (2026-11-14)
+
+- **What:** "Zombies Tournament Desert", built by the converter from the player's own
+  `MapsZH.big` (`zhbo_assets::zombie_map`; nothing shipped). It is the stock map with 8 zombie
+  spawn points, 4 in a 400-unit ring around each player start, on the neutral team (`team`, which
+  owns the map's props; `teamPlyrCivilian` owns its buildings).
+- **New reader/writer `zhbo_formats::zhmap`:** Zero Hour's chunk files (`DataChunkInput`: the
+  `CkMp` name table, `id/version/size` chunks, `ObjectsList` → `Object` with position, angle,
+  flags, template and `Dict`). It keeps every uninterpreted byte, so the stock map round-trips
+  byte for byte.
+- **Why the bridge installs the map:** official maps come only from `MapCache.ini`
+  (`MapCache::updateCache`), so the archive carries the map and the bridge copies it into the
+  user-data folder's `Maps` at init. The map list then reads it: 2 players, its starts, the
+  stock map's name tag.
+- **Host patch 0035:** on a map with spawn points, `placeNetworkBuildingsForPlayer` stands the
+  slot's survivor at the start waypoint instead of the Command Center and starting units, and
+  makes the neutral side and the player enemies both ways (`Zhbo_ZombiesStartObject`).
+  Combined with the defeat rule (patch 0034), a player is out once his survivor dies with no
+  buildings.
+- **Gotcha: the logic steps at the main menu too.** The round engine's map-wide scan for spawn
+  points crashed the game in the menu: `PartitionManager::getClosestObjects` with no map loaded,
+  and with the shell map loaded a radius of 1e6 overran its grid. `cbQuery` now answers nothing
+  outside a real game (not the menu, not the shell map), and the scan covers the map's extent.
+  Before the fix every menu-started game crashed 3 s in (`generalszh` crash reports); saved-game
+  starts never step at the menu, which hid it.
+- **Verified:**
+  - In game, a skirmish started from the menu on the Zombies map: each player starts as a
+    survivor (Misty, Marlton) with no buildings, armed with the M1911 and an empty frag.
+  - Round 1 begins on the 8 spawn points with 7 zombies at 150 health (BO2's two-player total:
+    a quarter of 24 + 6).
+  - The zombies reach the survivors, two swipes each down them (120 of 200), and with no buildings
+    both players are defeated: the score screen.
+  - The `--replay` leg's menu start, broken by the crash, should be rerun at the next integration.
+- **Not yet ported:**
+  - BO2's starting points (`zombie_score_start_<n>p`, 500): players keep the skirmish's starting
+    cash.
+  - Last stand and the next round's respawn (`spectators_respawn`): a fallen survivor's player is
+    out.
+  - Zone activation (`zombie_spawn_locations` limited to active zones): every spawn point is live.
+  - Points for overhead (Zero Hour weapon) kills: only the sim's BO2 hits pay.
+  - A 4-player base map.

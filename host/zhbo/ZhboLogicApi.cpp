@@ -269,6 +269,10 @@ int32_t cbObject(uint32_t id, uint32_t viewerId, ZhboObjInfo *out)
 
 int32_t cbQuery(const ZhboVec3 *center, float radius, uint32_t viewerId, ZhboObjInfo *out, int32_t cap)
 {
+	// No map, no partition cells: the logic also steps at the main menu, where the round engine's
+	// map-wide scan for zombie spawn points once reached an empty partition manager and crashed.
+	if (!ThePartitionManager || !TheGameLogic || !TheGameLogic->isInGame() || TheGameLogic->isInShellGame())
+		return 0;
 	const Object *viewer = TheGameLogic->findObjectByID((ObjectID)viewerId);
 	Coord3D c;
 	c.set(center->x, center->y, center->z);

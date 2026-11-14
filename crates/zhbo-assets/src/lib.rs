@@ -44,6 +44,7 @@ pub mod shield;
 pub mod props;
 pub mod weapons;
 pub mod zombies;
+pub mod zombie_map;
 pub mod toughness;
 #[cfg(test)]
 mod content_tests;

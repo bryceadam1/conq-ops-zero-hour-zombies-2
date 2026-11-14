@@ -559,7 +559,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     summary.push(vm_summary);
     // The weapon emblem: each faction's Zero Hour logo, from the player's own Zero Hour install.
     match zhbo_requirements::check_requirements().zero_hour {
-        Ok(zh) => summary.push(crate::emblems::faction_emblems(&zh.path, &mut out)),
+        Ok(zh) => {
+            summary.push(crate::emblems::faction_emblems(&zh.path, &mut out));
+            // The Zombies map, from the player's own stock map (`zombie_map`).
+            match crate::zombie_map::files(&zh.path) {
+                Ok((files, s)) => {
+                    out.extend(files);
+                    summary.push(s);
+                }
+                Err(e) => summary.push(format!("zombies map skipped: {e}")),
+            }
+        }
         Err(e) => summary.push(format!("faction emblems skipped: {e}")),
     }
     // The CaC reticle options as lens materials, one blob for every optic.

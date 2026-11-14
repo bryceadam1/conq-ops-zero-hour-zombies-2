@@ -24,6 +24,7 @@ pub mod w3d;
 pub mod xanim;
 pub mod weapon;
 pub mod xmodel;
+pub mod zhmap;
 
 use std::fmt;
 

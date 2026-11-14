@@ -1928,8 +1928,17 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   sound. `ZHBO_OBJ_SPAWNER = 1u << 16` marks a `ZHBO_ZM_Spawner` object. The free function
   `zhbo_load_zombie_rules(text)` installs the archive's `Data\ConquerOps\zombiemode.csv`
   (`names::ZOMBIE_RULES_PATH`). The sim's state gains `Sim::rounds`, hashed in the world part.
+* Host patch 0035 (`0035-zombies-map-start.patch`): `placeNetworkBuildingsForPlayer` asks the
+  bridge's `Zhbo_ZombiesStartObject`. On a Zombies map (one whose map objects include a
+  `ZHBO_ZM_Spawner`) each player starts with a survivor General at his start waypoint (by slot:
+  Misty, Marlton, Russman, Stuhlinger) and no buildings or starting units, and the neutral side
+  (the spawn points' and so the zombies') and he become enemies both ways. The bridge copies the
+  archive's Zombies maps (`names::ZOMBIE_MAPS`) into the user-data folder's `Maps` at init
+  (`ZHBO_NO_ZOMBIE_MAPS` skips it), where the map list finds user maps. The logic query
+  (`cbQuery`) answers nothing outside a real game (the main menu, the shell map). Host patches
+  are now 0001–0035.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
-  engine-only, no ABI change. Host patches are now 0001–0034.
+  engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)
   and the object flag `ZHBO_OBJ_GENERAL` (bit 13).
 

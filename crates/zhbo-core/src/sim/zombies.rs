@@ -21,8 +21,6 @@ use crate::zombies::{RunCycle, Vars};
 /// How often an inactive engine looks for spawn points, and an active one re-sends its zombies
 /// at the nearest survivor (logic frames).
 pub const SCAN_FRAMES: u32 = 30;
-/// Far enough to see a whole map (Zero Hour units).
-const MAP_REACH: f32 = 1.0e6;
 
 /// Where a round is.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -85,8 +83,11 @@ impl Sim {
         let scan = self.frame.is_multiple_of(SCAN_FRAMES);
         if matches!(self.rounds.phase, Phase::Off) {
             if scan {
+                // The whole map: its extent's centre and half diagonal (a query far past the map
+                // overran Zero Hour's partition grid).
+                let (lo, hi) = host.extent();
                 let mut objs = Vec::new();
-                host.query(Vec3::ZERO, MAP_REACH, 0, &mut objs);
+                host.query((lo + hi) * 0.5, (hi - lo).length() * 0.5, 0, &mut objs);
                 let spawners: Vec<u32> = objs.iter().filter(|o| o.has(objflags::SPAWNER) && !o.has(objflags::DEAD)).map(|o| o.id).collect();
                 if !spawners.is_empty() {
                     host.log(&format!("zombies: {} spawn points; round 1 begins", spawners.len()));

@@ -23,6 +23,13 @@ pub const ZOMBIE_SPAWNER: &str = "ZHBO_ZM_Spawner";
 pub const ZOMBIE_RULES_PATH: &str = "Data\\ConquerOps\\zombiemode.csv";
 /// Prefix of every zombie object (`ZHBO_Zombie_Walk`; `zhbo_assets::zombies` writes them).
 pub const ZOMBIE_PREFIX: &str = "ZHBO_Zombie";
+/// The Zombies maps the converter builds from the player's own Zero Hour maps
+/// (`zhbo_assets::zombie_map`): each file's path in the archive, then the folder and file name the
+/// bridge copies it to under the user-data folder's `Maps` (where the map list finds user maps).
+pub const ZOMBIE_MAPS: [(&str, &str, &str); 2] = [
+    ("Data\\ConquerOps\\Maps\\Zombies Tournament Desert.map", "Zombies Tournament Desert", "Zombies Tournament Desert.map"),
+    ("Data\\ConquerOps\\Maps\\Zombies Tournament Desert.tga", "Zombies Tournament Desert", "Zombies Tournament Desert.tga"),
+];
 /// Suffix marking a no-shadow copy of a texture (engine patch 0009 strips the shadow pass for it).
 pub const NO_SHADOW_SUFFIX: &str = "_nsg";
 
@@ -302,6 +309,20 @@ inline bool isZombieSpawner(const char *name)
 {
 	return name && strcmp(name, ZOMBIE_SPAWNER) == 0;
 }
+// TranZit's survivors as Generals, by player slot on a Zombies map (names.rs SURVIVORS).
+inline constexpr const char *SURVIVOR_OBJECTS[4] = {"ZHBO_General_Survivor_Misty", "ZHBO_General_Survivor_Marlton", "ZHBO_General_Survivor_Russman", "ZHBO_General_Survivor_Stuhlinger"};
+// The Zombies maps the converter built (names.rs ZOMBIE_MAPS): the archive path, then the folder
+// and file under the user-data folder's Maps.
+struct ZombieMapFile
+{
+	const char *archive;
+	const char *folder;
+	const char *file;
+};
+inline constexpr ZombieMapFile ZOMBIE_MAP_FILES[2] = {
+	{"Data\\ConquerOps\\Maps\\Zombies Tournament Desert.map", "Zombies Tournament Desert", "Zombies Tournament Desert.map"},
+	{"Data\\ConquerOps\\Maps\\Zombies Tournament Desert.tga", "Zombies Tournament Desert", "Zombies Tournament Desert.tga"},
+};
 // Zombies' rule table in the archive (the install's mp/zombiemode.csv).
 inline constexpr const char *ZOMBIE_RULES_PATH = "Data\\ConquerOps\\zombiemode.csv";
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).
@@ -335,6 +356,17 @@ inline constexpr const char *FONTS_PATH = "Data\\ConquerOps\\bo2_fonts.txt";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_headers_survivor_and_map_tables_match_the_registry() {
+        for (object, _, _) in SURVIVORS {
+            assert!(ZHBO_NAMES_H.contains(&format!("\"{object}\"")), "{object}");
+        }
+        for (archive, folder, file) in ZOMBIE_MAPS {
+            let row = format!("{{\"{}\", \"{folder}\", \"{file}\"}}", archive.replace('\\', "\\\\"));
+            assert!(ZHBO_NAMES_H.contains(&row), "{row}");
+        }
+    }
 
     #[test]
     fn builders_match_the_converted_layout() {

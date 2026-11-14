@@ -1,0 +1,22 @@
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+@@ -838,6 +838,19 @@
+ #endif
+ 	pos.z = TheTerrainLogic->getGroundHeight( pos.x, pos.y );
+ 
++	// ZHBO: on a Zombies map (one with zombie spawn points) the player starts with a survivor
++	// General where his buildings would stand, and none of them (Zhbo_ZombiesStartObject).
++	{
++		const AsciiString zhboSurvivor = Zhbo_ZombiesStartObject(slotNum, pPlayer);
++		if (zhboSurvivor.isNotEmpty())
++		{
++			Object *survivor = placeObjectAtPosition(slotNum, zhboSurvivor, pos, pPlayer, pTemplate);
++			if (survivor)
++				pPlayer->onUnitCreated(nullptr, survivor);
++			return;
++		}
++	}
++
+ 	AsciiString buildingTemplateName = pTemplate->getStartingBuilding();
+ 
+ 	DEBUG_ASSERTCRASH(!buildingTemplateName.isEmpty(), ("no starting building type for player %d (playertemplate %ls)",

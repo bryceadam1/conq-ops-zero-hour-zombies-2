@@ -38,6 +38,20 @@ inline bool isZombieSpawner(const char *name)
 {
 	return name && strcmp(name, ZOMBIE_SPAWNER) == 0;
 }
+// TranZit's survivors as Generals, by player slot on a Zombies map (names.rs SURVIVORS).
+inline constexpr const char *SURVIVOR_OBJECTS[4] = {"ZHBO_General_Survivor_Misty", "ZHBO_General_Survivor_Marlton", "ZHBO_General_Survivor_Russman", "ZHBO_General_Survivor_Stuhlinger"};
+// The Zombies maps the converter built (names.rs ZOMBIE_MAPS): the archive path, then the folder
+// and file under the user-data folder's Maps.
+struct ZombieMapFile
+{
+	const char *archive;
+	const char *folder;
+	const char *file;
+};
+inline constexpr ZombieMapFile ZOMBIE_MAP_FILES[2] = {
+	{"Data\\ConquerOps\\Maps\\Zombies Tournament Desert.map", "Zombies Tournament Desert", "Zombies Tournament Desert.map"},
+	{"Data\\ConquerOps\\Maps\\Zombies Tournament Desert.tga", "Zombies Tournament Desert", "Zombies Tournament Desert.tga"},
+};
 // Zombies' rule table in the archive (the install's mp/zombiemode.csv).
 inline constexpr const char *ZOMBIE_RULES_PATH = "Data\\ConquerOps\\zombiemode.csv";
 // A weapon's third-person meshes on the soldier model (viewmodel vm, mesh k).

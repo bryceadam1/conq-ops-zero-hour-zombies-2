@@ -41,6 +41,11 @@ void Zhbo_OnSwitchWeaponButton(const CommandButton *command);
 void Zhbo_OnFireWeaponCommand(const CommandButton *command);
 
 class Player;
+/// Host patch 0035: on a Zombies map (one whose objects include a zombie spawn point) the survivor
+/// General template player slot `slotNum` starts with instead of his buildings (Misty, Marlton,
+/// Russman and Stuhlinger by slot), having made the map's neutral side (the zombies') his enemy;
+/// empty on any other map.
+AsciiString Zhbo_ZombiesStartObject(Int slotNum, Player *player);
 /// Whether the player owns a General that is not dead or dying (patch 0034: losing every building
 /// defeats a player only once his General is gone too). Logic-side: every machine answers alike.
 Bool Zhbo_HasLivingGeneral(const Player *player);

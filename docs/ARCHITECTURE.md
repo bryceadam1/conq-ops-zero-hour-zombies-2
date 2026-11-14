@@ -28,7 +28,7 @@ Wine/CrossOver/Proton prefixes. Depends on nothing. Used by the launcher and by 
 
 ### `crates/zhbo-formats`
 Parsers for game data: Zero Hour `.big` (from a file or, `big::members`, from memory), Black Ops II
-`.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X, RefPack (`refpack`: Zero Hour's
+`.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X, Zero Hour's chunk files (`zhmap`: its `.map`s, read and written back), RefPack (`refpack`: Zero Hour's
 `EAR\0` files, its maps among them), the BO2 fastfile decryption,
 and the compiled UI Lua (`havok_lua`: Havok Script chunks and their constant stores). `t6zone::load_file`/`install_path`/`language_path` and `localize::install_strings` are the one way to open a zone of the player's install. Depends on nothing. All
 readers are hardened against corrupt input (refactor plan Phase 0.3) and used by the
@@ -183,7 +183,7 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
 ### `crates/zhbo-assets`
 The BO2 → mod converter: reads your BO2 install (through `zhbo-formats`), converts HUD art,
 sound, weapon viewmodels and the weapon table, and writes `ConquerOps_BO2.big`. Also a CLI
-to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts. `zombies.rs` adds TranZit's weapons (`zhbo_formats::weapon::ZM_TRANSIT_POOL`, `paks::ZmPool`) after the MP ones in the converted list, and ships the install's Zombies rule table. Depends on `zhbo-formats`, `zhbo-requirements`, and
+to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts. `zombie_map.rs` builds the Zombies map from a stock map of the player's own `MapsZH.big` (Tournament Desert with zombie spawn points around each start, through `zhbo_formats::zhmap`, Zero Hour's chunk file reader and writer). `zombies.rs` adds TranZit's weapons (`zhbo_formats::weapon::ZM_TRANSIT_POOL`, `paks::ZmPool`) after the MP ones in the converted list, and ships the install's Zombies rule table. Depends on `zhbo-formats`, `zhbo-requirements`, and
 `zhbo-core`. After Phase 2.5 the module is split into `textures.rs` (the texture pipeline),
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `props.rs` (thrown,
 launched and placed weapons as `ZHBO_Proj_<id>` objects at the General's drawn scale, the planted

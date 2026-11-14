@@ -42,6 +42,8 @@
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
 #include "Common/Xfer.h"
+#include "Common/LocalFileSystem.h"
+#include "Common/MapObject.h"
 #include "GameClient/ControlBar.h"
 #include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
@@ -157,6 +159,8 @@ std::string readTextFile(const char *path)
 	delete[] buf;
 	return text;
 }
+
+static void installZombieMaps();
 
 // A file of the mod's in the game's user-data directory. Several game instances on one machine
 // (the engine's multi-instance mode: the two-instance multiplayer test) share that directory; like
@@ -524,6 +528,7 @@ void Zhbo_Init()
 	if (!layers.empty())
 		logf("sound layers: %d BO2 third-person layers installed", (int)zhbo_load_sound_layers(layers.c_str()));
 	zhbo_load_fonts(readTextFile(zhbo_names::FONTS_PATH).c_str());
+	installZombieMaps();
 	// Zombies' rule table (the install's mp/zombiemode.csv): the round engine's numbers.
 	const std::string zombieRules = readTextFile(zhbo_names::ZOMBIE_RULES_PATH);
 	if (!zombieRules.empty())
@@ -1309,6 +1314,68 @@ void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button)
 	// Take Control: the class set (if it was up) hands the bar back to the General's own commands.
 	zhboCloseClassSet(obj);
 	Zhbo_RequestTakeControl(obj);
+}
+
+AsciiString Zhbo_ZombiesStartObject(Int slotNum, Player *player)
+{
+	Bool zombiesMap = FALSE;
+	for (MapObject *m = MapObject::getFirstMapObject(); m && !zombiesMap; m = m->getNext())
+		zombiesMap = zhbo_names::isZombieSpawner(m->getName().str());
+	if (!zombiesMap || !player || !ThePlayerList)
+		return AsciiString::TheEmptyString;
+	// The zombies are the neutral side's (they join their spawn point's): it and the player are
+	// enemies both ways, so the zombies attack him and his units fight them.
+	Player *neutral = ThePlayerList->getNeutralPlayer();
+	if (neutral && neutral != player)
+	{
+		neutral->setPlayerRelationship(player, ENEMIES);
+		player->setPlayerRelationship(neutral, ENEMIES);
+	}
+	const Int n = (Int)(sizeof(zhbo_names::SURVIVOR_OBJECTS) / sizeof(zhbo_names::SURVIVOR_OBJECTS[0]));
+	const char *survivor = zhbo_names::SURVIVOR_OBJECTS[(slotNum % n + n) % n];
+	logf("zombies map: player slot %d starts as %s, no buildings", (int)slotNum, survivor);
+	return AsciiString(survivor);
+}
+
+// The Zombies maps the converter built from the player's own install ride the archive; the map
+// list reads user maps from the user-data folder (MapCache::updateCache), so each is copied there
+// when missing or out of date.
+static void installZombieMaps()
+{
+	// ZHBO_NO_ZOMBIE_MAPS: leave the user's Maps folder alone (a test switch).
+	if (!TheGlobalData || getenv("ZHBO_NO_ZOMBIE_MAPS"))
+		return;
+	const std::string userData = TheGlobalData->getPath_UserData().str();
+	for (const zhbo_names::ZombieMapFile &m : zhbo_names::ZOMBIE_MAP_FILES)
+	{
+		const std::string bytes = readTextFile(m.archive);
+		if (bytes.empty())
+			continue;
+		const std::string dir = userData + "Maps/" + m.folder;
+		const std::string path = dir + "/" + m.file;
+		std::string old;
+		if (FILE *f = fopen(path.c_str(), "rb"))
+		{
+			char buf[65536];
+			size_t n;
+			while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+				old.append(buf, n);
+			fclose(f);
+		}
+		if (old == bytes)
+			continue;
+		if (TheLocalFileSystem)
+		{
+			TheLocalFileSystem->createDirectory((userData + "Maps").c_str());
+			TheLocalFileSystem->createDirectory(dir.c_str());
+		}
+		if (FILE *f = fopen(path.c_str(), "wb"))
+		{
+			fwrite(bytes.data(), 1, bytes.size(), f);
+			fclose(f);
+			logf("zombies map: installed %s", path.c_str());
+		}
+	}
 }
 
 static void noteLivingGeneral(Object *obj, void *found)
