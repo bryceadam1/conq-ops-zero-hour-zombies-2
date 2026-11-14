@@ -65,13 +65,15 @@ pub struct Rounds {
     pub up: u32,
     /// The wall buys stood on the map (`sim::wallbuy`).
     pub wall_buys: Vec<super::wallbuy::WallBuyAt>,
+    /// The power-ups (`sim::powerups`).
+    pub powerups: super::powerups::PowerUpState,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new() }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default() }
     }
 }
 
@@ -85,7 +87,7 @@ fn random_int_range(rng: &mut crate::weapons::Rng, lo: i32, hi: i32) -> i32 {
 
 impl Sim {
     /// The survivors in the game: the seats whose General is a survivor (BO2's `get_players()`).
-    fn survivors(&self) -> Vec<&PlayerSim> {
+    pub(super) fn survivors(&self) -> Vec<&PlayerSim> {
         self.players.iter().flatten().filter(|p| p.survivor).collect()
     }
 
@@ -155,11 +157,13 @@ impl Sim {
                     self.rounds.spawners = spawners;
                     self.note_players(host);
                     self.place_wall_buys(host, owner);
+                    self.powerups_start();
                     self.start_round(host, &vars, vars.start_round.max(1));
                 }
             }
             return;
         }
+        self.step_powerups(host);
         // The round's dead and the vanished leave the list.
         let mut alive = std::mem::take(&mut self.rounds.alive);
         alive.retain(|&id| host.object(id, id).is_some_and(|o| !o.has(objflags::DEAD)));
@@ -204,6 +208,8 @@ impl Sim {
         self.rounds.to_spawn = vars.zombie_total(round, players);
         self.rounds.next_spawn = 0.0;
         self.rounds.phase = Phase::Fighting;
+        // `powerup_round_start`.
+        self.rounds.powerups.drop_count = 0;
         host.log(&format!("zombies: round {round}: {} zombies at {} health", self.rounds.to_spawn, vars.health(round)));
         self.emit_all(EventKind::ZombieRound { round: round as u8 });
     }
@@ -260,7 +266,7 @@ impl Sim {
         }
     }
 
-    fn emit_all(&mut self, kind: EventKind) {
+    pub(super) fn emit_all(&mut self, kind: EventKind) {
         for idx in 0..self.players.len() {
             if self.players[idx].as_ref().is_some_and(|p| p.survivor) {
                 self.emit(idx, kind);
@@ -280,14 +286,27 @@ impl Sim {
         let Some(owner) = host.object(shooter, shooter).map(|o| o.owner_player) else { return };
         let vars = Vars::get();
         let players = self.survivors().len().clamp(1, 4);
+        // Insta-kill: the hit kills (`check_for_instakill`, after the hit's own points).
+        let insta = !kill && self.insta_kill_on();
+        let kill = kill || insta;
         let points = if kill {
             let bonus = if how == crate::damage::MeansOfDeath::Melee { vars.score_bonus_melee } else { 0 };
             vars.score_kill[players - 1] + bonus
         } else {
             vars.score_damage
         };
-        host.add_cash(owner, points);
-        self.emit(seat, EventKind::ZombiePoints { points: points as u16 });
+        let paid = self.pay_points(host, owner, points);
+        self.emit(seat, EventKind::ZombiePoints { points: paid.clamp(0, u16::MAX as i32) as u16 });
+        if kill {
+            let at = host.object(victim, victim).map(|o| Vec3::new(o.pos.x, o.pos.y, host.ground_height(o.pos.x, o.pos.y)));
+            if insta {
+                host.kill(victim);
+            }
+            // `zombie_death_points`: a player's kill may drop a power-up where it fell.
+            if let Some(at) = at {
+                self.powerup_drop(host, at);
+            }
+        }
     }
 }
 

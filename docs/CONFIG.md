@@ -133,6 +133,11 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
   `UpgradedAmmoCost` is the price of ammo for a Pack-a-Punched weapon. The roster's seventh column is
   each weapon's prompt key. `[Layout]` `WallBuyRing` is where the Zombies map stands them (the mod's
   own layout): the whole set around each player start, on a ring this many Zero Hour units from it.
+- **Power-ups:** `zombies.ini` `[PowerUps]` lists TranZit classic's power-ups (model and drop rule,
+  in `add_zombie_powerup`'s order) and what `_zm_powerups.gsc` hard-codes: the drop threshold's
+  increment and growth, four a round, the 3-in-100 chance, the 40-inch lift, the 15 s life and
+  11.5 s of blinking, the 64-inch grab, the 30 s timers, the nuke's points and pacing. The rule
+  table's `zombie_score_start_<n>p` sets the first threshold.
 - **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
   45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
   last-stand pistol and BO2's ranking of the pistols a downed player may hold

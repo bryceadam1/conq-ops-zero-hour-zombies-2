@@ -245,6 +245,113 @@ impl WallBuys {
     }
 }
 
+/// How a power-up drops with the regular ones (`func_should_drop_with_regular_powerups`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drops {
+    Always,
+    Never,
+    /// `func_should_drop_carpenter`: five windows broken; the Zombies map has none.
+    Carpenter,
+}
+
+/// One power-up: its name (`nuke`), model and drop rule.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PowerUpKind {
+    pub name: String,
+    pub model: String,
+    pub drops: Drops,
+}
+
+/// The power-ups (`zombies.ini` `[PowerUps]`, `_zm_powerups.gsc`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PowerUps {
+    pub kinds: Vec<PowerUpKind>,
+    pub drop_increment: f32,
+    pub increment_growth: f32,
+    pub drop_max_per_round: u32,
+    pub random_chance: u32,
+    /// In BO2 inches.
+    pub drop_height: f32,
+    pub life: f32,
+    pub blink_time: f32,
+    /// In BO2 inches.
+    pub grab_range: f32,
+    pub duration: f32,
+    pub nuke_points: i32,
+    pub nuke_delay: f32,
+    pub nuke_gap: (f32, f32),
+    pub flash_from: f32,
+}
+
+impl PowerUps {
+    pub fn parse(text: &str) -> PowerUps {
+        let mut p = PowerUps {
+            kinds: Vec::new(),
+            drop_increment: 0.0,
+            increment_growth: 1.0,
+            drop_max_per_round: 0,
+            random_chance: 0,
+            drop_height: 0.0,
+            life: 0.0,
+            blink_time: 0.0,
+            grab_range: 0.0,
+            duration: 0.0,
+            nuke_points: 0,
+            nuke_delay: 0.0,
+            nuke_gap: (0.0, 0.0),
+            flash_from: 0.0,
+        };
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[PowerUps]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "DropIncrement" => p.drop_increment = num(),
+                "IncrementGrowth" => p.increment_growth = num(),
+                "DropMaxPerRound" => p.drop_max_per_round = num() as u32,
+                "RandomChance" => p.random_chance = num() as u32,
+                "DropHeight" => p.drop_height = num(),
+                "Life" => p.life = num(),
+                "BlinkTime" => p.blink_time = num(),
+                "GrabRange" => p.grab_range = num(),
+                "Duration" => p.duration = num(),
+                "NukePoints" => p.nuke_points = num() as i32,
+                "NukeDelay" => p.nuke_delay = num(),
+                "NukeGapMin" => p.nuke_gap.0 = num(),
+                "NukeGapMax" => p.nuke_gap.1 = num(),
+                "FlashFrom" => p.flash_from = num(),
+                name => {
+                    let f: Vec<&str> = value.split(',').map(str::trim).collect();
+                    let drops = match f.get(1).copied() {
+                        Some("always") => Drops::Always,
+                        Some("carpenter") => Drops::Carpenter,
+                        _ => Drops::Never,
+                    };
+                    p.kinds.push(PowerUpKind { name: name.to_string(), model: f[0].to_string(), drops });
+                }
+            }
+        }
+        p
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static PowerUps {
+        static P: std::sync::OnceLock<PowerUps> = std::sync::OnceLock::new();
+        P.get_or_init(|| PowerUps::parse(SHIPPED))
+    }
+
+    /// The index of power-up `name`.
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.kinds.iter().position(|k| k.name == name)
+    }
+}
+
 /// A survivor's last stand (`zombies.ini` `[LastStand]`, `_zm_laststand.gsc`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LastStand {
@@ -399,6 +506,9 @@ pub struct Vars {
     /// `penalty_downed`: the share of his points a player loses going down (`player_reduce_points`,
     /// `_zm_score.gsc:292-296`, rounded up to ten).
     pub penalty_downed: f32,
+    /// `zombie_score_start_<n>p` (`_zm.gsc:936-945`): a game of n players' starting points,
+    /// which the first power-up threshold counts (`watch_for_drop`).
+    pub score_start: [i32; 8],
 }
 
 impl Vars {
@@ -432,6 +542,7 @@ impl Vars {
             respawn_floor_round: rounds_value(ini, "RespawnFloorRound").unwrap_or(6.0) as u32,
             respawn_floor_points: rounds_value(ini, "RespawnFloorPoints").unwrap_or(1500.0) as i32,
             penalty_downed: float("penalty_downed", 0.05, column),
+            score_start: std::array::from_fn(|i| int(&format!("zombie_score_start_{}p", i + 1), if i > 3 { 3000 } else { 500 }, column)),
         }
     }
 
@@ -545,6 +656,15 @@ impl RunCycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_power_ups_are_tranzits_with_four_that_drop() {
+        let p = PowerUps::get();
+        let regular: Vec<&str> = p.kinds.iter().filter(|k| k.drops == Drops::Always).map(|k| k.name.as_str()).collect();
+        assert_eq!(regular, vec!["nuke", "insta_kill", "full_ammo", "double_points"]);
+        assert_eq!((p.drop_max_per_round, p.random_chance, p.grab_range, p.duration, p.nuke_points), (4, 3, 64.0, 30.0, 400));
+        assert_eq!(Vars::get().score_start[0], 500);
+    }
 
     #[test]
     fn the_wall_buys_are_tranzits_ten_with_their_prompts_and_prices() {

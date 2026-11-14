@@ -446,7 +446,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
     // The survivors' zone streams their bodies' and arms' images by name too.
     let survivor_zone = load_zone(bo2_dir, SURVIVOR_ZONE)?;
-    let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone])?;
+    // Zombies' common zone holds the power-ups' models (`props::powerups`).
+    let common_zm = load_zone(bo2_dir, "common_zm")?;
+    let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone, &common_zm])?;
     // A weapon whose art the install lacks stays out (the Ray Gun Mark II's definition is in
     // TranZit's title update, its view model only in a DLC map's zones).
     let lacking = {
@@ -722,7 +724,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     summary.push(crate::props::projectiles(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
     crate::props::share_projectiles(&mut table.weapons);
     summary.push(crate::props::drops(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base));
-    summary.push(crate::props::wall_buys(&[&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone], &paks, &mut out));
+    let zm_props: [&Zone; 7] = [&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone, &common_zm];
+    summary.push(crate::props::wall_buys(&zm_props, &paks, &mut out));
+    summary.push(crate::props::powerups(&zm_props, &paks, &mut out));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

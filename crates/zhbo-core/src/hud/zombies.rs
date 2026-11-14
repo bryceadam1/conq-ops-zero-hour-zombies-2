@@ -84,8 +84,20 @@ pub const REVIVE_ICON_MAT: &str = "waypoint_revive_zm";
 pub const REVIVE_ICON_HEIGHT: f32 = 30.0;
 pub const REVIVE_ICON: f32 = 32.0;
 
+/// `CoD.PowerUps` (`hudpowerupszombie.lua`): the timed power-ups' icons, in its client field order,
+/// `IconSize` square, `Spacing` apart, centred at the bottom of the safe area (`UpdatePosition`).
+pub const POWERUP_ICON: f32 = 48.0;
+pub const POWERUP_SPACING: f32 = 8.0;
+pub const POWERUP_ICONS: [(&str, &str); 2] = [("insta_kill", "specialty_instakill_zombies"), ("double_points", "specialty_doublepoints_zombies")];
+/// The nuke's white flash (`nuke_flash`: to 0.8 over 0.2 s, held until 0.5 s, gone over 1 s).
+pub const NUKE_FLASH: (f32, f32, f32, f32) = (0.8, 0.2, 0.5, 1.0);
+/// Max ammo's text (`full_ammo_on_hud`: font scale 2, its top `zombie_timer_offset` less two
+/// intervals down, 290 of 480; in over 0.5 s, then up to 270 and out over 1.5 s).
+pub const MAX_AMMO_TEXT_480: (f32, f32, f32) = (290.0, 270.0, 2.0);
+pub const MAX_AMMO_TIMES: (f32, f32) = (0.5, 1.5);
+
 /// The materials this module draws (for `lui::materials::MATERIALS`).
-pub const MATERIALS: [&str; 11] = [CHALKS[0], CHALKS[1], CHALKS[2], CHALKS[3], CHALKS[4], BLOOD, CIRCLE, SCORE_BAR, BAR_FILL, BAR_BACK, REVIVE_ICON_MAT];
+pub const MATERIALS: [&str; 13] = [CHALKS[0], CHALKS[1], CHALKS[2], CHALKS[3], CHALKS[4], BLOOD, CIRCLE, SCORE_BAR, BAR_FILL, BAR_BACK, REVIVE_ICON_MAT, POWERUP_ICONS[0].1, POWERUP_ICONS[1].1];
 
 /// The chalk a round shows at rest (`UpdateRoundsPlayed`/`StartNewRound`): one to five its tally
 /// alone; six to ten a full five and the rest; past ten the number in Morris.
@@ -274,6 +286,85 @@ pub fn draw_last_stand(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim,
     }
 }
 
+/// `set_clientfield_powerups`: a timed power-up's icon state with `left` seconds of it (1 on, 2 off
+/// and 3 on while flashing), from `powerup_hud_monitor`'s table: from 10 s down, steps of 0.2 s
+/// (0.1 s under 5), the off steps 0.05 s longer.
+pub fn powerup_state(left: f32) -> u8 {
+    if left >= 10.0 {
+        return 1;
+    }
+    let mut table = Vec::new();
+    let (mut timer, mut on) = (10.0f32, false);
+    while timer >= 0.15 {
+        let delta = if timer < 5.0 { 0.1 } else { 0.2 };
+        if on {
+            timer -= delta + 0.05;
+            table.push((timer, 2u8));
+        } else {
+            timer -= delta;
+            table.push((timer, 3u8));
+        }
+        on = !on;
+    }
+    for &(t, v) in table.iter().skip(1).rev() {
+        if left < t {
+            return v;
+        }
+    }
+    3
+}
+
+/// The power-ups on the HUD: each timed one running (its icon, flashing near its end), the
+/// nuke's flash and max ammo's text.
+pub fn draw_powerups(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, clock_frames: f32) {
+    let s = &sim.rounds.powerups;
+    let active: Vec<(&str, f32)> = POWERUP_ICONS
+        .iter()
+        .filter_map(|&(name, mat)| {
+            let left = match name {
+                "insta_kill" => s.insta_kill,
+                _ => s.double_points,
+            };
+            (left > 0.0).then_some((mat, left))
+        })
+        .collect();
+    let n = active.len() as f32;
+    let mut x = -(POWERUP_ICON * 0.5 * n + POWERUP_SPACING * 0.5 * (n - 1.0));
+    for (mat, left) in active {
+        let r = Place::new((false, false, x, x + POWERUP_ICON), (false, true, -POWERUP_ICON, 0.0)).resolve(l.screen());
+        let alpha = if matches!(powerup_state(left), 1 | 3) { 1.0 } else { 0.0 };
+        if alpha > 0.0 {
+            l.image(prims, r, mat, (1.0, 1.0, 1.0), alpha, Vec::new());
+        }
+        x += POWERUP_ICON + POWERUP_SPACING;
+    }
+    let since = |frame: u32| (frame != 0).then_some((clock_frames - frame as f32) * crate::units::LOGIC_DT).filter(|e| *e >= 0.0);
+    if let Some(e) = since(s.nuke_frame) {
+        let (peak, up, hold, down) = NUKE_FLASH;
+        let alpha = if e < up {
+            peak * e / up
+        } else if e < hold {
+            peak
+        } else {
+            peak * (1.0 - (e - hold) / down)
+        };
+        if alpha > 0.0 {
+            let (w, h) = (l.px(l.screen()).w, l.px(l.screen()).h);
+            prims.push(Prim::Rect { x: 0.0, y: 0.0, w: w * 2.0, h: h * 2.0, argb: super::frame::argb((1.0, 1.0, 1.0), alpha) });
+        }
+    }
+    if let Some(e) = since(s.max_ammo_frame) {
+        let (top, rise_to, fontscale) = MAX_AMMO_TEXT_480;
+        let (fade_in, move_out) = MAX_AMMO_TIMES;
+        let (y, alpha) = if e < fade_in { (top, e / fade_in) } else { let k = ((e - fade_in) / move_out).min(1.0); (top + (rise_to - top) * k, 1.0 - k) };
+        if alpha > 0.0 {
+            let h = FONT_HEIGHT_480 * fontscale * 1.5;
+            let r = Place::new((true, true, 0.0, 0.0), (true, false, y * 1.5, y * 1.5 + h)).resolve(l.screen());
+            l.text(prims, r, Family::Condensed, crate::sim::hint_text("ZOMBIE_POWERUP_MAX_AMMO"), Some(Align::Center), (true, true), (1.0, 1.0, 1.0), alpha);
+        }
+    }
+}
+
 /// A Zombies trigger's prompt from its localized text: `[{+activate}]` is the use key and `&&1`
 /// the price (`sethintstring( hint, cost )`), as coloured runs.
 pub fn trigger_prompt(text: &str, use_key: &str, cost: u32) -> Vec<(String, (f32, f32, f32))> {
@@ -428,6 +519,13 @@ mod tests {
         draw_last_stand(&l, &mut prims, &sim, &downed, "F", &name, &|_| None);
         // Without the converted table the line is its key (the install's has `&&1 is reviving you`).
         assert!(prims.iter().any(|p| matches!(p, Prim::Text { text, .. } if text.contains("ZOMBIE_PLAYER_IS_REVIVING_YOU"))), "tells him he is being revived");
+    }
+
+    #[test]
+    fn a_timed_power_up_flashes_in_its_last_ten_seconds() {
+        assert_eq!(powerup_state(20.0), 1);
+        let states: Vec<u8> = (0..100).map(|i| powerup_state(9.99 - i as f32 * 0.099)).collect();
+        assert!(states.contains(&2) && states.contains(&3), "{states:?}");
     }
 
     #[test]

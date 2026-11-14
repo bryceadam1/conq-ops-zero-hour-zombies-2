@@ -116,6 +116,15 @@ pub const SCAVENGER_PACK_OBJECT: &str = "ZHBO_ScavengerPack";
 pub fn drop_object(base: &str) -> String {
     format!("ZHBO_Drop_{base}")
 }
+/// The Zero Hour object a Zombies power-up `name` lies as (`ZHBO_ZM_PowerUp_nuke`): its model
+/// (`zombies.ini` `[PowerUps]`), made by the converter.
+pub fn powerup_object(name: &str) -> String {
+    format!("ZHBO_ZM_PowerUp_{name}")
+}
+/// The W3D model of the converter's `n`-th Zombies power-up prop.
+pub fn powerup_model(n: u16) -> String {
+    format!("ZPU{n:03}_SKN")
+}
 /// The W3D model of the converter's `n`-th Zombies wall buy prop.
 pub fn wall_buy_model(n: u16) -> String {
     format!("ZWB{n:03}_SKN")

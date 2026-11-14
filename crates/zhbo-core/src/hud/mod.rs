@@ -387,6 +387,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             if sim.revive_target(p).is_none() {
                 zombies::draw_wall_buy(&l, prims, sim, p, use_key);
             }
+            zombies::draw_powerups(&l, prims, sim, sim.frame as f32);
         } else {
             // The scorestreak column is the player's own commands: the tablet, and the build tool
             // when an action slot holds it.

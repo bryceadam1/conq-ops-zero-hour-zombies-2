@@ -15766,3 +15766,46 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     - All six checks pass: survivors, round 1, 20 props, first person, reached, bought.
     - In the same run the other survivor went down while this one was up, and when he died the
       downed one died with him.
+
+## Zombies: power-ups (2026-11-14)
+
+- **Which:** TranZit classic includes nuke, insta-kill, double points, max ammo, the upgraded
+  insta-kill and carpenter (`zm_transit.gsc` `include_powerups`, `:1602-1617`). Only the first four
+  drop with the regular power-ups. Carpenter's `func_should_drop_carpenter` needs five broken
+  windows, and the Zombies map has none. `zombies.ini` `[PowerUps]` lists them in
+  `add_zombie_powerup`'s order with their models (`init_powerups`, `_zm_powerups.gsc:79-103`).
+- **When one is due** (`watch_for_drop`, `:384-413`): the first threshold is
+  `players * zombie_score_start_<n>p` (the rule table's, `_zm.gsc:936-945`) plus 2000. Once the
+  points earned pass it, a drop is due; the increment grows ×1.14 and the threshold moves past the
+  total. Points earned are counted as BO2's `score_total` adds them.
+- **The drop** (`powerup_drop`, `:480-544`, from `zombie_death_points`): on a player's kill, at most
+  4 a round. A kill drops one anyway when `randomint( 100 )` is 2 or under (3 in 100). Which one is
+  the next of a shuffled order that drops with the regular ones, shuffled again when it wraps
+  (`get_valid_powerup`, `get_next_powerup`, `array_randomize`). It appears 40 inches over the kill.
+- **On the ground:** 15 s, then 11.5 s of blinking (`powerup_timeout`). Any survivor within 64
+  inches takes it (`powerup_grab`'s `range_squared` 4096).
+- **Effects:**
+  - Nuke: every zombie of the round dies, nearest first, 0.5 s after the grab and each
+    `randomfloatrange( 0.1, 0.7 )` after the last. Every player gets 400.
+  - Insta-kill: for 30 s a player's hit on a zombie kills it (`check_for_instakill`).
+  - Double points: for 30 s the multiplier is 2. `player_add_points` applies it to every point
+    source after rounding up to five (`_zm_score.gsc:163-164`), so the nuke's 400 pays 800.
+  - Max ammo: `givemaxammo` on every weapon and grenade of each survivor not in last stand.
+- **HUD** (`hudpowerupszombie.lua`):
+  - The timed ones' icons, 48 square and 8 apart, centred at the bottom.
+  - They flash by `powerup_hud_monitor`'s table from 10 s left (`set_clientfield_powerups`: 1 on,
+    2/3 flashing). The Lua tweens alpha over 500 ms; the mod snaps on and off.
+  - The nuke's white flash (`nuke_flash`).
+  - Max ammo's `ZOMBIE_POWERUP_MAX_AMMO` rising and fading (`full_ammo_on_hud`). It uses the
+    normal font in place of BO2's `objective` font, which the converter doesn't make.
+- **Props:** each power-up's model as `names::powerup_object`, upright. The converter now loads
+  `common_zm`, where the models are.
+- **Verified:**
+  - `cargo test -p zhbo-core`: 1089 passed. New tests: the parse, the shuffled order, rounding and
+    doubling, a due drop landing and taken, four a round and the timeout, the nuke (killed in
+    order, 400 doubled to 800), max ammo, and the flashing table.
+  - The `--zombies` leg passes; the converter made all six props.
+  - Not yet seen in game: a drop. Only player kills drop, and the scripted run kills few zombies.
+- **Bump:** `hud::VERSION` → 101.
+- **Not ported:** the power-ups' glow FX and blinking, their announcer lines, the fire sale and
+  Death Machine (not in classic TranZit's drops).

@@ -1954,6 +1954,9 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
 * Wall buys (`sim::wallbuy`): the archive gains a prop object per TranZit wall buy
   (`names::wall_buy_object`, `Data\INI\Object\ZHBO_ZM_WallBuys.ini`), and the UI text the wall
   buys' prompt keys (`hud::VERSION` 100). The sim's state gains `Rounds::wall_buys`. No ABI change.
+* Power-ups (`sim::powerups`): the archive gains a prop per power-up (`names::powerup_object`,
+  `Data\INI\Object\ZHBO_ZM_PowerUps.ini`, from `common_zm`), two HUD materials and the max ammo
+  string (`hud::VERSION` 101). The sim's state gains `Rounds::powerups`. No ABI change.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

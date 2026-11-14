@@ -30,6 +30,7 @@ mod spawn;
 pub mod zombies;
 pub mod laststand;
 pub mod wallbuy;
+pub mod powerups;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
 /// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
@@ -161,6 +162,8 @@ pub enum EventKind {
     ZombieRoundOver { round: u8 },
     /// Zombies: a hit or kill on a zombie paid this seat `points` (`player_add_points`).
     ZombiePoints { points: u16 },
+    /// Zombies: a survivor took power-up `kind` (its row in `zombies::PowerUps`; to every survivor).
+    ZombiePowerUp { kind: u8 },
     /// Zombies: this seat bought from a wall for `cost` points (`sim/wallbuy.rs`).
     ZombiePurchase { cost: u16 },
     /// Zombies: survivor `general` went down (last stand, `sim/laststand.rs`), losing `points`.
@@ -1464,6 +1467,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         ZombieRound { round } => format!("player {} sees zombies round {round} begin", e.player),
         ZombieRoundOver { round } => format!("player {} sees zombies round {round} end", e.player),
         ZombiePoints { points } => format!("player {} scored {points} zombie points", e.player),
+        ZombiePowerUp { kind } => format!("player {} sees power-up {} taken", e.player, crate::zombies::PowerUps::get().kinds.get(kind as usize).map_or("?", |k| k.name.as_str())),
         ZombiePurchase { cost } => format!("player {} bought from a wall for {cost} points", e.player),
         Downed { general, points } => format!("player {}'s survivor {general} is down ({points} points lost)", e.player),
         Revived { general, by } => format!("player {} sees survivor {general} revived by {by}", e.player),
