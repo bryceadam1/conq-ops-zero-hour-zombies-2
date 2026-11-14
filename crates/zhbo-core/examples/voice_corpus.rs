@@ -4,7 +4,18 @@
 //! cargo run -p zhbo-core --example voice_corpus -- sample <dir> <count> <batches> <seed>
 //! cargo run -p zhbo-core --example voice_corpus -- assemble <dir> <seed>
 //! cargo run --release -p zhbo-core --example voice_corpus -- corpus <dir> <count> <seed> [per vocabulary]
+//! cargo run --release -p zhbo-core --example voice_corpus -- spoken-batches <dir> <per batch>
+//! cargo run --release -p zhbo-core --example voice_corpus -- spoken <dir> <seed>
 //! ```
+//!
+//! `spoken-batches` cuts a `corpus` draw's `canonical.tsv` into `<dir>/spoken/batches/sNNNNN.tsv`
+//! (`id`, canonical text, names) for the writers of spoken sentences (`tools/voice/spoken/BRIEF.md`:
+//! correct, conversational English as a player says it, no transcription errors, no parser-speak),
+//! who write `<dir>/spoken/out/sNNNNN.tsv` (`id`, sentence). `spoken` keeps the sentences that pass
+//! the meaning checks and are not filler around the canonical text, parser-speak, or broken text,
+//! and writes `<dir>/spoken.tsv` (sentence, canonical label, id, vocabulary id, split), 5% of the
+//! commands' canonical lines as `<dir>/spoken_canonical.tsv` (players reading the command menu
+//! aloud), and `<dir>/spoken_stats.txt`.
 //!
 //! `corpus` is the large, balanced draw (the scale-up, 200k commands): commands are accepted by
 //! `sample::Quotas` (each verb's and length's share, a floor for every rarer feature, the sampler
@@ -41,13 +52,119 @@ fn main() {
     let r = match args.first().map(String::as_str) {
         Some("sample") if args.len() == 5 => sample(Path::new(&args[1]), args[2].parse().unwrap(), args[3].parse().unwrap(), args[4].parse().unwrap()),
         Some("assemble") if args.len() == 3 => assemble(Path::new(&args[1]), args[2].parse().unwrap()),
+        Some("spoken-batches") if args.len() == 3 => spoken_batches(Path::new(&args[1]), args[2].parse().unwrap()),
+        Some("spoken") if args.len() == 3 => spoken(Path::new(&args[1]), args[2].parse().unwrap()),
         Some("corpus") if args.len() >= 4 => corpus(Path::new(&args[1]), args[2].parse().unwrap(), args[3].parse().unwrap(), args.get(4).and_then(|n| n.parse().ok()).unwrap_or(25)),
-        _ => Err("usage: voice_corpus sample <dir> <count> <batches> <seed> | assemble <dir> <seed> | corpus <dir> <count> <seed> [per vocabulary]".into()),
+        _ => Err("usage: voice_corpus sample <dir> <count> <batches> <seed> | assemble <dir> <seed> | corpus <dir> <count> <seed> [per vocabulary] | spoken-batches <dir> <per batch> | spoken <dir> <seed>".into()),
     };
     if let Err(e) = r {
         eprintln!("voice_corpus: {e}");
         std::process::exit(1);
     }
+}
+
+/// A corpus draw's commands: (id, vocabulary id, split, text, names).
+fn corpus_lines(dir: &Path) -> Result<Vec<(String, String, String, String, Vec<String>)>, String> {
+    Ok(fs::read_to_string(dir.join("canonical.tsv"))
+        .map_err(|e| format!("canonical.tsv: {e}"))?
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() >= 4).then(|| (f[0].to_string(), f[1].to_string(), f[2].to_string(), f[3].to_string(), f.get(4).unwrap_or(&"").split('|').filter(|n| !n.is_empty()).map(str::to_string).collect()))
+        })
+        .collect())
+}
+
+fn spoken_batches(dir: &Path, per: usize) -> Result<(), String> {
+    let lines = corpus_lines(dir)?;
+    let out = dir.join("spoken").join("batches");
+    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    fs::create_dir_all(dir.join("spoken").join("out")).map_err(|e| e.to_string())?;
+    for (b, chunk) in lines.chunks(per.max(1)).enumerate() {
+        let text: Vec<String> = chunk.iter().map(|(id, _, _, t, names)| format!("{id}\t{t}\t{}", names.join("|"))).collect();
+        fs::write(out.join(format!("s{b:05}.tsv")), text.join("\n") + "\n").map_err(|e| e.to_string())?;
+    }
+    eprintln!("voice_corpus: {} commands in {} batches of {per}", lines.len(), lines.len().div_ceil(per.max(1)));
+    Ok(())
+}
+
+/// Machine phrasing a speaker never uses: a sentence carrying it reads the canonical form aloud.
+const PARSER_SPEAK: [&str; 6] = ["attack-move", "force-move", "set rally point at", " act on ", "cancel construction", "make them group"];
+/// What a transcription error looks like in writing, never in a careful speaker's sentence.
+const NOT_SPOKEN: [&str; 5] = [" two the ", " their is ", " won ", " right the ", " ate "];
+
+/// Why a spoken sentence is unfit, if it is.
+fn unspoken(sentence: &str) -> Option<&'static str> {
+    if sentence.chars().any(char::is_control) {
+        return Some("control characters");
+    }
+    let words = sentence.split_whitespace().count();
+    if !(2..=60).contains(&words) {
+        return Some("too short or too long");
+    }
+    let padded = format!(" {} ", sentence.to_lowercase());
+    if PARSER_SPEAK.iter().any(|p| padded.contains(p)) {
+        return Some("parser-speak");
+    }
+    if NOT_SPOKEN.iter().any(|p| padded.contains(p)) {
+        return Some("a transcription error");
+    }
+    if sentence.contains('\t') || sentence.contains('"') {
+        return Some("quotes or tabs");
+    }
+    None
+}
+
+fn spoken(dir: &Path, seed: u32) -> Result<(), String> {
+    let lines = corpus_lines(dir)?;
+    let by_id: BTreeMap<&str, &(String, String, String, String, Vec<String>)> = lines.iter().map(|l| (l.0.as_str(), l)).collect();
+    let mut entries: Vec<_> = fs::read_dir(dir.join("spoken").join("out")).map_err(|e| format!("spoken/out: {e}"))?.flatten().map(|e| e.path()).collect();
+    entries.sort();
+    let (mut kept, mut read, mut unknown) = (Vec::new(), 0usize, 0usize);
+    let mut dropped: BTreeMap<String, usize> = BTreeMap::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut commands = std::collections::BTreeSet::new();
+    for path in entries {
+        for line in fs::read_to_string(&path).map_err(|e| e.to_string())?.lines() {
+            let Some((id, sentence)) = line.split_once('\t') else { continue };
+            let sentence = sentence.trim();
+            if sentence.is_empty() {
+                continue;
+            }
+            read += 1;
+            let Some((cid, vid, split, label, names)) = by_id.get(id.trim()).copied() else {
+                unknown += 1;
+                continue;
+            };
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let why = unspoken(sentence)
+                .map(str::to_string)
+                .or_else(|| trivial(label, sentence).then(|| "only filler around the label".to_string()))
+                .or_else(|| drift(label, &names, sentence).map(|w| w.split('\'').next().unwrap_or(&w).trim().to_string()));
+            if let Some(why) = why {
+                *dropped.entry(why).or_default() += 1;
+                continue;
+            }
+            if !seen.insert((cid.clone(), normal::words(sentence).join(" "))) {
+                *dropped.entry("a repeat".into()).or_default() += 1;
+                continue;
+            }
+            commands.insert(cid.clone());
+            kept.push(format!("{sentence}\t{label}\t{cid}\t{vid}\t{split}"));
+        }
+    }
+    // A few commands as players read them off the command menu.
+    let mut rng = Rng::new(seed);
+    let canonical: Vec<String> = lines.iter().filter(|_| rng.next_u32() % 100 < 5).map(|(cid, vid, split, t, _)| format!("{t}\t{t}\t{cid}\t{vid}\t{split}")).collect();
+    fs::write(dir.join("spoken.tsv"), kept.join("\n") + "\n").map_err(|e| e.to_string())?;
+    fs::write(dir.join("spoken_canonical.tsv"), canonical.join("\n") + "\n").map_err(|e| e.to_string())?;
+    let mut stats = format!("sentences read: {read} (unknown ids: {unknown})\nkept: {} for {} commands\ncanonical lines kept as said: {}\ndropped:\n", kept.len(), commands.len(), canonical.len());
+    for (why, n) in &dropped {
+        stats.push_str(&format!("  {why}: {n}\n"));
+    }
+    fs::write(dir.join("spoken_stats.txt"), &stats).map_err(|e| e.to_string())?;
+    eprint!("{stats}");
+    Ok(())
 }
 
 fn corpus(dir: &Path, count: usize, seed: u32, per_vocab: usize) -> Result<(), String> {
