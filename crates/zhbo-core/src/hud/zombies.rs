@@ -3,11 +3,14 @@
 //! (`huddpadareazombie.lua`): BO2's blood streak, the d-pad circle and the action slots on its
 //! four arms (`UpdateActionSlots`: 1 up, 2 down, 3 left, 4 right).
 //!
+//! On the circle, as TranZit has it (`hud.lua` builds `AmmoAreaZombie` only for the DLC 2-4 maps;
+//! TranZit gets the d-pad area): the ammo counter (`hud/ammocounter.lua`), the weapon label
+//! (`hud/weaponlabel.lua`) and the offhand icons (`hud/offhandicons.lua`); above it the points
+//! list (`hudcompetitivescoreboardzombie.lua`), the points being the player's money.
+//!
 //! Deliberate divergence: the field computer is no action slot (user's ruling); its key prompt
 //! sits under the circle. Not ported yet: the round chalk's animations (the first round's fade
-//! and fall, a new round's pulse), and BO2's classic points list and Zombies ammo counter, whose
-//! layouts are not in the reference dump (`AmmoAreaZombie` is required but was not dumped, the
-//! classic score is a `ui_zm` menuDef); the MP ammo area and score panel stand in for them.
+//! and fall, a new round's pulse) and the points list's flying points.
 
 use super::frame::Lui;
 use super::*;
@@ -34,8 +37,33 @@ pub const LINES_COLOR: (f32, f32, f32) = (0.21, 0.0, 0.0);
 pub const BLOOD: &str = "hud_dpad_blood";
 pub const CIRCLE: &str = "hud_lui_dpad_circle";
 
+/// `CoD.CompetitiveScoreboard`: a row's size, the list's bottom (not a DLC map) and its bar.
+pub const ROW_WIDTH: f32 = 150.0;
+pub const ROW_HEIGHT: f32 = 30.0;
+pub const ROWS_BOTTOM: f32 = -90.0;
+pub const SCORE_BAR: &str = "scorebar_zom_1";
+/// `CoD.Zombie.PlayerColors` (`basezombie.lua`), by player.
+pub const PLAYER_COLORS: [(f32, f32, f32); 4] = [(1.0, 1.0, 1.0), (0.486, 0.812, 0.933), (0.965, 0.792, 0.314), (0.514, 0.925, 0.533)];
+/// `CoD.AmmoCounter`: the counter's box on the circle (left/top anchored), its text height, the
+/// low-clip pulse's half period (`LowAmmoFadeTime`) and alpha (`pulse_high`).
+pub const AMMO_BOX: (f32, f32, f32, f32) = (-90.0, 10.0, 36.0, 76.0);
+pub const AMMO_LOW_FADE_MS: f32 = 500.0;
+pub const AMMO_LOW_ALPHA: f32 = 0.5;
+/// The weapon label's box on the circle (right/bottom anchored, `huddpadareazombie.lua`), its
+/// text height and fade (`CoD.WeaponLabel`).
+pub const LABEL_BOX: (f32, f32, f32, f32) = (-231.0, -131.0, -120.0, -88.0);
+pub const LABEL_FADE_MS: f32 = 2000.0;
+/// `CoD.OffhandIcons`: an icon's side and a slot's width; the lethal's slot ends 1 in from the
+/// circle's bottom-right, the tactical's beside it.
+pub const OFFHAND_SIZE: f32 = 24.0;
+pub const OFFHAND_WIDTH: f32 = OFFHAND_SIZE * 1.5;
+
+/// The field computer's key prompt (no BO2 counterpart): its right edge left of the circle, clear of
+/// the ammo counter and weapon label above it, and its text height.
+pub const FIELD_COMPUTER_LABEL: (f32, f32) = (-CIRCLE_SIZE - 8.0, 16.0);
+
 /// The materials this module draws (for `lui::materials::MATERIALS`).
-pub const MATERIALS: [&str; 7] = [CHALKS[0], CHALKS[1], CHALKS[2], CHALKS[3], CHALKS[4], BLOOD, CIRCLE];
+pub const MATERIALS: [&str; 8] = [CHALKS[0], CHALKS[1], CHALKS[2], CHALKS[3], CHALKS[4], BLOOD, CIRCLE, SCORE_BAR];
 
 /// The chalk a round shows at rest (`UpdateRoundsPlayed`/`StartNewRound`): one to five its tally
 /// alone; six to ten a full five and the rest; past ten the number in Morris.
@@ -83,9 +111,102 @@ pub fn slot_rect(circle: Rect, n: usize, aspect: f32) -> Rect {
     place.resolve(circle)
 }
 
-/// What one slot shows: its icon (a MappedImage), whether it can be used, and its key.
+/// One player on the points list: his points and his colour's index (`PLAYER_COLORS`), and
+/// whether he is the local player (only his row shows the bar, `CompetitiveScoreShowSelf`).
+pub struct Points {
+    pub points: i32,
+    pub color: usize,
+    pub own: bool,
+}
+
+/// The points list (`CompetitiveScoreboard`): rows of `ROW_WIDTH` by `ROW_HEIGHT` up from
+/// `ROWS_BOTTOM` at the right, the first player at the top (`Update`: score k goes to row n - k + 1),
+/// each score left in its row past a 10-unit inset in its player's colour, the local player's row
+/// on the bar tinted (0.21, 0, 0).
+pub fn draw_points(l: &Lui, prims: &mut Vec<Prim>, players: &[Points]) {
+    let n = players.len();
+    for (k, p) in players.iter().enumerate() {
+        let row = n - k;
+        let bottom = ROWS_BOTTOM - ROW_HEIGHT * row as f32;
+        let r = Place::new((false, true, -ROW_WIDTH, 0.0), (false, true, bottom - ROW_HEIGHT, bottom)).resolve(l.screen());
+        if p.own {
+            l.image(prims, r, SCORE_BAR, (0.21, 0.0, 0.0), 1.0, Vec::new());
+        }
+        let text = Place::new((true, false, 10.0, ROW_WIDTH), (true, true, 0.0, 0.0)).resolve(r);
+        l.text(prims, text, Family::Default, &p.points.to_string(), Some(Align::Left), (true, false), PLAYER_COLORS[p.color % PLAYER_COLORS.len()], 1.0);
+    }
+}
+
+/// The low-clip pulse (`Ammo_PulseHigh`/`Ammo_PulseLow`): the text fades to half and back, each
+/// way `LowAmmoFadeTime`.
+pub fn ammo_pulse(clock: f32) -> f32 {
+    let half = AMMO_LOW_FADE_MS / 1000.0;
+    let t = (clock / half).rem_euclid(2.0);
+    let k = if t < 1.0 { t } else { 2.0 - t };
+    1.0 - (1.0 - AMMO_LOW_ALPHA) * k
+}
+
+/// The ammo counter (`AmmoCounter.UpdateAmmo`): `clip/stock`, a dual-wield's left clip before
+/// it (`left | clip/stock`), right-aligned in Big in its box on the circle, pulsing on a low clip.
+/// Hidden for a melee weapon (`ShouldHideAmmoCounter`).
+pub fn draw_ammo(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, clock: f32) {
+    let w = p.arsenal.current();
+    if w.def.class == crate::weapons::Class::Melee || p.arsenal.is_unarmed() {
+        return;
+    }
+    let mut text = format!("{}/{}", w.ammo, w.reserve);
+    if let Some(left) = w.left_ammo() {
+        text = format!("{left} | {text}");
+    }
+    let low = super::ammo::low_clip(w.ammo, w.def) || w.left_ammo().is_some_and(|n| super::ammo::low_clip(n, w.def));
+    let alpha = if low { ammo_pulse(clock) } else { 1.0 };
+    let (left, right, top, bottom) = AMMO_BOX;
+    let b = Place::new((true, false, left, right), (true, false, top, bottom)).resolve(circle_rect(l));
+    let r = Place::new((false, true, -1.0, 0.0), (true, true, -4.0, 4.0)).resolve(b);
+    let r = Rect { x: b.x, w: r.right() - b.x, ..r };
+    l.text(prims, r, Family::Big, &text, Some(Align::Right), (false, true), super::frame::HUD_BASE, alpha);
+}
+
+/// The weapon label (`WeaponLabel.UpdateWeapon`): the weapon's name right-aligned in Big beside the
+/// circle after a weapon change, fading out over `FadeTime`.
+pub fn draw_weapon_label(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, since_ms: f32) {
+    let alpha = 1.0 - (since_ms / LABEL_FADE_MS).clamp(0.0, 1.0);
+    if alpha <= 0.0 {
+        return;
+    }
+    let (left, right, top, bottom) = LABEL_BOX;
+    let r = Place::new((false, true, left, right), (false, true, top, bottom)).resolve(circle_rect(l));
+    l.text(prims, r, Family::Big, &p.arsenal.current().def.display_name, Some(Align::Right), (false, true), super::frame::HUD_BASE, alpha);
+}
+
+/// The offhand icons (`OffhandIcons.SetMaterialAndQuantity`): one `OFFHAND_SIZE` icon per grenade,
+/// right to left from its slot's right edge, the k-th of n at alpha k/n; the lethal's slot ends 1
+/// in from the circle's bottom-right, the tactical's left of it.
+pub fn draw_offhands(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim) {
+    let circle = circle_rect(l);
+    for (k, slot) in [&p.arsenal.lethal, &p.arsenal.tactical].into_iter().enumerate() {
+        let n = slot.count as usize;
+        if n == 0 {
+            continue;
+        }
+        let right = -1.0 - OFFHAND_WIDTH * k as f32;
+        let area = Place::new((false, true, right - OFFHAND_WIDTH, right), (false, true, -1.0 - OFFHAND_SIZE, -1.0)).resolve(circle);
+        let icon = slot.def.hud_icon_image();
+        for i in 0..n {
+            let x = -(i as f32) * OFFHAND_SIZE;
+            let r = Place::new((false, true, x - OFFHAND_SIZE, x), (false, true, -OFFHAND_SIZE, 0.0)).resolve(area);
+            let px = l.px(r);
+            let alpha = (n - i) as f32 / n as f32;
+            prims.push(Prim::Image { name: icon.clone(), x: px.x, y: px.y, w: px.w, h: px.h, argb: super::frame::argb(super::frame::HUD_BASE, alpha), fallback: Vec::new() });
+        }
+    }
+}
+
+/// What one slot shows: its icon (a MappedImage), the name drawn where the icon has no art, whether
+/// it can be used, and its key.
 pub struct Slot<'a> {
     pub icon: Option<&'a str>,
+    pub label: String,
     pub usable: bool,
     pub key: &'a str,
 }
@@ -102,30 +223,34 @@ pub fn draw_dpad(l: &Lui, prims: &mut Vec<Prim>, slots: &[Slot; 4], field_comput
         let r = slot_rect(circle, k + 1, 1.0);
         let alpha = if slot.usable { super::frame::HUD_ALPHA_FULL } else { super::frame::HUD_ALPHA_EMPTY };
         let p = l.px(r);
-        prims.push(Prim::Image { name: icon.to_string(), x: p.x, y: p.y, w: p.w, h: p.h, argb: super::frame::argb(super::frame::HUD_BASE, alpha), fallback: Vec::new() });
+        let argb = super::frame::argb(super::frame::HUD_BASE, alpha);
+        let fallback = vec![Prim::Text { x: p.x + p.w * 0.5, y: p.y + p.h * 0.35, text: slot.label.clone(), argb, size: (p.h * 0.35) as i32, align: 1 }];
+        prims.push(Prim::Image { name: icon.to_string(), x: p.x, y: p.y, w: p.w, h: p.h, argb, fallback });
         if !slot.key.is_empty() {
             let key = Place::new((true, true, 0.0, 0.0), (false, true, -10.0, 0.0)).resolve(r);
             l.text(prims, key, Family::Default, slot.key, Some(Align::Center), (true, true), super::frame::HUD_BASE, alpha);
         }
     }
     if !field_computer_key.is_empty() {
-        let r = Place::new((false, true, -CIRCLE_SIZE, 0.0), (false, true, 2.0, 16.0)).resolve(l.screen());
+        let (right, height) = FIELD_COMPUTER_LABEL;
+        let r = Place::new((false, true, right - 300.0, right), (false, true, -2.0 - height, -2.0)).resolve(circle);
         let label = format!("[{field_computer_key}] {}", crate::strings::text("HUD:ZHBO_FieldComputer"));
-        l.text(prims, r, Family::Default, &label, Some(Align::Center), (true, true), super::frame::HUD_BASE, super::frame::HUD_ALPHA_FULL);
+        l.text(prims, r, Family::Default, &label, Some(Align::Right), (false, true), super::frame::HUD_BASE, super::frame::HUD_ALPHA_FULL);
     }
 }
 
 /// The four slots of a survivor `p` as the d-pad shows them: the build tool's icon (usable while
 /// he can build), the alt mode's (its weapon's `dpadIcon`, BO2's slot 3).
 pub fn slots<'a>(p: &'a PlayerSim, can_build: bool, keys: [&'a str; 4]) -> [Slot<'a>; 4] {
+    let build = crate::strings::text("HUD:ZHBO_Build");
     let alt = super::ammo::alt_slot_icon(p.arsenal.current().def, crate::weapons::catalog().get(&p.arsenal.current().def.alt));
     std::array::from_fn(|k| {
-        let (icon, usable) = match p.action_slots.slots[k] {
-            ActionSlot::Equipment { item: Equipment::BuildTool } => (Some(sprites::BUILD_ICON), can_build),
-            ActionSlot::AltMode => (alt, true),
-            ActionSlot::Empty => (None, false),
+        let (icon, label, usable) = match p.action_slots.slots[k] {
+            ActionSlot::Equipment { item: Equipment::BuildTool } => (Some(sprites::BUILD_ICON), build.clone(), can_build),
+            ActionSlot::AltMode => (alt, String::new(), true),
+            ActionSlot::Empty => (None, String::new(), false),
         };
-        Slot { icon, usable, key: keys[k] }
+        Slot { icon, label, usable, key: keys[k] }
     })
 }
 
@@ -153,6 +278,45 @@ mod tests {
             assert!((got.0 - want.0).abs() < 1e-3 && (got.1 - want.1).abs() < 1e-3, "slot {n}: {got:?} {want:?}");
         }
         assert_eq!((c.w, c.h), (CIRCLE_SIZE, CIRCLE_SIZE));
+    }
+
+    #[test]
+    fn the_points_list_puts_the_first_player_on_top_and_bars_only_your_row() {
+        let l = Lui::new(1280.0, 720.0);
+        let mut prims = Vec::new();
+        draw_points(&l, &mut prims, &[Points { points: 500, color: 0, own: false }, Points { points: 750, color: 1, own: true }]);
+        let bars = prims.iter().filter(|p| matches!(p, Prim::Image { name, .. } if name == "ZHBO_Mat_scorebar_zom_1")).count();
+        assert_eq!(bars, 1);
+        let y_of = |t: &str| prims.iter().find_map(|p| if let Prim::Text { text, y, .. } = p { (text == t).then_some(*y) } else { None }).unwrap();
+        assert!(y_of("500") < y_of("750"), "the first player above");
+    }
+
+    #[test]
+    fn the_dpad_stays_on_screen_and_names_an_icon_without_art() {
+        let l = Lui::new(1280.0, 720.0);
+        let mut prims = Vec::new();
+        let empty = || Slot { icon: None, label: String::new(), usable: false, key: "" };
+        let build = Slot { icon: Some(sprites::BUILD_ICON), label: "Build".into(), usable: true, key: "B" };
+        draw_dpad(&l, &mut prims, &[empty(), build, empty(), empty()], "F");
+        for p in &prims {
+            let (x, y) = match p {
+                Prim::Image { x, y, .. } | Prim::Text { x, y, .. } => (*x, *y),
+                _ => continue,
+            };
+            assert!((0.0..1280.0).contains(&x) && (0.0..720.0).contains(&y), "{p:?} off screen");
+        }
+        let fallback = prims.iter().find_map(|p| match p {
+            Prim::Image { name, fallback, .. } if name == sprites::BUILD_ICON => Some(fallback),
+            _ => None,
+        });
+        assert!(matches!(fallback.map(|f| f.as_slice()), Some([Prim::Text { text, .. }]) if text == "Build"));
+    }
+
+    #[test]
+    fn the_low_clip_pulse_runs_between_full_and_half() {
+        assert!((ammo_pulse(0.0) - 1.0).abs() < 1e-5);
+        assert!((ammo_pulse(0.5) - 0.5).abs() < 1e-5);
+        assert!((ammo_pulse(1.0) - 1.0).abs() < 1e-5);
     }
 
     #[test]

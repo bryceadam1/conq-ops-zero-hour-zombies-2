@@ -354,7 +354,10 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             draw_minimap(host, prims, &l, client.yaw, p, &marks);
             draw_compass(prims, &l, client.yaw);
         }
-        score::draw(&l, prims, team_color(host, p), host.cash(local_player).max(0) as u32);
+        // A survivor's points are on the Zombies points list (`hud::zombies`).
+        if !p.survivor {
+            score::draw(&l, prims, team_color(host, p), host.cash(local_player).max(0) as u32);
+        }
         if spectating {
             let name = host.player_name(local_player).unwrap_or_default();
             let b = &client.cfg.bindings;
@@ -368,6 +371,16 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             let can_build = !host.build_options(p.general).is_empty();
             zombies::draw_round(&l, prims, sim.rounds.round);
             zombies::draw_dpad(&l, prims, &zombies::slots(p, can_build, keys), crate::input::key_name(b.field_computer));
+            zombies::draw_ammo(&l, prims, p, st.clock);
+            zombies::draw_weapon_label(&l, prims, p, st.weapon_ms());
+            zombies::draw_offhands(&l, prims, p);
+            // The players in the game, in the order the round engine met them (yours at least).
+            let mut order: Vec<i32> = sim.rounds.players.clone();
+            if !order.contains(&local_player) {
+                order.push(local_player);
+            }
+            let points: Vec<zombies::Points> = order.iter().enumerate().map(|(k, &pl)| zombies::Points { points: host.cash(pl), color: k, own: pl == local_player }).collect();
+            zombies::draw_points(&l, prims, &points);
         } else {
             // The scorestreak column is the player's own commands: the tablet, and the build tool
             // when an action slot holds it.
@@ -375,7 +388,9 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             rewards::draw(&l, prims, tablet_up, p.hammer.is_some(), build, st.weapon_ms());
         }
         let alt_key = crate::input::key_name(client.cfg.bindings.alt_mode);
-        ammo::draw(&l, prims, p, st.weapon_ms(), st.clock, alt_key);
+        if !p.survivor {
+            ammo::draw(&l, prims, p, st.weapon_ms(), st.clock, alt_key);
+        }
         if map_open {
             draw_map(host, prims, w, h, s, p, crate::input::key_name(client.cfg.bindings.map));
         }

@@ -15587,3 +15587,41 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   down, as BO2's does.
 - **Not yet ported:** last stand (downed, revive, Quick Revive); a solo player's death ends the game,
   as BO2's does without Quick Revive.
+
+## The Zombies HUD, second pass: points, ammo, weapon label, offhands (2026-11-14)
+
+- **Correction to the first pass:** the layouts *are* in the dump. TranZit builds no
+  `AmmoAreaZombie` (`patch_zm` `hud.lua` creates it only for the DLC 2-4 maps); the d-pad area
+  carries the ammo, and the points list is `CompetitiveScoreboard`. The request to the BO2-reference
+  session for those layouts is withdrawn.
+- **Points list** (`hudcompetitivescoreboardzombie.lua`): rows of 150 × 30, right-anchored, bottom
+  at -90 (not a DLC map), going up; the first player sits on top (`Update`: list entry k is row
+  n - k + 1). Each score is drawn 10 in from the left of its row, in `CoD.Zombie.PlayerColors`
+  (`basezombie.lua`: white, blue, yellow, green). Only the local player's row shows the
+  `scorebar_zom_1` bar (`common_zm`), tinted (0.21, 0, 0). The points are the player's money (the
+  shared wallet). Players are ordered as the round engine met them (`Rounds::players`).
+- **On the circle** (`huddpadareazombie.lua`):
+  - **Ammo counter** (`ammocounter.lua`): box -90..10 × 36..76 from the circle's top-left, `clip/stock`
+    right-aligned in Big; a dual-wield shows `left | clip/stock`. A low clip pulses between alpha
+    1 and 0.5 over `LowAmmoFadeTime` 500 ms. Hidden for melee.
+  - **Weapon label** (`weaponlabel.lua`): box -231..-131 × -120..-88 from the circle's bottom-right,
+    right-aligned in Big, fading over `FadeTime` 2000 ms after a weapon change.
+  - **Offhand icons** (`offhandicons.lua`): one 24-unit `hudIcon` per grenade, right to left from
+    the slot's right edge, the k-th of n at alpha k/n. The lethal slot ends 1 in from the circle's
+    bottom-right; the tactical slot is 36 to its left.
+- A survivor no longer draws the MP score panel or ammo area.
+- **Fixes from the capture:**
+  - The field computer's prompt was anchored below the screen's bottom edge. It now sits left of
+    the circle, right-aligned, clear of the ammo and the weapon label.
+  - The build tool has no BO2 art, and the d-pad drew nothing for it. It now falls back to its
+    name, as the MP column's slot does.
+- **Seen in the capture:** BO2's circle is a faint dark ring and the score bar a near-black red
+  smear, so both barely show over the blood streak and the ground. That is the art, not a bug.
+  BO2's smallFont zero is a narrow rounded box.
+- **Verified:**
+  - `cargo test -p zhbo-core`: 1067 passed. New tests: `the_points_list_puts_the_first_player_on_top_and_bars_only_your_row`,
+    `the_low_clip_pulse_runs_between_full_and_half`, `the_dpad_stays_on_screen_and_names_an_icon_without_art`.
+  - Clippy is clean on our crates.
+  - A survivor capture (default leg with `ZHBO_AUTOPILOT_GENERAL=ZHBO_General_Survivor_Misty`)
+    shows the points, `8/24` on the circle, BUILD on slot 2 and the `[F] Field Computer` prompt.
+- **Bump:** `hud::VERSION` → 98 (the new material).
