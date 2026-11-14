@@ -153,6 +153,8 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   throw, shot or weapon change plays, and the clip's sound notetracks; `client/remote.rs` times it
   per General, plays its sounds and the third-person def sounds and voices, and `nativebody` layers
   it).
+- `zombies.rs` (BO2 Zombies' script-side rules: TranZit's weapon roster from `data/ConquerOps/zombies.ini`,
+  and `RuleTable`, the install's `mp/zombiemode.csv` the converter ships; docs/CONFIG.md "Zombies").
 - `math.rs` (the world-space vector math, and `math::det`: the sim's transcendental functions through the pure-Rust `libm` crate, the one external dependency of the sim, so every lockstep peer computes the same bits — `the_sim_calls_no_platform_libm` keeps sim-reachable code off the platform libm), `config.rs` (env vars parsed once at init), `content.rs` (the multiplayer content fingerprint:
   the weapon table's `Role::Sim` fields, the class-pick vocabulary, tuning, classes, settings and
   build, in parts the lobbies compare and name on a mismatch), `names.rs` (the naming registry),
@@ -178,7 +180,7 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
 ### `crates/zhbo-assets`
 The BO2 → mod converter: reads your BO2 install (through `zhbo-formats`), converts HUD art,
 sound, weapon viewmodels and the weapon table, and writes `ConquerOps_BO2.big`. Also a CLI
-to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts. Depends on `zhbo-formats`, `zhbo-requirements`, and
+to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts. `zombies.rs` adds TranZit's weapons (`zhbo_formats::weapon::ZM_TRANSIT_POOL`, `paks::ZmPool`) after the MP ones in the converted list, and ships the install's Zombies rule table. Depends on `zhbo-formats`, `zhbo-requirements`, and
 `zhbo-core`. After Phase 2.5 the module is split into `textures.rs` (the texture pipeline),
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `props.rs` (thrown,
 launched and placed weapons as `ZHBO_Proj_<id>` objects at the General's drawn scale, the planted

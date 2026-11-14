@@ -1906,6 +1906,11 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   `ACTION_SLOT_1` (bit 16) and `ACTION_SLOT_4` (bit 17) are new (`buttons::ALL` 16 → 18 bits). The
   message still carries the same two u32s; no struct moves. The sim's state gains
   `PlayerSim::action_slots` (`weapons::actionslot`), in the lockstep hash.
+* Archive (`hud::VERSION` 91): the weapon table gains TranZit's weapons (`_zm` ids, after every
+  MP row; viewmodel numbers after the MP ones, so MP's are unchanged), and the archive gains
+  `Data\ConquerOps\zombiemode.csv` (the install's Zombies rule table). A weapon whose own
+  definition names an alt weapon now carries it as `alt`; only Zombies' upgraded M16 has one, so
+  no MP row changes.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change. Host patches are now 0001–0034.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

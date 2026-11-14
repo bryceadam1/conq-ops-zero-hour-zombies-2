@@ -15259,3 +15259,58 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   (`ZHBO_MPTEST_SHOTS=1`) passes every check, and its captures show the enemy General named
   "MPJoin" in his green house colour, standing in a green ring, and the host's General in a blue
   ring overhead.
+
+## TranZit's weapons in the converter (2026-11-14)
+
+- **Scope:** the install has only TranZit's Zombies zones (`zm_transit`, `zm_transit_patch`,
+  `common_zm`, `patch_zm`; no DLC map), so "all the Zombies weapons" is TranZit's roster.
+- **Pool:** `zhbo_formats::weapon::ZM_TRANSIT_POOL = [zm_transit_patch, zm_transit]`. The title
+  update ranks over the map, by the same `"%s_patch%s"` pairing `DB_LoadXAssets` makes for
+  `common_mp`. It replaces 28 of the map's weapons and adds the Ray Gun Mark II.
+  - Its pairing in t6zm was not traced in Ghidra; it is assumed from the shared database code.
+  - `common_zm` and `patch_zm` hold no weapon but `none`.
+  - The shared T6 reader parses all 109.
+- **Roster (`data/ConquerOps/zombies.ini`, `zhbo_core::zombies`).** BO2 keeps it in script:
+  - `zm_transit.gsc` `include_weapons` (:1862-1975): which weapons, `in_box` (default 1,
+    `_zm_utility.gsc:2802`), `less_than_normal` box weight 0.5, `add_limited_weapon` limits;
+  - `custom_add_weapons` (:1983-2023): upgrade names and the script costs.
+
+  The prices are not the script's: `add_zombie_weapon` overrides them from `mp/zombiemode.csv`
+  (`_zm_weapons.gsc:526-534`, rounded up to ten), e.g. the Python's 50 becomes 2200. The ammo
+  cost defaults to `round_up_to_ten(int(cost * 0.5))` of the script's cost (:559-560). That table
+  is install data (`common_zm`), so the converter ships it unchanged (`Data\ConquerOps\zombiemode.csv`).
+  It also holds zombie health, score values and power-up timers for the Zombies mode to come.
+- **Converter (`zhbo_assets::zombies`):**
+  - Roster weapons and the alt modes they reach go through the same `to_def` and art passes as
+    MP's, appended after the MP converted list, so every MP viewmodel number is unchanged.
+  - `base_count` (the legacy W3D meshes) stays the MP base set's.
+  - Display names come from the Zombies language zones.
+  - Result: 79 weapons convert, every viewmodel with its clips (the M1911's 43, the Ray Gun's 31,
+    the upgrades with their own).
+- **BO2 rule ported: a definition's own alt weapon.** Zombies has no attachment system, so the
+  Pack-a-Punched M16 names its launcher in `szAltWeaponName` (`m16_gl_upgraded_zm` ↔
+  `gl_m16_upgraded_zm`). `to_def` now sets `alt` from the definition for every weapon, not only
+  alt modes. A probe over the MP pool found no MP base weapon with one, so no MP row changes
+  (conformance: weapons 12,163 rows, 0 cells).
+- **Gotcha: a definition without art.** The Ray Gun Mark II's definition is in the title update,
+  but its view model `t6_wpn_zmb_raygun2_view` is in no installed zone (it ships with a DLC map),
+  and one missing model failed the whole Generals conversion. Weapons whose art the install
+  lacks are now left out with what only they reach, as MP locks items without art; the summary
+  names them.
+- **Display names:** the monkey's and the EMP's keys (`ZOMBIE_CYMBAL_MONKEY`,
+  `WEAPON_EMP_GRENADE`) have no text in any of the install's language zones; they stay as BO2's
+  data has them. The knife's definition names nothing.
+- **Open question: start ammo.** `to_def` counts gun ammo in magazines as BO2 MP does, so the
+  M1911 converts to 8 + 24 (start) / 80 (max). Whether t6zm's start-ammo rule is the same is not
+  yet read in Ghidra. Zombies buys give max ammo through script, which this doesn't affect.
+- **Known gap:** TranZit's rows are not in the conformance oracle yet. The expected side builds its
+  jobs from MP's statstable combinations and MP's melee rule (`knife_mp`), so it needs a Zombies
+  job list and Zombies melee before those rows can be compared.
+- **Verified:**
+  - The ignored install tests (`tranzits_weapon_pool_parses`, `tranzits_roster_converts_from_the_install`).
+  - `cargo test --workspace`, and clippy clean but for the voice session's `voice_corpus` example.
+  - The conformance gate: weapons 12,163 rows, 0 cells; cac 0 + 4 BO2-only MTX camos, the known
+    baseline.
+  - The launcher's conversion: 79 TranZit weapons, the Mark II pair left out.
+  - The default in-game leg, all 22 checks pass.
+- **Bump:** `hud::VERSION` 90 → 91.

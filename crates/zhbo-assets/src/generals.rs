@@ -349,10 +349,23 @@ pub fn installed_dlc(bo2_dir: &Path) -> Vec<String> {
 pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // BO2's weapon asset pool, highest priority first (`zhbo_formats::weapon::MP_POOL`).
     let mp = crate::paks::MpPool::load(bo2_dir)?;
-    let (bo2, atts) = mp.weapons()?;
+    let (mp_weapons, atts) = mp.weapons()?;
     let crate::paks::MpPool { patch, common_patch, common } = mp;
+    // TranZit's weapons beside them (`crate::zombies`): their definitions join the weapon list the
+    // art passes search, after the MP ones (a name both pools define, `defaultweapon_mp`, stays
+    // MP's), and their zones join the pool below the MP zones.
+    let mut zm = crate::zombies::Zombies::load(bo2_dir)?;
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
-    let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common])?;
+    let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map])?;
+    // A weapon whose art the install lacks stays out (the Ray Gun Mark II's definition is in
+    // TranZit's title update, its view model only in a DLC map's zones).
+    let lacking = {
+        let zm_zones = [&zm.pool.patch, &zm.pool.map];
+        zm.lacking_art(|w| w.view_model.as_deref().and_then(|m| viewmodels::find_model(&zm_zones, m).ok()).is_some_and(|m| crate::weapons::model_art_converts(&m, |i| paks.resolve(i).is_some())))
+    };
+    let zm_no_art = zm.leave_out(lacking);
+    let mut bo2 = mp_weapons;
+    bo2.extend(zm.weapons.iter().filter(|w| zm.ids.contains(&w.name)).cloned());
     let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
     let patch_ui = load_zone(bo2_dir, "patch_ui_mp")?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -360,9 +373,30 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
-    let pool = [&patch, &common_patch, &common];
+    let pool = [&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map];
     let camo_assets = zhbo_formats::weapon::camo_all(&common_patch).map_err(|e| e.to_string())?;
     let (mut table, roster) = class_table(bo2_dir, &bo2, &atts, &patch, &patch_ui, &mut summary);
+    // TranZit's roster (`zhbo_core::zombies`), named from the Zombies strings over the MP ones.
+    let mut zm_names = crate::weapons::names(bo2_dir);
+    zm_names.extend(crate::zombies::names(bo2_dir));
+    for d in zm.defs(&zm_names) {
+        if !table.weapons.iter().any(|w| w.id == d.id) {
+            table.weapons.push(d);
+        }
+    }
+    let zm_missing = zm.missing();
+    summary.push(format!(
+        "zombies: {} TranZit weapons{}{}",
+        zm.ids.len(),
+        if zm_missing.is_empty() { String::new() } else { format!(", not in the install's pool: {}", zm_missing.join(" ")) },
+        if zm_no_art.is_empty() { String::new() } else { format!(", no art in the install: {}", zm_no_art.join(" ")) }
+    ));
+    match crate::zombies::Zombies::rule_table(bo2_dir) {
+        Ok(csv) => {
+            out.insert(crate::zombies::RULES_PATH.to_string(), csv.into_bytes());
+        }
+        Err(e) => summary.push(format!("zombies: no rule table: {e}")),
+    }
     let statstable = zhbo_formats::stringtable::rows(&patch, "mp/statstable.csv").ok().flatten().unwrap_or_default();
     crate::weapons::lock_items_without_art(
         &mut table,
@@ -384,8 +418,19 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // The torso clips each weapon's actions play (reload, melee, throw, fire, weapon change), from
     // the same script; the combinations copy their base's set too.
     let torso_sets = crate::thirdperson::assign_torso_sets(&common, &bo2, &mut table.weapons);
-    let converted = crate::weapons::converted(&patch, &bo2);
-    let converted_base = crate::weapons::converted_base(&bo2, &roster);
+    let mut converted = crate::weapons::converted(&patch, &bo2);
+    let mut converted_base = crate::weapons::converted_base(&bo2, &roster);
+    // TranZit's weapons after the MP ones, so the MP viewmodel numbering stays as it was. The
+    // legacy W3D meshes stay the MP base set's (`base_count`): the native pass draws the rest.
+    let base_count = converted_base.len();
+    for id in &zm.ids {
+        if !converted.contains(id) {
+            converted.push(id.clone());
+        }
+        if !converted_base.contains(id) {
+            converted_base.push(id.clone());
+        }
+    }
     crate::weapons::add_variants(&mut table, &converted, &bo2);
     let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
     crate::camo::offer_what_converted(&mut table, &camo.with_art);
@@ -414,7 +459,6 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             d.shield = Some(geometry);
         }
     }
-    let base_count = converted_base.len();
     let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
     summary.push(vm_summary);
     // The weapon emblem: each faction's Zero Hour logo, from the player's own Zero Hour install.
@@ -623,7 +667,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // BO2's own explosions for the converted weapons (and equipment breaking), as Zero Hour
     // particle systems.
-    let fx_pool = [&patch, &common_patch, &common];
+    let fx_pool = [&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map];
     let mut effects = crate::fx::Converted::with_pool(&fx_pool);
     let mut ids: Vec<String> = crate::weapons::with_alt_modes(&table.weapons, &converted_base);
     ids.extend(table.weapons.iter().filter(|d| d.id.contains('~')).map(|d| d.id.clone()));

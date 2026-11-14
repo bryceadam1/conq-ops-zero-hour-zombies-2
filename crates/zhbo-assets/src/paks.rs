@@ -50,6 +50,36 @@ impl MpPool {
     }
 }
 
+/// TranZit's weapon zones, loaded by `zhbo_formats::weapon::ZM_TRANSIT_POOL` (`zm_transit_patch`
+/// over `zm_transit`): the one place the converter opens the Zombies weapon pool.
+pub(crate) struct ZmPool {
+    pub(crate) patch: Zone,
+    pub(crate) map: Zone,
+}
+
+impl ZmPool {
+    pub(crate) fn load(bo2_dir: &Path) -> Result<ZmPool, String> {
+        let [patch, map] = zhbo_formats::weapon::ZM_TRANSIT_POOL.map(|name| load_zone(bo2_dir, name));
+        Ok(ZmPool { patch: patch?, map: map? })
+    }
+
+    /// The zones, highest priority first (`ZM_TRANSIT_POOL` order).
+    pub(crate) fn zones(&self) -> [&Zone; 2] {
+        [&self.patch, &self.map]
+    }
+
+    /// TranZit's weapons and attachments as its asset pool resolves them (the title update's
+    /// definitions over the map's, `DB_LinkXAssetEntry`).
+    pub(crate) fn weapons(
+        &self,
+    ) -> Result<(Vec<zhbo_formats::weapon::Weapon>, Vec<zhbo_formats::weapon::Attachment>), String> {
+        let pool = self.zones();
+        let weapons = zhbo_formats::weapon::pooled(&pool).map_err(|e| e.to_string())?;
+        let attachments = zhbo_formats::weapon::pooled_attachments(&pool).map_err(|e| e.to_string())?;
+        Ok((weapons, attachments))
+    }
+}
+
 /// The image packs, in file-name order.
 pub(crate) struct Paks {
     paks: Vec<Ipak>,
@@ -209,5 +239,26 @@ mod tests {
         let paks = Paks::open(&bo2).unwrap();
         let rgba = paks.image(image.key()).expect("the overlay decodes");
         assert_eq!((rgba.width, rgba.height), (1024, 1024));
+    }
+}
+
+#[cfg(test)]
+mod zm_pool_tests {
+    /// Over the player's install: TranZit's pool parses every weapon through the shared T6 reader,
+    /// the title update's copies winning (the Ray Gun Mark II exists only there).
+    #[test]
+    #[ignore]
+    fn tranzits_weapon_pool_parses() {
+        let bo2 = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR"));
+        let zm = super::ZmPool::load(&bo2).unwrap();
+        let (weapons, atts) = zm.weapons().unwrap();
+        let names: Vec<&str> = weapons.iter().map(|w| w.name.as_str()).collect();
+        eprintln!("{} weapons, {} attachments: {}", weapons.len(), atts.len(), names.join(" "));
+        for want in ["m1911_zm", "ray_gun_zm", "raygun_mark2_zm", "jetgun_zm", "galil_upgraded_zm", "knife_ballistic_zm", "cymbal_monkey_zm"] {
+            assert!(names.contains(&want), "{want}");
+        }
+        for w in weapons.iter().filter(|w| ["m1911_zm", "m1911_upgraded_zm", "ray_gun_zm", "galil_zm", "870mcs_zm"].contains(&w.name.as_str())) {
+            eprintln!("{} clip {} max {} damage {:?} vm {:?}", w.name, w.clip_size, w.max_ammo, w.damage, w.view_model);
+        }
     }
 }

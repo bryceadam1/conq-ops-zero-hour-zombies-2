@@ -103,6 +103,24 @@ archive the native viewmodel logs `the camo art is not in the archive (reconvert
 draws the stock finish; the class camo never reaches the W3D fallback or the third-person body
 (CONTRACT.md, "The native viewmodel").
 
+## Zombies (`data/ConquerOps/zombies.ini` and the install's `mp/zombiemode.csv`)
+
+BO2 keeps Zombies' rules in two places, and the mod reads each from its own source:
+
+- **The install's rule table.** `mp/zombiemode.csv` in `common_zm` holds zombie health per round, score values,
+  power-up timers and the wall prices that override the scripts'. The converter copies it unchanged into
+  the archive as `Data\ConquerOps\zombiemode.csv` (`zhbo_assets::zombies::RULES_PATH`), and
+  `zhbo_core::zombies::RuleTable` reads it (`tablelookup( table, 0, name, column )`; column 1 EASY to
+  4 VETERAN).
+- **TranZit's weapon roster**, which BO2 hard-codes in `zm_transit.gsc` (`include_weapons`,
+  `custom_add_weapons`). It is transcribed in `zombies.ini` `[Weapons]`, one row per weapon:
+  `in_box, upgrade, cost, ammo_cost, limit, box_weight`, each citing its GSC line.
+  `zhbo_core::zombies::roster` parses it, and `ZmWeapon::cost`/`ammo_cost` apply the table's override as
+  `add_zombie_weapon` does (`_zm_weapons.gsc:526-534, 559-560`).
+- **The converter's use of the roster:** it converts every roster weapon TranZit's pool defines, plus the alt modes they
+  reach, except a weapon whose art the install lacks: the Ray Gun Mark II's view model ships only with a DLC map.
+  These are compiled in, so a change to the roster needs the archive rebuilt (`hud::VERSION`).
+
 ## Graphics detail (Zero Hour's `GameLOD`)
 
 Zero Hour's detail level is its own: `Data\INI\GameLODPresets.ini` decides which level a machine is

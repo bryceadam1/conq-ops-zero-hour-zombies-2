@@ -1396,7 +1396,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
                 Some((short_name(att), alt))
             })
             .collect(),
-        alt: if w.inventory == bo2::inventory::ALTMODE { w.alt_weapon.clone().unwrap_or_default() } else { String::new() },
+        // An alt mode names the weapon it toggles back to; a weapon whose own definition names an
+        // alt (Zombies' Pack-a-Punched M16 and its launcher: Zombies has no attachment system, so
+        // no MP base weapon does) toggles to it. MP alt modes come from the attachment uniques.
+        alt: w.alt_weapon.clone().unwrap_or_default(),
         alt_own_ammo: false,
         // Set from the statstable by `set_cac_slots` (the table is not this weapon's data).
         cac_slot: String::new(),

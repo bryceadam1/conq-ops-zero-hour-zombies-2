@@ -466,6 +466,13 @@ pub fn pooled_attachments(pool: &[&Zone]) -> Result<Vec<Attachment>, FormatError
 /// patched weapons and 49 patched attachments replace `common_mp`'s, and `patch_mp`'s replace both.
 pub const MP_POOL: [&str; 3] = ["patch_mp", "common_patch_mp", "common_mp"];
 
+/// TranZit's weapon zones (the only Zombies map of a base install) in asset-pool priority, highest
+/// first. The map zone `zm_transit` loads with its title-update zone `zm_transit_patch` (the same
+/// `"%s_patch%s"` pairing `DB_LoadXAssets` makes for `common_mp`), which ranks higher and so
+/// replaces 28 of the map's weapons and adds the Ray Gun Mark II. `common_zm` and `patch_zm` hold
+/// no weapon but `none`.
+pub const ZM_TRANSIT_POOL: [&str; 2] = ["zm_transit_patch", "zm_transit"];
+
 /// The live `(zone, address)` of every asset of `kind` across `pool` (highest priority first): per
 /// name the highest-priority zone's asset. A `,name` reference stub never overrides a real asset
 /// (`FUN_00597000` returns the existing entry) and is dropped. Ordered as the lowest-priority zone

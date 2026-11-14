@@ -79,6 +79,7 @@ pub mod tuning;
 pub mod units;
 pub mod viewmodel;
 pub mod weapons;
+pub mod zombies;
 
 /// The renderer's C ABI (`zhgfx_*`) is part of this static library in wgpu builds.
 #[cfg(feature = "renderer")]
