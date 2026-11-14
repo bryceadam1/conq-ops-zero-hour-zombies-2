@@ -712,6 +712,29 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      commands: about half renamed into English, some with a sound-alike pair, some with a digit
      or acronym (`mk2 … tank`, `ecm tank`); the split is by vocabulary, so the test set's names
      are never trained on. A 20,000-command draw meets every floor.
+  10. **The spoken sentences** (`voice_corpus spoken <dir> <seed>`, for the scale-up's audio). The
+     200k commands went out in 1,000 batches of 200 (`spoken/batches/`) to Haiku agents following
+     `tools/voice/spoken/BRIEF.md`, five sentences each, a million in all (`spoken/out/`, kept
+     outside the repo). The ruling for the text: what a player would say aloud, written as a
+     correct, punctuated sentence; fillers and restarts allowed, no misheard words (the audio and
+     Whisper make those), no parser-speak (`attack-move`, `force attack`, bare labels). The
+     assembler checks each sentence against its label and drops it when it loses a name, a count,
+     a compass word, the exclusion or the sequence, reads as parser-speak, or repeats one already
+     kept; a sentence that is only the label with filler is kept once per command. It writes
+     `spoken.tsv` (sentence, label, command, vocabulary, split), `spoken_canonical.tsv` (5% of the
+     commands as their labels, the way a player reads them off the menu) and `spoken_stats.txt`.
+     984,692 of the million kept, for 199,919 commands; the largest drops are repeated filler-only
+     phrasings (7,693), parser-speak (4,805) and a lost name (1,741). The first pass dropped 7,400
+     sentences as losing their exclusion when they said `skip`, `minus`, `leave those out`, `sit
+     this out` or `everyone else`; the exclusion words now cover them (261 left, read as real
+     losses). `both of you` for `2 tanks` stays dropped: it assumes exactly two.
+  11. **Text to speech.** The bake-off (MODLOG, 2026-11-14) scored Kokoro, Audio8 and Fish S2-Pro
+     by Whisper's word error and by speaker match to the reference voice: Kokoro 0.160 and 0.749,
+     Audio8 0.171 and 0.967, Fish 0.185 and 0.963. Fish S2-Pro through SGLang-Omni on an L40S
+     (`tools/voice/tts/fish_sglang.sh`, `fish_bench.py`) makes 13.5 seconds of speech a second at
+     16 requests in flight; the million sentences are about 4.2M seconds, about $155 of GPU, so
+     the audio is a Fish subset (about 75k clips, about $8) for voice variety plus Kokoro on the
+     Mac for the bulk.
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
   the heard rows, with a prompt that carries the match's names (`--prompt

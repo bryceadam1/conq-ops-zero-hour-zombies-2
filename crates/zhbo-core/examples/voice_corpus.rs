@@ -124,6 +124,7 @@ fn spoken(dir: &Path, seed: u32) -> Result<(), String> {
     let mut dropped: BTreeMap<String, usize> = BTreeMap::new();
     let mut seen = std::collections::BTreeSet::new();
     let mut commands = std::collections::BTreeSet::new();
+    let mut trivial_kept = std::collections::BTreeSet::new();
     for path in entries {
         for line in fs::read_to_string(&path).map_err(|e| e.to_string())?.lines() {
             let Some((id, sentence)) = line.split_once('\t') else { continue };
@@ -137,9 +138,10 @@ fn spoken(dir: &Path, seed: u32) -> Result<(), String> {
                 continue;
             };
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let is_trivial = trivial(label, sentence);
             let why = unspoken(sentence)
                 .map(str::to_string)
-                .or_else(|| trivial(label, sentence).then(|| "only filler around the label".to_string()))
+                .or_else(|| (is_trivial && trivial_kept.contains(cid)).then(|| "only filler around the label (one kept per command)".to_string()))
                 .or_else(|| drift(label, &names, sentence).map(|w| w.split('\'').next().unwrap_or(&w).trim().to_string()));
             if let Some(why) = why {
                 *dropped.entry(why).or_default() += 1;
@@ -148,6 +150,9 @@ fn spoken(dir: &Path, seed: u32) -> Result<(), String> {
             if !seen.insert((cid.clone(), normal::words(sentence).join(" "))) {
                 *dropped.entry("a repeat".into()).or_default() += 1;
                 continue;
+            }
+            if is_trivial {
+                trivial_kept.insert(cid.clone());
             }
             commands.insert(cid.clone());
             kept.push(format!("{sentence}\t{label}\t{cid}\t{vid}\t{split}"));
@@ -272,8 +277,14 @@ fn vocab_line(v: &zhbo_core::command::Vocabulary) -> String {
 const NUMBER_WORDS: [(&str, &str); 12] =
     [("0", "zero"), ("1", "one"), ("2", "two"), ("3", "three"), ("4", "four"), ("5", "five"), ("6", "six"), ("7", "seven"), ("8", "eight"), ("9", "nine"), ("10", "ten"), ("12", "twelve")];
 const COMPASS: [&str; 4] = ["north", "south", "east", "west"];
-const EXCLUSION: [&str; 9] = ["except", "but", "not", "other than", "excluding", "besides", "apart", "without", "leave out"];
-const SEQUENCE: [&str; 6] = ["then", "after", "afterwards", "next", "once", "and"];
+/// Ways a phrasing says its exclusion (`except`): the spoken scale-up read `skip`, `minus`, `leave
+/// those out`, `sit this out`, `everyone else`, `isn't one of` as dropped exclusions, 7,400 of them.
+const EXCLUSION: [&str; 33] = [
+    "except", "but", "not", "other than", "excluding", "besides", "apart", "without", "leave", "leaving", "left out", "skip", "skipping",
+    "minus", "the rest", "stay", "stays", "staying", "hold back", "holding back", "sit", "sits", "sitting", "exclude", "excluded", "ignore",
+    "ignoring", "aside", "spare", "else", "isn't", "aren't", "doesn't",
+];
+const SEQUENCE: [&str; 7] = ["then", "after", "afterwards", "next", "once", "and", "so"];
 
 /// Why a paraphrase does not say what its label says, if it does not.
 fn drift(label: &str, names: &[&str], para: &str) -> Option<String> {

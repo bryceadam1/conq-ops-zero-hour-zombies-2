@@ -15625,3 +15625,24 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - A survivor capture (default leg with `ZHBO_AUTOPILOT_GENERAL=ZHBO_General_Survivor_Misty`)
     shows the points, `8/24` on the circle, BUILD on slot 2 and the `[F] Field Computer` prompt.
 - **Bump:** `hud::VERSION` → 98 (the new material).
+
+## Voice: a million spoken sentences for the scale-up (2026-11-14)
+
+- **What:** the 200k scale-up commands as spoken sentences, five each, written by Haiku agents (20 at
+  a time, the subagent limit) over 1,000 batches of 200, following `tools/voice/spoken/BRIEF.md`.
+  The files stay in `~/.conquerops/voice/corpus/spoken/`; `voice_corpus spoken` assembles them
+  (docs/COMMANDS.md section 11, step 10).
+- **Result:** 1,000,000 read, 984,692 kept, for 199,919 of the 200k commands.
+- **Filter fixes, from reading what it dropped:**
+  - The exclusion check dropped 7,425 sentences that said it fine: `skip the nearest rover`,
+    `minus the cougar cannons`, `leave those ones out`, `sit this one out`, `everyone else`,
+    `isn't one of the trucks`. The exclusion words now take them; the 261 left really lose it
+    (`eight northernmost factories, you can depart now`).
+  - `so` counts as a sequence word (`you're the tanvas team now, so head to the aircraft`); 143
+    left, mostly a second step really missing.
+  - A sentence that is only its label with filler was dropped every time on this path; it is kept
+    once per command now, as the rule's own comment and the first paraphrase path have it.
+- **Left as drops:** `both of you` for `2 tanks` (it assumes exactly two; 298 count losses, mostly
+  this), and a lost name (1,741).
+- **Gotcha:** two agents edited their files with BSD `sed -i -e`, which leaves a `<file>-e` backup;
+  the assembler reads every file in `spoken/out/`, so stray files there must go first.
