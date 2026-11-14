@@ -617,6 +617,14 @@ pub extern "C" fn zhbo_reset() {
     });
 }
 
+/// The map just loaded is a Zombies map (non-zero) or not: the bridge reads the map's objects for
+/// a zombie spawn point at the loading screen, the same on every machine. The round engine runs
+/// only on one (`Rounds::zombies_map`, sim state).
+#[no_mangle]
+pub extern "C" fn zhbo_zombies_map_loaded(zombies_map: i32) {
+    with_state(|s| s.sim.rounds.zombies_map = zombies_map != 0);
+}
+
 #[no_mangle]
 pub extern "C" fn zhbo_logic_take_control(player: i32, general: u32) {
     with_state(|s| {

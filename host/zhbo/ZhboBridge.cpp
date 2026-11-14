@@ -161,6 +161,7 @@ std::string readTextFile(const char *path)
 }
 
 static void installZombieMaps();
+static Bool isZombiesMap();
 
 // A file of the mod's in the game's user-data directory. Several game instances on one machine
 // (the engine's multi-instance mode: the two-instance multiplayer test) share that directory; like
@@ -618,6 +619,8 @@ void Zhbo_Preload()
 	const double started = zhbo_platform::now();
 	// The map's ground surfaces, before the first logic step can ask for one.
 	EnsureSurfaceGrid();
+	// A Zombies map runs the core's round engine (and only one does: no map-wide scan elsewhere).
+	zhbo_zombies_map_loaded(isZombiesMap() ? 1 : 0);
 	// The mod's objects (the Generals, their grenades, C4 and other equipment): what the engine's
 	// own preload does for KINDOF_PRELOAD things, which retail only runs with -preload.
 	int objects = 0;
@@ -1316,12 +1319,18 @@ void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button)
 	Zhbo_RequestTakeControl(obj);
 }
 
+// Whether the loaded map is a Zombies map: one of its objects is a zombie spawn point.
+static Bool isZombiesMap()
+{
+	for (MapObject *m = MapObject::getFirstMapObject(); m; m = m->getNext())
+		if (zhbo_names::isZombieSpawner(m->getName().str()))
+			return TRUE;
+	return FALSE;
+}
+
 AsciiString Zhbo_ZombiesStartObject(Int slotNum, Player *player)
 {
-	Bool zombiesMap = FALSE;
-	for (MapObject *m = MapObject::getFirstMapObject(); m && !zombiesMap; m = m->getNext())
-		zombiesMap = zhbo_names::isZombieSpawner(m->getName().str());
-	if (!zombiesMap || !player || !ThePlayerList)
+	if (!isZombiesMap() || !player || !ThePlayerList)
 		return AsciiString::TheEmptyString;
 	// The zombies are the neutral side's (they join their spawn point's): it and the player are
 	// enemies both ways, so the zombies attack him and his units fight them.

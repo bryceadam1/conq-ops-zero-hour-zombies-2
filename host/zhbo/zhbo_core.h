@@ -624,6 +624,9 @@ int32_t zhbo_load_impacts(const char *text);
 int32_t zhbo_load_sound_layers(const char *text);
 /* Zombies' rule table (names ZOMBIE_RULES_PATH; pending for the next ABI bump): its row count. */
 int32_t zhbo_load_zombie_rules(const char *text);
+/* The map just loaded is a Zombies map (its objects include a zombie spawn point): the round
+   engine runs only on one (pending for the next ABI bump). */
+void zhbo_zombies_map_loaded(int32_t zombies_map);
 /* Load the BO2 font metrics (see lui/font.rs); empty text leaves the engine font in use. */
 void zhbo_load_fonts(const char *text);
 /* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */

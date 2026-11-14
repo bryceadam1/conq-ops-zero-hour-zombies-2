@@ -53,13 +53,16 @@ pub struct Rounds {
     /// The last spawn point used (`round_spawning`'s `old_spawn`).
     pub last_spawner: u32,
     pub rng: crate::weapons::Rng,
+    /// The map is a Zombies map (its objects include a spawn point; the bridge says so as the map
+    /// loads, `zhbo_zombies_map_loaded`). Off, the engine never looks for spawn points.
+    pub zombies_map: bool,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001) }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false }
     }
 }
 
@@ -79,6 +82,9 @@ impl Sim {
 
     /// One logic frame of the round engine (after the seats have stepped).
     pub(super) fn step_zombies(&mut self, host: &dyn LogicHost) {
+        if !self.rounds.zombies_map {
+            return;
+        }
         let vars = Vars::get();
         let scan = self.frame.is_multiple_of(SCAN_FRAMES);
         if matches!(self.rounds.phase, Phase::Off) {
@@ -237,6 +243,7 @@ mod tests {
         host.add(ObjInfo { id: 50, owner_player: 7, flags: objflags::SPAWNER | objflags::NO_COLLIDE, pos: Vec3::new(300.0, 0.0, 0.0), ..Default::default() });
         host.add(ObjInfo { id: 51, owner_player: 7, flags: objflags::SPAWNER | objflags::NO_COLLIDE, pos: Vec3::new(-300.0, 0.0, 0.0), ..Default::default() });
         let mut sim = Sim::new();
+        sim.rounds.zombies_map = true;
         sim.take_control(&host, 0, 1);
         (sim, host)
     }
@@ -253,9 +260,18 @@ mod tests {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
+        sim.rounds.zombies_map = true;
         step(&mut sim, &host, SCAN_FRAMES * 2);
         assert_eq!(sim.rounds.phase, Phase::Off);
         assert!(host.spawned.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_ordinary_map_never_looks_for_spawn_points() {
+        let (mut sim, host) = zombies_map();
+        sim.rounds.zombies_map = false;
+        step(&mut sim, &host, SCAN_FRAMES * 3);
+        assert_eq!(sim.rounds.phase, Phase::Off, "not a Zombies map: spawn points or not, no rounds");
     }
 
     #[test]

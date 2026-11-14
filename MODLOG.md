@@ -15558,3 +15558,12 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   Kokoro on the Mac at 0.17 s per second would take about 200 hours. The corpus's audio has to be
   a subset: roughly 75k Fish clips for $8 of GPU at about 20×, plus Kokoro for more voices.
 - AWS so far: $6.20 (the bake-off $1.62, six Fish runs $4.58).
+- **Follow-up, same day: the round engine runs only on a Zombies map.** Replay playback still
+  crashed in the scan, because before the replay's map was set up the extent callback answers
+  its ±1e6 fallback. The bridge now tells the core whether the loaded map is a Zombies map
+  (`zhbo_zombies_map_loaded`, from the map's objects, at `Zhbo_Preload`), and `Rounds::zombies_map`
+  (sim state, hashed) gates the whole engine, so no other map ever scans.
+  - Verified: `cargo test -p zhbo-core` (1063, plus `an_ordinary_map_never_looks_for_spawn_points`).
+  - The `--replay` leg passes all five checks again.
+  - The multiplayer leg passes all 27 (state hash agrees on all 2757 common frames).
+  - The Zombies map still starts its survivors and round 1.
