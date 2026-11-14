@@ -16,7 +16,7 @@
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
-#define ZHBO_LOGIC_API_FIELDS 29u
+#define ZHBO_LOGIC_API_FIELDS 30u
 #define ZHBO_CLIENT_API_FIELDS 22u
 
 #ifdef __cplusplus
@@ -301,6 +301,9 @@ typedef struct ZhboLogicApi
 	   0 (BO2's spectators_respawn); player's money. */
 	uint32_t (*spawn_survivor)(int32_t player, const ZhboVec3 *pos, float yaw);
 	int32_t (*money)(int32_t player);
+	/* Pending for the next ABI bump (the last stand, zhbo_core::sim::laststand): kill id as Zero
+	   Hour kills (Object::kill), a survivor's bleed-out. */
+	void (*kill)(uint32_t id);
 } ZhboLogicApi;
 
 /* The damage kinds of ZhboLogicApi.damage (zhbo_core::damage::ZH_DAMAGE_TYPES): Zero Hour's
@@ -633,6 +636,10 @@ int32_t zhbo_load_zombie_rules(const char *text);
 void zhbo_zombies_map_loaded(int32_t zombies_map);
 /* Each player's points at a Zombies map's start (pending for the next ABI bump). */
 int32_t zhbo_zombie_start_points(void);
+/* The damage a blow may do to survivor victim with health left, of the amount his body would take
+   (BO2's last stand, zhbo_core::laststand; pending for the next ABI bump). Lock-free: the damage
+   hook calls it. */
+float zhbo_logic_survivor_damage(uint32_t victim, float amount, float health);
 /* Load the BO2 font metrics (see lui/font.rs); empty text leaves the engine font in use. */
 void zhbo_load_fonts(const char *text);
 /* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */

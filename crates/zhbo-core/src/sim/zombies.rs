@@ -59,13 +59,17 @@ pub struct Rounds {
     /// The Zero Hour players in the game (BO2's `get_players()`): every owner of a survivor seen,
     /// in the order first seen. A player whose survivor fell stays one: he is respawned.
     pub players: Vec<i32>,
+    /// The survivors in last stand (`sim::laststand`), in the order they went down.
+    pub downed: Vec<super::laststand::Downed>,
+    /// Survivors alive and not downed, as last counted (the damage hook's mirror reads it).
+    pub up: u32,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new() }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0 }
     }
 }
 
@@ -84,7 +88,7 @@ impl Sim {
     }
 
     /// The living survivor Generals on the map (any player's, a seat's or not).
-    fn living_survivors(&self, host: &dyn LogicHost) -> Vec<ObjInfo> {
+    pub(super) fn living_survivors(&self, host: &dyn LogicHost) -> Vec<ObjInfo> {
         let (lo, hi) = host.extent();
         let mut objs = Vec::new();
         host.query((lo + hi) * 0.5, (hi - lo).length() * 0.5, 0, &mut objs);
@@ -132,6 +136,7 @@ impl Sim {
         if !self.rounds.zombies_map {
             return;
         }
+        self.step_last_stand(host);
         let vars = Vars::get();
         let scan = self.frame.is_multiple_of(SCAN_FRAMES);
         if matches!(self.rounds.phase, Phase::Off) {
@@ -234,6 +239,7 @@ impl Sim {
     fn nearest_survivor(&self, host: &dyn LogicHost, pos: Vec3) -> Option<u32> {
         self.survivors()
             .into_iter()
+            .filter(|p| !self.is_downed(p.general))
             .filter_map(|p| host.object(p.general, p.general).filter(|o| !o.has(objflags::DEAD)))
             .min_by(|a, b| (a.pos - pos).length().total_cmp(&(b.pos - pos).length()))
             .map(|o| o.id)
@@ -241,7 +247,7 @@ impl Sim {
 
     /// Send every zombie of the round at its nearest survivor again (BO2's zombies re-target as
     /// players move; `find_flesh` runs on).
-    fn send_zombies(&mut self, host: &dyn LogicHost) {
+    pub(super) fn send_zombies(&mut self, host: &dyn LogicHost) {
         for &id in &self.rounds.alive {
             let Some(z) = host.object(id, id) else { continue };
             if let Some(t) = self.nearest_survivor(host, z.pos) {

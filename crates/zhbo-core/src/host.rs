@@ -185,6 +185,8 @@ pub trait LogicHost {
     fn money(&self, _player: i32) -> i32 {
         0
     }
+    /// Kill `id` as Zero Hour kills (its death, not a removal): a survivor's bleed-out.
+    fn kill(&self, _id: u32) {}
     /// The structures `general` can build (his build menu), with whether each can be placed now.
     fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
         Vec::new()
@@ -331,6 +333,8 @@ pub struct LogicApi {
     /// Zombies map starts him) at `pos`; its id, or 0. And player `player`'s money.
     pub spawn_survivor: Option<extern "C" fn(player: i32, pos: *const Vec3, yaw: f32) -> u32>,
     pub money: Option<extern "C" fn(player: i32) -> i32>,
+    /// Pending for the next ABI bump (the last stand): kill `id` (`Object::kill`).
+    pub kill: Option<extern "C" fn(id: u32)>,
 }
 
 #[repr(C)]
@@ -498,6 +502,12 @@ impl LogicHost for CLogicHost {
 
     fn money(&self, player: i32) -> i32 {
         self.0.money.map_or(0, |f| f(player))
+    }
+
+    fn kill(&self, id: u32) {
+        if let Some(f) = self.0.kill {
+            f(id);
+        }
     }
 
     fn destroy(&self, id: u32) {

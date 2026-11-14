@@ -166,6 +166,9 @@ impl LogicHost for Witness<'_> {
     fn money(&self, player: i32) -> i32 {
         self.host.money(player)
     }
+    fn kill(&self, id: u32) {
+        self.host.kill(id)
+    }
     fn disable(&self, id: u32, kind: i32, seconds: f32) {
         self.host.disable(id, kind, seconds)
     }

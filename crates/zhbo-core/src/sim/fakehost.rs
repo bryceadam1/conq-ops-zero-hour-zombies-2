@@ -61,6 +61,10 @@ pub struct FakeHost {
     pub spawn_objects: std::cell::Cell<bool>,
     /// The players whose survivor was stood again (`spawn_survivor`).
     pub respawned: RefCell<Vec<i32>>,
+    /// Each player's money before [`FakeHost::cash`]'s changes (`money` answers the sum).
+    pub wallet: RefCell<Vec<(i32, i32)>>,
+    /// The objects killed (`kill`; they are marked dead).
+    pub killed: RefCell<Vec<u32>>,
 }
 
 impl FakeHost {
@@ -184,6 +188,17 @@ impl LogicHost for FakeHost {
     fn spawn_survivor(&self, player: i32, _pos: Vec3, _yaw: f32) -> u32 {
         self.respawned.borrow_mut().push(player);
         0
+    }
+    fn money(&self, player: i32) -> i32 {
+        let base: i32 = self.wallet.borrow().iter().filter(|w| w.0 == player).map(|w| w.1).sum();
+        base + self.cash.borrow().iter().filter(|c| c.0 == player).map(|c| c.1).sum::<i32>()
+    }
+    fn kill(&self, id: u32) {
+        self.killed.borrow_mut().push(id);
+        if let Some(o) = self.objects.borrow_mut().iter_mut().find(|o| o.id == id) {
+            o.flags |= objflags::DEAD;
+            o.health = 0.0;
+        }
     }
     fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
         self.options.borrow().clone()

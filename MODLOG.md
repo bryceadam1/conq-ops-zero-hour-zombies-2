@@ -15646,3 +15646,66 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   this), and a lost name (1,741).
 - **Gotcha:** two agents edited their files with BSD `sed -i -e`, which leaves a `<file>-e` backup;
   the assembler reads every file in `spoken/out/`, so stray files there must go first.
+
+## Zombies: last stand (2026-11-14)
+
+- **Where the down is decided:** a survivor's health is the engine's, so the bridge's damage hook
+  asks the core about every blow on a survivor on a Zombies map
+  (`zhbo_logic_survivor_damage`, lock-free over a mirror published after each step). It passes the
+  damage his body would take after armour (`BodyModuleInterface::estimateDamage`), because Zero Hour
+  applies armour after the hook.
+  - A lethal blow while another survivor is up leaves him at 1 health and queues his down
+    (`player_damage_override`, `_zm.gsc:4239-4252`; `playerlaststand` sets `health = 1`).
+  - A downed survivor takes nothing (BO2's zombies ignore him, `ignoreme = 1`).
+  - The last survivor up dies, and the downed die with him: the game ends (`:4256-4291`).
+- **Going down** (`sim::laststand`):
+  - He loses `penalty_downed` (the rule table's, default 0.05) of his points, rounded up to ten
+    (`player_reduce_points`, `_zm_score.gsc:292-296`).
+  - He holds only his last-stand pistol: the best pistol he carries by `level.pistol_values`
+    (`_zm.gsc:2163-2202`, `last_stand_best_pistol`), skipping an empty one, else the M1911
+    (`level.laststandpistol`).
+  - The default pistol gets a clip plus two of stock. A carried pistol keeps its clip and up to
+    two clips of stock (`last_stand_pistol_swap`, `:2205-2251`).
+  - He can't change weapons, throw offhands, melee or use the field computer. He lies prone (t6zm
+    has its own `LASTSTAND` stance with prone-style transitions; its crawl speed is not traced, so
+    he crawls at prone speed).
+  - Zombies are re-sent at the nearest survivor still up.
+- **Bleeding out:** 45 s (`player_lastStandBleedoutTime`, `_zm.gsc:963`). The countdown holds at
+  the end while he is being revived (`laststand_bleedout`), then he dies through the new `kill`
+  call (`Object::kill`), so the respawn and defeat rules see a real death.
+- **Revive** (`revive_trigger_think`, `can_revive`, `revive_do_revive`):
+  - Who: a survivor who is up, inside the downed player's 75-inch trigger (`revive_trigger_radius`,
+    `:962`; as tall as it is wide) and facing him (flat dot > 0.9, `is_facing`), holding the use
+    key. The press is taken before the field computer, weapon pickups and building see it.
+  - The reviver's gun is down while reviving. Letting go starts the revive over.
+  - It takes 3 s (`:834`; Quick Revive will halve it).
+  - Revived: his weapons come back. The rounds his carried pistol spent are charged to its stock,
+    then its clip, unless it's the M1911 (`last_stand_restore_pistol_ammo`). He is at full health.
+- **HUD** (`hud::zombies::draw_last_stand`):
+  - The cursor hint `ZOMBIE_BUTTON_TO_REVIVE_PLAYER` ("Hold ^3&&1^7 to revive") in the pickup
+    hint's place.
+  - The reviver's 120 × 4 bar 110 below centre on a black half-alpha back 4 larger
+    (`createprimaryprogressbar`, `createbar`, the last stand's `primaryprogressbar*`), and
+    `ZOMBIE_REVIVING` 113 up from the bottom at fontscale 1.8.
+  - A message line 160 up at fontscale 1.5: `ZOMBIE_PLAYER_NEEDS_TO_BE_REVIVED` to the others as
+    someone goes down, and `ZOMBIE_PLAYER_IS_REVIVING_YOU` to the downed player. Each fades over
+    3 s (`revive_hud_create`, `faderevivemessageover`, `revive_hud_show_n_fade`).
+  - `waypoint_revive_zm` over each downed teammate, 30 inches up (the script's revive icons,
+    `_zm_chugabud.gsc:718-725`; t6zm `FUN_004d5e80` loads the `_zm` material in Zombies). Its drawn
+    size isn't traced: a fixed 32 units.
+  - The strings come from the install's `en_patch_zm` (`weapons::ZOMBIES_UI_TEXT_KEYS`).
+- **Data:** `zombies.ini` `[LastStand]` (`zhbo_core::zombies::LastStand`), each value cited.
+- **Verified:**
+  - `cargo test -p zhbo-core`: 1077 passed. New tests: `sim::laststand` (pistol rules, penalty,
+    bleed-out, revive, letting go, facing away, everyone down), the hook's
+    `a_lethal_blow_downs_while_another_survivor_is_up`, the HUD's reviver/downed test, and the
+    `[LastStand]` parse.
+  - On the Zombies map in game: player 2's survivor went down at frame 1209 (30 points lost). When
+    the other survivor died at 1373, the downed one died with him and the game ended.
+  - The multiplayer leg passes (state hash agrees on all 2835 common frames).
+  - Not yet seen in game: a revive and the last-stand HUD. A menu-started game stays overhead, and
+    the scripted scene has one survivor (solo goes straight to death, as BO2 without Quick Revive).
+- **Bump:** `hud::VERSION` → 99 (the strings and three materials). ABI pending: `kill`,
+  `zhbo_logic_survivor_damage`.
+- **Not yet ported:** Quick Revive (solo self-revive, faster revives), the downed screen's vision and
+  the bleed-out's red overlay, the last-stand crawl speed, suicide in co-op.

@@ -181,6 +181,9 @@ impl Client {
             | EventKind::ZombieRound { .. }
             | EventKind::ZombieRoundOver { .. }
             | EventKind::ZombiePoints { .. }
+            | EventKind::Downed { .. }
+            | EventKind::Revived { .. }
+            | EventKind::BledOut { .. }
             | EventKind::ReturnedToRts { .. }
             | EventKind::HitMarker { .. }
             | EventKind::PerkFeedback { .. }
@@ -434,6 +437,8 @@ impl Client {
                 EventKind::FieldComputerOpened => {}
                 // Zombies' round and points: the Zombies HUD reads them from the sim.
                 EventKind::ZombieRound { .. } | EventKind::ZombieRoundOver { .. } | EventKind::ZombiePoints { .. } => {}
+                // The last stand: the Zombies HUD reads it from the sim.
+                EventKind::Downed { .. } | EventKind::Revived { .. } | EventKind::BledOut { .. } => {}
                 // His death animation is the third person's (`remote`).
                 EventKind::KilledBy { .. } => {}
                 EventKind::ClassChosen { .. } => {

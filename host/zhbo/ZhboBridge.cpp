@@ -462,6 +462,7 @@ void Zhbo_Init()
 		.add_cash = cbAddCash,
 		.spawn_survivor = cbSpawnSurvivor,
 		.money = cbMoney,
+		.kill = cbKill,
 	};
 	static const ZhboClientApi clientApi = {
 		.screen_size = cbScreenSize,
@@ -849,6 +850,20 @@ void Zhbo_ShieldDamage(Object *obj, DamageInfo *info)
 		shieldDamageKind(info->in.m_damageType), info->in.m_amount);
 	if (scale < 1.0f)
 		info->in.m_amount *= scale < 0.0f ? 0.0f : scale;
+	// A survivor on a Zombies map goes down instead of dying while another is up, and a downed one
+	// takes no more harm (BO2's last stand): the core decides on the damage his body would take
+	// after its armour (estimateDamage), and the blow is scaled to what it allows.
+	if (s_zombiesMap && isSurvivor(obj) && info->in.m_amount > 0.0f && obj->getBodyModule())
+	{
+		BodyModuleInterface *body = obj->getBodyModule();
+		const Real actual = body->estimateDamage(info->in);
+		if (actual > 0.0f)
+		{
+			const float allowed = zhbo_logic_survivor_damage((uint32_t)obj->getID(), actual, body->getHealth());
+			if (allowed < actual)
+				info->in.m_amount *= allowed <= 0.0f ? 0.0f : allowed / actual;
+		}
+	}
 	// What reached him, for his hurt and death (BO2's vDir): the blast's own direction when it
 	// carries a shock wave (Weapon.cpp: victim less the exploding object), else from the source.
 	if (info->in.m_amount > 0.0f)

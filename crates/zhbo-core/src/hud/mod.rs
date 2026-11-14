@@ -381,6 +381,9 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             }
             let points: Vec<zombies::Points> = order.iter().enumerate().map(|(k, &pl)| zombies::Points { points: host.cash(pl), color: k, own: pl == local_player }).collect();
             zombies::draw_points(&l, prims, &points);
+            let use_key = crate::input::key_name(b.field_computer);
+            let name = |player: i32| host.player_name(player).unwrap_or_default();
+            zombies::draw_last_stand(&l, prims, sim, p, use_key, &name, &|at| panels::project(client, w, h, at));
         } else {
             // The scorestreak column is the player's own commands: the tablet, and the build tool
             // when an action slot holds it.

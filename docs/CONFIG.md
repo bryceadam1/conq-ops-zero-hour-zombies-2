@@ -128,6 +128,10 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
 - **Rounds:** `zombies.ini` `[Rounds]` holds what `_zm.gsc` hard-codes (`zombie_ai_limit` 24, the 10 s
   between rounds, the spawn delay's floor and decay, the difficulty whose column `set_zombie_var` reads).
   Everything else comes from the rule table by `set_zombie_var`'s rule (`zhbo_core::zombies::Vars`).
+- **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
+  45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
+  last-stand pistol and BO2's ranking of the pistols a downed player may hold
+  (`zhbo_core::zombies::LastStand`). The points lost going down are the rule table's `penalty_downed`.
 - **The converter's use of the roster:** it converts every roster weapon TranZit's pool defines, plus the alt modes they
   reach, except a weapon whose art the install lacks: the Ray Gun Mark II's view model ships only with a DLC map.
   These are compiled in, so a change to the roster needs the archive rebuilt (`hud::VERSION`).

@@ -55,6 +55,7 @@ pub mod host;
 pub mod impacts;
 pub mod hud;
 pub mod input;
+pub mod laststand;
 pub mod lui;
 pub mod math;
 pub mod menu;

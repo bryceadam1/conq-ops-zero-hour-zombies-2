@@ -1941,6 +1941,16 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   the core whether the map is a Zombies map (`zhbo_zombies_map_loaded`, free function; `Rounds::zombies_map`), and the round engine runs only on one. The logic query
   (`cbQuery`) answers nothing outside a real game (the main menu, the shell map). Host patches
   are now 0001–0035.
+* The last stand (`sim::laststand`, `crate::laststand`): `ZhboLogicApi` gains `kill(id)`
+  (`Object::kill`, a survivor's bleed-out) after `money` (30 fields), and the free function
+  `zhbo_logic_survivor_damage(victim, amount, health)`. The bridge's damage hook calls it for every
+  blow on a survivor on a Zombies map with the damage his body would take after armour
+  (`estimateDamage`) and scales the blow to its answer: a lethal blow while another survivor is up
+  leaves him at 1 health and queues his down for the sim's next step; a downed survivor takes
+  nothing. It is lock-free and reads a mirror written after each logic step (the downed Generals,
+  how many survivors are up). The sim's state gains `Rounds::downed` and `Rounds::up`. The weapon
+  table's UI text gains the four Zombies strings of `weapons::ZOMBIES_UI_TEXT_KEYS`, and the archive
+  three materials (`hud::VERSION` 99).
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

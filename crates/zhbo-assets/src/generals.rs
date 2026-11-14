@@ -474,6 +474,12 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             table.weapons.push(d);
         }
     }
+    // The Zombies strings the core draws (`zhbo_core::weapons::ZOMBIES_UI_TEXT_KEYS`).
+    for key in zhbo_core::weapons::ZOMBIES_UI_TEXT_KEYS {
+        if let Some(text) = zm_names.get(*key) {
+            table.ui_text.push(zhbo_core::weapons::UiText { key: key.to_string(), text: text.clone() });
+        }
+    }
     let zm_missing = zm.missing();
     summary.push(format!(
         "zombies: {} TranZit weapons{}{}",

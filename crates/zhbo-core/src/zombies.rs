@@ -167,6 +167,69 @@ pub fn survivor_kit() -> crate::weapons::Loadout {
     parse_survivor_kit(SHIPPED)
 }
 
+/// A survivor's last stand (`zombies.ini` `[LastStand]`, `_zm_laststand.gsc`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LastStand {
+    pub bleedout_time: f32,
+    pub revive_time: f32,
+    /// In BO2 inches.
+    pub revive_radius: f32,
+    pub revive_facing: f32,
+    pub pistol: String,
+    pub pistol_values: Vec<String>,
+}
+
+impl LastStand {
+    pub fn parse(text: &str) -> LastStand {
+        let mut ls = LastStand { bleedout_time: 0.0, revive_time: 0.0, revive_radius: 0.0, revive_facing: 1.0, pistol: String::new(), pistol_values: Vec::new() };
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[LastStand]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "BleedoutTime" => ls.bleedout_time = num(),
+                "ReviveTime" => ls.revive_time = num(),
+                "ReviveRadius" => ls.revive_radius = num(),
+                "ReviveFacing" => ls.revive_facing = num(),
+                "Pistol" => ls.pistol = value.to_string(),
+                "PistolValues" => ls.pistol_values = value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+                _ => {}
+            }
+        }
+        ls
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static LastStand {
+        static LS: std::sync::OnceLock<LastStand> = std::sync::OnceLock::new();
+        LS.get_or_init(|| LastStand::parse(SHIPPED))
+    }
+
+    /// `last_stand_best_pistol` (co-op): of the pistols `held` (id, rounds left), the one ranked
+    /// last in `pistol_values` (an unranked one counts as the first), skipping an empty one unless
+    /// it is the default pistol; none: the default pistol.
+    pub fn best_pistol<'a>(&'a self, held: &[(&'a str, u32)]) -> &'a str {
+        let value = |id: &str| self.pistol_values.iter().position(|v| v == id).unwrap_or(0);
+        let mut best: Option<(&str, usize)> = None;
+        for &(id, rounds) in held {
+            if rounds == 0 && id != self.pistol {
+                continue;
+            }
+            // `last_stand_compare_pistols` keeps the first of equal values.
+            if best.is_none_or(|(_, v)| value(id) > v) {
+                best = Some((id, value(id)));
+            }
+        }
+        best.map_or(self.pistol.as_str(), |(id, _)| id)
+    }
+}
+
 /// BO2's `mp/zombiemode.csv` (`common_zm`): Zombies' rule table, a name per row then one value per
 /// difficulty (`NAME,EASY,MEDIUM,HARD,VETERAN`). Scripts read it with `tablelookup( table, 0,
 /// name, column )`.
@@ -255,6 +318,9 @@ pub struct Vars {
     pub starting_points_per_round: i32,
     pub respawn_floor_round: u32,
     pub respawn_floor_points: i32,
+    /// `penalty_downed`: the share of his points a player loses going down (`player_reduce_points`,
+    /// `_zm_score.gsc:292-296`, rounded up to ten).
+    pub penalty_downed: f32,
 }
 
 impl Vars {
@@ -287,6 +353,7 @@ impl Vars {
             starting_points_per_round: rounds_value(ini, "StartingPointsPerRound").unwrap_or(500.0) as i32,
             respawn_floor_round: rounds_value(ini, "RespawnFloorRound").unwrap_or(6.0) as u32,
             respawn_floor_points: rounds_value(ini, "RespawnFloorPoints").unwrap_or(1500.0) as i32,
+            penalty_downed: float("penalty_downed", 0.05, column),
         }
     }
 
@@ -400,6 +467,18 @@ impl RunCycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_last_stand_reads_its_rules_and_picks_the_best_pistol_with_ammo() {
+        let ls = LastStand::get();
+        assert_eq!((ls.bleedout_time, ls.revive_time, ls.revive_radius, ls.pistol.as_str()), (45.0, 3.0, 75.0, "m1911_zm"));
+        assert_eq!(ls.pistol_values.len(), 32);
+        assert_eq!(ls.best_pistol(&[]), "m1911_zm");
+        assert_eq!(ls.best_pistol(&[("m1911_zm", 0), ("python_zm", 6)]), "python_zm");
+        assert_eq!(ls.best_pistol(&[("python_zm", 0)]), "m1911_zm", "an empty pistol is passed over");
+        assert_eq!(ls.best_pistol(&[("ray_gun_zm", 20), ("judge_zm", 5)]), "ray_gun_zm");
+        assert!((Vars::get().penalty_downed - 0.05).abs() < 1e-6);
+    }
 
     #[test]
     fn the_shipped_roster_parses_every_row() {

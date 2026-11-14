@@ -63,6 +63,9 @@ pub const MATERIALS: &[(&str, u32)] = &[
     // (`common_zm`, `patch_zm`).
     ("hud_chalk_1", 128), ("hud_chalk_2", 128), ("hud_chalk_3", 128), ("hud_chalk_4", 128), ("hud_chalk_5", 128),
     ("hud_lui_dpad_circle", 128), ("hud_dpad_blood", 512), ("scorebar_zom_1", 256),
+    // The last stand (`hud::zombies::draw_last_stand`): the progress bar (`common_zm`) and the downed
+    // player's icon.
+    ("progress_bar_fill", 128), ("progress_bar_bg", 128), ("waypoint_revive_zm", 64),
 ];
 
 /// A [`MATERIALS`] name ending in this is its base material mirrored top to bottom (LUI draws an

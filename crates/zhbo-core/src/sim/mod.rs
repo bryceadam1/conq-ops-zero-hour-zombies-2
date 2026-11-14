@@ -28,6 +28,7 @@ mod rts;
 pub mod score;
 mod spawn;
 pub mod zombies;
+pub mod laststand;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
 /// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
@@ -159,6 +160,12 @@ pub enum EventKind {
     ZombieRoundOver { round: u8 },
     /// Zombies: a hit or kill on a zombie paid this seat `points` (`player_add_points`).
     ZombiePoints { points: u16 },
+    /// Zombies: survivor `general` went down (last stand, `sim/laststand.rs`), losing `points`.
+    Downed { general: u32, points: u16 },
+    /// Zombies: survivor `general` was revived by General `by` (to both seats).
+    Revived { general: u32, by: u32 },
+    /// Zombies: survivor `general` bled out.
+    BledOut { general: u32 },
     ReturnedToRts { general: u32 },
     /// `left`: the dual-wield left gun's shot (BO2's `EV_FIRE_WEAPON_LEFT`). `spread`: the cone it
     /// flew in, degrees (`weapons::aim_spread`).
@@ -1089,6 +1096,10 @@ impl Sim {
         let mut input = p.input;
         input.pressed = p.pressed_accum;
         p.pressed_accum = 0;
+        // A survivor in last stand lies with his pistol and nothing else (`laststand`).
+        if self.is_downed(p.general) {
+            Self::downed_input(p, &mut input);
+        }
         // Prone, the view turns the body after it and is held within `bg_prone_yawcap` of it
         // (`FUN_008c29a0`, `FUN_008c2720`; the client caps its own view the same way).
         let (fwd, side) = input.move_axes();
@@ -1114,6 +1125,9 @@ impl Sim {
                 movement::step(&mut p.body, &idle, MoveModifiers::default(), &self.tuning, &world, LOGIC_DT);
             }
             Mode::Fps => {
+                // The use key held over a downed survivor revives him, before anything else takes
+                // it (`laststand`).
+                self.revive_input(p, &mut input);
                 // The use key works (builds or repairs) at a structure in reach, held, instead of
                 // opening the field computer.
                 p.site = host.work_site(p.general, p.body.pos, building::REACH);
@@ -1445,6 +1459,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
         ZombieRound { round } => format!("player {} sees zombies round {round} begin", e.player),
         ZombieRoundOver { round } => format!("player {} sees zombies round {round} end", e.player),
         ZombiePoints { points } => format!("player {} scored {points} zombie points", e.player),
+        Downed { general, points } => format!("player {}'s survivor {general} is down ({points} points lost)", e.player),
+        Revived { general, by } => format!("player {} sees survivor {general} revived by {by}", e.player),
+        BledOut { general } => format!("player {}'s survivor {general} bled out", e.player),
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
         GeneralDied { general } => format!("player {}'s General {general} died", e.player),
         Assist { level, tactical } => format!("player {} scored an assist ({})", e.player, tactical.map_or_else(|| (level as u32 * 25).to_string(), |t| format!("{t:?}").to_ascii_lowercase())),

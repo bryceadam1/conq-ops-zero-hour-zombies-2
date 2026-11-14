@@ -62,8 +62,30 @@ pub const OFFHAND_WIDTH: f32 = OFFHAND_SIZE * 1.5;
 /// the ammo counter and weapon label above it, and its text height.
 pub const FIELD_COMPUTER_LABEL: (f32, f32) = (-CIRCLE_SIZE - 8.0, 16.0);
 
+/// The last stand's HUD (`_zm_laststand.gsc`, in hud-element units of the 640 × 480 screen):
+/// the reviver's progress bar (`createprimaryprogressbar` with the last stand's `primaryprogressbar*`,
+/// `:44-47`: 120 × 4, centred 110 below the screen's centre, white `progress_bar_fill` over a
+/// `progress_bar_bg` 4 wider and taller in black at half alpha, `_hud_util.gsc` `createbar`), his
+/// `ZOMBIE_REVIVING` text (`revive_do_revive`: centred, 113 up from the bottom, `fontscale` 1.8) and
+/// the message line (`revive_hud_create`: 160 up from the bottom, `fontscale` 1.5), a font scale
+/// being `level.fontheight` 12 units tall (`_hud.gsc:20`).
+pub const BAR_480: (f32, f32, f32) = (120.0, 4.0, 110.0);
+pub const REVIVING_480: (f32, f32) = (-113.0, 1.8);
+pub const MESSAGE_480: (f32, f32) = (-160.0, 1.5);
+pub const FONT_HEIGHT_480: f32 = 12.0;
+/// The messages' fade (`faderevivemessageover`, `revive_hud_show_n_fade`: 3 s).
+pub const MESSAGE_FADE: f32 = 3.0;
+pub const BAR_FILL: &str = "progress_bar_fill";
+pub const BAR_BACK: &str = "progress_bar_bg";
+/// The downed player's icon: the engine's own (t6zm `FUN_004d5e80` loads `waypoint_revive_zm` in
+/// Zombies), 30 inches over him as the script's revive icons stand (`_zm_chugabud.gsc:718-725`).
+/// Its drawn size is not traced; a fixed `REVIVE_ICON` units.
+pub const REVIVE_ICON_MAT: &str = "waypoint_revive_zm";
+pub const REVIVE_ICON_HEIGHT: f32 = 30.0;
+pub const REVIVE_ICON: f32 = 32.0;
+
 /// The materials this module draws (for `lui::materials::MATERIALS`).
-pub const MATERIALS: [&str; 8] = [CHALKS[0], CHALKS[1], CHALKS[2], CHALKS[3], CHALKS[4], BLOOD, CIRCLE, SCORE_BAR];
+pub const MATERIALS: [&str; 11] = [CHALKS[0], CHALKS[1], CHALKS[2], CHALKS[3], CHALKS[4], BLOOD, CIRCLE, SCORE_BAR, BAR_FILL, BAR_BACK, REVIVE_ICON_MAT];
 
 /// The chalk a round shows at rest (`UpdateRoundsPlayed`/`StartNewRound`): one to five its tally
 /// alone; six to ten a full five and the rest; past ten the number in Morris.
@@ -202,6 +224,56 @@ pub fn draw_offhands(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim) {
     }
 }
 
+/// The last stand as survivor `p` sees it: each downed survivor's icon over him (`project` places a
+/// world point on screen, in pixels), the hint over one he may revive, his revive's bar and text,
+/// and the message line: a fresh down's `ZOMBIE_PLAYER_NEEDS_TO_BE_REVIVED`, or his reviver's
+/// `ZOMBIE_PLAYER_IS_REVIVING_YOU`, each fading over `MESSAGE_FADE`.
+pub fn draw_last_stand(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, use_key: &str, name: &dyn Fn(i32) -> String, project: &dyn Fn(crate::math::Vec3) -> Option<(f32, f32)>) {
+    let ls = crate::zombies::LastStand::get();
+    let size = l.px(Rect { x: 0.0, y: 0.0, w: REVIVE_ICON, h: REVIVE_ICON }).w;
+    for d in sim.rounds.downed.iter().filter(|d| d.general != p.general) {
+        let Some((x, y)) = project(d.pos + crate::math::Vec3::new(0.0, 0.0, crate::units::inches(REVIVE_ICON_HEIGHT))) else { continue };
+        prims.push(Prim::Image { name: crate::lui::materials::image(REVIVE_ICON_MAT), x: x - size * 0.5, y: y - size * 0.5, w: size, h: size, argb: super::frame::argb((1.0, 1.0, 1.0), 1.0), fallback: Vec::new() });
+    }
+    let scale = |v: f32| v * 1.5;
+    let line = |prims: &mut Vec<Prim>, bottom_480: f32, fontscale: f32, text: &str, alpha: f32| {
+        let h = scale(FONT_HEIGHT_480 * fontscale);
+        let y = scale(bottom_480);
+        let r = Place::new((true, true, 0.0, 0.0), (false, true, y - h * 0.5, y + h * 0.5)).resolve(l.screen());
+        l.text(prims, r, Family::Default, text, Some(Align::Center), (true, true), (1.0, 1.0, 1.0), alpha);
+    };
+    if let Some(d) = sim.rounds.downed.iter().find(|d| d.revived_by == p.general) {
+        let (w, h, below) = BAR_480;
+        let (w, h, below) = (scale(w), scale(h), scale(below));
+        let bar = Place::new((false, false, -w * 0.5, w * 0.5), (false, false, below - h * 0.5, below + h * 0.5)).resolve(l.screen());
+        let back = Rect { x: bar.x - scale(2.0), y: bar.y - scale(2.0), w: bar.w + scale(4.0), h: bar.h + scale(4.0) };
+        l.image(prims, back, BAR_BACK, (0.0, 0.0, 0.0), 0.5, Vec::new());
+        let frac = (d.revive / ls.revive_time.max(1e-3)).clamp(0.0, 1.0);
+        l.image(prims, Rect { w: bar.w * frac, ..bar }, BAR_FILL, (1.0, 1.0, 1.0), 1.0, Vec::new());
+        let (bottom, fontscale) = REVIVING_480;
+        line(prims, bottom, fontscale, crate::sim::hint_text("ZOMBIE_REVIVING"), 1.0);
+    } else if sim.revive_target(p).is_some() {
+        super::pickup::draw_runs(l, prims, &super::pickup::coloured_runs(crate::sim::hint_text("ZOMBIE_BUTTON_TO_REVIVE_PLAYER"), use_key));
+    }
+    let (bottom, fontscale) = MESSAGE_480;
+    if let Some(d) = sim.rounds.downed.iter().find(|d| d.general == p.general && d.revived_by != 0) {
+        // `revive_hud_show_n_fade( 3.0 )` as the revive starts.
+        let alpha = 1.0 - d.revive / MESSAGE_FADE;
+        if alpha > 0.0 {
+            let reviver = sim.seat_of(d.revived_by).map_or_else(String::new, |s| name(s as i32));
+            line(prims, bottom, fontscale, &crate::sim::hint_text("ZOMBIE_PLAYER_IS_REVIVING_YOU").replace("&&1", &reviver), alpha);
+        }
+    } else if !sim.is_downed(p.general) {
+        // `revive_hud_think`: the latest down, to every survivor up, fading as it shows.
+        if let Some(d) = sim.rounds.downed.iter().rev().find(|d| d.general != p.general) {
+            let alpha = 1.0 - (ls.bleedout_time - d.bleed) / MESSAGE_FADE;
+            if alpha > 0.0 {
+                line(prims, bottom, fontscale, &crate::sim::hint_text("ZOMBIE_PLAYER_NEEDS_TO_BE_REVIVED").replace("&&1", &name(d.player)), alpha);
+            }
+        }
+    }
+}
+
 /// What one slot shows: its icon (a MappedImage), the name drawn where the icon has no art, whether
 /// it can be used, and its key.
 pub struct Slot<'a> {
@@ -310,6 +382,31 @@ mod tests {
             _ => None,
         });
         assert!(matches!(fallback.map(|f| f.as_slice()), Some([Prim::Text { text, .. }]) if text == "Build"));
+    }
+
+    #[test]
+    fn a_reviver_sees_the_bar_fill_and_the_downed_see_who_revives_them() {
+        use crate::sim::laststand::Downed;
+        let mut sim = Sim::new();
+        let reviver = sim.new_record(2, crate::sim::Mode::Fps, None);
+        sim.players[1] = Some(reviver.clone());
+        let downed = sim.new_record(1, crate::sim::Mode::Fps, None);
+        sim.players[0] = Some(downed.clone());
+        sim.rounds.downed.push(Downed { general: 1, player: 0, pos: crate::math::Vec3::ZERO, bleed: 40.0, revive: 1.5, reviver: 0, revived_by: 2, saved: None, given: 0 });
+        let l = Lui::new(1280.0, 720.0);
+        let name = |pl: i32| format!("P{pl}");
+        let mut prims = Vec::new();
+        draw_last_stand(&l, &mut prims, &sim, &reviver, "F", &name, &|_| Some((640.0, 300.0)));
+        let fill = prims.iter().find_map(|p| match p {
+            Prim::Image { name, w, .. } if name == "ZHBO_Mat_progress_bar_fill" => Some(*w),
+            _ => None,
+        });
+        assert!((fill.unwrap() - 120.0 * 1.5 * 0.5).abs() < 1.0, "half way through three seconds");
+        assert!(prims.iter().any(|p| matches!(p, Prim::Image { name, .. } if name == "ZHBO_Mat_waypoint_revive_zm")), "his icon over him");
+        let mut prims = Vec::new();
+        draw_last_stand(&l, &mut prims, &sim, &downed, "F", &name, &|_| None);
+        // Without the converted table the line is its key (the install's has `&&1 is reviving you`).
+        assert!(prims.iter().any(|p| matches!(p, Prim::Text { text, .. } if text.contains("ZOMBIE_PLAYER_IS_REVIVING_YOU"))), "tells him he is being revived");
     }
 
     #[test]

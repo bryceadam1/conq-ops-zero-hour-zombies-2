@@ -488,6 +488,15 @@ void cbAddCash(int32_t player, int32_t amount)
 		p->getMoney()->withdraw((UnsignedInt)-amount, FALSE);
 }
 
+// The last stand's bleed-out: a real death (Object::kill), so the General falls and the defeat and
+// respawn rules see it.
+void cbKill(uint32_t id)
+{
+	if (Object *obj = TheGameLogic->findObjectByID((ObjectID)id))
+		if (!obj->isEffectivelyDead())
+			obj->kill();
+}
+
 void cbSmoke(const ZhboVec3 *at, float radius)
 {
 	const UnsignedInt frame = TheGameLogic->getFrame();

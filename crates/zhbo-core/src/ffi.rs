@@ -197,7 +197,7 @@ pub const ABI_VERSION: u32 = 36;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
-pub const LOGIC_API_FIELDS: u64 = 29;
+pub const LOGIC_API_FIELDS: u64 = 30;
 pub const CLIENT_API_FIELDS: u64 = 22;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
@@ -611,6 +611,7 @@ pub extern "C" fn zhbo_reset() {
         s.menu = None;
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
+        crate::laststand::publish(&s.sim);
         publish_smokes(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
         crate::nativebody::ffi::publish_offhands(&s.sim.offhand_weapons());
@@ -711,12 +712,14 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
         let before = s.sim.emitted;
         drain_shield_hits(s);
         crate::enginedamage::drain(&mut s.sim);
+        crate::laststand::drain(&mut s.sim, &s.logic);
         s.sim.step(&s.logic, frame);
         // The step's tracer bullets, as this machine's viewer sees them (client-only FX).
         s.client.tracers.play(&s.logic, &mut s.sim.tracers);
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
         publish_smokes(&s.sim);
+        crate::laststand::publish(&s.sim);
         crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
         crate::nativebody::ffi::publish_offhands(&s.sim.offhand_weapons());
         log_step(s, s.sim.first_event_since(before), frame);

@@ -72,6 +72,24 @@ pub fn coloured_runs(text: &str, key: &str) -> Vec<(String, (f32, f32, f32))> {
     out
 }
 
+/// A cursor hint's text, centred on its line (`cursorhints.menu`): its row and where the text ends.
+pub(super) fn draw_runs(l: &Lui, prims: &mut Vec<Prim>, runs: &[(String, (f32, f32, f32))]) -> (Rect, f32) {
+    // LUI's 720-line space is 1.5 x the menus' 480.
+    let (top, height) = (HINT_Y_480 * 1.5, HINT_TEXT_480 * 1.5);
+    let pen = top + height * 0.5;
+    let widths: Vec<f32> = runs.iter().map(|(t, _)| l.text_width(Family::Condensed, t, height)).collect();
+    let total: f32 = widths.iter().sum();
+    let row = Place::new((true, true, 0.0, 0.0), (false, false, pen - height, pen)).resolve(l.screen());
+    let mut x = row.x + row.w * 0.5 - total * 0.5;
+    for ((text, rgb), w) in runs.iter().zip(&widths) {
+        let r = Rect { x, w: *w, ..row };
+        l.text(prims, Rect { x: x + 1.5, y: r.y + 1.5, ..r }, Family::Condensed, text, Some(Align::Left), (true, false), (0.0, 0.0, 0.0), 1.0);
+        l.text(prims, r, Family::Condensed, text, Some(Align::Left), (true, false), *rgb, 1.0);
+        x += w;
+    }
+    (row, x)
+}
+
 /// What the hint names for the use target: its text key, the weapon, and whether the weapon's name
 /// follows the text (`FUN_004db920`). A live grenade in the use list: `PLATFORM_THROWBACKGRENADE`
 /// alone for a frag-class grenade (offhand class 1), else `PLATFORM_PICKUPNEWWEAPON` and its name;
@@ -94,19 +112,8 @@ pub(super) fn draw(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, key
     if named {
         runs.push((format!(" {}", pickup_name(def)), (1.0, 1.0, 1.0)));
     }
-    // LUI's 720-line space is 1.5 x the menus' 480.
     let (top, size, height) = (HINT_Y_480 * 1.5, HINT_SIZE_480 * 1.5, HINT_TEXT_480 * 1.5);
-    let pen = top + height * 0.5;
-    let widths: Vec<f32> = runs.iter().map(|(t, _)| l.text_width(Family::Condensed, t, height)).collect();
-    let total: f32 = widths.iter().sum();
-    let row = Place::new((true, true, 0.0, 0.0), (false, false, pen - height, pen)).resolve(l.screen());
-    let mut x = row.x + row.w * 0.5 - total * 0.5;
-    for ((text, rgb), w) in runs.iter().zip(&widths) {
-        let r = Rect { x, w: *w, ..row };
-        l.text(prims, Rect { x: x + 1.5, y: r.y + 1.5, ..r }, Family::Condensed, text, Some(Align::Left), (true, false), (0.0, 0.0, 0.0), 1.0);
-        l.text(prims, r, Family::Condensed, text, Some(Align::Left), (true, false), *rgb, 1.0);
-        x += w;
-    }
+    let (row, x) = draw_runs(l, prims, &runs);
     // BO2's hint draws the weapon's `hudIcon` by its `hudIconRatio`: both the base gun's (an attached
     // variant names its gun's icon, `classicons::weapon_icon`).
     let base = crate::weapons::weapon_or_none(def.id.split('+').next().unwrap_or(&def.id)).unwrap_or(def);
