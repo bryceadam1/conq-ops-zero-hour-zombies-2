@@ -15749,3 +15749,20 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - Not yet seen in game: a purchase, which needs first person on the Zombies map (the menu-started
     game stays overhead).
 - **Bump:** `hud::VERSION` → 100.
+
+- **Follow-up, same day: a wall buy bought in game, and a Zombies leg.**
+  - Each start now has the whole wall-buy set on its ring. Our map's survivors start in separate
+    bases, where BO2's co-op starts together, so dealing the buys between starts left the
+    affordable guns across the map.
+  - New leg `scripts/autotest-mac.sh --zombies`. It starts the Zombies map from the menu
+    (Skirmish.ini's map set to it). On a Zombies map the bridge's autopilot takes the local
+    survivor into first person (no Command Center, no scene). The core's `wallbuy` run walks him to
+    the nearest gun his starting points buy and presses the use key.
+  - Verified in game:
+    - The survivor bought the M14 (one run) and the Olympia (the leg's run) for 500. Points went
+      500 → 0, the gun came up and fired.
+    - The prompt then read BO2's "Hold F for ammo [Cost: 250]" (the M14's ammo price, half its
+      cost).
+    - All six checks pass: survivors, round 1, 20 props, first person, reached, bought.
+    - In the same run the other survivor went down while this one was up, and when he died the
+      downed one died with him.

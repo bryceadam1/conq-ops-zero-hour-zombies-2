@@ -563,7 +563,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         crate::config::Autopilot::Manual => {
             state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
         }
-        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command } => {
+        crate::config::Autopilot::Scripted { equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command, wallbuy } => {
             #[cfg(feature = "autopilot")]
             {
                 state.client.autopilot = Some(crate::client::Autopilot {
@@ -577,11 +577,12 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
                     flicker,
                     hipfire,
                     command,
+                    wallbuy,
                     voice_file: config.autopilot_voice.clone(),
                     ..Default::default()
                 });
             }
-            let _ = (equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command);
+            let _ = (equipment, build, classpick, scope, smoke, splash, drops, flicker, hipfire, command, wallbuy);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
         crate::config::Autopilot::Multiplayer => {

@@ -163,6 +163,13 @@ pub struct Autopilot {
     /// across the ground), set by the client from the sim, and when the use key was pressed.
     pub(crate) drop_aim: Option<(f32, f32, f32)>,
     pub(crate) drop_used: Option<f32>,
+    /// The wall buy run ([`Autopilot::wallbuy_input`], `ZHBO_AUTOPILOT=wallbuy`, on the Zombies
+    /// map): the survivor walks to the nearest wall buy, buys from it and fires what he holds. The
+    /// client sets where it is (as `drop_aim`) and whether it is in his use list.
+    pub wallbuy: bool,
+    pub(crate) wall_aim: Option<(f32, f32, f32)>,
+    pub(crate) wall_in_reach: bool,
+    pub(crate) wall_used: Option<f32>,
     /// The classpick script's next action and whether the previous key still needs a release frame
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
@@ -302,6 +309,7 @@ impl Autopilot {
             flicker: self.flicker,
             hipfire: self.hipfire,
             command: self.command,
+            wallbuy: self.wallbuy,
             voice_file: self.voice_file.clone(),
             mp: self.mp,
             mp_shooter: self.mp_shooter,
@@ -329,6 +337,9 @@ impl Autopilot {
         }
         if self.drops {
             return self.drops_input(b);
+        }
+        if self.wallbuy {
+            return self.wallbuy_input(b);
         }
         if self.flicker {
             return self.flicker_input();
@@ -995,6 +1006,33 @@ impl Autopilot {
             keys.set_down(b.field_computer, true);
         }
         Scripted { keys, look, class_pick: pick, ..Default::default() }
+    }
+
+    /// The wall buy run: a second in, face the nearest gun his starting points buy and walk to it; in his use list,
+    /// press the use key once; two seconds later fire for a second (the bought gun, or the pistol
+    /// short of points).
+    pub fn wallbuy_input(&mut self, b: &Bindings) -> Scripted {
+        let t = self.t;
+        let mut keys = KeySet::default();
+        let mut look = None;
+        if t >= 1.0 && self.wall_used.is_none() {
+            if let Some((yaw, pitch, _)) = self.wall_aim {
+                look = Some((yaw, pitch));
+                if self.wall_in_reach {
+                    self.wall_used = Some(t);
+                    self.log.push(format!("autopilot wallbuy: at the wall buy at t {t:.1}, pressing use"));
+                } else {
+                    keys.set_down(b.forward, true);
+                }
+            }
+        }
+        if self.wall_used.is_some_and(|u| t < u + 0.1) {
+            keys.set_down(b.field_computer, true);
+        }
+        if self.wall_used.is_some_and(|u| (u + 2.0..u + 3.0).contains(&t)) {
+            keys.set_down(b.fire, true);
+        }
+        Scripted { keys, look, ..Default::default() }
     }
 
     /// Each step waits for the state it needs, not a clock: the lethal goes once the class is

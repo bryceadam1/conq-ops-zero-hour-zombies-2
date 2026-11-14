@@ -182,6 +182,8 @@ void cbAddCash(int32_t player, int32_t amount);
 uint32_t cbSpawnSurvivor(int32_t player, const ZhboVec3 *pos, float yaw);
 int32_t cbMoney(int32_t player);
 void cbKill(uint32_t id);
+// The map loaded is a Zombies map (its objects include a zombie spawn point).
+Bool zhboZombiesMap();
 void cbHeal(uint32_t id, float amount);
 int32_t cbBuildOptions(uint32_t general, ZhboBuildOption *out, int32_t cap);
 int32_t cbCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);

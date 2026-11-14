@@ -1011,6 +1011,19 @@ impl Client {
                 Some((wrap_angle(d.y.atan2(d.x) - off_aim.0), d.z.atan2(d.length_xy()) - off_aim.1, d.length_xy()))
             });
         }
+        if ap.wallbuy {
+            let me = sim.player(inp.local_player);
+            ap.wall_aim = me.and_then(|p| {
+                let eye = p.body.eye();
+                // The nearest gun the survivor's starting points buy (the run buys at once).
+                let buys = &crate::zombies::WallBuys::get().buys;
+                let points = crate::zombies::Vars::get().starting_points().max(0) as u32;
+                let affordable = |i: usize| buys.get(i).is_some_and(|b| b.cost() <= points && crate::weapons::weapon_or_none(&b.weapon).is_some_and(|d| d.class.is_slot_weapon()));
+                let d = sim.rounds.wall_buys.iter().filter(|w| affordable(w.index as usize)).map(|w| w.pos - eye).min_by(|a, b| a.length_xy().total_cmp(&b.length_xy()))?;
+                Some((wrap_angle(d.y.atan2(d.x) - off_aim.0), d.z.atan2(d.length_xy()) - off_aim.1, d.length_xy()))
+            });
+            ap.wall_in_reach = me.is_some_and(|p| sim.wall_buy_target(p).is_some());
+        }
         if ap.equipment {
             if let Some(p) = sim.player(inp.local_player).filter(|p| p.class.is_some()) {
                 let a = &p.arsenal;

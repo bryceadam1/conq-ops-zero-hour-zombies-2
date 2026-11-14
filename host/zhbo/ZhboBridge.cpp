@@ -1387,6 +1387,11 @@ uint32_t cbSpawnSurvivor(int32_t playerIndex, const ZhboVec3 *pos, float yaw)
 	return (uint32_t)obj->getID();
 }
 
+Bool zhboZombiesMap()
+{
+	return s_zombiesMap;
+}
+
 int32_t cbMoney(int32_t playerIndex)
 {
 	Player *player = ThePlayerList ? ThePlayerList->getNthPlayer(playerIndex) : nullptr;

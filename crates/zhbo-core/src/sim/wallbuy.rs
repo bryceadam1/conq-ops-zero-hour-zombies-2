@@ -8,8 +8,8 @@
 
 //! TranZit's wall buys (`zombies.ini` `[WallBuys]`, `zhbo_core::zombies::WallBuys`) on a Zombies
 //! map. The round engine stands them as it starts: the converter's prop of each one's wall model
-//! (`names::wall_buy_object`), dealt to the player starts in turn and spread on a ring around each
-//! (`[Layout]`, the mod's own map). The sim keeps which is which (`Rounds::wall_buys`, hashed).
+//! (`names::wall_buy_object`), the whole set on a ring around each player start (`[Layout]`, the
+//! mod's own map: its survivors start apart, where BO2's co-op starts together). The sim keeps which is which (`Rounds::wall_buys`, hashed).
 //!
 //! The use key on one in a survivor's use list (as a dropped weapon's: within `player_useRadius`,
 //! the best of distance and facing) is BO2's `weapon_spawn_think` (`_zm_weapons.gsc:1969-2181`):
@@ -133,9 +133,9 @@ pub fn give_ammo(p: &mut PlayerSim, i: usize) -> bool {
 }
 
 impl Sim {
-    /// Stand the wall buys (the round engine's start, on a Zombies map): dealt to the survivors'
-    /// starts in turn, each start's share evenly on the `ring` around it, facing it, owned as
-    /// `owner` (a spawn point: the map's neutral side).
+    /// Stand the wall buys (the round engine's start, on a Zombies map): every one around each
+    /// survivor's start, evenly on the `ring`, facing it, owned as `owner` (a spawn point: the
+    /// map's neutral side).
     pub(super) fn place_wall_buys(&mut self, host: &dyn LogicHost, owner: u32) {
         let w = WallBuys::get();
         let starts: Vec<Vec3> = self.living_survivors(host).iter().map(|o| o.pos).collect();
@@ -143,20 +143,19 @@ impl Sim {
             return;
         }
         let n = starts.len();
-        for (i, b) in w.buys.iter().enumerate() {
-            let start = starts[i % n];
-            let share = w.buys.len().div_ceil(n).max(1);
-            let k = i / n;
-            let a = k as f32 * std::f32::consts::TAU / share as f32;
-            let (s, c) = crate::math::det::sin_cos(a);
-            let pos = start + Vec3::new(c, s, 0.0) * w.ring;
-            let pos = Vec3::new(pos.x, pos.y, host.ground_height(pos.x, pos.y));
-            let yaw = crate::math::wrap_angle(a + std::f32::consts::PI);
-            let object = host.spawn(&crate::names::wall_buy_object(&b.weapon), owner, pos, yaw);
-            self.rounds.wall_buys.push(WallBuyAt { index: i as u8, pos, yaw, object });
+        for start in &starts {
+            for (i, b) in w.buys.iter().enumerate() {
+                let a = i as f32 * std::f32::consts::TAU / w.buys.len() as f32;
+                let (s, c) = crate::math::det::sin_cos(a);
+                let pos = *start + Vec3::new(c, s, 0.0) * w.ring;
+                let pos = Vec3::new(pos.x, pos.y, host.ground_height(pos.x, pos.y));
+                let yaw = crate::math::wrap_angle(a + std::f32::consts::PI);
+                let object = host.spawn(&crate::names::wall_buy_object(&b.weapon), owner, pos, yaw);
+                self.rounds.wall_buys.push(WallBuyAt { index: i as u8, pos, yaw, object });
+            }
         }
         let stood = self.rounds.wall_buys.iter().filter(|b| b.object != 0).count();
-        host.log(&format!("zombies: {} wall buys around {n} starts, {stood} with their props", w.buys.len()));
+        host.log(&format!("zombies: {} wall buys around each of {n} starts, {stood} props stood", w.buys.len()));
     }
 
     /// The wall buy in `p`'s use list now, if any (the HUD's prompt asks the same).

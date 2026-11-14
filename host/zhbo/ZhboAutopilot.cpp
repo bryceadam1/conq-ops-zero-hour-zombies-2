@@ -576,9 +576,32 @@ static Bool autopilotPlayback()
 	return TheRecorder && TheRecorder->isPlaybackMode();
 }
 
+static void findSurvivor(Object *obj, void *userData)
+{
+	Object **out = static_cast<Object **>(userData);
+	if (!*out && isSurvivor(obj) && !obj->isEffectivelyDead())
+		*out = obj;
+}
+
 void autopilotSpawn()
 {
 	Player *local = autopilotPlayer();
+	// A Zombies map has no Command Center and no scene: the local player's survivor goes into
+	// first person as he stands (the wall buy run, ZHBO_AUTOPILOT=wallbuy).
+	if (zhboZombiesMap())
+	{
+		Object *survivor = nullptr;
+		if (local)
+			local->iterateObjects(findSurvivor, &survivor);
+		s_autopilot.spawnFrame = TheGameLogic->getFrame();
+		if (survivor)
+		{
+			s_autopilot.general = survivor->getID();
+			logf("autopilot zombies: survivor %u goes into first person", (unsigned)survivor->getID());
+			Zhbo_RequestTakeControl(survivor);
+		}
+		return;
+	}
 	// The multiplayer run spawns nothing (see mpAutopilotFrame): it starts at the Command Center.
 	if (s_config.autopilot_mp)
 	{

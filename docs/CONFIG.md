@@ -132,7 +132,7 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
   each weapon and the model on its wall. The two melee buys also give their own cost and prompt.
   `UpgradedAmmoCost` is the price of ammo for a Pack-a-Punched weapon. The roster's seventh column is
   each weapon's prompt key. `[Layout]` `WallBuyRing` is where the Zombies map stands them (the mod's
-  own layout): dealt to the player starts in turn, on a ring this many Zero Hour units from each.
+  own layout): the whole set around each player start, on a ring this many Zero Hour units from it.
 - **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
   45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
   last-stand pistol and BO2's ranking of the pistols a downed player may hold

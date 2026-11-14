@@ -87,6 +87,12 @@
 #                                      destroys every building of the player's; with his General alive
 #                                      Zero Hour must not count him defeated; then the General is
 #                                      killed, and it must
+#   scripts/autotest-mac.sh --zombies  the Zombies map from the menu (Skirmish.ini's map set to it):
+#                                      a survivor stands for each player, the round engine stands the
+#                                      wall buys and starts round 1; the local survivor goes into
+#                                      first person, walks to the nearest gun his starting points buy
+#                                      and buys it (ZHBO_AUTOPILOT=wallbuy). Needs a Skirmish.ini (play
+#                                      one skirmish first); back it up, the leg rewrites its map
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -125,6 +131,7 @@ mode=autopilot
 [[ "${1:-}" == "--hipfire" ]] && mode=hipfire
 [[ "${1:-}" == "--command" ]] && mode=command
 [[ "${1:-}" == "--defeat" ]] && mode=defeat
+[[ "${1:-}" == "--zombies" ]] && mode=zombies
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -936,6 +943,34 @@ if [[ "$mode" == "defeat" ]]; then
     check "General dead: defeated" "autopilot: defeat: buildings left 0, General alive 0: defeated=1"
     grep -E "defeat" "$l" | head -20
     echo "log: $out"
+    exit $ok
+fi
+
+if [[ "$mode" == "zombies" ]]; then
+    # The bridge copies the archive's Zombies map into the user maps at init; the skirmish starts
+    # from the menu on it (ZHBO_AUTOTEST_SKIRMISH), Skirmish.ini naming it by its lower-case path.
+    map="$userdata/Maps/Zombies Tournament Desert/Zombies Tournament Desert.map"
+    [[ -f "$userdata/Skirmish.ini" ]] || { echo "the zombies leg needs a Skirmish.ini (play one skirmish first)" >&2; exit 1; }
+    sed -i '' "s|^Map = .*|Map = $(echo "$map" | tr 'A-Z' 'a-z')|" "$userdata/Skirmish.ini"
+    export ZHBO_AUTOPILOT=wallbuy ZHBO_AUTOTEST_SKIRMISH=1 GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-45}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -quickstart >"$out/stdout.txt" 2>&1
+    wait_for_log "autopilot zombies: survivor" 120 || { echo "no survivor went into first person; see $log" >&2; exit 1; }
+    for _ in $(seq 90); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    l="$out/ConquerOps.log"
+    check() { # name, pattern
+        if grep -qE "$2" "$l"; then printf '%-34s PASS\n' "$1"; else printf '%-34s FAIL\n' "$1"; ok=1; fi
+    }
+    check "survivors stood, no buildings" "zombies map: player slot 0 starts as ZHBO_General_Survivor_"
+    check "round 1 began" "zombies: round 1: [0-9]+ zombies"
+    check "wall buys stood with props" "zombies: [0-9]+ wall buys around each of [0-9]+ starts, [1-9][0-9]* props stood"
+    check "the survivor in first person" "General [0-9]+ entered first-person control"
+    check "reached a wall buy" "autopilot wallbuy: at the wall buy"
+    check "bought from it" "zombies: General [0-9]+ bought [a-z0-9_]+ for [0-9]+"
+    grep -E "zombies|autopilot" "$l" | head -20
+    echo "screenshots and log: $out"
     exit $ok
 fi
 
