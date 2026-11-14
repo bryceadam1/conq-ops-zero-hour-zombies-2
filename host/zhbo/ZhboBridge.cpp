@@ -544,6 +544,7 @@ void Zhbo_Reset()
 	// Every game start passes here (GameLogic::startNewGame), a loaded save too, which sends no
 	// MSG_NEW_GAME: pace it at the speed its message noted, else Zero Hour's 30.
 	zhboPaceStartingGame();
+	zhboTeamRingsReset();
 	if (!s_ready)
 		return;
 	// The shell create-a-class screen never survives a game transition (a new game, a loaded game
@@ -1094,6 +1095,7 @@ void Zhbo_ClientFrame()
 	if (classScreenWasUp || s_out.menu_open)
 		s_classScreenSeenAt = zhbo_platform::now();
 	applyWorldPoses();
+	zhboTeamRingsFrame();
 	applyClientOutput(focused, menuUp);
 }
 

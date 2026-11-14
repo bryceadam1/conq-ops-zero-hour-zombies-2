@@ -132,8 +132,8 @@ pub fn name_scale(dist: f32) -> f32 {
     }
 }
 
-/// Draw one ally's name at screen point `(x, y)` (his head), `dist` away, at `alpha`.
-pub fn draw_name(prims: &mut Vec<Prim>, h: f32, x: f32, y: f32, dist: f32, name: &str, alpha: f32) {
+/// Draw one General's name at screen point `(x, y)` (his head), `dist` away, in `color`, at `alpha`.
+pub fn draw_name(prims: &mut Vec<Prim>, h: f32, x: f32, y: f32, dist: f32, name: &str, color: (f32, f32, f32), alpha: f32) {
     if alpha <= 0.0 || name.is_empty() {
         return;
     }
@@ -143,7 +143,7 @@ pub fn draw_name(prims: &mut Vec<Prim>, h: f32, x: f32, y: f32, dist: f32, name:
     let shadow = h / 480.0;
     let a = super::frame::argb((0.0, 0.0, 0.0), alpha);
     crate::lui::font::text(prims, crate::lui::font::Family::Condensed, name, x - width * 0.5 + shadow, top + shadow, size, crate::lui::font::Align::Left, a);
-    let c = super::frame::argb(super::obituary::MY_TEAM, alpha);
+    let c = super::frame::argb(color, alpha);
     crate::lui::font::text(prims, crate::lui::font::Family::Condensed, name, x - width * 0.5, top, size, crate::lui::font::Align::Left, c);
 }
 

@@ -249,6 +249,7 @@ The launcher's `voice` module downloads the models listed in `data/ConquerOps/vo
 | `ZhboControlBar.cpp` | `ZhboControlBarAccess`, idle-worker tracking |
 | `ZhboBuilding.cpp` | First-person build/repair/ghost |
 | `ZhboCommand.cpp` | First-person commands: the clickable-object and command-button lists, template names, orders sent as the overhead view sends them (the control bar's presses, the bridge's own `CommandTranslator` for targeted buttons and right-clicks, construction placement) |
+| `ZhboTeamRings.cpp` | The house-colour ring under every General (a projected `DM_Ring` decal the client moves under him; hidden by fog, stealth and the local General's first person; released on death and at every reset). Presentation only |
 | `ZhboDetail.cpp` | The render rate at each game start (`Zhbo_PaceNewGame`, host patch 0026); logs the graphics detail GameLOD applied, the dynamic LOD's changes and the frame rate (presentation only) |
 | `ZhboMenu.cpp` | The shell create-a-class window (modal, code-built) and `Zhbo_MenuFrame` |
 

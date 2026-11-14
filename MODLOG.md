@@ -15229,3 +15229,33 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   `the_build_slot_shows_only_while_an_action_slot_holds_the_build_tool`, and the lockstep
   perturbation test over the new field); clippy clean; `scripts/autotest-mac.sh --build`: every
   check passes, and the capture shows the build box in the column.
+
+## Team colours on the General: ring and nameplate (2026-11-14)
+
+- **Why:** a General was hard to see and nothing told his side. The user picked two marks, a
+  deliberate break from both games:
+  - **Ring:** every General stands on a ring in his owner's Zero Hour house colour.
+    `ZhboTeamRings.cpp` keeps a projected decal (`SHADOW_ALPHA_DECAL`, Zero Hour's own plain
+    `DM_Ring` texture, the demoralize decal's) under each General, coloured with
+    `Player::getPlayerColor`, the way `RadiusDecalTemplate::createRadiusDecal` colours a template
+    whose colour is 0. Its diameter is 3 footprints (geometry radius) and its opacity 220.
+    It hides under fog or shroud for another player's General, with a hidden or stealthed
+    drawable, and under the local General in first person.
+  - **Nameplate:** in first person every other General carries his owner's name in that colour.
+    `hud::feedback::Nameplate` replaces BO2's friends-only names: any Zero Hour General (AI and
+    RTS-controlled ones too, found by the `GENERAL` object flag), friend or foe, with no
+    `cg_overheadNamesMaxDist` cap. BO2's sight rule stays (`FUN_004b2500`/`FUN_004b3690`: in front
+    of the view, the trace clear), and so does its fade (`FUN_004b3c90`). The shroud hides an
+    enemy's name as it hides him.
+- **Gotcha: decals belong to their owner.** `W3DProjectedShadowManager::reset` (per map) asserts
+  its decal list is empty, so the bridge releases every ring in `Zhbo_Reset`, which runs at the start of
+  `GameLogic::reset` and `startNewGame`, before that reset. It does this even when the core isn't
+  ready.
+- **Gotcha: the sight trace starts inside the viewer.** BO2's name trace passed `ignore = 0`; with
+  every General now named, the new unit test caught the eye's trace stopping on the viewer's own
+  cylinder. The viewer's General is ignored now.
+- **Verified:** `cargo test -p zhbo-core` (new
+  `every_other_general_wears_his_owners_name_and_house_colour_at_any_range`); the multiplayer leg
+  (`ZHBO_MPTEST_SHOTS=1`) passes every check, and its captures show the enemy General named
+  "MPJoin" in his green house colour, standing in a green ring, and the host's General in a blue
+  ring overhead.

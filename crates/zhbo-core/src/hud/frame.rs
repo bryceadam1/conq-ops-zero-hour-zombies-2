@@ -20,6 +20,12 @@ pub fn argb(rgb: (f32, f32, f32), alpha: f32) -> u32 {
     (c(alpha) << 24) | (c(rgb.0) << 16) | (c(rgb.1) << 8) | c(rgb.2)
 }
 
+/// An engine ARGB's colour as an LUI colour (its alpha dropped).
+pub fn rgb_of(argb: u32) -> (f32, f32, f32) {
+    let c = |shift: u32| ((argb >> shift) & 0xFF) as f32 / 255.0;
+    (c(16), c(8), c(0))
+}
+
 /// One screen's LUI context: the root and, for convenience, its full box in LUI units.
 #[derive(Clone, Copy, Debug)]
 pub struct Lui {

@@ -26,6 +26,7 @@ target_sources(z_gameengine PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/ZhboBuilding.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboCommand.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboDetail.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboTeamRings.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboPlatform.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboPlatform.h
     ${CMAKE_CURRENT_LIST_DIR}/zhbo_core.h

@@ -1505,11 +1505,9 @@ impl Client {
         // drawn from the viewmodel's flash tag (`zhbo_viewmodel_tracer`) while it shows.
         self.tracers.begin_frame(out.camera_override != 0 && out.hide_object != 0 && out.viewmodel >= 0);
         self.tracers.viewer = tracers::Viewer { player: viewed, general: self.general, first_person: out.hide_object };
-        // What the view sees this frame: the crosshair's target and the allies' names.
+        // What the view sees this frame: the crosshair's target and the Generals' nameplates.
         if let (Some(h), Ok(me), ViewMode::Fps) = (host, usize::try_from(viewed), self.view) {
-            let seats = self.seats;
-            let ally = |seat: usize| seats.get(seat).is_some_and(|t| t.ally);
-            self.feedback.look(h, sim, me, self.view_eye, self.view_dir, &ally, self.hud.lui.clock);
+            self.feedback.look(h, sim, me, self.view_eye, self.view_dir, self.hud.lui.clock);
         }
         out
     }

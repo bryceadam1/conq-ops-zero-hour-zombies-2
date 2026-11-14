@@ -313,7 +313,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     } else {
         if !tablet_up && !map_open {
             draw_marks(host, prims, w, h, s, client, sim, p);
-            draw_names(prims, w, h, client, sim, host, local_player);
+            draw_names(prims, w, h, client, host);
             // The grenade indicator: not under the scope overlay (`FUN_004aea40` tests
             // `FUN_004b4760`).
             if zoom.is_none() {
@@ -376,17 +376,18 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     }
 }
 
-/// The allies' names over their heads ([`grenade::draw_name`]), each at its fade
-/// ([`feedback::NameFade`]).
-fn draw_names(prims: &mut Vec<Prim>, w: f32, h: f32, client: &Client, sim: &Sim, host: &dyn ClientHost, local_player: i32) {
+/// The Generals' nameplates over their heads ([`grenade::draw_name`]), each in its owner's house
+/// colour at its fade ([`feedback::Nameplate`]).
+fn draw_names(prims: &mut Vec<Prim>, w: f32, h: f32, client: &Client, host: &dyn ClientHost) {
     let now = client.hud.lui.clock;
-    for (seat, fade) in client.feedback.names.iter().enumerate() {
-        let alpha = fade.alpha(now);
-        let Some(q) = sim.players.get(seat).and_then(|q| q.as_ref()).filter(|_| alpha > 0.0 && seat as i32 != local_player) else { continue };
-        let at = feedback::name_anchor(q);
-        let Some((x, y)) = project(client, w, h, at) else { continue };
-        let name = host.player_name(seat as i32).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("Player {}", seat + 1));
-        grenade::draw_name(prims, h, x, y, (at - client.view_eye).length(), &name, alpha);
+    for plate in &client.feedback.names {
+        let alpha = plate.fade.alpha(now);
+        if alpha <= 0.0 {
+            continue;
+        }
+        let Some((x, y)) = project(client, w, h, plate.at) else { continue };
+        let name = host.player_name(plate.owner).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("Player {}", plate.owner + 1));
+        grenade::draw_name(prims, h, x, y, (plate.at - client.view_eye).length(), &name, frame::rgb_of(plate.color), alpha);
     }
 }
 
