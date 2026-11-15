@@ -88,7 +88,7 @@ class TestAugment(Fixture):
         noise = np.random.default_rng(5).normal(0, 0.2, len(x)).astype(np.float32)
         for snr in (0, 10, 20):
             y = A.add_noise(x, noise, snr)
-            got = A.db(A.speech_power(x) / np.mean((y - x) ** 2))
+            got = A.db(A.speech_power(x) / A.speech_power(y - x))
             self.assertAlmostEqual(got, snr, delta=0.01)
 
     def test_a_room_keeps_the_voice_aligned_and_as_loud(self):

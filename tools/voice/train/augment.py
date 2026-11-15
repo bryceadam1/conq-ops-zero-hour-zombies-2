@@ -15,8 +15,8 @@ so no test noise or room is ever trained on.
 `augment(audio, rng, pools, split)` is applied as clips are loaded, never stored: each load draws
 its own chain from `rng_for(clip, epoch)`, so every epoch hears a different take and a run repeats
 exactly. A fifth of the loads stay clean; the rest draw each effect by its share (`SHARES`):
-push-to-talk timing, a room, background noise (noise, music or chatter at 0-25 dB under the voice,
-mostly 10-20, measured over the speech alone), a microphone's frequency response and, on most of
+push-to-talk timing, a room, background noise (noise or music 12-30 dB under the voice, mostly 20;
+chatter 15-30, mostly 22; both measured over their active frames), a microphone's frequency response and, on most of
 those, the Opus codec voice chat runs through (ffmpeg's libopus), then a level and now and then
 clipping. Whisper's 3 s of trailing silence (`hear::WINDOW_SILENCE`) is digital silence at run
 time, so it is added after augmenting, never under the noise. `spec_augment` masks the log-mel
@@ -40,6 +40,9 @@ CLEAN = 0.2
 SHARES = {"ptt": 0.3, "room": 0.4, "noise": 0.6, "mic": 0.5}
 NOISE_KINDS = {"noise": 0.5, "music": 0.25, "babble": 0.25}
 ROOMS = {"smallroom": 0.6, "mediumroom": 0.25, "largeroom": 0.05, "real": 0.1}
+# How far under the voice a background sits, in dB (low, mode, high): the listening check
+# (MODLOG, 2026-11-15) marked every take under about 15 dB too hard, chatter at 14 too.
+SNR = {"noise": (12, 20, 30), "music": (12, 20, 30), "babble": (15, 22, 30)}
 OPUS = 0.6
 OPUS_KBPS = [12, 16, 24, 32]
 CLIP = 0.05
@@ -140,12 +143,13 @@ class Pools:
         return x[:n]
 
     def rir(self, rng, split):
-        row = self.choose(rng, pick(rng, ROOMS), split)
+        room = pick(rng, ROOMS)
+        row = self.choose(rng, room, split)
         if row is None:
-            return None
+            return None, room
         x, sr = sf.read(str(self.root / row[0]), dtype="float32", always_2d=True)
         x = x[:, int(rng.integers(x.shape[1]))]
-        return resample(x, sr) if sr != SR else x
+        return (resample(x, sr) if sr != SR else x), room
 
 
 def resample(x, sr):
@@ -217,8 +221,9 @@ def reverberate(x, rir):
 
 
 def add_noise(x, noise, snr):
-    """`noise` under `x` at `snr` dB, the voice's power taken over its speech only."""
-    p = np.mean(noise * noise)
+    """`noise` under `x` at `snr` dB, both powers taken over their active frames only, so music's
+    quiet passages and chatter's pauses don't make the loud parts louder than `snr` says."""
+    p = speech_power(noise)
     if p <= 0:
         return x
     return x + noise * np.sqrt(speech_power(x) / (p * 10 ** (snr / 10)))
@@ -301,14 +306,14 @@ def augment(audio, rng, pools, split="train", force=False):
         x, r = push_to_talk(x, rng)
         recipe.update(r)
     if on["room"]:
-        rir = pools.rir(rng, split)
+        rir, room = pools.rir(rng, split)
         if rir is not None:
             x = reverberate(x, rir)
-            recipe["room"] = True
+            recipe["room"] = room
     if on["noise"]:
         bed, kind, voices = noise_bed(rng, pools, split, len(x))
         if bed is not None:
-            snr = rng.triangular(5 if kind == "babble" else 0, 15, 25)
+            snr = rng.triangular(*SNR[kind])
             x = add_noise(x, bed, snr)
             recipe.update({"noise": kind, "snr": round(float(snr), 1)} | ({"voices": voices} if kind == "babble" else {}))
     if on["mic"]:
@@ -440,7 +445,7 @@ def describe(r):
     if "ptt" in r:
         parts.append("push-to-talk timing")
     if r.get("room"):
-        parts.append("room echo")
+        parts.append(f"room echo ({r['room']})" if isinstance(r["room"], str) else "room echo")
     if "noise" in r:
         what = {"noise": "noise", "music": "music", "babble": f"{r.get('voices', 1)} other voice(s)"}[r["noise"]]
         parts.append(f"{what} at {r['snr']} dB under the voice")
@@ -501,7 +506,7 @@ def cmd_calibrate(args):
             keys = ["all"] + [e for e in ("ptt", "room", "mic", "opus", "clip_db") if e in recipe]
             if "noise" in recipe:
                 snr = recipe["snr"]
-                keys += [f"noise:{recipe['noise']}", "snr " + ("0-5" if snr < 5 else "5-10" if snr < 10 else "10-15" if snr < 15 else "15-20" if snr < 20 else "20-25")]
+                keys += [f"noise:{recipe['noise']}", f"snr {int(snr // 5) * 5}-{int(snr // 5) * 5 + 5}"]
             for key in keys:
                 b = buckets.setdefault(key, [0, 0, 0, 0])
                 b[0] += ec

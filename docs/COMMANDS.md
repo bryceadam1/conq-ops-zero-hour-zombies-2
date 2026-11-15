@@ -740,7 +740,8 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      hears a different take and a run repeats exactly. A fifth of the loads stay clean; the rest
      draw push-to-talk timing (cut to the speech, now and then 50 ms into it, up to 0.5 s before and
      0.3 s after) 30%, a room 40%, background noise 60% (MUSAN noise, music or one to five LibriVox
-     voices at 0-25 dB under the voice, mostly 10-20, measured over the speech alone), a microphone
+     voices; noise and music 12-30 dB under the voice, mostly 20, chatter 15-30, mostly 22, both
+     powers measured over their active frames), a microphone
      50% (a headset's or a laptop's band edges, a tilt, a laptop resonance; Opus at 12-32 kbps on
      60% of those), then a peak level from -35 to -3 dBFS, clipped on 5%. SpecAugment masks the
      log-mel lightly, never in the padded silence; Whisper's 3 s of trailing silence stays digital
@@ -748,10 +749,12 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      kept in `~/.conquerops/voice/augment`, never shipped) are listed in `pools.json`; a fifth of
      each kind is held back for the noisy test set, rooms whole (a simulated room's responses, a
      real room's), so no test noise or room is trained on. RIRS_NOISES' point-source noises are
-     MUSAN's Freesound noises again and are left out. Calibration (Whisper base.en, 400 test
-     clips, clean against augmented): word error 0.139 to 0.176; a room 0.204, chatter 0.213, 5-10
-     dB 0.246. Harder, still heard; 5 takes in 400 lost most of their words, each a room with
-     music or chatter on top. One take costs about 3 ms, 75 ms with Opus.
+     MUSAN's Freesound noises again and are left out. The levels come from a listening check
+     (20 takes): every background under about 15 dB was too hard for a person, chatter at 14 too,
+     and the first ranges (0-25 dB, mostly 15, measured against the bed's mean power, which
+     chatter's pauses and music's quiet passages pull down) put most takes there. Calibration
+     (Whisper base.en, 400 test clips, clean against augmented): word error 0.139 to 0.155; a
+     room 0.170, chatter 0.173 (the first ranges: 0.176 in all). One take costs about 3 ms, 75 ms with Opus.
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
   the heard rows, with a prompt that carries the match's names (`--prompt

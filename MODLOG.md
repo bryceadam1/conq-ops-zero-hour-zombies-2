@@ -16180,3 +16180,9 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   57.7 h of audio in 3.34 h at 19.5×, **$6.08**. AWS in all: about $25.60.
 - Every train command now has at least one clip: 195,002 training clips (about 214 h) for
   180,073 commands, and 12,022 test clips.
+- **Listening check, round 1** (20 takes): 9 too hard, 1 unrealistic (a small room, music at
+  14 dB, a headset and Opus 16 kbps). Every background under about 15 dB was too hard, chatter at
+  14.2-14.7 too; everything from 17.4 dB was fine. The backgrounds now sit 12-30 dB under the
+  voice (chatter 15-30), and the bed is measured over its active frames like the voice: chatter's
+  pauses had made its loud parts louder than the stated SNR. Calibration again: 0.139 clean,
+  0.155 augmented.
