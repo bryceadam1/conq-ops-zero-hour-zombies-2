@@ -16172,3 +16172,11 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     position; the split goes by room.
   - The venv has no scipy; the filters are FFT-domain magnitude curves and the convolution an
     rfft product, which is enough here.
+
+## Voice: Fish for the commands without audio (2026-11-15)
+
+- `fish_corpus.py lines --exclude` over the 137,618 commands that had a clip: 52,477 train lines
+  (80 of them a command's only kept sentence). One g6e.xlarge spot run: 52,477 clips, 0 failed,
+  57.7 h of audio in 3.34 h at 19.5×, **$6.08**. AWS in all: about $25.60.
+- Every train command now has at least one clip: 195,002 training clips (about 214 h) for
+  180,073 commands, and 12,022 test clips.
