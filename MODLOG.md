@@ -16192,3 +16192,16 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   chatter 18-30 (24). Calibration: 0.139 clean, 0.156 augmented.
 - **Noisy test set:** 3,000 test clips (495 of them Fish in the held-out voices) augmented once
   from the held-back recordings, 157 MB, in 1 m 42 s.
+
+## Voice: the trainer for Whisper on commands (2026-11-15)
+
+- `tools/voice/train/train_whisper.py` and `voice_prompts` (docs/COMMANDS.md section 11, step 13).
+  Checked against transformers: the log-mel and the encoder agree to 0.0 on a 30 s window; the
+  cached greedy decoder matches one-row-at-a-time decoding on 16 of 16 rows.
+- Speed on the M1 Pro: 18.5 clips a second in fp32 with batches grouped by length (bf16 10.2 on
+  random batches against fp32's 15.3), so an epoch is about 2.9 h.
+- A 300-step smoke run (a twentieth of an epoch): dev exact match 0.347; 0.484 on 128 test clips.
+- **Gotchas:**
+  - The vocabulary's logits at every decoder position took the process to 32 GB: the prompt is
+    about 140 of each row's 160 tokens. Only the label's positions are projected now.
+  - Greedy decoding without the cache re-ran the prompt every token: 300 dev clips in 7 minutes.

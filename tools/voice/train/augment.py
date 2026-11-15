@@ -22,8 +22,8 @@ clipping. Whisper's 3 s of trailing silence (`hear::WINDOW_SILENCE`) is digital 
 time, so it is added after augmenting, never under the noise. `spec_augment` masks the log-mel
 features lightly as they go into the model.
 
-A clip list is a file of `<path>\t<sentence>` lines (`clips` below builds one from the corpus
-manifests).
+A clip list is a file of lines `path, sentence, label, vocabulary id, seconds` (`clips` builds
+one from the corpus manifests; the tools here read the first two).
 """
 
 import argparse
@@ -380,16 +380,17 @@ def cmd_clips(args):
         d = Path(d)
         lines = {p[0]: p for p in (l.split("\t") for l in (d.parent.parent / "lines.tsv").read_text().splitlines())}
         for l in (d / "manifest.tsv").read_text().splitlines():
-            rid = l.split("\t")[0].rsplit(".", 1)[0]
-            if lines[rid][5] == args.split:
-                rows.append(f"{d / (rid + '.flac')}\t{lines[rid][1]}")
+            name, seconds = l.split("\t")[:2]
+            line = lines[name.rsplit(".", 1)[0]]
+            if line[5] == args.split:
+                rows.append("\t".join([str(d / name), line[1], line[2], line[4], seconds]))
     for d in args.kokoro or []:
         d = Path(d)
         for m in sorted(d.glob("manifest-*.tsv")):
             for l in m.read_text().splitlines():
                 p = l.split("\t")
                 if p[5] == args.split:
-                    rows.append(f"{d / p[0]}\t{p[1]}")
+                    rows.append("\t".join([str(d / p[0]), p[1], p[2], p[4], p[8]]))
     Path(args.out).write_text("\n".join(rows) + "\n")
     print(f"{len(rows)} clips in {args.out}")
 
