@@ -12,7 +12,8 @@ On the Mac, the lines and their reference voices:
   whisper-t5-bridge's LibriSpeech selection (CC BY 4.0) at any of their three rates, test lines
   from the 8 `heldout` ones, so no test voice is ever trained on. Writes `<dir>/lines.tsv` (id,
   sentence, label, command, vocabulary, split, clip, clip text) and copies the clips to
-  `<dir>/refs/`.
+  `<dir>/refs/`. `--exclude <file>` (command ids, one per line) skips commands that already have
+  audio; a command left with only one kept sentence then speaks that one (id `<cid>_0`).
 
 On the GPU machine, against SGLang-Omni's server (fish_sglang.sh starts it):
 
@@ -38,14 +39,17 @@ def h(key):
 def lines(args):
     voices = json.loads((Path(args.voices) / "voices.json").read_text())
     pools = {"train": [v for v in voices if v["split"] == "train"], "test": [v for v in voices if v["split"] == "heldout"]}
+    exclude = set(Path(args.exclude).read_text().split()) if args.exclude else set()
     second = {}
     seen = {}
     for line in Path(args.spoken).read_text().splitlines():
         sentence, label, cid, vid, split = line.split("\t")
         k = seen.get(cid, 0)
         seen[cid] = k + 1
-        if k == 1 and split in pools:
-            second[cid] = (f"{cid}_1", sentence, label, cid, vid, split)
+        if k <= 1 and split in pools and cid not in exclude and (k == 1 or cid not in second):
+            second[cid] = (f"{cid}_{k}", sentence, label, cid, vid, split)
+    if not exclude:  # as first run: only commands with a second sentence
+        second = {cid: r for cid, r in second.items() if r[0].endswith("_1")}
     out = Path(args.out)
     (out / "refs").mkdir(parents=True, exist_ok=True)
     rows = []
@@ -116,6 +120,7 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--train", type=int, default=120000)
     p.add_argument("--test", type=int, default=2000)
+    p.add_argument("--exclude")
     p.set_defaults(fn=lines)
     p = sub.add_parser("speak")
     p.add_argument("--lines", required=True)

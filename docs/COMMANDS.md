@@ -735,6 +735,23 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      16 requests in flight; the million sentences are about 4.2M seconds, about $155 of GPU, so
      the audio is a Fish subset (about 50k clips for $8 at the measured 13.5×; 75k if more
      requests in flight reach 20×) for voice variety plus Kokoro on the Mac for the bulk.
+  12. **Augmentation** (`tools/voice/train/augment.py`, tests in `test_augment.py`). Applied as
+     each clip is loaded, never stored: the draw comes from the clip and the epoch, so every epoch
+     hears a different take and a run repeats exactly. A fifth of the loads stay clean; the rest
+     draw push-to-talk timing (cut to the speech, now and then 50 ms into it, up to 0.5 s before and
+     0.3 s after) 30%, a room 40%, background noise 60% (MUSAN noise, music or one to five LibriVox
+     voices at 0-25 dB under the voice, mostly 10-20, measured over the speech alone), a microphone
+     50% (a headset's or a laptop's band edges, a tilt, a laptop resonance; Opus at 12-32 kbps on
+     60% of those), then a peak level from -35 to -3 dBFS, clipped on 5%. SpecAugment masks the
+     log-mel lightly, never in the padded silence; Whisper's 3 s of trailing silence stays digital
+     silence, as at run time. The recordings (MUSAN, CC BY 4.0; OpenSLR RIRS_NOISES, Apache 2.0;
+     kept in `~/.conquerops/voice/augment`, never shipped) are listed in `pools.json`; a fifth of
+     each kind is held back for the noisy test set, rooms whole (a simulated room's responses, a
+     real room's), so no test noise or room is trained on. RIRS_NOISES' point-source noises are
+     MUSAN's Freesound noises again and are left out. Calibration (Whisper base.en, 400 test
+     clips, clean against augmented): word error 0.139 to 0.176; a room 0.204, chatter 0.213, 5-10
+     dB 0.246. Harder, still heard; 5 takes in 400 lost most of their words, each a room with
+     music or chatter on top. One take costs about 3 ms, 75 ms with Opus.
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
   the heard rows, with a prompt that carries the match's names (`--prompt

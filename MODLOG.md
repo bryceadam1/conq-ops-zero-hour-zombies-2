@@ -16154,3 +16154,21 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     replays the whole log; watch the pulled clip count instead.
   - Disk: the Windows VM was 235 GB; shutting it down (not suspended) freed 8 GB and deleting its
     `pre-bo2-reference` snapshot 36 GB. Compacting frees nothing until Windows itself deletes data.
+
+## Voice: augmentation for the end-to-end training (2026-11-15)
+
+- **`tools/voice/train/augment.py`** (docs/COMMANDS.md section 11, step 12): a seeded chain applied
+  as clips load (push-to-talk timing, a room, noise/music/chatter, a microphone and Opus, a level
+  and clipping) plus light SpecAugment; `pools`, `clips`, `demo`, `testset` and `calibrate`
+  subcommands; 12 unit tests on synthetic recordings (`python -m unittest test_augment.py`).
+- **Recordings:** MUSAN's noise (6.2 h), music (42.6 h) and LibriVox speech (20.4 h), streamed
+  from the tarball so the 11 GB archive never lands on disk; RIRS_NOISES' 60,000 simulated and 325
+  real room responses. A fifth held back for testing.
+- **Calibration** (Whisper base.en, 400 test clips): word error 0.139 clean, 0.176 augmented.
+- **Gotchas:**
+  - RIRS_NOISES' point-source noises are MUSAN's Freesound noises under other paths: kept both,
+    one recording could land in both splits. Left out.
+  - Splitting room responses by file put the same simulated room in train and test from another
+    position; the split goes by room.
+  - The venv has no scipy; the filters are FFT-domain magnitude curves and the convolution an
+    rfft product, which is enough here.
