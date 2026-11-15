@@ -757,7 +757,22 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      0.170 (the first ranges: 0.176 in all). The **noisy test set** (`augment.py testset`,
      `~/.conquerops/voice/augment/test_noisy/`): 3,000 test clips (495 Fish in the held-out
      voices), each augmented once from the held-back recordings, never clean, its recipe in
-     `manifest.tsv`; every model is scored on it beside the clean test set. One take costs about 3 ms, 75 ms with Opus.
+     `manifest.tsv`; every model is scored on it beside the clean test set. One take costs about
+     3 ms, 75 ms with Opus.
+  13. **Whisper trained on commands** (`tools/voice/train/train_whisper.py`). The audio in, the
+     label out, nothing between. Each example is what the game sends: the clip augmented as it
+     loads, 3 s of digital silence, the log-mel of that window alone (the encoder runs on the
+     window's own positions, as `hear::WINDOW_SILENCE`; transformers' encoder insists on 30 s, so
+     the script runs its layers itself), and the decoder starting from `<|startofprev|>`, the
+     vocabulary's prompt (`voice_prompts`, `hear::prompt` of each `vocab.tsv` line), then the start
+     tokens; the loss covers the label and end of text. Its mel and encoder match transformers'
+     to 0.0 on a 30 s window. Dev: 1% of the training vocabularies, never trained on. Greedy
+     evaluation uses the decoder's cache, rows left-padded with their own positions (the same
+     tokens as one row at a time; 2.7 s for 64 rows, against 7 minutes for 300 without it). On
+     the Mac (M1 Pro, MPS, fp32; bf16 was slower) base.en trains at about 18.5 clips a second, an
+     epoch of 193,046 clips in about 2.9 h. Gotcha: the logits over Whisper's 51,864 tokens at
+     every position (the prompt is most of each row) took the process to 32 GB and into swap;
+     they are taken only at the label's positions.
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
   the heard rows, with a prompt that carries the match's names (`--prompt
