@@ -10,6 +10,10 @@ audio. Writes `<out>/<cid>_<k>.flac` (16 kHz mono, the training format) and appe
 `<out>/manifest-<shard>.tsv`: file, sentence, label, command, vocabulary, split, voice, speed,
 seconds of audio, seconds taken. Clips already written are skipped, so a run resumes; `--shard i/n`
 splits the work between processes.
+
+Gotcha: a Kokoro process grows by about 7 GB per thousand clips (19 GB each after 2,600, three of
+them filling 36 GB of swap and the disk with it), so run it in pieces: `--limit 500` in a loop
+that starts a fresh process each time.
 """
 
 import argparse
