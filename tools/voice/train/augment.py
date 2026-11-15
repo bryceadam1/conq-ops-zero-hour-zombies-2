@@ -15,8 +15,8 @@ so no test noise or room is ever trained on.
 `augment(audio, rng, pools, split)` is applied as clips are loaded, never stored: each load draws
 its own chain from `rng_for(clip, epoch)`, so every epoch hears a different take and a run repeats
 exactly. A fifth of the loads stay clean; the rest draw each effect by its share (`SHARES`):
-push-to-talk timing, a room, background noise (noise or music 12-30 dB under the voice, mostly 20;
-chatter 15-30, mostly 22; both measured over their active frames), a microphone's frequency response and, on most of
+push-to-talk timing, a room, background noise (noise 16-30 dB under the voice, mostly 22; music
+18-30, mostly 23; chatter 18-30, mostly 24; both measured over their active frames), a microphone's frequency response and, on most of
 those, the Opus codec voice chat runs through (ffmpeg's libopus), then a level and now and then
 clipping. Whisper's 3 s of trailing silence (`hear::WINDOW_SILENCE`) is digital silence at run
 time, so it is added after augmenting, never under the noise. `spec_augment` masks the log-mel
@@ -40,9 +40,10 @@ CLEAN = 0.2
 SHARES = {"ptt": 0.3, "room": 0.4, "noise": 0.6, "mic": 0.5}
 NOISE_KINDS = {"noise": 0.5, "music": 0.25, "babble": 0.25}
 ROOMS = {"smallroom": 0.6, "mediumroom": 0.25, "largeroom": 0.05, "real": 0.1}
-# How far under the voice a background sits, in dB (low, mode, high): the listening check
-# (MODLOG, 2026-11-15) marked every take under about 15 dB too hard, chatter at 14 too.
-SNR = {"noise": (12, 20, 30), "music": (12, 20, 30), "babble": (15, 22, 30)}
+# How far under the voice a background sits, in dB (low, mode, high), from two listening checks
+# (MODLOG, 2026-11-15): noise under about 16 dB was too hard for a person, music and chatter under
+# about 18.
+SNR = {"noise": (16, 22, 30), "music": (18, 23, 30), "babble": (18, 24, 30)}
 OPUS = 0.6
 OPUS_KBPS = [12, 16, 24, 32]
 CLIP = 0.05

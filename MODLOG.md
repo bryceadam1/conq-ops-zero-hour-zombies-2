@@ -16186,3 +16186,9 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   voice (chatter 15-30), and the bed is measured over its active frames like the voice: chatter's
   pauses had made its loud parts louder than the stated SNR. Calibration again: 0.139 clean,
   0.155 augmented.
+- **Listening check, round 2** (20 new takes at 12-30 dB): 4 too hard, all near the bottom (music
+  at 15.0 and 18.0 dB with a room, four voices at 17.4, noise at 15.4); music at 16.6, noise at
+  16.3 and one voice at 16.4 were fine. Now noise 16-30 dB (mostly 22), music 18-30 (23),
+  chatter 18-30 (24). Calibration: 0.139 clean, 0.156 augmented.
+- **Noisy test set:** 3,000 test clips (495 of them Fish in the held-out voices) augmented once
+  from the held-back recordings, 157 MB, in 1 m 42 s.
