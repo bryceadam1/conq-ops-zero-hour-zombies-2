@@ -1986,6 +1986,15 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   sprint). A TranZit alt mode no longer takes over its gun's viewmodel; the magazine is
   `attachViewModel[6]`; a clip the install lacks is the default `void`. The sim's state gains
   `Arsenal::{pools, items, item_up}` and `ActionSlot::Weapon`. No ABI change.
+* TranZit's buildables, riot shield and jetgun (`hud::VERSION` 110). The weapon table gains
+  `Overheat` and `StartClip` (sim fields), the fire mode `jetgun`, and `FireLoopSound`,
+  `FireLoopEndSound`, `FireLoopSoundNpc`, `FireLoopEndSoundNpc` (presentation). Zombies' shield is
+  the shield class (any riotshield weapType). The archive gains the buildables' props
+  (`Data\INI\Object\ZHBO_ZM_Buildables.ini`: the parts, the workbench, the finished pieces), the
+  parts' HUD icons and the buildables' prompts; the converter loads `so_zclassic_zm_transit`.
+  `zhbo_logic_shield_damage` also blocks a blow on a survivor's Zombies shield from its side and
+  queues its wear (a new queue kind, no struct change). The sim's state gains `Rounds::buildables`,
+  `PlayerSim::{shield_wear, jet_pulse}` and `WeaponState::{heat, overheated, firing}`. No ABI change.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

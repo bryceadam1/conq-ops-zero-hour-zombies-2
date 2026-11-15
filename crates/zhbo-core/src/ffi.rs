@@ -57,7 +57,21 @@ const SHIELD_HITS: usize = 64;
 static SHIELD_HIT_QUEUE: [[AtomicU32; 4]; SHIELD_HITS] = [const { [const { AtomicU32::new(0) }; 4] }; SHIELD_HITS];
 static SHIELD_HIT_COUNT: AtomicU32 = AtomicU32::new(0);
 
+/// Zombies' shields (`Sim::zm_shield_bearers`): per survivor carrying one, his General, feet x/y,
+/// yaw (bits) and whether it is up.
+static ZM_SHIELDS: [[AtomicU32; 5]; SHIELD_SLOTS] = [const { [const { AtomicU32::new(0) }; 5] }; SHIELD_SLOTS];
+static ZM_SHIELD_COUNT: AtomicU32 = AtomicU32::new(0);
+/// The queue's `kind` for a blocked blow on a Zombies shield: the wear for `Sim::zm_shield_wear`.
+const ZM_SHIELD_WEAR: u32 = u32::MAX - 1;
+
 fn publish_shields(sim: &Sim) {
+    let zm = sim.zm_shield_bearers();
+    for (slot, b) in ZM_SHIELDS.iter().zip(&zm) {
+        for (w, v) in slot.iter().zip([b.general, b.pos.x.to_bits(), b.pos.y.to_bits(), b.yaw.to_bits(), b.held as u32]) {
+            w.store(v, Ordering::Relaxed);
+        }
+    }
+    ZM_SHIELD_COUNT.store(zm.len().min(SHIELD_SLOTS) as u32, Ordering::Relaxed);
     let n = sim.shields.len().min(SHIELD_SLOTS);
     for (slot, b) in SHIELDS.iter().zip(&sim.shields) {
         for (w, v) in slot.iter().zip(b.to_words()) {
@@ -90,6 +104,10 @@ fn drain_shield_hits(s: &mut State) {
     let n = (SHIELD_HIT_COUNT.swap(0, Ordering::Relaxed) as usize).min(SHIELD_HITS);
     for e in &SHIELD_HIT_QUEUE[..n] {
         let w: [u32; 4] = std::array::from_fn(|k| e[k].load(Ordering::Relaxed));
+        if w[2] == ZM_SHIELD_WEAR {
+            s.sim.zm_shield_wear(&s.logic, w[0], f32::from_bits(w[3]));
+            continue;
+        }
         s.sim.engine_damage_to_deployed(&s.logic, w[0], w[1], w[2] as i32, f32::from_bits(w[3]));
     }
 }
@@ -106,6 +124,26 @@ fn drain_shield_hits(s: &mut State) {
 pub extern "C" fn zhbo_logic_shield_damage(victim: u32, source: u32, from_x: f32, from_y: f32, from_z: f32, from_height: f32, source_known: i32, kind: i32, amount: f32) -> f32 {
     if source != 0 && zhbo_logic_is_controlled(source) != 0 {
         return 1.0;
+    }
+    // Zombies' shield (`player_damage_override`, `_zm.gsc:4071-4087`): a blow from its side wears
+    // it and does him no harm.
+    if victim != 0 && source_known != 0 && amount > 0.0 {
+        let n = (ZM_SHIELD_COUNT.load(Ordering::Relaxed) as usize).min(SHIELD_SLOTS);
+        let bearer = ZM_SHIELDS[..n].iter().find(|s| s[0].load(Ordering::Relaxed) == victim);
+        if let Some(s) = bearer {
+            let f = |k: usize| f32::from_bits(s[k].load(Ordering::Relaxed));
+            let rules = crate::zombies::RiotShield::get();
+            if rules.blocks(f(3), (from_x - f(1), from_y - f(2)), s[4].load(Ordering::Relaxed) != 0) {
+                let i = SHIELD_HIT_COUNT.load(Ordering::Relaxed) as usize;
+                if i < SHIELD_HITS {
+                    for (slot, v) in SHIELD_HIT_QUEUE[i].iter().zip([victim, source, ZM_SHIELD_WEAR, rules.block_wear.to_bits()]) {
+                        slot.store(v, Ordering::Relaxed);
+                    }
+                    SHIELD_HIT_COUNT.store(i as u32 + 1, Ordering::Relaxed);
+                }
+                return 0.0;
+            }
+        }
     }
     let bearers = mirrored_shields();
     if victim != 0 && bearers.iter().any(|b| b.object == victim) {

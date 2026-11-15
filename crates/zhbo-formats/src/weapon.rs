@@ -143,6 +143,7 @@ pub mod fire {
     pub const STACKED: u32 = 6;
     pub const MINIGUN: u32 = 7;
     pub const CHARGESHOT: u32 = 8;
+    pub const JETGUN: u32 = 9;
 }
 
 /// `OffhandClass`.
@@ -734,6 +735,18 @@ pub struct Weapon {
     pub ammo_name: String,
     pub clip_name: String,
     pub shared_ammo: bool,
+    /// `overheatWeapon`, `overheatRate`, `cooldownRate` (per second), `overheatEndVal`,
+    /// `coolWhileFiring` (`FUN_0066eba0`, `FUN_008d8160`).
+    pub overheat_weapon: bool,
+    pub overheat_rate: f32,
+    pub cooldown_rate: f32,
+    pub overheat_end_val: f32,
+    pub cool_while_firing: bool,
+    /// `fireLoopSound(Player)`, `fireLoopEndSound(Player)`: a continuous fire's loop and its end.
+    pub fire_loop_sound: Option<String>,
+    pub fire_loop_sound_player: Option<String>,
+    pub fire_loop_end_sound: Option<String>,
+    pub fire_loop_end_sound_player: Option<String>,
     /// The HUD's low-ammo warning (`FUN_0049d3e0`): a clip at or under `lowAmmoWarningThreshold`
     /// of its size warns; `bNoPartialReload` shows no reload prompt; `ammoCounterClip` 0 (no clip
     /// counter) shows none at all.
@@ -1333,6 +1346,15 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.segmented_reload = z.u8(d + WD::bSegmentedReload) != 0;
     w.unlimited_ammo = z.u8(d + WD::unlimitedAmmo) != 0;
     w.shared_ammo = z.u8(d + WD::sharedAmmo) != 0;
+    w.overheat_weapon = z.u32(d + WD::overheatWeapon) != 0;
+    w.overheat_rate = z.f32(d + WD::overheatRate);
+    w.cooldown_rate = z.f32(d + WD::cooldownRate);
+    w.overheat_end_val = z.f32(d + WD::overheatEndVal);
+    w.cool_while_firing = z.u8(d + WD::coolWhileFiring) != 0;
+    w.fire_loop_sound = opt_str(z, d + WD::fireLoopSound);
+    w.fire_loop_sound_player = opt_str(z, d + WD::fireLoopSoundPlayer);
+    w.fire_loop_end_sound = opt_str(z, d + WD::fireLoopEndSound);
+    w.fire_loop_end_sound_player = opt_str(z, d + WD::fireLoopEndSoundPlayer);
     w.ammo_name = opt_str(z, v + WV::szAmmoName).unwrap_or_default();
     w.clip_name = opt_str(z, v + WV::szClipName).unwrap_or_default();
     w.low_ammo_warning_threshold = z.f32(d + WD::lowAmmoWarningThreshold);

@@ -66,6 +66,7 @@ pub(crate) fn fire_name(f: FireMode) -> String {
         FireMode::Burst(n) => format!("burst {n}"),
         FireMode::Minigun => "minigun".to_string(),
         FireMode::Stacked => "stacked".to_string(),
+        FireMode::Jetgun => "jetgun".to_string(),
     }
 }
 
@@ -76,6 +77,7 @@ pub(crate) fn parse_fire(value: &str) -> Option<FireMode> {
         "semi" => FireMode::Semi,
         "minigun" => FireMode::Minigun,
         "stacked" => FireMode::Stacked,
+        "jetgun" => FireMode::Jetgun,
         "burst" => FireMode::Burst(words.next().and_then(|n| n.parse().ok()).unwrap_or(3)),
         _ => return None,
     })
@@ -986,6 +988,28 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Equipment", "What the weapon is as equipment once down: claymore, betty, c4, shock, trophy, insertion, sensor, or none.", FieldKind::Enum,
         |d: &WeaponDef| d.equipment_kind.name().into(),
         |d: &mut WeaponDef, v: Values| { d.equipment_kind = Kind::parse(v.text).ok_or("unknown equipment kind")?; Ok(()) }),
+    field!("Overheat", "BO2's overheat: heat per second firing, cooling per second, the heat it must cool to, cool while firing (empty: none).", FieldKind::Str,
+        |d: &WeaponDef| d.overheat.map_or(String::new(), |o| format!("{} {} {} {}", o.rate, o.cooldown, o.end, o.cool_while_firing as u8)),
+        |d: &mut WeaponDef, v: Values| {
+            let n: Vec<f32> = v.text.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+            d.overheat = (n.len() == 4).then(|| super::def::Overheat { rate: n[0], cooldown: n[1], end: n[2], cool_while_firing: n[3] != 0.0 });
+            Ok(())
+        }),
+    field!("StartClip", "A clip loaded short at the start (rounds; empty: full).", FieldKind::Str,
+        |d: &WeaponDef| d.start_clip.map_or(String::new(), |n| n.to_string()),
+        |d: &mut WeaponDef, v: Values| { d.start_clip = v.text.trim().parse().ok(); Ok(()) }),
+    field!(present "FireLoopSound", "A continuous fire's loop (`fireLoopSoundPlayer`).", FieldKind::Str,
+        |d: &WeaponDef| d.fire_loop_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.fire_loop_sound = v.text.into(); Ok(()) }),
+    field!(present "FireLoopEndSound", "Its end (`fireLoopEndSoundPlayer`).", FieldKind::Str,
+        |d: &WeaponDef| d.fire_loop_end_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.fire_loop_end_sound = v.text.into(); Ok(()) }),
+    field!(present "FireLoopSoundNpc", "What others hear of the loop (`fireLoopSound`).", FieldKind::Str,
+        |d: &WeaponDef| d.npc_fire_loop_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_fire_loop_sound = v.text.into(); Ok(()) }),
+    field!(present "FireLoopEndSoundNpc", "And of its end (`fireLoopEndSound`).", FieldKind::Str,
+        |d: &WeaponDef| d.npc_fire_loop_end_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_fire_loop_end_sound = v.text.into(); Ok(()) }),
     field!("SpecificUse", "1 for BO2's specific-use offhand slot (`offhandSlot` 4): an item a script sets on an action slot or hands over.", FieldKind::Num,
         |d: &WeaponDef| (d.specific_use as u8).to_string(),
         |d: &mut WeaponDef, v: Values| { d.specific_use = v.text_num()? != 0.0; Ok(()) }),
@@ -1415,7 +1439,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 186);
+        assert_eq!(WEAPON_FIELDS.len(), 192);
         assert_eq!(ATTACHMENT_FIELDS.len(), 32);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

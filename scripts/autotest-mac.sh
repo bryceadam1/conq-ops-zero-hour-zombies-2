@@ -980,6 +980,7 @@ if [[ "$mode" == "zombies" ]]; then
     check "survivors stood, no buildings" "zombies map: player slot 0 starts as ZHBO_General_Survivor_"
     check "round 1 began" "zombies: round 1: [0-9]+ zombies"
     check "wall buys stood with props" "zombies: [0-9]+ wall buys around each of [0-9]+ starts, [1-9][0-9]* props stood"
+    check "buildables stood, parts laid" "zombies: 2 buildables stood, their parts laid"
     check "the survivor in first person" "General [0-9]+ entered first-person control"
     if [[ "${shop:-0}" != 2 ]]; then
         check "reached a wall buy" "autopilot wallbuy: at the wall buy"

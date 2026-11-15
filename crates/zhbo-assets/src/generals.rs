@@ -488,6 +488,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     keys.push("ZOMBIE_PERK_QUICKREVIVE_SOLO".to_string());
     let pap = zhbo_core::zombies::PackAPunch::get();
     keys.extend([pap.hint.clone(), pap.take_hint.clone()]);
+    let build = zhbo_core::zombies::Buildables::get();
+    keys.extend([build.part_hint.clone(), build.swap_hint.clone()]);
+    keys.extend(build.list.iter().flat_map(|r| [r.build_hint.clone(), r.building_hint.clone(), r.bought_hint.clone(), r.grab_hint.clone()]));
     for key in keys {
         if let Some(text) = zm_names.get(&key) {
             if !table.ui_text.iter().any(|u| u.key == key) {
@@ -742,6 +745,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     summary.push(crate::props::perk_machines(&zm_props, &paks, &mut out));
     summary.push(crate::props::pack_a_punch(&zm_props, &paks, &mut out));
     summary.push(crate::props::tombstone(&zm_props, &paks, &mut out));
+    // TranZit's buildables: the parts' models are the classic mode's own zone's.
+    let classic = load_zone(bo2_dir, "so_zclassic_zm_transit")?;
+    let zm_build: [&Zone; 8] = [&patch, &common_patch, &common, &zm.pool.patch, &zm.pool.map, &survivor_zone, &common_zm, &classic];
+    let built: Vec<(String, String)> = zhbo_core::zombies::Buildables::get().list.iter().filter_map(|r| zm.weapons.iter().find(|w| w.name == r.weapon).and_then(|w| w.world_model.clone()).map(|m| (r.weapon.clone(), m))).collect();
+    summary.push(crate::props::buildables(&zm_build, &paks, &mut out, &built));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.

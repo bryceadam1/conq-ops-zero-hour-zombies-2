@@ -36,6 +36,9 @@ pub mod perks;
 pub mod packapunch;
 pub mod items;
 pub mod tombstone;
+pub mod riotshield;
+pub mod jetgun;
+pub mod buildables;
 mod lockstep;
 /// The fake engine world and the lockstep match harness: the sim's own tests, and behind the
 /// `harness` feature the full-roster gate `zhbo-assets` runs over a real install.
@@ -386,6 +389,10 @@ pub struct PlayerSim {
     /// Zombies: the script weapon in hand for a moment (a perk's bottle, the knuckle crack, the
     /// syrette; `sim::items`).
     pub zm_item: Option<items::ItemUse>,
+    /// Zombies: his riot shield's wear (BO2's `shielddamagetaken`, `sim::riotshield`).
+    pub shield_wear: f32,
+    /// Zombies: the jetgun's next pulse, seconds (`sim::jetgun`); `None` while it is not firing.
+    pub jet_pulse: Option<f32>,
     /// The build tool (the hammer), when it is out.
     pub hammer: Option<Hammer>,
     /// The structure under construction in reach (the use key builds it instead of opening the
@@ -416,7 +423,7 @@ pub struct PlayerSim {
 crate::statehash::state_hash!(struct PlayerSim {
     general, class, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle, mode, body, yaw, pitch,
     view_kick, idle, gun, fire_yaw, fire_pitch, arsenal, rng, input, seen_frame, pressed_accum, health, max_health, regen_wait, very_hurt, hack,
-    rts, survivor, action_slots, zm_item, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, taser, combat, spawned,
+    rts, survivor, action_slots, zm_item, shield_wear, jet_pulse, hammer, site, building, optics, tracer_count, charge, use_grenade, shock, taser, combat, spawned,
 });
 
 impl PlayerSim {
@@ -571,6 +578,8 @@ impl PlayerSim {
             survivor: false,
             action_slots: crate::weapons::actionslot::ActionSlots::GENERAL,
             zm_item: None,
+            shield_wear: 0.0,
+            jet_pulse: None,
             hammer: None,
             site: None,
             building: false,
@@ -730,11 +739,14 @@ impl Sim {
     /// A shield standing deployed is on neither (the deployed ones follow, `general` 0).
     fn shield_bearers(&self) -> Vec<crate::shield::Bearer> {
         let mut out = Vec::new();
+        let zm = &crate::zombies::RiotShield::get().weapon;
         for p in self.players.iter().flatten() {
             let up = p.arsenal.current().def;
-            // A deployed shield's weapon is out of the arsenal (`Arsenal::take_shield`).
-            let stowed = || p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield()).map(|d| (d, false));
-            let carried = if up.is_shield() { Some((up, true)) } else { stowed() };
+            // A deployed shield's weapon is out of the arsenal (`Arsenal::take_shield`). Zombies'
+            // shield blocks by its own rule (`sim::riotshield`).
+            let mp = |d: &&'static crate::weapons::WeaponDef| d.is_shield() && d.id != *zm;
+            let stowed = || p.arsenal.weapons.iter().map(|w| w.def).find(mp).map(|d| (d, false));
+            let carried = if mp(&up) { Some((up, true)) } else { stowed() };
             if let Some(b) = carried.and_then(|(d, held)| crate::shield::Bearer::of(p.general, p.body.pos, p.yaw, d, held)) {
                 out.push(b);
             }
@@ -1160,6 +1172,8 @@ impl Sim {
                 self.perk_machine_input(host, idx, p, &mut input);
                 // The use key on Pack-a-Punch upgrades the weapon up, or takes it back (`packapunch`).
                 self.pack_a_punch_input(host, idx, p, &mut input);
+                // The use key on a buildable's part takes it; held at its bench, builds (`buildables`).
+                self.buildable_input(host, p, &mut input);
                 // The use key works (builds or repairs) at a structure in reach, held, instead of
                 // opening the field computer.
                 p.site = host.work_site(p.general, p.body.pos, building::REACH);
@@ -1255,6 +1269,8 @@ impl Sim {
                     p.arsenal.plant_ok = [true, false].map(|lethal| can_plant(p.arsenal.offhand_def(lethal), &p.body, p.yaw, p.pitch, p.general, host));
                     let prev_ads = p.arsenal.ads;
                     p.arsenal.step(held, pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
+                    // The jetgun's pulses and overheat (`sim::jetgun`).
+                    self.step_jetgun(host, p);
                     // The move's events on the scale, after this frame's shots took theirs
                     // (`FUN_008b5000`'s jump add; `FUN_008c1120`: with `bg_ads`, a view height
                     // above its target opens it).

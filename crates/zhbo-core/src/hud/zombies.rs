@@ -429,6 +429,53 @@ pub fn draw_wall_buy(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, u
     super::pickup::draw_runs(l, prims, &trigger_prompt(crate::sim::hint_text(&key), use_key, cost));
 }
 
+/// `CoD.Buildables` (`hudbuildableszombie.lua`, a base map): the carried part's icon, `IconSize`
+/// square, its left edge `CoD.PowerUps.IconSize * 2.8` right of the centre, on the bottom of the
+/// safe area.
+pub const PART_ICON: f32 = 48.0;
+pub const PART_ICON_LEFT: f32 = POWERUP_ICON * 2.8;
+
+/// The buildables on the HUD for `p`: the part he carries (its icon), and the prompt at a part or
+/// a bench, or the build's progress bar and building text while he builds (`player_progress_bar`,
+/// the last stand's primary progress bar). True when a prompt was drawn.
+pub fn draw_buildables(l: &Lui, prims: &mut Vec<Prim>, sim: &Sim, p: &PlayerSim, use_key: &str) -> bool {
+    let rules = crate::zombies::Buildables::get();
+    if let Some((b, i)) = sim.carried_part(p.general) {
+        let row = &rules.list[sim.rounds.buildables[b].index as usize];
+        if let Some((_, icon)) = row.parts.get(i) {
+            let r = Place::new((false, false, PART_ICON_LEFT, PART_ICON_LEFT + PART_ICON), (false, true, -PART_ICON, 0.0)).resolve(l.screen());
+            l.image(prims, r, icon, (1.0, 1.0, 1.0), 1.0, Vec::new());
+        }
+    }
+    if let Some(at) = sim.rounds.buildables.iter().find(|b| b.building.is_some_and(|(g, ..)| g == p.general)) {
+        let Some((_, _, t)) = at.building else { return false };
+        let scale = |v: f32| v * 1.5;
+        let (w, h, below) = BAR_480;
+        let (w, h, below) = (scale(w), scale(h), scale(below));
+        let bar = Place::new((false, false, -w * 0.5, w * 0.5), (false, false, below - h * 0.5, below + h * 0.5)).resolve(l.screen());
+        let back = Rect { x: bar.x - scale(2.0), y: bar.y - scale(2.0), w: bar.w + scale(4.0), h: bar.h + scale(4.0) };
+        l.image(prims, back, BAR_BACK, (0.0, 0.0, 0.0), 0.5, Vec::new());
+        let frac = (t / rules.build_time.max(1e-3)).clamp(0.0, 1.0);
+        l.image(prims, Rect { w: bar.w * frac, ..bar }, BAR_FILL, (1.0, 1.0, 1.0), 1.0, Vec::new());
+        let row = &rules.list[at.index as usize];
+        let (bottom, fontscale) = REVIVING_480;
+        let th = scale(FONT_HEIGHT_480 * fontscale);
+        let y = scale(bottom);
+        let r = Place::new((true, true, 0.0, 0.0), (false, true, y - th * 0.5, y + th * 0.5)).resolve(l.screen());
+        l.text(prims, r, Family::Default, crate::sim::hint_text(&row.building_hint), Some(Align::Center), (true, true), (1.0, 1.0, 1.0), 1.0);
+        return true;
+    }
+    let key = if sim.part_target(p).is_some() {
+        if sim.carried_part(p.general).is_some() { rules.swap_hint.as_str() } else { rules.part_hint.as_str() }
+    } else if let Some(k) = sim.bench_target(p).and_then(|b| sim.bench_prompt(p, b)) {
+        k
+    } else {
+        return false;
+    };
+    super::pickup::draw_runs(l, prims, &trigger_prompt(crate::sim::hint_text(key), use_key, 0));
+    true
+}
+
 /// What one slot shows: its icon (a MappedImage), the name drawn where the icon has no art, whether
 /// it can be used, and its key.
 pub struct Slot<'a> {

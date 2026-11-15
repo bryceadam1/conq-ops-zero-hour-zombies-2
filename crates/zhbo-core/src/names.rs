@@ -134,6 +134,21 @@ pub fn pack_a_punch_object() -> String {
 pub fn pack_a_punch_model(n: u16) -> String {
     format!("ZPP{n:03}_SKN")
 }
+/// The Zero Hour object a buildable's part lies as (`zombies.ini` `[Buildables]`), by its model.
+pub fn buildable_part_object(model: &str) -> String {
+    format!("ZHBO_ZM_Part_{model}")
+}
+/// The Zero Hour object of a buildable's workbench, and of the finished equipment on it.
+pub fn buildable_table_object() -> String {
+    "ZHBO_ZM_Workbench".to_string()
+}
+pub fn buildable_built_object(weapon: &str) -> String {
+    format!("ZHBO_ZM_Built_{weapon}")
+}
+/// The W3D models of the converter's buildable props.
+pub fn buildable_model(n: u16) -> String {
+    format!("ZBP{n:03}_SKN")
+}
 /// The Zero Hour object Tombstone's grave stands as (`zombies.ini` `[Tombstone]`'s model).
 pub fn tombstone_object() -> String {
     "ZHBO_ZM_Tombstone".to_string()

@@ -233,6 +233,19 @@ pub(crate) fn tombstone(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTre
     format!("the tombstone{note}")
 }
 
+/// TranZit's buildables (`zhbo_core::zombies::Buildables`): each part's model as
+/// `names::buildable_part_object`, the workbench as `names::buildable_table_object`, and the
+/// finished equipment on it as `names::buildable_built_object` (`built`: weapon, its world model).
+/// Returns the summary line.
+pub(crate) fn buildables(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTreeMap<String, Vec<u8>>, built: &[(String, String)]) -> String {
+    let b = zhbo_core::zombies::Buildables::get();
+    let mut items: Vec<(String, String)> = b.list.iter().flat_map(|r| r.parts.iter().map(|(m, _)| (zhbo_core::names::buildable_part_object(m), m.clone()))).collect();
+    items.push((zhbo_core::names::buildable_table_object(), b.workbench.clone()));
+    items.extend(built.iter().map(|(w, m)| (zhbo_core::names::buildable_built_object(w), m.clone())));
+    let note = named_props(pool, paks, out, &items, zhbo_core::names::buildable_model, false, "Data\\INI\\Object\\ZHBO_ZM_Buildables.ini");
+    format!("buildables{note}")
+}
+
 /// The power-ups (`zhbo_core::zombies::PowerUps`): each one's model (`zombies.ini` `[PowerUps]`)
 /// as the Zero Hour object `names::powerup_object`, upright as it floats. Returns the summary line.
 pub(crate) fn powerups(pool: &[&Zone], paks: &crate::paks::Paks, out: &mut BTreeMap<String, Vec<u8>>) -> String {

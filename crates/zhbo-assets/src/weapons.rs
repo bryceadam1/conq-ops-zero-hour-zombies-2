@@ -1035,9 +1035,18 @@ impl Roster {
     }
 }
 
-/// BO2's riot shield: weapType `riotshield` in the primary inventory (`riotshield_mp`).
+/// BO2's riot shield: weapType `riotshield` (`riotshield_mp` in the primary inventory, Zombies'
+/// `riotshield_zm` an item on action slot 1).
 pub fn is_shield(w: &Weapon) -> bool {
-    w.weap_type == bo2::kind::RIOTSHIELD && w.inventory == bo2::inventory::PRIMARY && w.view_model.is_some()
+    w.weap_type == bo2::kind::RIOTSHIELD && w.view_model.is_some()
+}
+
+/// The model a riot shield is carried as on `tag_weapon_left`: MP's engine literal
+/// (`refreshshieldattachment`, which only MP's `_riotshield.gsc` calls), or for Zombies' (an item)
+/// the model `_zm_riotshield.gsc` attaches itself, `level.carriedshieldmodel[0]`, its own
+/// `worldModel`.
+pub fn shield_carry_model(w: &Weapon) -> Option<&str> {
+    if w.inventory == bo2::inventory::ITEM { w.world_model.as_deref() } else { Some(crate::shield::CARRY_MODEL) }
 }
 
 /// Whether the converted weapon `id` is a riot shield in BO2's data.
@@ -1119,6 +1128,7 @@ fn fire_mode(w: &Weapon) -> FireMode {
         bo2::fire::FULLAUTO => FireMode::Auto,
         bo2::fire::STACKED => FireMode::Stacked,
         bo2::fire::MINIGUN => FireMode::Minigun,
+        bo2::fire::JETGUN => FireMode::Jetgun,
         bo2::fire::BURST2 | bo2::fire::BURST3 | bo2::fire::BURST4 | bo2::fire::BURST5 => FireMode::Burst(w.burst_count() as u8),
         _ => FireMode::Semi,
     }
@@ -1239,7 +1249,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let (start_reserve, max_reserve) = if class.is_offhand() {
         // Offhands: how many you spawn with, and carry at most.
         (w.start_ammo.max(1) as u16, w.max_ammo.max(w.start_ammo).max(1) as u16)
-    } else if w.ammo_clip_relative || (w.start_ammo > 0 && w.start_ammo < w.clip_size) {
+    } else if !w.unlimited_ammo && (w.ammo_clip_relative || (w.start_ammo > 0 && w.start_ammo < w.clip_size)) {
         // BO2 multiplayer counts gun ammo in magazines. `iStartAmmo` is what a spawn tops up to,
         // the loaded magazine included (`FUN_005e0910`); `iMaxAmmo` is the stock cap, the spare
         // rounds beside the magazine (`FUN_005e08d0`; G16): the AN-94's 4/8 is 30 + 90 at spawn
@@ -1272,6 +1282,12 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         id: w.name.clone(),
         equipment_kind: manifest::equipment_kind_of(&w.name),
         specific_use: w.offhand_slot == bo2::offhand_slot::SPECIFIC_USE,
+        start_clip: (w.unlimited_ammo && !w.ammo_clip_relative && w.start_ammo >= 0 && w.start_ammo < w.clip_size).then_some(w.start_ammo as u16),
+        overheat: w.overheat_weapon.then_some(zhbo_core::weapons::Overheat { rate: w.overheat_rate, cooldown: w.cooldown_rate, end: w.overheat_end_val, cool_while_firing: w.cool_while_firing }),
+        fire_loop_sound: def_sound(&w.fire_loop_sound_player),
+        fire_loop_end_sound: def_sound(&w.fire_loop_end_sound_player),
+        npc_fire_loop_sound: def_sound(&w.fire_loop_sound),
+        npc_fire_loop_end_sound: def_sound(&w.fire_loop_end_sound),
         display_name,
         class,
         weap_class: WeapClass::from_bo2(w.class),

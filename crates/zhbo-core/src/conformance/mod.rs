@@ -90,6 +90,8 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
         let mut out = Vec::new();
         let spin = frames(def.spin_up_time);
         match def.fire {
+            // No rounds: its trigger spins the engine (`sim::jetgun` plays the rest).
+            FireMode::Jetgun => {}
             FireMode::Auto | FireMode::Minigun => {
                 // Hold: the magazine empties at BO2's fire time.
                 let mut first = None;

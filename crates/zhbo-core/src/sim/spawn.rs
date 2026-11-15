@@ -178,6 +178,8 @@ impl Sim {
             survivor: false,
             action_slots: crate::weapons::actionslot::ActionSlots::GENERAL,
             zm_item: None,
+            shield_wear: 0.0,
+            jet_pulse: None,
             hammer: None,
             site: None,
             building: false,

@@ -1272,3 +1272,35 @@ fn an_owned_item_comes_up_plants_and_goes_away_when_spent() {
     assert_eq!(a.current().main.id, gun, "a swap puts it away");
     assert_eq!(a.item_count(claymore), Some(2));
 }
+
+/// The jetgun (`FireMode::Jetgun`, BO2's overheat `FUN_0066eba0`/`FUN_008d8160`): held, its engine
+/// spins up and it heats at its rate; at 100 it is overheated and stops, and cools back to its end
+/// value before it fires again.
+#[test]
+fn the_jetgun_spins_up_heats_and_overheats() {
+    let jet = def(|d| {
+        d.id = "jetgun_zm".into();
+        d.fire = FireMode::Jetgun;
+        d.clip = 500;
+        d.spin_up_time = 3.0;
+        d.timing.spin_down_time = 5.0;
+        d.traits.unlimited_ammo = true;
+        d.overheat = Some(Overheat { rate: 20.0, cooldown: 10.0, end: 50.0, cool_while_firing: false });
+    });
+    let mut a = arsenal_with(jet);
+    let mut rng = Rng::new(1);
+    frames(&mut a, buttons::FIRE, 45, &mut rng);
+    assert!((a.spin_lerp() - 0.5).abs() < 0.02, "half spun in 1.5 s: {}", a.spin_lerp());
+    assert!((a.current().heat - 30.0).abs() < 1.0, "20 a second: {}", a.current().heat);
+    // 100 at 5 s, overheated: it stops and cools from there.
+    frames(&mut a, buttons::FIRE, 110, &mut rng);
+    assert!(a.current().overheated && a.current().heat > 95.0, "{}", a.current().heat);
+    frames(&mut a, buttons::FIRE, 2, &mut rng);
+    assert!(!a.current().firing, "overheated, it stops");
+    // Cooling 10 a second it clears at 50: five seconds, the trigger held or not.
+    frames(&mut a, buttons::FIRE, 4 * 30, &mut rng);
+    assert!(a.current().overheated);
+    frames(&mut a, 0, 35, &mut rng);
+    assert!(!a.current().overheated, "{}", a.current().heat);
+    assert_eq!(a.current().ammo, 500, "no rounds spent");
+}

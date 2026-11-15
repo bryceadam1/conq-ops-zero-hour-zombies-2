@@ -802,6 +802,9 @@ impl Arsenal {
     pub fn take_shield(&mut self) -> Option<(usize, WeaponState, bool)> {
         let slot = self.weapons.iter().position(|w| w.def.is_shield())?;
         let state = self.weapons.remove(slot);
+        if self.item_up.is_some_and(|d| d.id == state.main.id) {
+            self.item_up = None;
+        }
         let gave_knife = self.weapons.is_empty();
         if gave_knife {
             self.weapons.push(WeaponState::new(self.melee));
@@ -1080,11 +1083,51 @@ impl Arsenal {
         }
     }
 
+    /// BO2's heat (`FUN_0066eba0` each frame, `FUN_008d8160` per change): every held weapon that
+    /// overheats, in hand or on a slot, gains its rate while it is the one firing and loses its
+    /// cooling otherwise (or also, with `cool_while_firing`); at 100 it is overheated until it is
+    /// down to its end value.
+    fn step_heat(&mut self, dt: f32) {
+        let active = self.active;
+        let add = |w: &mut WeaponState, o: super::def::Overheat, delta: f32| {
+            w.heat += delta;
+            if w.heat >= 100.0 {
+                w.heat = 100.0;
+                w.overheated = true;
+            }
+            w.heat = w.heat.max(0.0);
+            if w.heat <= o.end {
+                w.overheated = false;
+            }
+        };
+        for (i, w) in self.weapons.iter_mut().enumerate().map(|(i, w)| (Some(i), w)).chain(self.items.iter_mut().map(|w| (None, w))) {
+            let Some(o) = w.main.overheat else { continue };
+            let firing = i == Some(active) && w.firing;
+            if firing {
+                add(w, o, dt * o.rate);
+            }
+            if !firing || o.cool_while_firing {
+                add(w, o, -dt * o.cooldown);
+            }
+        }
+    }
+
+    /// The engine spin of the weapon up, -1 to 1 (BO2's `getcurrentweaponspinlerp`).
+    pub fn spin_lerp(&self) -> f32 {
+        let w = self.current();
+        if w.def.spin_up_time > 0.0 { (w.spin / w.def.spin_up_time).clamp(0.0, 1.0) } else { 0.0 }
+    }
+
     /// Advance one logic frame. `stance` is 0 stand, 1 crouch, 2 prone; `speed` the ground speed.
     #[allow(clippy::too_many_arguments)]
     pub fn step(&mut self, held: u32, pressed: u32, sprinting: bool, stance: usize, speed: f32, rng: &mut Rng, out: &mut Vec<WeaponAction>) {
         let dt = LOGIC_DT;
         self.pool_ammo();
+        // Last frame's fire heats (or cools) each weapon; this frame's sets it again below.
+        self.step_heat(dt);
+        for w in &mut self.weapons {
+            w.firing = false;
+        }
         let pressed = pressed | (held & !self.held_last);
         let released = self.held_last & !held;
         self.held_last = held;
@@ -1350,6 +1393,23 @@ impl Arsenal {
         if def.class == Class::Melee || def.class.is_offhand() {
             return;
         }
+        // The jetgun fires no round: the trigger, held, spins its engine up over `spin_up_time`
+        // (released, down over `spin_down_time`) and the weapon fires, heating it; overheated it
+        // stops (`tu12_zm_stop_firing_when_overheated`, on in Zombies: `FUN_008de500`).
+        if def.fire == FireMode::Jetgun {
+            let blocked = sprinting || !sprint_ready || self.raise_left > 0.0 || self.drop_left > 0.0 || self.melee_left > 0.0 || self.melee_recover_left > 0.0;
+            let w = self.current_mut();
+            let trigger = held & buttons::FIRE != 0 && !blocked && !w.overheated;
+            w.spin = if trigger {
+                (w.spin + dt).min(def.spin_up_time)
+            } else {
+                let down = def.timing.spin_down_time;
+                let rate = if down > 0.0 { def.spin_up_time / down } else { f32::INFINITY };
+                (w.spin - dt * rate).max(0.0)
+            };
+            w.firing = trigger;
+            return;
+        }
 
         // Firing.
         let ads = self.ads;
@@ -1388,6 +1448,8 @@ impl Arsenal {
         let trigger = match def.fire {
             FireMode::Auto => held & buttons::FIRE != 0,
             FireMode::Minigun => held & buttons::FIRE != 0 && w.spin >= def.spin_up_time,
+            // Its own branch above; never a round.
+            FireMode::Jetgun => false,
             FireMode::Semi => pressed & buttons::FIRE != 0,
             FireMode::Stacked => pressed & buttons::FIRE != 0,
             FireMode::Burst(n) => {

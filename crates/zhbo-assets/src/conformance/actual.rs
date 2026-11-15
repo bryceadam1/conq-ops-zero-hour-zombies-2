@@ -431,6 +431,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         FireMode::Burst(n) => format!("burstfire{n}"),
         FireMode::Minigun => "minigun".to_string(),
         FireMode::Stacked => "stacked".to_string(),
+        FireMode::Jetgun => "jetgun".to_string(),
     };
     b.text("fire_type", fire)
         .int("shot_count", d.pellets as i64)
@@ -501,7 +502,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // reserve is never read (`toggle_alt` swaps only for `alt_own_ammo`), whether or not a gun of
     // the table toggles to it.
     let shared_alt = d.inventory == zhbo_core::weapons::Inventory::AltMode && !d.alt_own_ammo;
-    let start = if shared_alt { 0 } else if d.class.is_offhand() { d.start_reserve as i64 } else { d.clip as i64 + d.start_reserve as i64 };
+    let start = if shared_alt { 0 } else if d.class.is_offhand() { d.start_reserve as i64 } else { d.start_clip.unwrap_or(d.clip).min(d.clip) as i64 + d.start_reserve as i64 };
     let max = if shared_alt { 0 } else { d.max_reserve as i64 };
     b.int("clip_size", d.clip as i64)
         .int("start_ammo_rounds", start)
@@ -757,6 +758,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             // The Black Hat fires as its hack lands (`client`'s `Hacked` cue).
             Place::Hack => zhbo_core::sounds::hack_fire_for(d).and_then(|e| sh.sound(e)),
         }
+    } else if d.fire == FireMode::Jetgun {
+        // The jetgun fires no round: what it plays is its loop (`fire_loop_sound*`).
+        None
     } else if d.class == Class::Item {
         // An item fired from the hand plays its own sound only (`sounds::item_fire_for`).
         zhbo_core::sounds::item_fire_for(d).and_then(|e| sh.sound(e))
@@ -786,13 +790,18 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             // Another player's opening and last round (`client`'s remote round, `sounds::remote_round`).
             "fire_start_sound" => b.opt_text(c, own(&d.npc_fire_start_sound)),
             "fire_last_sound" => b.opt_text(c, own(&d.npc_fire_last_sound)),
+            // A continuous fire's loop and its end (`sounds::Cues`' loop while it fires).
+            "fire_loop_sound_player" => b.opt_text(c, own(&d.fire_loop_sound)),
+            "fire_loop_end_sound_player" => b.opt_text(c, own(&d.fire_loop_end_sound)),
+            "fire_loop_sound" => b.opt_text(c, own(&d.npc_fire_loop_sound)),
+            "fire_loop_end_sound" => b.opt_text(c, own(&d.npc_fire_loop_end_sound)),
             _ => b.absent(c),
         };
     }
     // The mod's dry fire: the def's own event when it carries one, else the generic click.
     for c in cols::DEF_SOUNDS {
         let v = match c {
-            "empty_fire_sound_player" if d.class.is_gun() => {
+            "empty_fire_sound_player" if d.class.is_gun() && !d.traits.unlimited_ammo => {
                 let event = if d.empty_fire_sound.is_empty() { "ZHBO_BO2_DryFire" } else { d.empty_fire_sound.as_str() };
                 sh.sound(event)
             }

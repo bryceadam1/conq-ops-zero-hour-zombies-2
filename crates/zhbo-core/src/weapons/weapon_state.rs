@@ -46,8 +46,13 @@ pub struct WeaponState {
     pub cooldown: f32,
     pub reload: Option<Reload>,
     pub burst_left: u8,
-    /// Minigun barrel spin, seconds toward `spin_up_time`.
+    /// Minigun barrel spin, seconds toward `spin_up_time` (the jetgun's engine too).
     pub spin: f32,
+    /// BO2's overheat (`WeaponDef::overheat`): the heat, 0 to 100, and whether it is overheated.
+    pub heat: f32,
+    pub overheated: bool,
+    /// The weapon fired this frame (BO2's weapon state 6): what heats it.
+    pub firing: bool,
     /// Has been raised before (the first raise is BO2's longer "first raise").
     pub raised_once: bool,
     /// The alt mode's own ammo while the main mode is up (and the main mode's while the alt is).
@@ -85,7 +90,7 @@ pub struct WeaponState {
 }
 
 crate::statehash::state_hash!(struct WeaponState {
-    def, main, alt_mode, ammo, reserve, cooldown, reload, burst_left, spin, raised_once, alt_ammo, alt_reserve,
+    def, main, alt_mode, ammo, reserve, cooldown, reload, burst_left, spin, heat, overheated, firing, raised_once, alt_ammo, alt_reserve,
     string, recoil_acc, since_shot, rechamber_pending, rechamber_shots, rechamber, reload_owed, zoom, quick_reload, left,
     options,
 });
@@ -119,7 +124,7 @@ impl Hand {
     /// A full magazine of `def`'s.
     pub(super) fn full(def: &WeaponDef) -> Self {
         Hand {
-            ammo: def.clip,
+            ammo: def.start_clip.unwrap_or(def.clip).min(def.clip),
             cooldown: 0.0,
             reload: None,
             burst_left: 0,
@@ -155,6 +160,9 @@ impl WeaponState {
             reload: None,
             burst_left: 0,
             spin: 0.0,
+            heat: 0.0,
+            overheated: false,
+            firing: false,
             raised_once: false,
             alt_ammo: 0,
             alt_reserve: 0,

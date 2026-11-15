@@ -189,6 +189,22 @@ pub enum FireMode {
     /// BO2's `stacked` (the tri-bolt): a pull fires the whole loaded stack (`FUN_008e1320`
     /// keeps firing while `FUN_008dc0c0` says the stack is part-spent, the fire delay zeroed).
     Stacked,
+    /// BO2's `jetgun` (Zombies' jetgun): no rounds; the trigger spins the engine up over
+    /// `spin_up_time` and lets it down over `spin_down_time` (the script's
+    /// `getcurrentweaponspinlerp`), and the weapon fires while held, heating it ([`Overheat`]).
+    Jetgun,
+}
+
+/// BO2's overheat (`overheatWeapon`; `FUN_0066eba0`, `FUN_008d8160`): each frame a weapon firing
+/// gains `rate` per second of heat; every other held weapon, or the firing one too with
+/// `cool_while_firing`, loses `cooldown` per second. At 100 it is overheated until it is back down
+/// to `end`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Overheat {
+    pub rate: f32,
+    pub cooldown: f32,
+    pub end: f32,
+    pub cool_while_firing: bool,
 }
 
 /// What a projectile does when it goes off.
@@ -622,6 +638,17 @@ pub struct WeaponDef {
     /// BO2's `offhandSlot` specific use (`OFFHAND_SLOT_SPECIFIC_USE`): an item a script sets on an
     /// action slot (the claymores) or hands over itself (the syrette), never in the weapon cycle.
     pub specific_use: bool,
+    /// BO2's overheat, for a weapon that has one.
+    pub overheat: Option<Overheat>,
+    /// A clip loaded short at the start: `iStartAmmo` under the clip size in rounds (the jetgun's
+    /// 400 of 500), what `giveweapon` loads. `None`: a full clip.
+    pub start_clip: Option<u16>,
+    /// A continuous fire's loop and its end (`fireLoopSoundPlayer`, `fireLoopEndSoundPlayer`), and
+    /// what others hear (`fireLoopSound`, `fireLoopEndSound`): BO2 sound events.
+    pub fire_loop_sound: String,
+    pub fire_loop_end_sound: String,
+    pub npc_fire_loop_sound: String,
+    pub npc_fire_loop_end_sound: String,
     /// The specialties this weapon grants while it is the current weapon: its variant's own
     /// (`WeaponVariantDef.perks`) and its attachments' (`WeaponAttachment.perks`), unioned when
     /// the attachments are applied (Ghidra G1's HasSpecialty rule).
@@ -1122,6 +1149,12 @@ impl Default for WeaponDef {
             effect: Effect::None,
             equipment_kind: Kind::Other,
             specific_use: false,
+            overheat: None,
+            start_clip: None,
+            fire_loop_sound: String::new(),
+            fire_loop_end_sound: String::new(),
+            npc_fire_loop_sound: String::new(),
+            npc_fire_loop_end_sound: String::new(),
             fuse_time: 0.0,
             cook: false,
             detonate_delay: 0.0,
@@ -1388,6 +1421,10 @@ impl WeaponDef {
         self.reload_empty_sound.clone_from(&from.reload_empty_sound);
         self.reload_start_sound.clone_from(&from.reload_start_sound);
         self.reload_end_sound.clone_from(&from.reload_end_sound);
+        self.fire_loop_sound.clone_from(&from.fire_loop_sound);
+        self.fire_loop_end_sound.clone_from(&from.fire_loop_end_sound);
+        self.npc_fire_loop_sound.clone_from(&from.npc_fire_loop_sound);
+        self.npc_fire_loop_end_sound.clone_from(&from.npc_fire_loop_end_sound);
         self.ads_zoom_sound.clone_from(&from.ads_zoom_sound);
         self.melee_swipe_sound.clone_from(&from.melee_swipe_sound);
         self.melee_hit_sound.clone_from(&from.melee_hit_sound);
@@ -1436,6 +1473,10 @@ impl WeaponDef {
             (&self.reload_empty_sound, Heard::Player),
             (&self.reload_start_sound, Heard::Player),
             (&self.reload_end_sound, Heard::Player),
+            (&self.fire_loop_sound, Heard::Player),
+            (&self.fire_loop_end_sound, Heard::Player),
+            (&self.npc_fire_loop_sound, Heard::World),
+            (&self.npc_fire_loop_end_sound, Heard::World),
             (&self.ads_zoom_sound, Heard::Player),
             (&self.melee_swipe_sound, Heard::Player),
             (&self.melee_hit_sound, Heard::Player),

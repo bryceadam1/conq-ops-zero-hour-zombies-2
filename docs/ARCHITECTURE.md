@@ -100,7 +100,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   waiting for its buyer), `items.rs` (the scripts' hand animations as weapons: a perk's bottle, the
   knuckle crack, the syrette, a melee flourish, each one's raise played out; they and TranZit's
   claymores are `Class::Item`, held up as the weapon in hand, the claymores from
-  `Arsenal::items` by their action slot), `tombstone.rs` (BO2
+  `Arsenal::items` by their action slot), `buildables.rs` (TranZit's buildables: the parts, the
+  benches, the build and taking the equipment onto action slot 1), `riotshield.rs` (Zombies' riot
+  shield: its block, wear and bash), `jetgun.rs` (the jetgun's pulses on the zombies and its
+  overheat), `tombstone.rs` (BO2
   Zombies' Tombstone grave), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`, `fire_round` (one bullet, to its end and through penetration),

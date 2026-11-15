@@ -71,6 +71,10 @@ pub const MATERIALS: &[(&str, u32)] = &[
     // The perks' icons (`hud::zombies::draw_perks`; `zombies.ini` `[Perks]` names them).
     ("specialty_fastreload_zombies", 32), ("specialty_marathon_zombies", 32), ("specialty_juggernaut_zombies", 32),
     ("specialty_doubletap_zombies", 32), ("specialty_quickrevive_zombies", 32), ("specialty_tombstone_zombies", 32),
+    // The carried buildable part's icon (`hud::zombies::draw_buildables`; `zombies.ini`
+    // `[Buildables]` names them).
+    ("zm_hud_icon_dolly", 64), ("zm_hud_icon_cardoor", 64), ("zm_hud_icon_jetgun_wires", 64), ("zm_hud_icon_jetgun_engine", 64),
+    ("zm_hud_icon_jetgun_gauges", 64), ("zm_hud_icon_jetgun_handles", 64),
 ];
 
 /// A [`MATERIALS`] name ending in this is its base material mirrored top to bottom (LUI draws an

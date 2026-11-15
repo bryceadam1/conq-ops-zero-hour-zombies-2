@@ -363,6 +363,8 @@ pub struct Cues {
     feet: crate::stepsounds::Feet,
     heartbeat: Heartbeat,
     fire_was_held: bool,
+    /// The continuous fire's loop playing (`fireLoopSoundPlayer`), to end when the fire does.
+    fire_loop: Option<(&'static str, &'static crate::weapons::WeaponDef)>,
     breath: BreathSounds,
     weapon: WeaponCues,
     pub queue: Vec<Request>,
@@ -611,6 +613,10 @@ impl Cues {
 
     /// Forget movement history (first person starts, or the General changed).
     pub fn reset(&mut self) {
+        // A continuous fire's loop stops with what it belonged to.
+        if let Some((e, _)) = self.fire_loop.take() {
+            self.loops.push((e, 0.0));
+        }
         let (queue, loops) = (std::mem::take(&mut self.queue), std::mem::take(&mut self.loops));
         *self = Cues { queue, loops, ..Default::default() };
     }
@@ -635,6 +641,24 @@ impl Cues {
             self.play(dry_fire_for(w.def));
         }
         self.fire_was_held = fire_held;
+
+        // A continuous fire (the jetgun) loops its sound while it fires and plays its end when it
+        // stops (BO2's `fireLoopSoundPlayer`, `fireLoopEndSoundPlayer`).
+        let looping = some(w.def.fire_loop_sound.as_str()).filter(|_| w.firing);
+        match (self.fire_loop, looping) {
+            (_, Some(e)) => {
+                self.loops.push((e, 1.0));
+                self.fire_loop = Some((e, w.def));
+            }
+            (Some((e, def)), None) => {
+                self.loops.push((e, 0.0));
+                if let Some(end) = some(def.fire_loop_end_sound.as_str()) {
+                    self.play(end);
+                }
+                self.fire_loop = None;
+            }
+            (None, None) => {}
+        }
 
         if let Some(e) = self.breath.update(dt, p.idle.breath.holding, &p.arsenal.tuning) {
             self.play(e);

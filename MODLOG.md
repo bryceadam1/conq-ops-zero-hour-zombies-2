@@ -16098,3 +16098,37 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     `zombies` 0; `zm_weapons` 17 (the jetgun's 9, the shield's 8); in game `--shop` 12/12 and the new
     `--claymores` 6/6 (the claymores alone: a five-step run raced round 1's zombies).
   - **Bump:** `hud::VERSION` → 109 (the weapon table's new fields, the classes, the viewmodels).
+- **Follow-up, same day: the jetgun, the riot shield and TranZit's buildables; every gate at 0.**
+  - **The buildables** (`sim::buildables`, `zombies.ini` `[Buildables]`; `_zm_buildables.gsc`,
+    `zm_transit_buildables.gsc`): the riot shield's two parts and the jetgun's four lie around the
+    starts (the mod's map; a stream of their own, so the round engine's draws are unchanged); a
+    survivor carries one at a time (another swaps it, going down drops it, a dead carrier's goes
+    home); at its workbench, the use key held for 3 s with `zombie_builder_zm` up puts it on
+    (letting go or walking off stops it); built, the bench gives the equipment free onto action
+    slot 1 (`equipment_give`: one at a time; the jetgun one in use at once). Prompts
+    (`ZOMBIE_BUILD_PIECE_GRAB`/`_SWITCH`, each bench's build/building/grab hints), the build's
+    progress bar, and the carried part's icon where `hudbuildableszombie.lua` puts it. Props from
+    `so_zclassic_zm_transit` (the parts), `p6_zm_work_bench`, the finished pieces' world models.
+  - **The riot shield** (`sim::riotshield`, `[RiotShield]`): the shield class (any riotshield
+    weapType). `player_damage_override` (`_zm.gsc:4071-4087`): a blow on a survivor whose shield is
+    up and faces the attacker (2D dot > 0.2), or on his back with the attacker behind (≤ -0.2),
+    wears it 100 and does him nothing; it breaks at 2250 and is taken. The bash flings the zombies
+    within 90 inches in front (2500, 100 wear each, `riotshield_melee`). Carried as its script
+    attaches it (its own `worldModel` on `tag_weapon_left`).
+  - **The jetgun**: BO2's `jetgun` fire type and overheat in the arsenal. Ghidra (t6zm):
+    `FUN_0066eba0` each frame adds ms × `overheatRate` × 0.001 to the firing weapon's heat and takes
+    ms × `cooldownRate` × 0.001 from every other held one (and from the firing one with
+    `coolWhileFiring`); `FUN_008d8160` caps at 100 (overheated) and clears at `overheatEndVal`;
+    `tu12_zm_stop_firing_when_overheated` (on in Zombies, `FUN_008de500`) stops the fire. The
+    engine spins up over `iSpinUpTime` and down over `iSpinDownTime`. The script's part
+    (`sim::jetgun`, `[Jetgun]`, `_zm_weap_jetgun.gsc`): every 0.25 s past a spin of 0.2 the three
+    closest zombies in its cone are ground (within 128: killed, the engine let down to half) or
+    dragged to him; power-ups pulled 50 inches; overheated, TranZit's explodes and its parts go
+    home (`level.explode_overheated_jetgun`). Its loop and end sounds play while it fires. It
+    starts with 400 of its 500 (`iStartAmmo` under the clip, rounds) and never spends one.
+    - Not modelled: the drag's own run cycles (the dragged zombie is sent at him), the shield's
+      damage-level models and its planted-shield attraction.
+  - Verified: `cargo test --workspace` all pass; clippy clean; the gates: weapons 0 (12,163 rows),
+    `zm_weapons` **0** (90 rows), `zombies` 0, cac the known 4 MTX camos; in game `--zombies` 7/7,
+    `--shop` 13/13, `--claymores` 7/7 (each now checks the buildables stood).
+  - **Bump:** `hud::VERSION` → 110.

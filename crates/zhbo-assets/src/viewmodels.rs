@@ -812,7 +812,7 @@ pub(crate) fn world_weapons(
         // The Assault Shield is carried as the script's carry model on the left hand
         // (`_riotshield.gsc` `refreshshieldattachment`), not its pickup world model.
         let shield = crate::weapons::is_shield(w);
-        let world_name = if shield { Some(crate::shield::CARRY_MODEL) } else { model_w.world_model.as_deref() };
+        let world_name = if shield { crate::weapons::shield_carry_model(w) } else { model_w.world_model.as_deref() };
         // The body bone the weapon hangs on: the shield's own (`tag_weapon_left`), else the right
         // hand. The W3D meshes and the native manifest's base part name the same one.
         let body_tag = shield.then_some(crate::shield::HELD_TAG);

@@ -525,6 +525,207 @@ impl Claymore {
     }
 }
 
+/// One buildable (`zombies.ini` `[Buildables]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Buildable {
+    pub weapon: String,
+    pub build_hint: String,
+    pub building_hint: String,
+    pub bought_hint: String,
+    pub grab_hint: String,
+    /// How many may be out at once (0: no limit).
+    pub limit: u32,
+    /// Its parts: model, HUD icon.
+    pub parts: Vec<(String, String)>,
+}
+
+/// TranZit's buildables (`zombies.ini` `[Buildables]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Buildables {
+    pub build_time: f32,
+    /// The build's reach: this times the bench's use radius (`2.25 * test_radius_sq`).
+    pub build_reach: f32,
+    pub builder: String,
+    pub workbench: String,
+    /// Zero Hour units.
+    pub part_ring: f32,
+    pub part_hint: String,
+    pub swap_hint: String,
+    pub list: Vec<Buildable>,
+}
+
+impl Buildables {
+    pub fn parse(text: &str) -> Buildables {
+        let mut b = Buildables::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[Buildables]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            let cols: Vec<&str> = value.split(',').map(str::trim).collect();
+            match key {
+                "BuildTime" => b.build_time = num(),
+                "BuildReach" => b.build_reach = num(),
+                "Builder" => b.builder = value.to_string(),
+                "Workbench" => b.workbench = value.to_string(),
+                "PartRing" => b.part_ring = num(),
+                "PartHint" => b.part_hint = value.to_string(),
+                "SwapHint" => b.swap_hint = value.to_string(),
+                k if k.ends_with(".part") => {
+                    let weapon = &k[..k.len() - ".part".len()];
+                    if let Some(row) = b.list.iter_mut().find(|r| r.weapon == weapon) {
+                        row.parts.push((cols.first().copied().unwrap_or_default().to_string(), cols.get(1).copied().unwrap_or_default().to_string()));
+                    }
+                }
+                weapon if cols.len() >= 5 => b.list.push(Buildable {
+                    weapon: weapon.to_string(),
+                    build_hint: cols[0].to_string(),
+                    building_hint: cols[1].to_string(),
+                    bought_hint: cols[2].to_string(),
+                    grab_hint: cols[3].to_string(),
+                    limit: cols[4].parse().unwrap_or(0),
+                    parts: Vec::new(),
+                }),
+                _ => {}
+            }
+        }
+        b
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static Buildables {
+        static B: std::sync::OnceLock<Buildables> = std::sync::OnceLock::new();
+        B.get_or_init(|| Buildables::parse(SHIPPED))
+    }
+}
+
+/// Zombies' jetgun, the script's part (`zombies.ini` `[Jetgun]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Jetgun {
+    pub weapon: String,
+    pub pulse: f32,
+    pub firing: f32,
+    pub enemies: usize,
+    /// In BO2 inches.
+    pub drag_range: f32,
+    pub cone_dot: f32,
+    pub cylinder_radius: f32,
+    pub knockdown_range: f32,
+    pub grind_range: f32,
+    pub grind_let_down: f32,
+    pub powerup_range: f32,
+    pub powerup_move: f32,
+    pub explode: bool,
+}
+
+impl Jetgun {
+    pub fn parse(text: &str) -> Jetgun {
+        let mut j = Jetgun::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[Jetgun]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "Weapon" => j.weapon = value.to_string(),
+                "Pulse" => j.pulse = num(),
+                "Firing" => j.firing = num(),
+                "Enemies" => j.enemies = num() as usize,
+                "DragRange" => j.drag_range = num(),
+                "ConeDot" => j.cone_dot = num(),
+                "CylinderRadius" => j.cylinder_radius = num(),
+                "KnockdownRange" => j.knockdown_range = num(),
+                "GrindRange" => j.grind_range = num(),
+                "GrindLetDown" => j.grind_let_down = num(),
+                "PowerupRange" => j.powerup_range = num(),
+                "PowerupMove" => j.powerup_move = num(),
+                "Explode" => j.explode = num() != 0.0,
+                _ => {}
+            }
+        }
+        j
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static Jetgun {
+        static J: std::sync::OnceLock<Jetgun> = std::sync::OnceLock::new();
+        J.get_or_init(|| Jetgun::parse(SHIPPED))
+    }
+}
+
+/// Zombies' riot shield (`zombies.ini` `[RiotShield]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RiotShield {
+    pub weapon: String,
+    pub hit_points: f32,
+    pub block_wear: f32,
+    pub held_facing: f32,
+    pub stowed_facing: f32,
+    /// In BO2 inches.
+    pub melee_range: f32,
+    pub cylinder_radius: f32,
+    pub fling_damage: f32,
+    pub fling_wear: f32,
+}
+
+impl RiotShield {
+    pub fn parse(text: &str) -> RiotShield {
+        let mut r = RiotShield::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[RiotShield]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "Weapon" => r.weapon = value.to_string(),
+                "HitPoints" => r.hit_points = num(),
+                "BlockWear" => r.block_wear = num(),
+                "HeldFacing" => r.held_facing = num(),
+                "StowedFacing" => r.stowed_facing = num(),
+                "MeleeRange" => r.melee_range = num(),
+                "CylinderRadius" => r.cylinder_radius = num(),
+                "FlingDamage" => r.fling_damage = num(),
+                "FlingWear" => r.fling_wear = num(),
+                _ => {}
+            }
+        }
+        r
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static RiotShield {
+        static R: std::sync::OnceLock<RiotShield> = std::sync::OnceLock::new();
+        R.get_or_init(|| RiotShield::parse(SHIPPED))
+    }
+
+    /// Whether a blow from the way `to_attacker` (2D, from him) lands on the shield of a survivor
+    /// facing `yaw`, held up or on his back (`player_shield_facing_attacker`).
+    pub fn blocks(&self, yaw: f32, to_attacker: (f32, f32), held: bool) -> bool {
+        let len = (to_attacker.0 * to_attacker.0 + to_attacker.1 * to_attacker.1).sqrt();
+        if len <= 0.0 {
+            return false;
+        }
+        let (s, c) = crate::math::det::sin_cos(yaw);
+        let dot = (c * to_attacker.0 + s * to_attacker.1) / len;
+        if held { dot > self.held_facing } else { dot <= self.stowed_facing }
+    }
+}
+
 /// Pack-a-Punch (`zombies.ini` `[PackAPunch]`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PackAPunch {
@@ -579,6 +780,7 @@ pub fn script_weapons() -> Vec<String> {
     out.push(PackAPunch::get().knuckle_crack.clone());
     out.push(LastStand::get().revive_tool.clone());
     out.extend(WallBuys::get().buys.iter().filter_map(|b| b.flourish.clone()));
+    out.push(Buildables::get().builder.clone());
     out.retain(|w| !w.is_empty());
     out
 }
@@ -1036,7 +1238,8 @@ mod tests {
         assert_eq!((p.limit, p.jugg_health, p.solo_lives), (4, 160.0, 3));
         assert_eq!(jugg.bottle, "zombie_perk_bottle_jugg");
         let script = script_weapons();
-        assert_eq!(script.len(), 10);
+        assert_eq!(script.len(), 11);
+        assert!(script.contains(&"zombie_builder_zm".to_string()), "the builder");
         assert!(script.contains(&"zombie_knuckle_crack".to_string()) && script.contains(&"syrette_zm".to_string()));
     }
 

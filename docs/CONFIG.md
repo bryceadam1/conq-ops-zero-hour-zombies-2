@@ -152,6 +152,14 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
   (`claymore_zm`), its 96-inch trigger, 70° cone and 20-inch least distance, the 0.4 s from the
   trip to the blast, and the 12 a player may have down (one more goes off after 0.1 s). Bought at
   its wall buy once, it sits on action slot 4 with a full clip, refilled at each round's start.
+- **Buildables:** `zombies.ini` `[Buildables]` lists TranZit's riot shield and jetgun: each one's
+  prompts, its limit (the jetgun one at a time) and its parts (model, HUD icon), with the build time
+  (3 s), the builder weapon, the workbench model and the ring the parts lie on. The benches stand on
+  the wall-buy ring after Pack-a-Punch around the first start; each part lies around a start.
+- **Riot shield and jetgun:** `[RiotShield]` holds the shield's hit points, the wear of a blocked
+  blow, the facing limits and its bash; `[Jetgun]` the script's part of the jetgun (its pulse, its
+  ranges and cone, grinding, dragging, pulling power-ups, exploding when it overheats). Its spin and
+  heat are the weapon table's (BO2's own fields).
 - **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
   45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
   last-stand pistol and BO2's ranking of the pistols a downed player may hold

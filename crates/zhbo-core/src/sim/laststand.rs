@@ -123,6 +123,8 @@ impl Sim {
             return;
         }
         let Some(info) = host.object(general, general) else { return };
+        // `player_drop_piece_on_death`: the part he carries falls where he is.
+        self.drop_part(host, general, info.pos);
         let ls = LastStand::get();
         let player = info.owner_player;
         let points = host.money(player).max(0) as i64;

@@ -66,7 +66,7 @@ pub fn area(l: &Lui) -> Rect {
 /// carry BO2's fire type yet, so pump and bolt actions read as single.
 pub fn fire_rate_material(fire: FireMode) -> &'static str {
     match fire {
-        FireMode::Auto | FireMode::Minigun => "hud_mp_firerate_auto",
+        FireMode::Auto | FireMode::Minigun | FireMode::Jetgun => "hud_mp_firerate_auto",
         FireMode::Semi | FireMode::Stacked => "hud_mp_firerate_single",
         FireMode::Burst(_) => "hud_mp_firerate_burst",
     }

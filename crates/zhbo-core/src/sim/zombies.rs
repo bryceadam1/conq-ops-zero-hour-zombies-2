@@ -75,13 +75,15 @@ pub struct Rounds {
     pub pack_a_punch: Vec<super::packapunch::PapAt>,
     /// Tombstone's graves (`sim::tombstone`).
     pub graves: Vec<super::tombstone::Grave>,
+    /// The buildables: their benches and parts (`sim::buildables`).
+    pub buildables: Vec<super::buildables::BuildableAt>,
 }
 
-crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box, perks, pack_a_punch, graves });
+crate::statehash::state_hash!(struct Rounds { phase, round, spawners, to_spawn, alive, next_spawn, last_spawner, rng, zombies_map, players, downed, up, wall_buys, powerups, magic_box, perks, pack_a_punch, graves, buildables });
 
 impl Default for Rounds {
     fn default() -> Rounds {
-        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default(), perks: Default::default(), pack_a_punch: Vec::new(), graves: Vec::new() }
+        Rounds { phase: Phase::Off, round: 0, spawners: Vec::new(), to_spawn: 0, alive: Vec::new(), next_spawn: 0.0, last_spawner: 0, rng: crate::weapons::Rng::new(0x5A4D_0001), zombies_map: false, players: Vec::new(), downed: Vec::new(), up: 0, wall_buys: Vec::new(), powerups: Default::default(), magic_box: Default::default(), perks: Default::default(), pack_a_punch: Vec::new(), graves: Vec::new(), buildables: Vec::new() }
     }
 }
 
@@ -194,6 +196,7 @@ impl Sim {
                     self.place_magic_box(host);
                     self.place_perk_machines(host);
                     self.place_pack_a_punch(host);
+                    self.place_buildables(host);
                     self.start_round(host, &vars, vars.start_round.max(1));
                 }
             }
@@ -202,6 +205,7 @@ impl Sim {
         self.step_powerups(host);
         self.step_magic_box(host);
         self.step_pack_a_punch(host);
+        self.step_buildables(host);
         // The round's dead and the vanished leave the list.
         let mut alive = std::mem::take(&mut self.rounds.alive);
         alive.retain(|&id| host.object(id, id).is_some_and(|o| !o.has(objflags::DEAD)));

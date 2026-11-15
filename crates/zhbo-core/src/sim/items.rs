@@ -16,6 +16,8 @@
 //!   played out before his next gun comes up.
 //! * **The reviver's syrette** (`revive_trigger_think`): held while he revives, then his gun back
 //!   (`revive_give_back_weapons`).
+//! * **The builder** (`buildable_use_hold_think_internal`): held while he builds at a bench, then
+//!   his gun back (`switch_back_primary_weapon`).
 //!
 //! Meanwhile he may not aim, sprint, go prone or melee (`disable_player_move_states`), nor fire,
 //! throw, change weapon or use anything (`is_drinking`).
@@ -31,9 +33,11 @@ pub enum ItemKind {
     Syrette,
     /// A melee buy's flourish: `weapon` (an id) is his when it is done.
     Flourish { weapon: String },
+    /// The builder at a buildable's bench, held while he builds (`sim::buildables`).
+    Build,
 }
 
-crate::statehash::state_hash!(enum ItemKind { Drink { perk }, KnuckleCrack, Syrette, Flourish { weapon } });
+crate::statehash::state_hash!(enum ItemKind { Drink { perk }, KnuckleCrack, Syrette, Flourish { weapon }, Build });
 
 /// A script weapon in hand: what for, its id and the gun to bring back (by id).
 #[derive(Clone, Debug, PartialEq)]
@@ -103,7 +107,7 @@ impl Sim {
             }
             _ => {}
         }
-        if p.zm_item.as_ref().is_some_and(|u| u.kind != ItemKind::Syrette) {
+        if p.zm_item.as_ref().is_some_and(|u| u.kind != ItemKind::Syrette && u.kind != ItemKind::Build) {
             input.held &= !(ITEM_BLOCKED | buttons::FIELD_COMPUTER);
             input.pressed &= !(ITEM_BLOCKED | buttons::FIELD_COMPUTER);
         } else if p.zm_item.is_some() {

@@ -74,6 +74,9 @@ impl Sim {
                 self.emit(idx, EventKind::Melee);
                 self.start_melee_charge(host, p);
             }
+            // Zombies' shield bashes by its script (`riotshield_melee`); the strike's own 1 damage
+            // is ignored (`is_riotshield_damage`).
+            WeaponAction::Melee { .. } if p.arsenal.current().main.id == crate::zombies::RiotShield::get().weapon => self.zm_shield_bash(host, p),
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
                 if def.class == crate::weapons::Class::Item {
