@@ -16132,3 +16132,25 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
     `zm_weapons` **0** (90 rows), `zombies` 0, cac the known 4 MTX camos; in game `--zombies` 7/7,
     `--shop` 13/13, `--claymores` 7/7 (each now checks the buildables stood).
   - **Bump:** `hud::VERSION` → 110.
+
+## Voice: the scale-up's audio, one night (2026-11-15)
+
+- **Fish S2-Pro on a g6e spot machine** (`tools/voice/tts/fish_corpus.sh`, `fish_corpus.py`): all
+  122,000 lines (2,000 test in the 8 held-out LibriSpeech voices, then 120,000 train in the 32
+  train voices at three rates), 0 failed, 134 h of audio in 7.3 h, **$13.33**. 32 requests in flight
+  ran at 19.4× real time (16 gave 13.5×). Spot capacity took 12 minutes of retries to find. A
+  Whisper small.en check of 80 clips: word error 0.133; every clip over 0.3 was an invented name
+  spelled another way (`Mirhals` as `Mayor Hulse`), not a broken clip.
+- **Kokoro on the Mac** (`corpus_kokoro.py`, three shards, 01:30 to 10:00): 10,022 test clips
+  (10.6 h) and 22,525 train (23.9 h).
+- **Totals:** 142,525 training clips (about 158 h) and 12,022 test clips. AWS so far: about $19.50
+  of the $25 month, so training runs on the Mac.
+- **Gotchas:**
+  - A Kokoro process grows about 7 GB per thousand clips: three reached 19 GB each, filled 36 GB of
+    swap and took the disk from 52 to 13 GB free. The runner now starts a fresh process every 500.
+  - `pkill -f run_kokoro.sh` also kills anything whose command line names the script, the
+    scheduled morning stop among them; it never fired and Kokoro was stopped by hand at 10:06.
+  - `cloud.py watch` pulls the job's log with rsync, which replaces the file, so `tail -F` on it
+    replays the whole log; watch the pulled clip count instead.
+  - Disk: the Windows VM was 235 GB; shutting it down (not suspended) freed 8 GB and deleting its
+    `pre-bo2-reference` snapshot 36 GB. Compacting frees nothing until Windows itself deletes data.
