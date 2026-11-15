@@ -202,6 +202,15 @@ pub struct Arsenal {
     pub throwback: Option<&'static WeaponDef>,
     /// Specialties given outside the class (Zombies' perks, `sim::perks`).
     pub granted: Specialties,
+    /// The pooled counts as the last [`Arsenal::pool_ammo`] left them: per pool (`true` a
+    /// magazine, `false` a stock; the weapon it is registered under), the count.
+    pub pools: Vec<(bool, &'static str, u16)>,
+    /// Weapons owned on an action slot but not in hand (`giveweapon` + `setactionslot`: TranZit's
+    /// claymores, the equipment), each with its own clip.
+    pub items: Vec<WeaponState>,
+    /// The weapon in hand that came out of [`Arsenal::items`] (its action slot's press), to go
+    /// back there.
+    pub item_up: Option<&'static WeaponDef>,
     /// The tuning pack's perk multipliers, taken when the kit was made (the pack is loaded once at
     /// init, identically on every client).
     pub tuning: Tuning,
@@ -213,6 +222,7 @@ crate::statehash::state_hash!(struct Arsenal {
     loadout, weapons, active, lethal, tactical, melee, class_melee, raise_left, raise_total, raise_kind, drop_left,
     drop_total, previous, alt_pending, ads, sights, since_sprint, melee_left, melee_recover_left, melee_delay_left, offhand,
     plant_ok, aim_spread, spread_in, shot_scale, swaps_pending, held_last, since_reload_press, cooked, throwback, granted,
+    pools, items, item_up,
 } skip { tuning });
 
 /// One of BO2's weapon-state families, each of which a specialty speeds up (Ghidra G3,
@@ -282,6 +292,9 @@ impl Arsenal {
             cooked: 0.0,
             throwback: None,
             granted: Specialties::NONE,
+            pools: Vec::new(),
+            items: Vec::new(),
+            item_up: None,
             tuning: crate::tuning::get(),
         }
     }
@@ -374,6 +387,9 @@ impl Arsenal {
             cooked: 0.0,
             throwback: None,
             granted: Specialties::NONE,
+            pools: Vec::new(),
+            items: Vec::new(),
+            item_up: None,
             tuning: crate::tuning::get(),
         }
     }
@@ -604,9 +620,10 @@ impl Arsenal {
     }
 
     /// Sprint length multiplier: the weapon's `sprintDurationScale`, x `perk_sprintMultiplier`
-    /// with `longersprint` (`FUN_008bcfe0`; G2).
+    /// with `longersprint` (`FUN_008bcfe0`; G2). Its 0 (the jetgun, the Galvaknuckles) is no sprint
+    /// at all with that weapon up: the engine takes the product as it is.
     pub fn sprint_scale(&self) -> f32 {
-        let d = self.current().def.sprint_duration_scale.max(0.1);
+        let d = self.current().def.sprint_duration_scale.max(0.0);
         d * if self.has_specialty(Specialty::LongerSprint) { self.tuning.perk_sprint_multiplier } else { 1.0 }
     }
 
@@ -636,6 +653,66 @@ impl Arsenal {
             self.weapons.push(item);
             self.switch_to(self.weapons.len() - 1);
         }
+    }
+
+    /// `giveweapon` of an action-slot item (`claymore_setup`): own `def` with `count` in its clip
+    /// (it is clip-only), not in hand. Owning it already, the count is set.
+    pub fn give_item(&mut self, def: &'static WeaponDef, count: u16) {
+        if let Some(w) = self.weapons.iter_mut().chain(self.items.iter_mut()).find(|w| w.main.id == def.id) {
+            w.ammo = count;
+            return;
+        }
+        let mut item = WeaponState::new(def);
+        item.ammo = count;
+        item.reserve = 0;
+        self.items.push(item);
+    }
+
+    /// The owned item `def`'s count, in hand or not; `None` when he has none.
+    pub fn item_count(&self, def: &WeaponDef) -> Option<u16> {
+        let in_hand = self.weapons.iter().find(|w| w.main.id == def.id && self.item_up.is_some_and(|u| u.id == def.id));
+        in_hand.or_else(|| self.items.iter().find(|w| w.main.id == def.id)).map(|w| w.ammo)
+    }
+
+    /// The press of the action slot holding item `def` (`+actionslot 4` on a `"weapon"` slot):
+    /// it comes up as the weapon in hand, the weapon up going away first. Nothing when it is
+    /// already up, none is left, or another item is in hand.
+    pub fn raise_owned_item(&mut self, def: &WeaponDef) -> bool {
+        if self.item_up.is_some() || self.current().def.class == Class::Item {
+            return false;
+        }
+        let Some(i) = self.items.iter().position(|w| w.main.id == def.id && w.ammo > 0) else { return false };
+        let mut item = self.items.remove(i);
+        item.raised_once = true;
+        self.item_up = Some(item.main);
+        self.weapons.push(item);
+        self.switch_to(self.weapons.len() - 1);
+        true
+    }
+
+    /// The owned item in hand goes back to [`Arsenal::items`] and the weapon before it comes up
+    /// (BO2 switches off an item with no ammo, and the weapon cycle never holds one).
+    pub fn stow_item(&mut self) {
+        let Some(up) = self.item_up else { return };
+        let Some(i) = self.weapons.iter().position(|w| w.main.id == up.id) else {
+            self.item_up = None;
+            return;
+        };
+        let back = self.weapons[self.previous.min(self.weapons.len() - 1)].main.id.clone();
+        let mut item = self.weapons.remove(i);
+        item.interrupt();
+        item.cooldown = 0.0;
+        self.items.push(item);
+        self.item_up = None;
+        let to = self.weapons.iter().position(|w| w.main.id == back).unwrap_or(0);
+        self.active = to;
+        self.previous = to;
+        let def = self.current().def;
+        (self.raise_left, self.raise_kind) = (def.raise_time, RaiseKind::Normal);
+        self.raise_total = self.raise_left;
+        self.drop_left = 0.0;
+        self.drop_total = 0.0;
+        self.ads = 0.0;
     }
 
     /// Whether the script weapon `def` is up and done raising (BO2's `weapon_change_complete`).
@@ -942,10 +1019,72 @@ impl Arsenal {
         weapon_or_none(id).map_or(0, |d| count.unwrap_or(d.start_reserve.max(1)))
     }
 
+    /// BO2's pooled ammo: the held weapons (each mode with ammo of its own) whose stock or magazine
+    /// is registered under the same weapon ([`super::stock_owner`], [`super::clip_owner`]) carry
+    /// one count, as the engine's shared ammo index does. Whatever changed a member since the last
+    /// call (a shot, a reload, a refill) carries its count to the rest; a pool just formed takes
+    /// its fullest member's. Run at the top of each frame, before anything reads the counts.
+    pub fn pool_ammo(&mut self) {
+        // Each member: (magazine?, owner, weapon index, alt mode?).
+        let mut members: Vec<(bool, &'static str, usize, bool)> = Vec::new();
+        for (i, w) in self.weapons.iter().enumerate() {
+            // One entry per weapon: BO2 never holds a weapon twice.
+            if self.weapons[..i].iter().any(|o| o.main.id == w.main.id) {
+                continue;
+            }
+            let modes = std::iter::once((w.main, false)).chain(w.alt_mode.filter(|_| w.alt_owns_ammo()).map(|a| (a, true)));
+            for (def, alt) in modes {
+                members.push((false, super::stock_owner(def), i, alt));
+                members.push((true, super::clip_owner(def), i, alt));
+            }
+        }
+        let mut pools = Vec::new();
+        for (k, &(clip, owner, ..)) in members.iter().enumerate() {
+            if members[..k].iter().any(|m| m.0 == clip && m.1 == owner) {
+                continue;
+            }
+            let group: Vec<(usize, bool)> = members.iter().filter(|m| m.0 == clip && m.1 == owner).map(|m| (m.2, m.3)).collect();
+            // A weapon and its own alt mode under one name trade magazines by the toggle itself.
+            if group.len() < 2 || group.iter().all(|g| g.0 == group[0].0) {
+                continue;
+            }
+            let counts: Vec<u16> = group.iter().map(|&(i, alt)| self.mode_count(i, alt, clip)).collect();
+            let last = self.pools.iter().find(|p| p.0 == clip && p.1 == owner).map(|p| p.2);
+            let count = match last {
+                Some(last) => counts.iter().copied().find(|&c| c != last).unwrap_or(last),
+                None => counts.iter().copied().max().unwrap_or(0),
+            };
+            for &(i, alt) in &group {
+                *self.mode_count_mut(i, alt, clip) = count;
+            }
+            pools.push((clip, owner, count));
+        }
+        self.pools = pools;
+    }
+
+    /// Weapon `i`'s magazine (`clip`) or stock for its main mode or its own-ammo alt mode.
+    fn mode_count(&self, i: usize, alt: bool, clip: bool) -> u16 {
+        let w = &self.weapons[i];
+        let (ammo, reserve) = if alt == w.alt_up() { (w.ammo, w.reserve) } else { (w.alt_ammo, w.alt_reserve) };
+        if clip { ammo } else { reserve }
+    }
+
+    fn mode_count_mut(&mut self, i: usize, alt: bool, clip: bool) -> &mut u16 {
+        let w = &mut self.weapons[i];
+        let up = alt == w.alt_up();
+        match (up, clip) {
+            (true, true) => &mut w.ammo,
+            (true, false) => &mut w.reserve,
+            (false, true) => &mut w.alt_ammo,
+            (false, false) => &mut w.alt_reserve,
+        }
+    }
+
     /// Advance one logic frame. `stance` is 0 stand, 1 crouch, 2 prone; `speed` the ground speed.
     #[allow(clippy::too_many_arguments)]
     pub fn step(&mut self, held: u32, pressed: u32, sprinting: bool, stance: usize, speed: f32, rng: &mut Rng, out: &mut Vec<WeaponAction>) {
         let dt = LOGIC_DT;
+        self.pool_ammo();
         let pressed = pressed | (held & !self.held_last);
         let released = self.held_last & !held;
         self.held_last = held;
@@ -1055,7 +1194,12 @@ impl Arsenal {
             self.swaps_pending = 0;
         }
         let swaps = if self.swaps_pending > 0 { self.swaps_pending as usize } else { (pressed & buttons::SWAP_WEAPON != 0) as usize };
-        if swaps > 0 && self.weapons.len() > 1 && !held_back && !self.alt_pending {
+        // The weapon cycle never holds an item: a swap with one up puts it away.
+        if swaps > 0 && self.item_up.is_some() && !held_back && !self.alt_pending {
+            self.swaps_pending = 0;
+            self.stow_item();
+            out.push(WeaponAction::Swapped);
+        } else if swaps > 0 && self.weapons.len() > 1 && !held_back && !self.alt_pending {
             self.swaps_pending = 0;
             let next = (self.active + swaps) % self.weapons.len();
             if next != self.active {
@@ -1179,6 +1323,27 @@ impl Arsenal {
                 } else {
                     out.push(WeaponAction::DryFire);
                 }
+            }
+            return;
+        }
+        // An item fires once per press when it is up: planted or thrown as a grenade (its `place`),
+        // its clip being its count. The last one gone, an owned item is put away once its fire time
+        // has run (BO2 switches off an item with no ammo).
+        if def.class == Class::Item {
+            let blocked = sprinting || !sprint_ready || self.raise_left > 0.0 || self.drop_left > 0.0 || self.melee_left > 0.0 || self.melee_recover_left > 0.0;
+            let fire_tick = self.tick(Timing::Fire);
+            let w = self.current_mut();
+            let was = w.cooldown;
+            w.cooldown = (w.cooldown - fire_tick).max(0.0);
+            if pressed & buttons::FIRE != 0 && !blocked && w.cooldown <= 0.0 && w.ammo > 0 {
+                w.ammo -= 1;
+                w.cooldown = def.fire_time;
+                out.push(match def.place {
+                    Place::Plant => WeaponAction::Plant { def },
+                    _ => WeaponAction::Throw { def, fuse_left: def.fuse_time, lethal: false },
+                });
+            } else if was > 0.0 && w.cooldown <= 0.0 && w.ammo == 0 && self.item_up.is_some() {
+                self.stow_item();
             }
             return;
         }

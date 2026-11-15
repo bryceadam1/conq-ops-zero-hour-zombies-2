@@ -576,7 +576,10 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             d.shield = Some(geometry);
         }
     }
-    let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
+    // The default `xanim` (`code_post_gfx_zm`'s `void`), for a clip the install does not define.
+    let code_zm = crate::paks::load_zone(bo2_dir, "code_post_gfx_zm")?;
+    let void = viewmodels::find_anim(&[&code_zm], zhbo_conformance::bo2::install::DEFAULT_XANIM);
+    let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count, void.as_ref())?;
     summary.push(vm_summary);
     // The weapon emblem: each faction's Zero Hour logo, from the player's own Zero Hour install.
     match zhbo_requirements::check_requirements().zero_hour {
@@ -1049,7 +1052,7 @@ mod tests {
         let ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
         for (i, id) in ids.iter().enumerate() {
             let mut out = BTreeMap::new();
-            match weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut defs, std::slice::from_ref(id), 1) {
+            match weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut defs, std::slice::from_ref(id), 1, None) {
                 Ok((summary, clips)) => {
                     let d = defs.iter().find(|d| &d.id == id).unwrap();
                     let models = out.keys().filter(|k| k.contains("_SKN")).count();
@@ -1126,7 +1129,7 @@ mod tests {
         let paks = Paks::open(&bo2_dir).unwrap();
         let mut defs = vec![crate::weapons::to_def(pk, &names)];
         let mut out = BTreeMap::new();
-        let (_, clips) = weapon_viewmodels(&pool, &zones, &paks, &mut out, &pooled, &atts, &mut defs, std::slice::from_ref(&pk.name), 1).unwrap();
+        let (_, clips) = weapon_viewmodels(&pool, &zones, &paks, &mut out, &pooled, &atts, &mut defs, std::slice::from_ref(&pk.name), 1, None).unwrap();
         assert!(!clips.is_empty(), "the Peacekeeper's clips convert from common_patch_mp");
     }
 
@@ -1265,7 +1268,7 @@ mod tests {
                     fails.extend(zhbo_core::conformance::check(Box::leak(Box::new(c))));
                 }
                 let mut out = BTreeMap::new();
-                match weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut t.weapons, std::slice::from_ref(&id), 1) {
+                match weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut t.weapons, std::slice::from_ref(&id), 1, None) {
                     Ok((summary, clips)) => {
                         let has_model = base_weapon(&bo2, &base.id).attachment_uniques.iter().any(|u| u.combined == 0 && u.view_model.is_some() && crate::weapons::short_name(&base.allowed.iter().find(|(s, _)| s == short).unwrap().1) == *short && w_kind(&bo2, &base.id, short) == Some(u.kind));
                         if has_model && !summary.contains("attachment model") {

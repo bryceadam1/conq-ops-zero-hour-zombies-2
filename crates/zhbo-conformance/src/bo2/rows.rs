@@ -61,18 +61,31 @@ pub struct Expected<'a> {
     materials: std::cell::RefCell<HashMap<String, String>>,
     /// The melee weapon a gun strikes with: MP's class knife, or a survivor's (`with_melee`).
     class_melee: &'static str,
+    /// The model a riot shield is carried as: MP's engine literal (`refreshshieldattachment`), or
+    /// `None` where the scripts attach it themselves (`zombies`).
+    shield_carry: Option<&'static str>,
 }
 
 impl<'a> Expected<'a> {
     pub fn new(install: &'a Install) -> Expected<'a> {
         let atts = install.attachments();
-        Expected { install, variants: install.variants(), default_att: atts.get("defaultattachment").copied(), materials: Default::default(), class_melee: "knife_mp" }
+        Expected { install, variants: install.variants(), default_att: atts.get("defaultattachment").copied(), materials: Default::default(), class_melee: "knife_mp", shield_carry: Some(SHIELD_CARRY_MODEL) }
     }
 
     /// The same with `melee` the weapon a gun strikes with (Zombies' `zombie_melee_weapon_player_init`,
     /// TranZit's `knife_zm`, `zm_transit.gsc:1853`).
     pub fn with_melee(mut self, melee: &'static str) -> Expected<'a> {
         self.class_melee = melee;
+        self
+    }
+
+    /// Zombies' riot shield: no Zombies script calls `refreshshieldattachment` (only MP's
+    /// `_riotshield.gsc` does), so the engine's `t6_wpn_shield_carry_world` is never attached;
+    /// `_zm_riotshield.gsc` attaches `level.carriedshieldmodel[ damage level ]` on
+    /// `tag_weapon_left` itself (`updateriotshieldmodel`), whose undamaged model,
+    /// `t6_wpn_zmb_shield_world` (`:24`), is the def's own `worldModel`.
+    pub fn with_scripted_shield(mut self) -> Expected<'a> {
+        self.shield_carry = None;
         self
     }
 
@@ -528,8 +541,11 @@ impl<'a> Expected<'a> {
         // the weapon up (`FUN_00967450`: the literal `t6_wpn_shield_carry_world` on
         // `tag_weapon_left`), and its `worldModel` (`t6_wpn_shield_pickup_world`) is the dropped
         // pickup's only.
-        if d.weap_type() == RIOTSHIELD {
-            b.text("world_model", SHIELD_CARRY_MODEL);
+        if let Some(carry) = self.shield_carry.filter(|_| d.weap_type() == RIOTSHIELD) {
+            b.text("world_model", carry);
+            part_cols(&mut b, "world_part", &[]);
+        } else if d.weap_type() == RIOTSHIELD {
+            b.opt_text("world_model", d.world_model());
             part_cols(&mut b, "world_part", &[]);
         } else {
             b.opt_text("world_model", d.world_model());
@@ -542,7 +558,7 @@ impl<'a> Expected<'a> {
         for (s, name) in cols::ANIM_SLOTS.iter().enumerate().skip(1) {
             // The ADS-in/out slots play only through the ADS layer (`resolve::ads_layer_runs`).
             let unplayed = (cols::is_left_slot(s) && !dw) || (cols::is_ads_layer_slot(s) && !ads_layer);
-            let clip = if unplayed { None } else { table.get(s).cloned().flatten() };
+            let clip = if unplayed { None } else { table.get(s).cloned().flatten().map(|c| self.install.played_anim(c)) };
             b.opt_text(&format!("anim_{name}"), clip);
         }
         debug_assert_eq!(table.len(), ANIMS);

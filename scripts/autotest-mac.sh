@@ -94,7 +94,9 @@
 #                                      and buys it (ZHBO_AUTOPILOT=wallbuy). With --shop he starts with
 #                                      20000 points and goes on: Pack-a-Punches the gun (knuckle crack,
 #                                      takes the upgrade), drinks Jugger-Nog from its bottle, pulls the
-#                                      Mystery Box and takes its weapon. Needs a Skirmish.ini (play
+#                                      Mystery Box and takes its weapon. With --claymores he only
+#                                      buys claymores and plants both from action slot 4. Needs a
+#                                      Skirmish.ini (play
 #                                      one skirmish first); back it up, the leg rewrites its map
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
@@ -136,6 +138,7 @@ mode=autopilot
 [[ "${1:-}" == "--defeat" ]] && mode=defeat
 [[ "${1:-}" == "--zombies" ]] && mode=zombies
 [[ "${1:-}" == "--shop" ]] && { mode=zombies; shop=1; }
+[[ "${1:-}" == "--claymores" ]] && { mode=zombies; shop=2; }
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="${DIST:-$HOME/Library/Application Support/ConquerOps/dist}"
@@ -960,6 +963,9 @@ if [[ "$mode" == "zombies" ]]; then
     export GGC_BGFX_SCREENSHOT_AFTER=60 GGC_BGFX_SCREENSHOT_INTERVAL=${SHOT_INTERVAL:-30} GGC_BGFX_SCREENSHOT_PATH="$out/shot.bmp"
     if [[ "${shop:-0}" == 1 ]]; then
         export ZHBO_AUTOPILOT_ZOMBIE_POINTS=20000 GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS_SHOP:-90}
+        export ZHBO_AUTOPILOT_SHOP="wall buy,Jugger-Nog,Mystery Box,Pack-a-Punch"
+    elif [[ "${shop:-0}" == 2 ]]; then
+        export ZHBO_AUTOPILOT_ZOMBIE_POINTS=20000 ZHBO_AUTOPILOT_SHOP=claymores GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS_SHOP:-60}
     fi
     "$dist/conquerops" -win -xres 1280 -yres 720 -quickstart >"$out/stdout.txt" 2>&1
     wait_for_log "autopilot zombies: survivor" 120 || { echo "no survivor went into first person; see $log" >&2; exit 1; }
@@ -975,8 +981,10 @@ if [[ "$mode" == "zombies" ]]; then
     check "round 1 began" "zombies: round 1: [0-9]+ zombies"
     check "wall buys stood with props" "zombies: [0-9]+ wall buys around each of [0-9]+ starts, [1-9][0-9]* props stood"
     check "the survivor in first person" "General [0-9]+ entered first-person control"
-    check "reached a wall buy" "autopilot wallbuy: at the wall buy"
-    check "bought from it" "zombies: General [0-9]+ bought [a-z0-9_]+ for [0-9]+"
+    if [[ "${shop:-0}" != 2 ]]; then
+        check "reached a wall buy" "autopilot wallbuy: at the wall buy"
+        check "bought from it" "zombies: General [0-9]+ bought [a-z0-9_]+ for [0-9]+"
+    fi
     if [[ "${shop:-0}" == 1 ]]; then
         check "Pack-a-Punch took the gun" "zombies: General [0-9]+ packs [a-z0-9_]+ into [a-z0-9_]+_upgraded_zm"
         check "...and gave the upgrade" "zombies: General [0-9]+ took [a-z0-9_]+upgraded_zm$"
@@ -984,6 +992,9 @@ if [[ "$mode" == "zombies" ]]; then
         check "...and drank it" "zombies: General [0-9]+ drank specialty_armorvest"
         check "pulled the Mystery Box" "zombies: General [0-9]+ pulls the Mystery Box"
         check "...and took its weapon" "zombies: General [0-9]+ took [a-z0-9_]+ from the box|the teddy bear"
+    elif [[ "${shop:-0}" == 2 ]]; then
+        check "bought claymores" "zombies: General [0-9]+ bought claymore_zm for [0-9]+"
+        if [[ $(grep -cE "General [0-9]+ plants claymore_zm from his hand" "$l") -ge 2 ]]; then printf '%-34s PASS\n' "...raised and planted both"; else printf '%-34s FAIL\n' "...raised and planted both"; ok=1; fi
     fi
     for f in "$out"/shot.*.bmp; do [[ -f "$f" ]] && sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null && rm "$f"; done
     grep -E "zombies|autopilot" "$l" | head -20

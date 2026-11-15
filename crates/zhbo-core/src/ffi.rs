@@ -579,6 +579,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
                     command,
                     wallbuy,
                     voice_file: config.autopilot_voice.clone(),
+                    shop_only: config.autopilot_shop.clone(),
                     ..Default::default()
                 });
             }

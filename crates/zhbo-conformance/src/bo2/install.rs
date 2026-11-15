@@ -21,6 +21,10 @@ pub struct Install {
     pub strings: HashMap<String, String>,
 }
 
+/// The default `xanim` asset (`code_post_gfx_zm`'s first): what an animation the install does not
+/// define plays.
+pub const DEFAULT_XANIM: &str = "void";
+
 /// The localized string zones a multiplayer session loads, in load order.
 const STRING_ZONES: &[&str] = &["code_pre_gfx_mp", "code_post_gfx_mp", "ui_mp", "common_mp", "patch_mp", "patch_ui_mp"];
 
@@ -63,6 +67,21 @@ impl Install {
 
     fn pool(&self) -> [&Zone; 3] {
         [&self.common, &self.common_patch, &self.patch]
+    }
+
+    /// The clip BO2 plays for an animation named `name`: it, when a zone of the pool defines it;
+    /// else the type's default asset, `void` (the first `xanim` of the code zones,
+    /// `code_post_gfx_zm`), which a reference stub with nothing behind it resolves to
+    /// (`DB_LinkXAssetEntry`, `FUN_00597000`: TranZit's `viewmodel_m1911_dw_putaway_empty` is only
+    /// `zm_transit_patch`'s `,` stub).
+    pub fn played_anim(&self, name: String) -> String {
+        let kind = zhbo_formats::fastfile::ASSET_XANIM;
+        let real = |z: &Zone| z.find(kind, &name).and_then(|a| z.asset_name(a)).is_some_and(|n| !n.starts_with(','));
+        if self.pool().iter().any(|z| real(z)) {
+            name
+        } else {
+            DEFAULT_XANIM.to_string()
+        }
     }
 
     /// Every `WeaponVariantDef` by name, as the asset pool holds it (`pool`).

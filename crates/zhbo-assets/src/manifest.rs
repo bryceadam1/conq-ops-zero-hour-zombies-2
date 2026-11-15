@@ -9,7 +9,7 @@ use zhbo_core::weapons::{Effect, Kind, Place};
 /// here.
 pub fn equipment_kind_of(name: &str) -> Kind {
     match name {
-        "claymore_mp" => Kind::Claymore,
+        "claymore_mp" | "claymore_zm" => Kind::Claymore,
         "bouncingbetty_mp" => Kind::Betty,
         "satchel_charge_mp" => Kind::C4,
         "proximity_grenade_mp" => Kind::Shock,
@@ -23,7 +23,7 @@ pub fn equipment_kind_of(name: &str) -> Kind {
 /// How an offhand item is used.
 pub fn place_of(name: &str) -> Place {
     match name {
-        "claymore_mp" | "bouncingbetty_mp" | "trophy_system_mp" | "tactical_insertion_mp" => Place::Plant,
+        "claymore_mp" | "claymore_zm" | "bouncingbetty_mp" | "trophy_system_mp" | "tactical_insertion_mp" => Place::Plant,
         "pda_hack_mp" => Place::Hack,
         _ => Place::Throw,
     }

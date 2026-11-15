@@ -476,6 +476,55 @@ impl Tombstone {
     }
 }
 
+/// TranZit's claymores (`zombies.ini` `[Claymore]`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Claymore {
+    pub weapon: String,
+    /// In BO2 inches.
+    pub radius: f32,
+    /// In degrees.
+    pub cone_angle: f32,
+    /// In BO2 inches.
+    pub min_dist: f32,
+    pub grace: f32,
+    pub max_per_player: usize,
+    pub over_limit_delay: f32,
+}
+
+impl Claymore {
+    pub fn parse(text: &str) -> Claymore {
+        let mut c = Claymore::default();
+        let mut in_section = false;
+        for line in text.lines() {
+            let line = line.split(';').next().unwrap_or("").trim();
+            if line.starts_with('[') {
+                in_section = line.eq_ignore_ascii_case("[Claymore]");
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=').filter(|_| in_section) else { continue };
+            let (key, value) = (key.trim(), value.trim());
+            let num = || value.parse::<f32>().unwrap_or(0.0);
+            match key {
+                "Weapon" => c.weapon = value.to_string(),
+                "Radius" => c.radius = num(),
+                "ConeAngle" => c.cone_angle = num(),
+                "MinDist" => c.min_dist = num(),
+                "Grace" => c.grace = num(),
+                "MaxPerPlayer" => c.max_per_player = num() as usize,
+                "OverLimitDelay" => c.over_limit_delay = num(),
+                _ => {}
+            }
+        }
+        c
+    }
+
+    /// The shipped `zombies.ini`'s.
+    pub fn get() -> &'static Claymore {
+        static C: std::sync::OnceLock<Claymore> = std::sync::OnceLock::new();
+        C.get_or_init(|| Claymore::parse(SHIPPED))
+    }
+}
+
 /// Pack-a-Punch (`zombies.ini` `[PackAPunch]`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PackAPunch {

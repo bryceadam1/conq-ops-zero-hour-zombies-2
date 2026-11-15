@@ -26,7 +26,7 @@ pub enum Equipment {
 crate::statehash::state_hash!(enum Equipment { BuildTool });
 
 /// What one action slot holds (BO2's `setactionslot` kinds the mod uses).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum ActionSlot {
     #[default]
     Empty,
@@ -34,15 +34,18 @@ pub enum ActionSlot {
     AltMode,
     /// `"weapon"`: an equipment item.
     Equipment { item: Equipment },
+    /// `"weapon"`: an item weapon its press brings up (TranZit's claymores in slot 4,
+    /// `_zm_weap_claymore.gsc` `claymore_setup`).
+    Weapon { def: &'static crate::weapons::WeaponDef },
 }
 
-crate::statehash::state_hash!(enum ActionSlot { Empty, AltMode, Equipment { item } });
+crate::statehash::state_hash!(enum ActionSlot { Empty, AltMode, Equipment { item }, Weapon { def } });
 
 /// The input button of each slot (index 0 is slot 1). Slot 3's button is the alt-mode toggle.
 pub const BUTTONS: [u32; 4] = [buttons::ACTION_SLOT_1, buttons::ACTION_SLOT_2, buttons::ALT_MODE, buttons::ACTION_SLOT_4];
 
 /// A player's four action slots (index 0 is slot 1).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ActionSlots {
     pub slots: [ActionSlot; 4],
 }
@@ -68,6 +71,19 @@ impl ActionSlots {
     /// Whether any slot holds `item`.
     pub fn holds(&self, item: Equipment) -> bool {
         self.slot_of(item).is_some()
+    }
+
+    /// The item weapon whose slot `pressed` presses, if any.
+    pub fn weapon_pressed(&self, pressed: u32) -> Option<&'static crate::weapons::WeaponDef> {
+        self.slots.iter().zip(BUTTONS).find_map(|(s, b)| match s {
+            ActionSlot::Weapon { def } if pressed & b != 0 => Some(*def),
+            _ => None,
+        })
+    }
+
+    /// Whether a slot holds item weapon `id` (BO2's `is_player_placeable_mine`).
+    pub fn holds_weapon(&self, id: &str) -> bool {
+        self.slots.iter().any(|s| matches!(s, ActionSlot::Weapon { def } if def.id == id))
     }
 }
 

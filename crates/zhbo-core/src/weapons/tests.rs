@@ -1189,3 +1189,86 @@ fn a_switch_press_with_one_weapon_is_not_carried() {
     assert!(a.current().def.is_shield(), "the shield stays up");
     assert!(!out.contains(&WeaponAction::Swapped), "{out:?}");
 }
+
+/// BO2's shared ammo (`FUN_008e2760`): two held weapons that share under one ammo name carry one
+/// stock, whichever spends it; a weapon that does not share keeps its own.
+#[test]
+fn weapons_that_share_ammo_carry_one_stock() {
+    let a_def = def(|d| {
+        d.id = "share_a_zm".into();
+        d.clip = 30;
+        d.shared_ammo = true;
+        d.ammo_name = "5.56 test".into();
+        d.clip_name = "share_a".into();
+    });
+    let b_def = def(|d| {
+        d.id = "share_b_zm".into();
+        d.clip = 30;
+        d.shared_ammo = true;
+        d.ammo_name = "5.56 test".into();
+        d.clip_name = "share_b".into();
+    });
+    let mut a = arsenal_with(a_def);
+    a.weapons[0].reserve = 90;
+    a.weapons[1] = WeaponState::new(b_def);
+    a.weapons[1].reserve = 60;
+    a.pool_ammo();
+    assert_eq!((a.weapons[0].reserve, a.weapons[1].reserve), (90, 90), "a pool just formed takes its fullest");
+    a.weapons[1].reserve = 45;
+    a.pool_ammo();
+    assert_eq!(a.weapons[0].reserve, 45, "what one spends, the other no longer has");
+    assert_eq!((a.weapons[0].ammo, a.weapons[1].ammo), (30, 30), "their clips are their own (two clip names)");
+    let own = def(|d| {
+        d.id = "own_zm".into();
+        d.clip = 30;
+        d.ammo_name = "5.56 test".into();
+    });
+    a.weapons[1] = WeaponState::new(own);
+    a.weapons[1].reserve = 10;
+    a.pool_ammo();
+    assert_eq!((a.weapons[0].reserve, a.weapons[1].reserve), (45, 10), "one that does not share keeps its own");
+}
+
+/// TranZit's claymores: given on the side, brought up by their slot, planted one per press, and
+/// put away with the last one gone.
+#[test]
+fn an_owned_item_comes_up_plants_and_goes_away_when_spent() {
+    let claymore = def(|d| {
+        d.id = "claymore_zm".into();
+        d.class = Class::Item;
+        d.place = Place::Plant;
+        d.clip = 2;
+        d.fire_time = 0.5;
+        d.raise_time = 0.2;
+        d.drop_time = 0.1;
+        d.first_raise_time = 0.2;
+        d.specific_use = true;
+    });
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
+    a.raise_left = 0.0;
+    let gun = a.current().main.id.clone();
+    a.give_item(claymore, 2);
+    assert_eq!(a.weapons.len(), 2, "not in the weapon cycle");
+    assert_eq!(a.item_count(claymore), Some(2));
+    assert!(a.raise_owned_item(claymore));
+    let mut rng = Rng::new(1);
+    frames(&mut a, 0, 30, &mut rng);
+    assert_eq!(a.current().main.id, "claymore_zm");
+    let mut out = Vec::new();
+    for _ in 0..2 {
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        frames(&mut a, 0, 20, &mut rng);
+    }
+    assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Plant { .. })).count(), 2);
+    frames(&mut a, 0, 5, &mut rng);
+    assert_eq!(a.current().main.id, gun, "spent: the gun back up");
+    assert_eq!(a.item_count(claymore), Some(0));
+    assert!(!a.raise_owned_item(claymore), "none left: nothing comes up");
+    a.give_item(claymore, 2);
+    assert!(a.raise_owned_item(claymore));
+    frames(&mut a, 0, 30, &mut rng);
+    let mut out = Vec::new();
+    a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+    assert_eq!(a.current().main.id, gun, "a swap puts it away");
+    assert_eq!(a.item_count(claymore), Some(2));
+}

@@ -68,6 +68,11 @@ pub fn offer(p: &PlayerSim, b: &WallBuy) -> Offer {
     let Some(def) = crate::weapons::weapon_or_none(&b.weapon) else { return Offer::Nothing };
     // `trigger_hide_all`: a melee weapon bought, every melee buy is hidden from him.
     let melee_bought = WallBuys::get().buys.iter().any(|m| m.flourish.is_some() && p.arsenal.class_melee.id == m.weapon);
+    // `claymore_unitrigger_update_prompt`: an action-slot item he has offers nothing (its buys are
+    // hidden from him, `buy_claymores`).
+    if def.class == crate::weapons::Class::Item {
+        return if p.action_slots.holds_weapon(&b.weapon) { Offer::Nothing } else { Offer::Weapon { cost: b.cost() } };
+    }
     let has = if is_melee(def) {
         if melee_bought {
             return Offer::Nothing;
@@ -104,6 +109,12 @@ pub fn give(p: &mut PlayerSim, def: &'static crate::weapons::WeaponDef) {
         crate::weapons::Class::Tactical | crate::weapons::Class::Equipment => {
             p.arsenal.tactical = crate::weapons::Offhand { def, count: def.start_reserve.max(1) };
             p.arsenal.loadout.tactical = def.id.clone();
+        }
+        // `claymore_setup`: given, on action slot 4 (`setactionslot( 4, "weapon", ... )`), a full
+        // clip (`setweaponammostock` does nothing to a clip-only weapon).
+        crate::weapons::Class::Item => {
+            p.arsenal.give_item(def, def.clip);
+            p.action_slots.slots[3] = crate::weapons::actionslot::ActionSlot::Weapon { def };
         }
         _ => {
             let item = Carried { def, clip: def.clip, stock: def.start_reserve, alt_clip: 0, alt_stock: 0, options: WeaponOptions::default() };

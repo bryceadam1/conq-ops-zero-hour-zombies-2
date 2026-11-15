@@ -66,6 +66,9 @@ pub struct Config {
     /// were the microphone (`client::Autopilot::voice_due`, docs/COMMANDS.md section 11). Script
     /// only; presentation only.
     pub autopilot_voice: Option<String>,
+    /// `ZHBO_AUTOPILOT_SHOP`: the shopping run's steps by name, comma-separated
+    /// (`client::autopilot::SHOP_STEPS`); unset, all of them. Script only.
+    pub autopilot_shop: Option<String>,
 }
 
 impl Config {
@@ -80,6 +83,7 @@ impl Config {
             mp_rounds: 1,
             state_hash_log: false,
             autopilot_voice: None,
+            autopilot_shop: None,
         }
     }
 
@@ -92,6 +96,7 @@ impl Config {
             mp_rounds: env("ZHBO_AUTOPILOT_ROUNDS").and_then(|v| v.trim().parse().ok()).filter(|&n| n >= 1).unwrap_or(1),
             state_hash_log: flag(env("ZHBO_STATE_HASH_LOG")),
             autopilot_voice: env("ZHBO_AUTOPILOT_VOICE").filter(|v| !v.trim().is_empty()).map(str::to_string),
+            autopilot_shop: env("ZHBO_AUTOPILOT_SHOP").filter(|v| !v.trim().is_empty()).map(str::to_string),
             ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT"))
         }
     }
@@ -172,7 +177,7 @@ pub fn init(config: Config) {
 /// once locked the defaults in, so `init` silently dropped every variable it parsed.
 pub fn get() -> &'static Config {
     static DEFAULT: Config =
-        Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0, mp_role: MpRole::Shooter, mp_rounds: 1, state_hash_log: false, autopilot_voice: None };
+        Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0, mp_role: MpRole::Shooter, mp_rounds: 1, state_hash_log: false, autopilot_voice: None, autopilot_shop: None };
     CONFIG.get().unwrap_or(&DEFAULT)
 }
 

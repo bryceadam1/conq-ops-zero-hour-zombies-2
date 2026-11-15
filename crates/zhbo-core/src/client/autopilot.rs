@@ -170,8 +170,10 @@ pub struct Autopilot {
     pub(crate) wall_aim: Option<(f32, f32, f32)>,
     pub(crate) wall_in_reach: bool,
     pub(crate) wall_used: Option<f32>,
-    /// The shopping run's step ([`SHOP_STEPS`]), set back to the wall buy for each run.
+    /// The shopping run's step (of [`Autopilot::shop_steps`]), set back to the first for each run.
     pub(crate) shop_step: usize,
+    /// The shopping run's steps by name (`ZHBO_AUTOPILOT_SHOP`); `None`, all of [`SHOP_STEPS`].
+    pub shop_only: Option<String>,
     /// The classpick script's next action and whether the previous key still needs a release frame
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
@@ -300,10 +302,28 @@ pub const COMMAND_LINES: [(f32, &str); 10] = [
 /// The shopping run's steps: what it walks to, when (after the first press) it presses again to
 /// take what waits, and when it goes on: the wall buy, Jugger-Nog (the drink; it also keeps him up
 /// for the rest), the Mystery Box (the weapon floats after 4 s), Pack-a-Punch (the gun comes out
-/// after 3.35 s).
-pub const SHOP_STEPS: [(&str, Option<f32>, f32); 4] = [("wall buy", None, 3.0), ("Jugger-Nog", None, 5.0), ("Mystery Box", Some(4.6), 6.5), ("Pack-a-Punch", Some(4.2), 6.0)];
+/// after 3.35 s), the claymores (raised by action slot 4 half a second after the buy, both
+/// planted). A run takes the steps `ZHBO_AUTOPILOT_SHOP` names, in this order: a long one would
+/// race round 1's zombies.
+pub const SHOP_STEPS: [(&str, Option<f32>, f32); 5] = [("wall buy", None, 3.0), ("Jugger-Nog", None, 5.0), ("Mystery Box", Some(4.6), 6.5), ("Pack-a-Punch", Some(4.2), 6.0), ("claymores", None, 4.5)];
+
+/// The claymore step's moments after its buy: action slot 4, then the two plants (the gun goes
+/// down, the claymore raises in 1 s and fires in 0.99 s).
+const CLAYMORE_SLOT_AT: f32 = 0.5;
+const CLAYMORE_PLANTS_AT: [f32; 2] = [2.6, 3.7];
 
 impl Autopilot {
+    /// The shopping run's steps: those `ZHBO_AUTOPILOT_SHOP` names, or all, in [`SHOP_STEPS`]' order.
+    pub fn shop_steps(&self) -> Vec<(&'static str, Option<f32>, f32)> {
+        let named = |n: &str| self.shop_only.as_deref().is_none_or(|only| only.split(',').any(|o| o.trim().eq_ignore_ascii_case(n)));
+        SHOP_STEPS.iter().copied().filter(|(n, ..)| named(n)).collect()
+    }
+
+    /// The step under way, if the run is not done.
+    pub fn shop_step_now(&self) -> Option<(&'static str, Option<f32>, f32)> {
+        self.shop_steps().get(self.shop_step).copied()
+    }
+
     /// The same run, its state cleared (a new game).
     pub fn fresh(&self) -> Autopilot {
         Autopilot {
@@ -319,6 +339,7 @@ impl Autopilot {
             command: self.command,
             wallbuy: self.wallbuy,
             voice_file: self.voice_file.clone(),
+            shop_only: self.shop_only.clone(),
             mp: self.mp,
             mp_shooter: self.mp_shooter,
             mp_rounds: self.mp_rounds,
@@ -1025,7 +1046,7 @@ impl Autopilot {
         let t = self.t;
         let mut keys = KeySet::default();
         let mut look = None;
-        let Some(&(name, take_after, next_after)) = SHOP_STEPS.get(self.shop_step) else { return Scripted::default() };
+        let Some((name, take_after, next_after)) = self.shop_step_now() else { return Scripted::default() };
         if t >= 1.0 && self.wall_used.is_none() {
             if let Some((yaw, pitch, _)) = self.wall_aim {
                 look = Some((yaw, pitch));
@@ -1043,8 +1064,16 @@ impl Autopilot {
             if t < u + 0.1 || take {
                 keys.set_down(b.field_computer, true);
             }
-            if self.shop_step == 0 && (u + 1.0..u + 2.0).contains(&t) {
+            if name == "wall buy" && (u + 1.0..u + 2.0).contains(&t) {
                 keys.set_down(b.fire, true);
+            }
+            if name == "claymores" {
+                if (u + CLAYMORE_SLOT_AT..u + CLAYMORE_SLOT_AT + 0.1).contains(&t) {
+                    keys.set_down(b.action_slot_4, true);
+                }
+                if CLAYMORE_PLANTS_AT.iter().any(|a| (u + a..u + a + 0.1).contains(&t)) {
+                    keys.set_down(b.fire, true);
+                }
             }
             if t >= u + next_after {
                 self.shop_step += 1;

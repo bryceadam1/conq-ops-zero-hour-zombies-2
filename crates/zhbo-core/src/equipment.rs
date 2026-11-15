@@ -299,9 +299,10 @@ impl Placed {
         self.age >= t.activation_delay(self.kind) - 1e-4
     }
 
-    /// Whether `o` (as seen from this equipment) is an enemy that sets it off.
+    /// Whether `o` (as seen from this equipment) is an enemy that sets it off: one of another team,
+    /// or a zombie (TranZit's claymore leaves out only its own team, `setexcludeteamfortrigger`).
     fn trips(o: &ObjInfo) -> bool {
-        o.has(objflags::ENEMY) && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::AIRBORNE) && (o.has(objflags::INFANTRY) || o.has(objflags::VEHICLE))
+        (o.has(objflags::ENEMY) || o.has(objflags::ZOMBIE)) && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::AIRBORNE) && (o.has(objflags::INFANTRY) || o.has(objflags::VEHICLE))
     }
 
     fn enemies_near(&self, host: &dyn LogicHost, range: f32) -> Vec<ObjInfo> {
@@ -380,6 +381,12 @@ crate::statehash::state_hash!(struct Equipment { placed, marks } skip { shields,
 impl Equipment {
     pub fn add(&mut self, mut p: Placed) {
         p.charges = self.tuning.trophy_charges;
+        // `claymore_safe_to_plant`: a TranZit claymore over its owner's limit goes off at once
+        // (`claymore_wait_and_detonate`).
+        let zm = crate::zombies::Claymore::get();
+        if p.def.id == zm.weapon && self.placed.iter().filter(|q| q.owner == p.owner && q.def.id == zm.weapon).count() >= zm.max_per_player {
+            p.triggered = Some(zm.over_limit_delay);
+        }
         self.placed.push(p);
     }
 
@@ -468,14 +475,21 @@ impl Equipment {
             match p.kind {
                 Kind::Claymore => {
                     let (fwd, _) = basis_xy(p.yaw);
-                    let range = EquipTuning::trigger_range(tn.claymore_range, p.def);
+                    // TranZit's claymore is its script's (`claymore_detonation`, `zombies.ini`
+                    // `[Claymore]`), the multiplayer one `_weaponobjects.gsc`'s.
+                    let zm = crate::zombies::Claymore::get();
+                    let (range, cos, min_dist, grace) = if p.def.id == zm.weapon {
+                        (EquipTuning::trigger_range(inches(zm.radius), p.def), crate::math::det::cos(zm.cone_angle.to_radians()), inches(zm.min_dist), zm.grace)
+                    } else {
+                        (EquipTuning::trigger_range(tn.claymore_range, p.def), tn.claymore_cos, tn.claymore_min_dist, tn.claymore_grace)
+                    };
                     let tripped = p.enemies_near(host, range).into_iter().find(|o| {
                         let to = o.pos - p.pos;
                         let ahead = to.x * fwd.x + to.y * fwd.y;
-                        ahead >= tn.claymore_min_dist && ahead / to.length_xy().max(1e-3) > tn.claymore_cos
+                        ahead >= min_dist && ahead / to.length_xy().max(1e-3) > cos
                     });
                     if let Some(o) = tripped {
-                        p.triggered = Some(tn.claymore_grace + delay(&o));
+                        p.triggered = Some(grace + delay(&o));
                     }
                 }
                 Kind::Betty => {
@@ -680,7 +694,7 @@ mod tests {
             effect,
             place: Place::Plant,
             equipment_kind: match id {
-                "claymore_mp" => Kind::Claymore,
+                "claymore_mp" | "claymore_zm" => Kind::Claymore,
                 "bouncingbetty_mp" => Kind::Betty,
                 "satchel_charge_mp" => Kind::C4,
                 "proximity_grenade_mp" => Kind::Shock,
@@ -731,6 +745,44 @@ mod tests {
         assert!(matches!(events[0], EquipEvent::Exploded { hit_enemy: true, .. }), "{events:?}");
         assert!(eq.placed.is_empty());
         assert!(host.destroyed.borrow().contains(&50));
+    }
+
+    /// TranZit's claymore (`_zm_weap_claymore.gsc`): a zombie in front sets it off, within its
+    /// own 96 inches, after its 0.4 s; one over its owner's twelve goes off at once.
+    #[test]
+    fn a_tranzit_claymore_trips_on_zombies_by_its_own_rules() {
+        let zm = crate::zombies::Claymore::get();
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut claymore = general(50, 0);
+        claymore.flags = objflags::NO_COLLIDE;
+        host.add(claymore);
+        let big = Box::leak(Box::new(WeaponDef { explosion_radius: 1000.0, ..def("claymore_zm", Effect::Explode).clone() }));
+        let mut eq = Equipment::default();
+        eq.add(Placed::new(big, 0, 1, 50, Vec3::ZERO, 0.0, None));
+        // A zombie (no team's enemy, `ZOMBIE`) in front past the 96 inches does nothing.
+        let mut zombie = soldier(7, 2, inches(zm.radius) + 3.0);
+        zombie.flags = (zombie.flags & !objflags::ENEMY) | objflags::ZOMBIE;
+        host.add(zombie);
+        let mut events = Vec::new();
+        step_n(&mut eq, &host, 10, &mut events);
+        assert!(eq.placed[0].triggered.is_none(), "out of its reach");
+        host.objects.borrow_mut().iter_mut().find(|o| o.id == 7).unwrap().pos = Vec3::new(inches(zm.radius) - 3.0, 0.0, 0.0);
+        step_n(&mut eq, &host, 1, &mut events);
+        assert!(eq.placed[0].triggered.is_some(), "a zombie in front trips it");
+        let grace = (zm.grace / LOGIC_DT).round() as usize;
+        step_n(&mut eq, &host, grace - 2, &mut events);
+        assert!(events.is_empty(), "its 0.4 s: {events:?}");
+        step_n(&mut eq, &host, 3, &mut events);
+        assert!(matches!(events[0], EquipEvent::Exploded { .. }), "{events:?}");
+        // Twelve down, the thirteenth goes off by itself.
+        let mut eq = Equipment::default();
+        for k in 0..zm.max_per_player {
+            eq.add(Placed::new(big, 0, 1, 0, Vec3::new(0.0, 100.0 * k as f32, 0.0), 0.0, None));
+        }
+        assert!(eq.placed.iter().all(|p| p.triggered.is_none()));
+        eq.add(Placed::new(big, 0, 1, 0, Vec3::new(0.0, -100.0, 0.0), 0.0, None));
+        assert_eq!(eq.placed.last().unwrap().triggered, Some(zm.over_limit_delay));
     }
 
     /// A Sensor Grenade's timed fuse runs on where it lies (`timedDetonation`, t6mp

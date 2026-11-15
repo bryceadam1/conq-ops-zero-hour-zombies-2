@@ -242,12 +242,13 @@ impl<'a> Converted<'a> {
     /// from the spawner and turned by `rotate_deg` about its X, then Y, then Z (Zero Hour's
     /// `RotateX/Y/Z`, post-multiplied onto the spawner's matrix): BO2's third-person shell, which
     /// plays at the world model's `tag_brass`, spawned from the flash bone the shot comes from.
-    /// `None` when `src` was not converted or has nothing to draw.
+    /// `None` when `src` was not converted. An effect that draws nothing still plays (the
+    /// revolvers' `fx_revolver` runs only `system_elements/fx_null`): its list is empty.
     pub fn placed(&mut self, src: &str, name: &str, offset: [f32; 3], rotate_deg: [f32; 3]) -> Option<String> {
         if self.bodies.contains_key(name) {
             return Some(name.to_string());
         }
-        let (systems, orient) = self.lists.get(src).cloned().filter(|(s, _)| !s.is_empty())?;
+        let (systems, orient) = self.lists.get(src).cloned()?;
         let rotate = format!("    RotateX = {:.2}\n    RotateY = {:.2}\n    RotateZ = {:.2}\n", rotate_deg[0], rotate_deg[1], rotate_deg[2]);
         let orient = if orient { "    OrientToObject = Yes\n" } else { "" };
         let body = systems

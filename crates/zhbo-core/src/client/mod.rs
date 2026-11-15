@@ -1013,31 +1013,38 @@ impl Client {
         }
         if ap.wallbuy {
             let me = sim.player(inp.local_player);
-            let step = ap.shop_step;
+            let step = ap.shop_step_now().map_or("", |(name, ..)| name);
             ap.wall_aim = me.and_then(|p| {
                 let eye = p.body.eye();
                 let nearest = |spots: Vec<Vec3>| spots.into_iter().map(|s| s - eye).min_by(|a, b| a.length_xy().total_cmp(&b.length_xy()));
                 let d = match step {
                     // The nearest gun the survivor's starting points buy.
-                    0 => {
+                    "wall buy" => {
                         let buys = &crate::zombies::WallBuys::get().buys;
                         let points = crate::zombies::Vars::get().starting_points().max(0) as u32;
                         let affordable = |i: usize| buys.get(i).is_some_and(|b| b.cost() <= points && crate::weapons::weapon_or_none(&b.weapon).is_some_and(|d| d.class.is_slot_weapon()));
                         nearest(sim.rounds.wall_buys.iter().filter(|w| affordable(w.index as usize)).map(|w| w.pos).collect())
                     }
-                    1 => {
+                    "Jugger-Nog" => {
                         let jugg = crate::zombies::Perks::get().index("specialty_armorvest").map(|i| i as u8);
                         nearest(sim.rounds.perks.machines.iter().filter(|m| Some(m.perk) == jugg).map(|m| m.pos).collect())
                     }
-                    2 => nearest(sim.rounds.magic_box.pos().into_iter().collect()),
+                    // The nearest claymore buy (an item wall buy).
+                    "claymores" => {
+                        let buys = &crate::zombies::WallBuys::get().buys;
+                        let item = |i: usize| buys.get(i).and_then(|b| crate::weapons::weapon_or_none(&b.weapon)).is_some_and(|d| d.class == crate::weapons::Class::Item);
+                        nearest(sim.rounds.wall_buys.iter().filter(|w| item(w.index as usize)).map(|w| w.pos).collect())
+                    }
+                    "Mystery Box" => nearest(sim.rounds.magic_box.pos().into_iter().collect()),
                     _ => nearest(sim.rounds.pack_a_punch.iter().map(|m| m.pos).collect()),
                 }?;
                 Some((wrap_angle(d.y.atan2(d.x) - off_aim.0), d.z.atan2(d.length_xy()) - off_aim.1, d.length_xy()))
             });
             ap.wall_in_reach = me.is_some_and(|p| match step {
-                0 => sim.wall_buy_target(p).is_some(),
-                1 => sim.perk_machine_target(p).is_some_and(|i| crate::zombies::Perks::get().perks[sim.rounds.perks.machines[i].perk as usize].specialty == "specialty_armorvest"),
-                2 => sim.magic_box_in_reach(p),
+                "wall buy" => sim.wall_buy_target(p).is_some(),
+                "Jugger-Nog" => sim.perk_machine_target(p).is_some_and(|i| crate::zombies::Perks::get().perks[sim.rounds.perks.machines[i].perk as usize].specialty == "specialty_armorvest"),
+                "claymores" => sim.wall_buy_target(p).and_then(|i| crate::zombies::WallBuys::get().buys.get(sim.rounds.wall_buys[i].index as usize)).and_then(|b| crate::weapons::weapon_or_none(&b.weapon)).is_some_and(|d| d.class == crate::weapons::Class::Item),
+                "Mystery Box" => sim.magic_box_in_reach(p),
                 _ => sim.pack_a_punch_target(p).is_some(),
             });
         }

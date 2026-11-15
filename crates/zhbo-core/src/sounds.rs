@@ -423,6 +423,9 @@ pub struct WeaponCues {
     raise_played: bool,
     drop_left: f32,
     ads: f32,
+    /// The held weapon's reload as last seen: its index, phase (0 a magazine, 1-3 a shell
+    /// reload's start, insert, end) and seconds into it.
+    reload: Option<(usize, u8, f32)>,
 }
 
 /// A sound field overridden to nothing (Zero Hour's `NONE`): BO2's attachment override with an
@@ -463,6 +466,19 @@ pub fn throw_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
 /// item's own `fireSoundPlayer` — what BO2 plays when any offhand fires — else the global plant.
 pub fn plant_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
     some(def.fire_sound.as_str()).unwrap_or(PLANT)
+}
+
+/// An item fired from the hand (`Class::Item`: TranZit's claymore planted): its own
+/// `fireSoundPlayer`, nothing when it names none (a perk's bottle).
+pub fn item_fire_for(def: &'static crate::weapons::WeaponDef) -> Option<&'static str> {
+    some(def.fire_sound.as_str())
+}
+
+/// The item in hand, when the weapon up is one (`Class::Item`): what a throw or a plant from no
+/// offhand slot came from.
+pub fn item_in_hand(a: &crate::weapons::Arsenal) -> Option<&'static crate::weapons::WeaponDef> {
+    let d = a.current().def;
+    (d.class == crate::weapons::Class::Item).then_some(d)
 }
 
 /// What everyone but the thrower hears when an offhand is thrown or set down: its third-person
@@ -640,6 +656,10 @@ impl Cues {
                 Moment::Raise(d, RaiseKind::Normal | RaiseKind::Quick | RaiseKind::Empty) => some(d.raise_sound.as_str()),
                 Moment::Raise(_, RaiseKind::Alt) => None,
                 Moment::AdsZoom(d) => some(d.ads_zoom_sound.as_str()),
+                Moment::Reload(d, false) => some(d.reload_sound.as_str()),
+                Moment::Reload(d, true) => some(d.reload_empty_sound.as_str()),
+                Moment::ReloadStart(d) => some(d.reload_start_sound.as_str()),
+                Moment::ReloadEnd(d) => some(d.reload_end_sound.as_str()),
             };
             if let Some(e) = e {
                 queue.push(Request { event: e, at: None, gain: 1.0 });
@@ -661,6 +681,12 @@ pub enum Moment {
     Raise(&'static crate::weapons::WeaponDef, crate::weapons::arsenal::RaiseKind),
     /// Aiming starts.
     AdsZoom(&'static crate::weapons::WeaponDef),
+    /// A reload (a magazine, or a shell reload's next insert) begins, from an empty clip or not
+    /// (EV_RELOAD, EV_RELOAD_FROM_EMPTY).
+    Reload(&'static crate::weapons::WeaponDef, bool),
+    /// A shell reload's start and end begin (EV_RELOAD_START, EV_RELOAD_END).
+    ReloadStart(&'static crate::weapons::WeaponDef),
+    ReloadEnd(&'static crate::weapons::WeaponDef),
 }
 
 impl WeaponCues {
@@ -680,7 +706,32 @@ impl WeaponCues {
     pub fn step(&mut self, a: &crate::weapons::Arsenal, mut on: impl FnMut(Moment)) {
         use crate::weapons::arsenal::RaiseKind;
         let prev = std::mem::take(self);
-        let mut now = WeaponCues { seen: true, raise_left: a.raise_left, raise_played: prev.raise_played, drop_left: a.drop_left, ads: a.ads };
+        let w = a.current();
+        let reload = w.reload.as_ref().map(|r| match r {
+            crate::weapons::Reload::Magazine { t, .. } => (a.active, 0, *t),
+            crate::weapons::Reload::Shells { phase, t, .. } => {
+                let code = match phase {
+                    crate::weapons::ShellPhase::Start => 1,
+                    crate::weapons::ShellPhase::Insert => 2,
+                    crate::weapons::ShellPhase::End => 3,
+                };
+                (a.active, code, *t)
+            }
+        });
+        // A phase begins: none was running, another weapon's or phase's was, or it started over
+        // (the next insert of a shell reload).
+        if let Some((i, code, t)) = reload {
+            let begins = prev.reload.is_none_or(|(pi, pc, pt)| pi != i || pc != code || t < pt);
+            if begins {
+                match (code, &w.reload) {
+                    (0, Some(crate::weapons::Reload::Magazine { empty, .. })) => on(Moment::Reload(w.def, *empty)),
+                    (1, _) => on(Moment::ReloadStart(w.def)),
+                    (2, _) => on(Moment::Reload(w.def, w.ammo == 0)),
+                    _ => on(Moment::ReloadEnd(w.def)),
+                }
+            }
+        }
+        let mut now = WeaponCues { seen: true, raise_left: a.raise_left, raise_played: prev.raise_played, drop_left: a.drop_left, ads: a.ads, reload };
         if a.drop_left > prev.drop_left + 1e-6 {
             // An alt toggle with a drop (alt-timing's `iAltDropTime`) begins here: BO2 sends
             // EV_WEAPON_ALT, not EV_PUTAWAY_WEAPON, and the held def is still the outgoing mode.
@@ -724,6 +775,49 @@ mod tests {
         assert_eq!(dry_fire_for(def), "ZHBO_BO2_DryFireGlRifle");
         let plain: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef::default()));
         assert_eq!(dry_fire_for(plain), DRY_FIRE);
+    }
+
+    /// The reload's own sounds as each phase begins (EV_RELOAD, EV_RELOAD_FROM_EMPTY,
+    /// EV_RELOAD_START, EV_RELOAD_END: the client's events 0x12-0x15, `FUN_004c1590`): the Ray
+    /// Gun's `gear_player` as its reload starts.
+    #[test]
+    fn a_reload_plays_its_sound_as_each_phase_begins() {
+        use crate::weapons::{Reload, ShellPhase};
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            reload_sound: "ZHBO_BO2_Snd_gear_player".into(),
+            reload_empty_sound: "ZHBO_BO2_Snd_gear_empty".into(),
+            reload_start_sound: "ZHBO_BO2_Snd_tube_open".into(),
+            reload_end_sound: "ZHBO_BO2_Snd_tube_close".into(),
+            ..Default::default()
+        }));
+        let mut p = PlayerSim::spawn_for_tests();
+        for w in p.arsenal.weapons.iter_mut() {
+            w.def = def;
+        }
+        (p.arsenal.raise_left, p.arsenal.drop_left) = (0.0, 0.0);
+        let mut c = Cues::default();
+        let weapon = |c: &mut Cues| -> Vec<&'static str> { events(c).into_iter().filter(|e| e.starts_with(crate::names::DEF_SOUND_PREFIX)).collect() };
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
+        weapon(&mut c);
+        let i = p.arsenal.active;
+        p.arsenal.weapons[i].reload = Some(Reload::Magazine { t: 0.0, length: 2.0, add_at: 1.0, added: false, empty: false, quick: false });
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_gear_player"]);
+        p.arsenal.weapons[i].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false, quick: false });
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
+        assert!(weapon(&mut c).is_empty(), "once per reload");
+        p.arsenal.weapons[i].reload = None;
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
+        p.arsenal.weapons[i].reload = Some(Reload::Magazine { t: 0.0, length: 2.0, add_at: 1.0, added: false, empty: true, quick: false });
+        c.update(0.016, &p, false, crate::impacts::Surface::Default);
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_gear_empty"], "from empty");
+        // A shell reload: its start, each insert, its end.
+        p.arsenal.weapons[i].ammo = 2;
+        for (phase, t, want) in [(ShellPhase::Start, 0.0, Some("ZHBO_BO2_Snd_tube_open")), (ShellPhase::Insert, 0.0, Some("ZHBO_BO2_Snd_gear_player")), (ShellPhase::Insert, 0.3, None), (ShellPhase::Insert, 0.0, Some("ZHBO_BO2_Snd_gear_player")), (ShellPhase::End, 0.0, Some("ZHBO_BO2_Snd_tube_close"))] {
+            p.arsenal.weapons[i].reload = Some(Reload::Shells { phase, t, stop: false });
+            c.update(0.016, &p, false, crate::impacts::Surface::Default);
+            assert_eq!(weapon(&mut c), want.into_iter().collect::<Vec<_>>(), "{phase:?} at {t}");
+        }
     }
 
     #[test]

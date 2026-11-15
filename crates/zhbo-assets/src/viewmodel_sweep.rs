@@ -85,7 +85,7 @@ impl Source {
     pub fn composition(&self, id: &str) -> Result<BTreeMap<String, Vec<u8>>, String> {
         let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         let mut defs = self.defs.clone();
-        weapon_viewmodels(&self.pool(), &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()), 0)?;
+        weapon_viewmodels(&self.pool(), &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()), 0, None)?;
         out.retain(|path, _| path.starts_with(zhbo_native::DIR) || path.starts_with("Art\\Textures\\"));
         out.extend(self.emblems.clone());
         Ok(out)
@@ -1127,7 +1127,7 @@ mod tests {
         let summary = |id: &str| {
             let mut out = BTreeMap::new();
             let mut defs = src.defs.clone();
-            match crate::viewmodels::weapon_viewmodels(&src.pool(), &src.zones, &src.paks, &mut out, &src.bo2, &src.atts, &mut defs, &[id.to_string()], 0) {
+            match crate::viewmodels::weapon_viewmodels(&src.pool(), &src.zones, &src.paks, &mut out, &src.bo2, &src.atts, &mut defs, &[id.to_string()], 0, None) {
                 Ok((s, _)) => eprintln!("SUMMARY {id}: {s}"),
                 Err(e) => eprintln!("SUMMARY {id}: ERR {e}"),
             }

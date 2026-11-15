@@ -198,8 +198,6 @@ struct Job {
     group: String,
     slot: String,
     requires: Vec<&'static str>,
-    /// The row is an alt mode (BO2's `WEAPINVENTORY_ALTMODE`).
-    alt: bool,
     /// The melee weapon a gun strikes with: the class's (`knife_mp`) unless set (a survivor's,
     /// `knife_zm`).
     melee: Option<&'static WeaponDef>,
@@ -265,7 +263,7 @@ fn jobs() -> Vec<Job> {
                     continue;
                 }
                 let requires = if set.len() > base_cap { vec![card] } else { Vec::new() };
-                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.cac_class()).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false, melee: None });
+                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.cac_class()).to_string(), slot: slot.clone(), requires: requires.clone(), melee: None });
                 if def.alt.is_empty() {
                     continue;
                 }
@@ -273,7 +271,7 @@ fn jobs() -> Vec<Job> {
                     let alt_base = crate::generals::base_id(&def.alt).to_string();
                     if seen.insert((alt_base.clone(), combo.clone())) {
                         let vm_def = if alt.viewmodel >= 0 { alt } else { def };
-                        out.push(Job { weapon: alt_base, combo, def: alt, vm_def, group: String::new(), slot: String::new(), requires, alt: true, melee: None });
+                        out.push(Job { weapon: alt_base, combo, def: alt, vm_def, group: String::new(), slot: String::new(), requires, melee: None });
                     }
                 }
             }
@@ -283,7 +281,7 @@ fn jobs() -> Vec<Job> {
     for melee in [weapons::Loadout::default().melee, weapons::CLASS_MELEE.to_string()] {
         let Some(def) = cat.get(&melee) else { continue };
         if seen.insert((melee.clone(), Vec::new())) {
-            out.push(Job { weapon: melee, combo: Vec::new(), def, vm_def: def, group: String::new(), slot: String::new(), requires: Vec::new(), alt: false, melee: None });
+            out.push(Job { weapon: melee, combo: Vec::new(), def, vm_def: def, group: String::new(), slot: String::new(), requires: Vec::new(), melee: None });
         }
     }
     out
@@ -325,7 +323,7 @@ pub fn rows_for(shipped: &Shipped, schema: &Schema, ids: &[String]) -> Result<Ve
             _ => def,
         };
         let melee = cat.get(&zhbo_core::zombies::survivor_kit().melee);
-        let j = Job { weapon: id.clone(), combo: Vec::new(), def, vm_def, group: String::new(), slot: String::new(), requires: Vec::new(), alt: parent.is_some(), melee };
+        let j = Job { weapon: id.clone(), combo: Vec::new(), def, vm_def, group: String::new(), slot: String::new(), requires: Vec::new(), melee };
         match row(shipped, schema, &j) {
             Ok(r) => out.push(r),
             Err(e) => errors.push(e),
@@ -409,10 +407,11 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // weapType grenade or mine there, and the arsenal has nothing mine-specific): a grenade.
     // The Assault Shield's own branches: the sim's shield block, deploy and self-melee
     // (`WeaponDef::is_shield`).
+    // An item (`Class::Item`) is thrown or planted as a grenade when it fires.
     let weap_type = match d.class {
         _ if d.is_shield() => Some("riotshield"),
         Class::Melee => Some("melee"),
-        c if c.is_offhand() => Some("grenade"),
+        c if c.is_offhand() || c == Class::Item => Some("grenade"),
         _ if launches => Some("projectile"),
         _ => Some("bullet"),
     };
@@ -422,6 +421,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         Class::Lethal => "lethal_grenade",
         Class::Tactical => "tactical_grenade",
         Class::Equipment => "equipment",
+        Class::Item if d.specific_use => "specific_use",
         _ => "none",
     };
     b.opt_text("weap_type", weap_type).text("weap_class", d.weap_class.name()).text("inventory", inventory).text("offhand_class", d.traits.offhand.name()).text("offhand_slot", offhand_slot);
@@ -498,8 +498,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // rounds the weapon can carry beside its magazine — BO2's `iMaxAmmo` is that stock cap, not a
     // total (the crossbow starts with 6 rounds, a 3-round clip, and `iMaxAmmo` 3).
     // An alt mode without its own ammo carries none: it fires the weapon's magazine and its def's
-    // reserve is never read (`toggle_alt` swaps only for `alt_own_ammo`).
-    let shared_alt = j.alt && !d.alt_own_ammo;
+    // reserve is never read (`toggle_alt` swaps only for `alt_own_ammo`), whether or not a gun of
+    // the table toggles to it.
+    let shared_alt = d.inventory == zhbo_core::weapons::Inventory::AltMode && !d.alt_own_ammo;
     let start = if shared_alt { 0 } else if d.class.is_offhand() { d.start_reserve as i64 } else { d.clip as i64 + d.start_reserve as i64 };
     let max = if shared_alt { 0 } else { d.max_reserve as i64 };
     b.int("clip_size", d.clip as i64)
@@ -507,9 +508,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .int("max_ammo_rounds", max)
         .bool("clip_only", d.traits.clip_only)
         .bool("dual_mag", d.traits.dual_mag)
-        // An alt mode without its own ammo fires the weapon's magazine (`toggle_alt` swaps
-        // magazines only for one with its own): that pair — the weapon and its alt — shares.
-        .bool("shared_ammo", if j.alt { !d.alt_own_ammo } else { cat.get(&d.alt).is_some_and(|a| !a.alt_own_ammo && !d.alt_own_ammo) });
+        // The arsenal pools the stock and magazine of held weapons registered under one weapon
+        // (`Arsenal::pool_ammo`, `weapons::stock_owner`) by the carried flag.
+        .bool("shared_ammo", d.shared_ammo);
 
     // Damage.
     b.list("damage", &d.damage.map(|x| format!("{}", x as i64)))
@@ -756,6 +757,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             // The Black Hat fires as its hack lands (`client`'s `Hacked` cue).
             Place::Hack => zhbo_core::sounds::hack_fire_for(d).and_then(|e| sh.sound(e)),
         }
+    } else if d.class == Class::Item {
+        // An item fired from the hand plays its own sound only (`sounds::item_fire_for`).
+        zhbo_core::sounds::item_fire_for(d).and_then(|e| sh.sound(e))
     } else if d.class == Class::Melee || d.class == Class::Shield {
         // A knife or the Assault Shield fires no shot (the shield's trigger deploys it).
         None
@@ -774,7 +778,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             // An offhand others hear as it leaves the thrower's hand (`client`'s remote
             // `Thrown`/`Planted` cue, `sounds::remote_offhand`); a gun through its FX weapon.
             // (the Black Hat's as its hack lands).
-            "fire_sound" if d.class.is_offhand() => b.opt_text(c, zhbo_core::sounds::remote_offhand(d).and_then(|e| sh.sound(e))),
+            "fire_sound" if d.class.is_offhand() || d.class == Class::Item => b.opt_text(c, zhbo_core::sounds::remote_offhand(d).and_then(|e| sh.sound(e))),
             "fire_sound" => b.opt_text(c, npc.clone()),
             "fire_sound_player" => b.opt_text(c, plr.clone()),
             "fire_start_sound_player" => b.opt_text(c, own(&d.fire_start_sound)),
@@ -801,6 +805,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             "raise_sound_player" => own(&d.raise_sound),
             "first_raise_sound_player" => own(&d.first_raise_sound),
             "putaway_sound_player" => own(&d.putaway_sound),
+            "reload_sound_player" => own(&d.reload_sound),
+            "reload_empty_sound_player" => own(&d.reload_empty_sound),
             "ads_zoom_sound" => own(&d.ads_zoom_sound),
             _ => None,
         };

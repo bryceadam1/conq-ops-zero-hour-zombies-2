@@ -98,9 +98,9 @@ impl Zombies {
             .filter_map(|id| self.weapons.iter().find(|w| &w.name == id))
             .map(|w| {
                 // An alt mode's ammo by the MP table's rule (the upgraded M16's launcher has its own
-                // grenades).
+                // grenades; the upgraded Chicom's select fire loads the gun's magazine).
                 let mut d = crate::weapons::to_def(w, names);
-                crate::weapons::alt_mode_ammo(&mut d, w);
+                crate::weapons::alt_mode_ammo(&mut d, w, crate::weapons::alt_parent(&self.weapons, w));
                 d
             })
             .collect()

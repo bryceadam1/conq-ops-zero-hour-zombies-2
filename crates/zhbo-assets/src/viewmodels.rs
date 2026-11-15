@@ -105,13 +105,14 @@ pub(crate) struct BasePart {
 /// snipers and the M32's three ids); everything else is unchanged.
 pub(crate) fn base_parts(pool: &[&Zone], w: &zhbo_formats::weapon::Weapon, c: &Combo, view: &str) -> Vec<BasePart> {
     let mut out = Vec::new();
-    if w.is_gun() && !c.no_clip {
-        let authored = authored_parts(w)
-            .find(|(m, ..)| m.contains("attach_mag"))
-            .and_then(|(m, _, offset, _)| find_model(pool, m).ok().map(|model| (model, offset)));
+    if !c.no_clip {
+        // `attachViewModel[6]` is the clip channel whatever it holds (the upgraded Saiga's is its
+        // fast magazine, G14 §3); the name search stands in only for a gun with nothing there.
+        let slot6 = authored_parts(w).find(|(.., slot)| *slot == CLIP_SLOT);
+        let authored = slot6.and_then(|(m, _, offset, _)| find_model(pool, m).ok().map(|model| (model, offset)));
         if let Some((model, offset)) = authored {
             out.push(BasePart { model, tag: None, offset, magazine: true, optic: false, ads_only: false, ads_of: None });
-        } else if let Some(model) = magazine(pool, view) {
+        } else if let Some(model) = (w.is_gun() && slot6.is_none()).then(|| magazine(pool, view)).flatten() {
             out.push(BasePart { model, tag: None, offset: crate::xf::IDENTITY, magazine: true, optic: false, ads_only: false, ads_of: None });
         }
     }
@@ -119,7 +120,7 @@ pub(crate) fn base_parts(pool: &[&Zone], w: &zhbo_formats::weapon::Weapon, c: &C
         // Slot 0's part, for slot 7 (its ADS model) to replace.
         let mut slot0 = None;
         for (name, tag, (rotation, offset), slot) in authored_parts(w) {
-            if name.is_empty() || name.contains("attach_mag") {
+            if name.is_empty() || slot == CLIP_SLOT {
                 continue;
             }
             let Ok(model) = find_model(pool, name) else { continue };
@@ -152,6 +153,9 @@ fn authored_parts(w: &zhbo_formats::weapon::Weapon) -> impl Iterator<Item = (&st
         .enumerate()
         .map(move |(i, (((m, t), off), &slot))| (m.as_str(), t.as_str(), (crate::xf::from_angles(rotation(i)), *off), slot))
 }
+
+/// `attachViewModel[6]`: the clip, dropped by `disableBaseWeaponClip` (G14 §3).
+const CLIP_SLOT: u8 = 6;
 
 /// `attachViewModel[7]`: slot 0's ADS model. BO2 draws it only while aiming, and slot 0 then only
 /// when it is empty (`FUN_00535170`, G14 §3).
@@ -513,6 +517,7 @@ pub(crate) fn weapon_viewmodels(
     defs: &mut [zhbo_core::weapons::WeaponDef],
     converted: &[String],
     base_count: usize,
+    void: Option<&xanim::Anim>,
 ) -> Result<(String, Vec<Clip>), String> {
     use zhbo_core::attachments::point;
     let mut looks = Looks::default();
@@ -525,6 +530,12 @@ pub(crate) fn weapon_viewmodels(
         let (base, shorts) = zhbo_core::attachments::split_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let Some(view) = w.view_model.as_deref() else { continue };
+        // An alt mode its gun toggles to draws on its gun's viewmodel (`FUN_00535170`), given it
+        // with the gun's below. (TranZit's alt modes name their gun back; that gun is not theirs
+        // to draw on.)
+        if w.inventory == zhbo_formats::weapon::inventory::ALTMODE && defs.iter().any(|d| d.id != *id && d.alt == *id) {
+            continue;
+        }
         // The dual-wield pair: the gun plus the left gun its def names, as a second rig on the left
         // palm.
         let lh_w = left_gun(w, bo2);
@@ -664,7 +675,11 @@ pub(crate) fn weapon_viewmodels(
         }
         // The weapon's clips, then its alt mode's after them on the same viewmodel.
         let alt_id = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).unwrap_or_default();
-        let alt_anims = (!alt_id.is_empty()).then(|| bo2.iter().find(|a| a.name == base_id(&alt_id))).flatten().map(|a| alt_anims(a, atts, &shorts));
+        let alt_anims = (!alt_id.is_empty())
+            .then(|| bo2.iter().find(|a| a.name == base_id(&alt_id)))
+            .flatten()
+            .filter(|a| a.inventory == zhbo_formats::weapon::inventory::ALTMODE)
+            .map(|a| alt_anims(a, atts, &shorts));
         let mut sets = vec![(0usize, c.anims.clone())];
         if let Some(a) = alt_anims.clone() {
             sets.push((zhbo_core::weapons::ALT_CLIPS as usize, a));
@@ -674,7 +689,9 @@ pub(crate) fn weapon_viewmodels(
         for (base_slot, anims) in &sets {
             for (slot, anim_name) in anims.iter().enumerate() {
                 let Some(anim_name) = anim_name else { continue };
-                let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| find_anim(pool, anim_name));
+                // A clip the install does not define plays the default `void` (a reference stub
+                // with nothing behind it resolves to the type's default asset).
+                let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| find_anim(pool, anim_name).or_else(|| void.cloned()));
                 let Some(anim) = anim else { continue };
                 if let (Some(rig), Some(hierarchy)) = (&rig, &hierarchy) {
                     let (frames, channels) = character::animate(rig, anim);
@@ -700,7 +717,7 @@ pub(crate) fn weapon_viewmodels(
                 let Some(name) = registered(left_slot) else { continue };
                 let name = &name;
                 let right_slot = zhbo_core::viewmodel::slot::left_as_right(left_slot).map_or(left_slot, |r| r as usize);
-                let anim = anim_cache.entry(name.clone()).or_insert_with(|| find_anim(pool, name));
+                let anim = anim_cache.entry(name.clone()).or_insert_with(|| find_anim(pool, name).or_else(|| void.cloned()));
                 let Some(anim) = anim else { continue };
                 native_clips.push(((right_slot as u16) | zhbo_native::viewmodel::INSTANCE_LEFT, native::put_anim(out, anim)));
                 // The left gun's clips feed the native path and the sound events; the base W3D render

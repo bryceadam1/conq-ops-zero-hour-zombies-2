@@ -148,6 +148,10 @@ BO2 keeps Zombies' rules in two places, and the mod reads each from its own sour
 - **Pack-a-Punch:** `zombies.ini` `[PackAPunch]` holds its price (5000), prompts, model, the upgrade's
   time and the 15 s the upgraded weapon waits. What a weapon becomes is the roster's `upgrade`
   column. It stands on the ring after the perk machines, built and on.
+- **Claymores:** `zombies.ini` `[Claymore]` holds `_zm_weap_claymore.gsc`'s numbers: the weapon
+  (`claymore_zm`), its 96-inch trigger, 70° cone and 20-inch least distance, the 0.4 s from the
+  trip to the blast, and the 12 a player may have down (one more goes off after 0.1 s). Bought at
+  its wall buy once, it sits on action slot 4 with a full clip, refilled at each round's start.
 - **Last stand:** `zombies.ini` `[LastStand]` holds what `_zm.gsc` and `_zm_laststand.gsc` hard-code: the
   45 s bleed-out, the 3 s revive, the 75-inch revive trigger, the reviver's facing, the default
   last-stand pistol and BO2's ranking of the pistols a downed player may hold

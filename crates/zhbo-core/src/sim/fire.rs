@@ -76,6 +76,9 @@ impl Sim {
             }
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
+                if def.class == crate::weapons::Class::Item {
+                    host.log(&format!("General {} plants {} from his hand", p.general, def.id));
+                }
                 // Where BO2's launch sets it down, not a fixed distance in front: a lobbed item
                 // flies, bounces and is placed where it rests (the projectiles' `Landed`).
                 let Some(at) = plant_point(def, &p.body, p.yaw, p.pitch, host) else {

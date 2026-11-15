@@ -621,7 +621,16 @@ impl Zone {
     /// holds as `viewmodel_m4m203_knife_melee_1`).
     pub fn find(&self, kind: u32, name: &str) -> Option<&Asset> {
         let named = |a: &&Asset, eq: &dyn Fn(&str) -> bool| a.kind == kind && self.asset_name(a).is_some_and(|n| eq(n.trim_start_matches(',')));
-        self.assets.iter().find(|a| named(a, &|n| n == name)).or_else(|| self.assets.iter().find(|a| named(a, &|n| n.eq_ignore_ascii_case(name))))
+        // A zone can hold a `,name` reference stub beside the real asset (`zm_transit_patch`'s
+        // `viewmodel_m1911_dw_putaway_empty`): the real one wins, as a stub never overrides an
+        // asset in BO2's pool (`FUN_00597000`).
+        let stub = |a: &&Asset| self.asset_name(a).is_some_and(|n| n.starts_with(','));
+        let first = |eq: &dyn Fn(&str) -> bool| {
+            let mut hits = self.assets.iter().filter(|a| named(a, eq));
+            let any = hits.next()?;
+            Some(if stub(&any) { std::iter::once(any).chain(hits).find(|a| !stub(a)).unwrap_or(any) } else { any })
+        };
+        first(&|n| n == name).or_else(|| first(&|n| n.eq_ignore_ascii_case(name)))
     }
 
     /// Every address holding `name` as a NUL-terminated string (an inline struct's name).

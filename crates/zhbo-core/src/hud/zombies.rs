@@ -436,6 +436,8 @@ pub struct Slot<'a> {
     pub label: String,
     pub usable: bool,
     pub key: &'a str,
+    /// An item weapon's count, drawn on its icon (`UpdateActionSlots`: every slot but 1).
+    pub count: Option<u16>,
 }
 
 /// The d-pad area: the streak, the circle, each filled slot's icon (full alpha when usable, BO2's
@@ -453,6 +455,12 @@ pub fn draw_dpad(l: &Lui, prims: &mut Vec<Prim>, slots: &[Slot; 4], field_comput
         let argb = super::frame::argb(super::frame::HUD_BASE, alpha);
         let fallback = vec![Prim::Text { x: p.x + p.w * 0.5, y: p.y + p.h * 0.35, text: slot.label.clone(), argb, size: (p.h * 0.35) as i32, align: 1 }];
         prims.push(Prim::Image { name: icon.to_string(), x: p.x, y: p.y, w: p.w, h: p.h, argb, fallback });
+        // The count: white at full alpha, `CoD.textSize.Default` tall, centred on the icon.
+        if let Some(n) = slot.count.filter(|_| k != 0) {
+            let size = super::spectate::TEXT_SIZE;
+            let t = Place::new((false, false, -10.0, 10.0), (false, false, -size / 2.0, size / 2.0)).resolve(r);
+            l.text(prims, t, Family::Default, &n.to_string(), Some(Align::Center), (true, true), super::frame::OFF_WHITE, super::frame::HUD_ALPHA_FULL);
+        }
         if !slot.key.is_empty() {
             let key = Place::new((true, true, 0.0, 0.0), (false, true, -10.0, 0.0)).resolve(r);
             l.text(prims, key, Family::Default, slot.key, Some(Align::Center), (true, true), super::frame::HUD_BASE, alpha);
@@ -472,12 +480,19 @@ pub fn slots<'a>(p: &'a PlayerSim, can_build: bool, keys: [&'a str; 4]) -> [Slot
     let build = crate::strings::text("HUD:ZHBO_Build");
     let alt = super::ammo::alt_slot_icon(p.arsenal.current().def, crate::weapons::catalog().get(&p.arsenal.current().def.alt));
     std::array::from_fn(|k| {
+        let mut count = None;
         let (icon, label, usable) = match p.action_slots.slots[k] {
             ActionSlot::Equipment { item: Equipment::BuildTool } => (Some(sprites::BUILD_ICON), build.clone(), can_build),
             ActionSlot::AltMode => (alt, String::new(), true),
+            // An item weapon: its d-pad icon, dimmed with none left, and its count.
+            ActionSlot::Weapon { def } => {
+                let n = p.arsenal.item_count(def).unwrap_or(0);
+                count = Some(n);
+                (Some(def.dpad_icon.as_str()).filter(|i| !i.is_empty()), n.to_string(), n > 0)
+            }
             ActionSlot::Empty => (None, String::new(), false),
         };
-        Slot { icon, label, usable, key: keys[k] }
+        Slot { icon, label, usable, key: keys[k], count }
     })
 }
 
@@ -522,8 +537,8 @@ mod tests {
     fn the_dpad_stays_on_screen_and_names_an_icon_without_art() {
         let l = Lui::new(1280.0, 720.0);
         let mut prims = Vec::new();
-        let empty = || Slot { icon: None, label: String::new(), usable: false, key: "" };
-        let build = Slot { icon: Some(sprites::BUILD_ICON), label: "Build".into(), usable: true, key: "B" };
+        let empty = || Slot { icon: None, label: String::new(), usable: false, key: "", count: None };
+        let build = Slot { icon: Some(sprites::BUILD_ICON), label: "Build".into(), usable: true, key: "B", count: None };
         draw_dpad(&l, &mut prims, &[empty(), build, empty(), empty()], "F");
         for p in &prims {
             let (x, y) = match p {

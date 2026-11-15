@@ -1247,6 +1247,10 @@ impl Sim {
                     // The hammer, or building, takes the hands: the gun gets no input meanwhile.
                     let busy = self.step_building(host, idx, p, &input);
                     let (held, pressed) = if busy { (0, 0) } else { (input.held, input.pressed) };
+                    // An item weapon's action slot (the claymores): it comes up as the weapon in hand.
+                    if let Some(def) = p.action_slots.weapon_pressed(pressed) {
+                        p.arsenal.raise_owned_item(def);
+                    }
                     // BO2's plant check, from the world, for the arsenal's plantable items.
                     p.arsenal.plant_ok = [true, false].map(|lethal| can_plant(p.arsenal.offhand_def(lethal), &p.body, p.yaw, p.pitch, p.general, host));
                     let prev_ads = p.arsenal.ads;

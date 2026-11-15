@@ -1974,6 +1974,18 @@ Appended since ABI 36 and not yet folded into a version (the next integration bu
   state gains `PlayerSim::zm_item`, `Rounds::graves`, and `Blow::location` (the round's hit location)
   rides the blow. The bridge reads `ZHBO_AUTOPILOT_ZOMBIE_POINTS` (the shopping test's starting
   points; autopilot only). No ABI change.
+* What the TranZit weapon gate found (`hud::VERSION` 109). The weapon table gains `AmmoPool`
+  (`sharedAmmo|szAmmoName|szClipName`, a sim field: the arsenal pools stock and magazine across
+  held weapons registered under one name, `Arsenal::pool_ammo`), `SpecificUse` (sim), the
+  attachment field `SharedAmmo`, and the presentation fields `ReloadSound`, `ReloadEmptySound`,
+  `ReloadStartSound`, `ReloadEndSound`; `NpcSounds` gains `reload`, `reload_empty`,
+  `reload_start`, `reload_end`. `Class` gains `item` (BO2's item-inventory grenades: the bottles,
+  flourishes, syrette, TranZit's claymore), and an alt mode owns its ammo by BO2's registration
+  rule, not by being a launcher (the upgraded SMR's dual optic now has its own magazine). The
+  sprint length scale is carried as BO2 has it (0 for the jetgun and the Galvaknuckles: no
+  sprint). A TranZit alt mode no longer takes over its gun's viewmodel; the magazine is
+  `attachViewModel[6]`; a clip the install lacks is the default `void`. The sim's state gains
+  `Arsenal::{pools, items, item_up}` and `ActionSlot::Weapon`. No ABI change.
 * Host patch 0034 (`0034-general-keeps-player-alive.patch`, the defeat rule; see "Who owns what"):
   engine-only, no ABI change.
 * Already marked pending where they are described: `ZhboClientApi.image_quad` (host patch 0033)

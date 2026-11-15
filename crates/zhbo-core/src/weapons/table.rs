@@ -466,6 +466,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             (a.dual_mag, a.infrared, a.mms, a.use_as_melee, a.alt_ads_only, a.alt_disable_switching) = (v.flag(0), v.flag(1), v.flag(2), v.flag(3), v.flag(4), v.flag(5));
             Ok(())
         }),
+    field!("SharedAmmo", "1 if the attachment makes its weapon share ammo by name (`sharedAmmo`, `FUN_008e8bc0`).", FieldKind::Num,
+        |a: &AttachmentDef| (a.shared_ammo as u8).to_string(),
+        |a: &mut AttachmentDef, v: Values| { a.shared_ammo = v.text_num()? != 0.0; Ok(()) }),
     field!("AdsKickCenterScale", "Scales the aimed view-kick recentre speed (`fAdsViewKickCenterSpeedScale`).", FieldKind::Num,
         |a: &AttachmentDef| a.ads_kick_center_scale.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.ads_kick_center_scale = v.text_num()?; Ok(()) }),
@@ -810,6 +813,18 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!(present "PutawaySound", "The putaway's event (`putawaySoundPlayer`), played as the drop begins.", FieldKind::Str,
         |d: &WeaponDef| d.putaway_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.putaway_sound = v.text.into(); Ok(()) }),
+    field!(present "ReloadSound", "The reload's event (`reloadSoundPlayer`), played as a reload begins (EV_RELOAD).", FieldKind::Str,
+        |d: &WeaponDef| d.reload_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.reload_sound = v.text.into(); Ok(()) }),
+    field!(present "ReloadEmptySound", "The reload from empty's event (`reloadEmptySoundPlayer`, EV_RELOAD_FROM_EMPTY).", FieldKind::Str,
+        |d: &WeaponDef| d.reload_empty_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.reload_empty_sound = v.text.into(); Ok(()) }),
+    field!(present "ReloadStartSound", "A shell reload's start event (`reloadStartSoundPlayer`, EV_RELOAD_START).", FieldKind::Str,
+        |d: &WeaponDef| d.reload_start_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.reload_start_sound = v.text.into(); Ok(()) }),
+    field!(present "ReloadEndSound", "A shell reload's end event (`reloadEndSoundPlayer`, EV_RELOAD_END).", FieldKind::Str,
+        |d: &WeaponDef| d.reload_end_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.reload_end_sound = v.text.into(); Ok(()) }),
     field!(present "AdsZoomSound", "The zoom-in event as aiming starts (`adsZoomSound`; scoped weapons).", FieldKind::Str,
         |d: &WeaponDef| d.ads_zoom_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.ads_zoom_sound = v.text.into(); Ok(()) }),
@@ -946,6 +961,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.target_finder = v.flag(3);
             Ok(())
         }),
+    field!("AmmoPool", "BO2's `sharedAmmo`, `szAmmoName` and `szClipName`, `|`-separated: a weapon that shares pools its stock and magazine with the first weapon of the table under the same names (`FUN_008e2760`, `FUN_008e2b00`).", FieldKind::Str,
+        |d: &WeaponDef| if d.shared_ammo || !d.ammo_name.is_empty() || !d.clip_name.is_empty() { format!("{}|{}|{}", d.shared_ammo as u8, d.ammo_name, d.clip_name) } else { String::new() },
+        |d: &mut WeaponDef, v: Values| {
+            let mut it = v.text.split('|');
+            d.shared_ammo = it.next().is_some_and(|f| f.trim() == "1");
+            d.ammo_name = it.next().unwrap_or_default().to_string();
+            d.clip_name = it.next().unwrap_or_default().to_string();
+            Ok(())
+        }),
     field!("MmsMaxDist", "Millimetre scanner's max distance (BO2 inches; the scanner flag is in Traits).", FieldKind::Num,
         |d: &WeaponDef| d.mms_max_dist.to_string(),
         |d: &mut WeaponDef, v: Values| { d.mms_max_dist = v.text_num()?; Ok(()) }),
@@ -962,6 +986,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Equipment", "What the weapon is as equipment once down: claymore, betty, c4, shock, trophy, insertion, sensor, or none.", FieldKind::Enum,
         |d: &WeaponDef| d.equipment_kind.name().into(),
         |d: &mut WeaponDef, v: Values| { d.equipment_kind = Kind::parse(v.text).ok_or("unknown equipment kind")?; Ok(()) }),
+    field!("SpecificUse", "1 for BO2's specific-use offhand slot (`offhandSlot` 4): an item a script sets on an action slot or hands over.", FieldKind::Num,
+        |d: &WeaponDef| (d.specific_use as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.specific_use = v.text_num()? != 0.0; Ok(()) }),
     field!("Specialties", "The specialties the weapon grants while in hand (`WeaponVariantDef.perks`, with its attachments'), by name.", FieldKind::Words,
         |d: &WeaponDef| d.specialties.format(),
         |d: &mut WeaponDef, v: Values| { d.specialties = Specialties::parse(v.text)?; Ok(()) }),
@@ -1388,8 +1415,8 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 180);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 31);
+        assert_eq!(WEAPON_FIELDS.len(), 186);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 32);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }
 

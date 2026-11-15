@@ -258,6 +258,12 @@ impl Sim {
                     let max = a.lethal.def.max_reserve.max(a.lethal.def.start_reserve);
                     a.lethal.count = vars.grenades_awarded(a.lethal.count, max);
                 }
+                // `give_claymores_after_rounds`: an action-slot item's clip back to full.
+                for s in p.action_slots.slots {
+                    if let crate::weapons::actionslot::ActionSlot::Weapon { def } = s {
+                        a.give_item(def, def.clip);
+                    }
+                }
             }
             self.players[idx] = Some(p);
         }

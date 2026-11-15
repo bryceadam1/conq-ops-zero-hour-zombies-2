@@ -119,6 +119,7 @@ pub mod offhand_slot {
     pub const LETHAL: u32 = 1;
     pub const TACTICAL: u32 = 2;
     pub const EQUIPMENT: u32 = 3;
+    pub const SPECIFIC_USE: u32 = 4;
 }
 
 /// `weapInventoryType_t`.
@@ -373,6 +374,9 @@ pub struct Attachment {
     pub fire_type: Option<u32>,
     pub silenced: bool,
     pub dual_mag: bool,
+    /// `sharedAmmo`: the weapon with it pools its ammo by name (`FUN_008e8bc0`; see
+    /// [`Weapon::shared_ammo`]).
+    pub shared_ammo: bool,
     pub laser_sight: bool,
     pub dual_wield: bool,
     pub damage_range_scale: f32,
@@ -503,6 +507,7 @@ fn read_attachment(z: &Zone, at: u32) -> Result<Attachment, FormatError> {
         fire_type: (fire < 9 && fire != 0).then_some(fire),
         silenced: z.u8(at + WA::bSilenced) != 0,
         dual_mag: z.u8(at + WA::bDualMag) != 0,
+        shared_ammo: z.u8(at + WA::sharedAmmo) != 0,
         laser_sight: z.u8(at + WA::laserSight) != 0,
         dual_wield: z.u8(at + WA::bDualWield) != 0,
         damage_range_scale: z.f32(at + WA::fDamageRangeScale),
@@ -719,8 +724,16 @@ pub struct Weapon {
     pub reload_ammo_add: i32,
     /// `bSegmentedReload`: start, a cycle per `reload_ammo_add` rounds, end (tube shotguns).
     pub segmented_reload: bool,
-    /// `unlimitedAmmo`: the clip never counts as empty for the empty raise/drop (`FUN_008e6770`).
+    /// `unlimitedAmmo`: the clip never counts as empty for the empty raise/drop (`FUN_008e6770`),
+    /// and the weapon has no clip index (`FUN_008e2b00`).
     pub unlimited_ammo: bool,
+    /// `szAmmoName` and `szClipName`, and the def's `sharedAmmo`: a weapon that shares (it or an
+    /// attachment, `FUN_008e8bc0`) takes the stock of the first registered weapon with its ammo
+    /// name and the magazine of the first with its clip name (`FUN_008e2760`, `FUN_008e2b00`);
+    /// any other has its own.
+    pub ammo_name: String,
+    pub clip_name: String,
+    pub shared_ammo: bool,
     /// The HUD's low-ammo warning (`FUN_0049d3e0`): a clip at or under `lowAmmoWarningThreshold`
     /// of its size warns; `bNoPartialReload` shows no reload prompt; `ammoCounterClip` 0 (no clip
     /// counter) shows none at all.
@@ -911,7 +924,15 @@ pub struct Weapon {
     pub putaway_sound: Option<String>,
     pub alt_switch_sound: Option<String>,
     pub reload_sound: Option<String>,
+    /// `reloadEmptySound`, `reloadStartSound`, `reloadEndSound` (what others hear).
+    pub reload_empty_sound: Option<String>,
+    pub reload_start_sound: Option<String>,
+    pub reload_end_sound: Option<String>,
     pub reload_sound_player: Option<String>,
+    /// `reloadEmptySoundPlayer`, `reloadStartSoundPlayer`, `reloadEndSoundPlayer`.
+    pub reload_empty_sound_player: Option<String>,
+    pub reload_start_sound_player: Option<String>,
+    pub reload_end_sound_player: Option<String>,
     pub melee_miss_sound: Option<String>,
     pub empty_fire_sound: Option<String>,
     /// HUD art (material names).
@@ -1200,22 +1221,21 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
             });
         }
     }
-    // The base unique (kind == 0) carries the weapon's overlay material; the raw attachment
-    // struct has no overlay pointer. Fall back to the variant's own fields when the base unique
-    // is absent.
+    // With no attachment the overlay is the variant's material and the def's reticle (an
+    // attachment's single unique overrides them where it differs from the base unique's: the
+    // converter's `overlay_for`). A variant naming no material falls back to the base unique's.
     let variant_overlay_material = named(z, v + WV::overlayMaterial).unwrap_or_default();
     let variant_overlay_material_low_res = named(z, v + WV::overlayMaterialLowRes).unwrap_or_default();
-    let variant_overlay_reticle = 0;
     let base_unique = attachment_uniques.iter().find(|u| u.kind == 0);
-    let overlay_material = base_unique
-        .map(|u| u.overlay_material.clone())
+    let overlay_material = Some(variant_overlay_material.clone())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| variant_overlay_material.clone());
-    let overlay_material_low_res = base_unique
-        .map(|u| u.overlay_material_low_res.clone())
+        .or_else(|| base_unique.map(|u| u.overlay_material.clone()))
+        .unwrap_or_default();
+    let overlay_material_low_res = Some(variant_overlay_material_low_res.clone())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| variant_overlay_material_low_res.clone());
-    let overlay_reticle = base_unique.map_or(variant_overlay_reticle, |u| u.overlay_reticle);
+        .or_else(|| base_unique.map(|u| u.overlay_material_low_res.clone()))
+        .unwrap_or_default();
+    let overlay_reticle = z.u32(d + WD::overlayReticle);
     let mut w = Weapon {
         attachment_uniques,
         name: z.str_ptr(v + WV::szInternalName),
@@ -1312,6 +1332,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.reload_ammo_add = int(z, d + WD::iReloadAmmoAdd);
     w.segmented_reload = z.u8(d + WD::bSegmentedReload) != 0;
     w.unlimited_ammo = z.u8(d + WD::unlimitedAmmo) != 0;
+    w.shared_ammo = z.u8(d + WD::sharedAmmo) != 0;
+    w.ammo_name = opt_str(z, v + WV::szAmmoName).unwrap_or_default();
+    w.clip_name = opt_str(z, v + WV::szClipName).unwrap_or_default();
     w.low_ammo_warning_threshold = z.f32(d + WD::lowAmmoWarningThreshold);
     w.no_partial_reload = z.u8(d + WD::bNoPartialReload) != 0;
     w.ammo_counter_clip = z.u32(d + WD::ammoCounterClip);
@@ -1517,6 +1540,12 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.alt_switch_sound = opt_str(z, d + WD::altSwitchSound);
     w.reload_sound = opt_str(z, d + WD::reloadSound);
     w.reload_sound_player = opt_str(z, d + WD::reloadSoundPlayer);
+    w.reload_empty_sound_player = opt_str(z, d + WD::reloadEmptySoundPlayer);
+    w.reload_empty_sound = opt_str(z, d + WD::reloadEmptySound);
+    w.reload_start_sound = opt_str(z, d + WD::reloadStartSound);
+    w.reload_end_sound = opt_str(z, d + WD::reloadEndSound);
+    w.reload_start_sound_player = opt_str(z, d + WD::reloadStartSoundPlayer);
+    w.reload_end_sound_player = opt_str(z, d + WD::reloadEndSoundPlayer);
     w.melee_miss_sound = opt_str(z, d + WD::meleeMissSound);
     w.empty_fire_sound = opt_str(z, d + WD::emptyFireSound);
     w.impact_type = z.u32(d + WD::impactType);
@@ -2120,10 +2149,12 @@ mod tests {
     }
 
     #[test]
-    fn the_base_unique_carries_the_overlay_material() {
-        // The base unique's kind == 0 entry is the weapon's base configuration. The synthetic zone's
-        // base unique points at `scope_overlay_xpr50`; the weapon surfaces it.
-        let mut mem = vec![0u8; 512];
+    fn the_overlay_is_the_variants_material_and_the_defs_reticle() {
+        // With no attachment BO2 draws the variant's `overlayMaterial` and the def's
+        // `overlayReticle` (the conformance oracle's `rows.rs`). A variant naming no material
+        // falls back to the base unique's (kind 0): the synthetic zone's points at
+        // `scope_overlay_xpr50`.
+        let mut mem = vec![0u8; 8192];
         let put32 = |mem: &mut Vec<u8>, at: usize, v: u32| {
             mem[at..at + 4].copy_from_slice(&v.to_le_bytes());
         };
@@ -2148,12 +2179,19 @@ mod tests {
         put32(&mut mem, 300, 340);
         put_str(&mut mem, 340, "scope_overlay_xpr50");
         put32(&mut mem, 128 + 196, 300);
-        // overlayMaterialLowRes at offset 200 is 0.
-        // overlayReticle at offset 204 is 1.
-        put32(&mut mem, 128 + 204, 1);
-        let zone = crate::t6zone::synthetic_zone("t", mem, Vec::new(), Vec::new());
+        // The unique's overlayReticle (offset 204) is 2; the def's is 1.
+        put32(&mut mem, 128 + 204, 2);
+        put32(&mut mem, WV::weapDef as usize, 4096);
+        put32(&mut mem, 4096 + WD::overlayReticle as usize, 1);
+        let zone = crate::t6zone::synthetic_zone("t", mem.clone(), Vec::new(), Vec::new());
         let w = read(&zone, 0).expect("the weapon reads");
-        assert_eq!(w.overlay_material, "scope_overlay_xpr50");
-        assert_eq!(w.overlay_reticle, 1);
+        assert_eq!(w.overlay_material, "scope_overlay_xpr50", "no variant material: the base unique's");
+        assert_eq!(w.overlay_reticle, 1, "the def's reticle");
+        // A variant material wins over the base unique's (the upgraded Barrett's `scope_overlay_vzoom`).
+        put32(&mut mem, 1900, 1940);
+        put_str(&mut mem, 1940, "scope_overlay_vzoom");
+        put32(&mut mem, WV::overlayMaterial as usize, 1900);
+        let zone = crate::t6zone::synthetic_zone("t", mem, Vec::new(), Vec::new());
+        assert_eq!(read(&zone, 0).expect("the weapon reads").overlay_material, "scope_overlay_vzoom");
     }
 }

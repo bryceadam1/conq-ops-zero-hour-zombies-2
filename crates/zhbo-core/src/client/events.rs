@@ -139,7 +139,8 @@ impl Client {
             // An offhand leaving another player's hand: its third-person `fireSound` at them
             // (`sounds::remote_offhand`), as BO2 plays it for everyone but the thrower.
             EventKind::Thrown { lethal } => {
-                let def = p.arsenal.offhand_def(lethal);
+                // An item throws from the hand, not a slot.
+                let def = sounds::item_in_hand(&p.arsenal).filter(|d| !lethal && d.place == crate::weapons::Place::Throw).unwrap_or_else(|| p.arsenal.offhand_def(lethal));
                 if let Some(cue) = sounds::remote_offhand(def) {
                     self.cues.play_at(cue, p.body.eye());
                 }
@@ -152,7 +153,7 @@ impl Client {
                 }
             }
             EventKind::Planted { kind } => {
-                let set_down = [p.arsenal.lethal.def, p.arsenal.tactical.def].into_iter().find(|d| d.equipment_kind == kind && d.place == crate::weapons::Place::Plant);
+                let set_down = [p.arsenal.lethal.def, p.arsenal.tactical.def].into_iter().chain(sounds::item_in_hand(&p.arsenal)).find(|d| d.equipment_kind == kind && d.place == crate::weapons::Place::Plant);
                 if let Some(cue) = set_down.and_then(sounds::remote_offhand) {
                     self.cues.play_at(cue, p.body.eye());
                 }
@@ -460,7 +461,15 @@ impl Client {
                         self.cues.play(cue);
                     }
                 }
-                EventKind::Thrown { lethal } => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
+                // An item throws from the hand: its own sound only.
+                EventKind::Thrown { lethal } => match holder.and_then(|p| sounds::item_in_hand(&p.arsenal)).filter(|d| !lethal && d.place == crate::weapons::Place::Throw) {
+                    Some(item) => {
+                        if let Some(cue) = sounds::item_fire_for(item) {
+                            self.cues.play(cue);
+                        }
+                    }
+                    None => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
+                },
                 EventKind::Launched => self.cues.play(held.map_or(sounds::FIRE_LAUNCHER, |(def, ammo, ..)| sounds::shot_for(def, ammo, sounds::launch_for(def)))),
                 EventKind::Hacking { progress } => {
                     self.hud.hack_progress = progress;
@@ -478,9 +487,17 @@ impl Client {
                 EventKind::Planted { kind } => {
                     use crate::equipment::Kind;
                     if matches!(kind, Kind::Claymore | Kind::Betty | Kind::Trophy | Kind::Insertion) {
-                        // The planted item's own sound: the player's lethal or tactical of that kind.
-                        let def = held.and_then(|(_, _, _, l, t)| [l, t].into_iter().find(|d| d.equipment_kind == kind));
-                        self.cues.play(def.map_or(sounds::PLANT, sounds::plant_for));
+                        // The planted item's own sound: the player's lethal or tactical of that kind,
+                        // or the item in hand (its own sound only).
+                        let item = holder.and_then(|p| sounds::item_in_hand(&p.arsenal)).filter(|d| d.equipment_kind == kind);
+                        if let Some(item) = item {
+                            if let Some(cue) = sounds::item_fire_for(item) {
+                                self.cues.play(cue);
+                            }
+                        } else {
+                            let def = held.and_then(|(_, _, _, l, t)| [l, t].into_iter().find(|d| d.equipment_kind == kind));
+                            self.cues.play(def.map_or(sounds::PLANT, sounds::plant_for));
+                        }
                     }
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),

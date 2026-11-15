@@ -16034,3 +16034,67 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - Verified: `cargo test --workspace` 1501 passed; clippy clean; the `zombies` gate 0 gaps; the
     TranZit install tests; in game `--shop` 12/12.
   - **Bump:** `hud::VERSION` → 108 (the icons).
+- **Follow-up, same day: the `zm_weapons` gate, 260 → 17 cells (only the jetgun and riot shield left).**
+  - **Shared ammo is BO2's registration rule, not "the alt's magazine".** Ghidra (t6zm):
+    `FUN_008e8bc0` is "shares ammo" (the def's `sharedAmmo` at `WeaponDef+0x630`, or an
+    attachment's unless `bIgnoreAttachments`). `FUN_008e2760` gives a variant its stock index: a
+    sharing weapon takes the index of the first variant registered under its `szAmmoName`; a
+    dual-wield left gun takes its right gun's; any other gets its own. `FUN_008e2b00` does the same
+    for the magazine by `szClipName` (none with `unlimitedAmmo`). The converter carries the flag
+    and both names (`AmmoPool`, a sim field; `SharedAmmo` on attachments), and
+    `Arsenal::pool_ammo` pools the held weapons registered under one weapon (the table's order is
+    the registration order), once a frame, a changed member carrying its count to the rest.
+    - An alt mode owns its ammo unless it shares under its gun's clip name. That is the old
+      launcher rule for every MP weapon (the MP gate stays at 0), but TranZit's upgraded SMR's dual
+      optic now has its own magazine (BO2 data: `sharedAmmo` 0) and the upgraded Chicom's select
+      fire loads the gun's (`sharedAmmo` 1).
+  - **TranZit's alt modes took over their gun's viewmodel.** They name their gun back as their own
+    alt, so `weapon_viewmodels` gave `tar21_zm` the launcher's viewmodel (no magazine) and the
+    upgraded M16's launcher the rifle's clips. An alt mode now takes its gun's viewmodel only from
+    a gun that toggles to it, and only an `ALTMODE` weapon is given its gun's.
+  - **The magazine is `attachViewModel[6]`** (G14 §3), whatever it holds: the upgraded Saiga's is
+    its fast magazine, which the name search used to double with the plain one.
+  - **The item class.** BO2's item-inventory grenades (`WEAPINVENTORY_ITEM`, weapType grenade) are
+    held up as the weapon in hand, never offhands: the perk bottles, the knuckle crack, the melee
+    flourishes, the syrette and TranZit's claymore (`Class::Item`; `SpecificUse` carries
+    `offhandSlot` 4). They used to be "launchers" (a stand-in world flash, a dry fire, the
+    claymore bought as a gun).
+  - **TranZit's claymores** (`_zm_weap_claymore.gsc`, `zombies.ini` `[Claymore]`): bought once at
+    their wall buy (hidden from him after), on action slot 4 with a full clip (2), each round's
+    start fills it again. The slot's press brings the claymore up as the weapon in hand
+    (`Arsenal::items`, `raise_owned_item`); fire plants it; the last one gone puts it away, as does
+    a swap. Down, it trips on a zombie in its 70° front within 96 inches and goes off 0.4 s later;
+    a thirteenth goes off after 0.1 s. The d-pad shows its icon and count (`UpdateActionSlots`).
+  - **Reload sounds.** The client's events 0x12-0x15 (`FUN_004c1590`, t6mp) play
+    `reloadSound(Player)`, `reloadEmptySound(Player)`, `reloadStartSound(Player)` and
+    `reloadEndSound(Player)` as a reload, a reload from empty, and a shell reload's start and end
+    begin. No MP weapon names them, so they were never carried; the Ray Gun's `gear_player` is
+    the first. Others hear the third-person ones.
+  - **Smaller facts:**
+    - The scope overlay is the variant's material and the def's reticle, not the base unique's
+      (the upgraded Barrett's `scope_overlay_vzoom`; the Barrett's and DSR-50's `crosshair`).
+    - An effect that draws nothing still plays: the revolvers' `fx_revolver` runs only
+      `system_elements/fx_null`, and its brass FX weapon is now written (empty).
+    - `Zone::find` prefers a real asset over a `,` stub of the same name (`FUN_00597000`).
+    - A clip the install never defines plays the default xanim, `void` (`code_post_gfx_zm`'s):
+      the upgraded M1911's `viewmodel_m1911_dw_putaway_empty` is only `zm_transit_patch`'s stub.
+      The oracle says so too (`Install::played_anim`); the converter registers `void` there instead
+      of leaving the slot to fall back to idle.
+    - `sprintDurationScale` is carried as BO2 has it: 0 (the jetgun, the Galvaknuckles) is no
+      sprint with that weapon up (`FUN_008bcfe0` has no floor).
+  - **Oracle correction, cited:** Zombies' riot shield is carried as its script attaches it.
+    `refreshshieldattachment` (t6zm `FUN_0061e640` → `FUN_009647d0`, the
+    `t6_wpn_shield_carry_world` literal) is called only by MP's `_riotshield.gsc`;
+    `_zm_riotshield.gsc` attaches `level.carriedshieldmodel[]` (`t6_wpn_zmb_shield_world`, the
+    def's `worldModel`) itself.
+  - **Researched for what's next** (the gate fails on 17 cells until they land): the jetgun's heat
+    (`FUN_0066eba0`: each frame, a firing weapon's heat += ms × `overheatRate` × 0.001, every other
+    held weapon's, or with `coolWhileFiring` also the firing one's, −= ms × `cooldownRate` × 0.001;
+    `FUN_008d8160` caps it at 100 and sets "overheated", which clears at or under
+    `overheatEndVal`); TranZit explodes an overheated jetgun (`level.explode_overheated_jetgun`).
+    The shield's 2250 hit points, its melee's fling (2500 within 90 inches) and knockdown (15).
+    The buildables (`_zm_buildables.gsc`): one part carried, 3 s builds with `zombie_builder_zm`.
+  - Verified: `cargo test --workspace` all pass; clippy clean; the MP gate 0 cells (12,163 rows),
+    `zombies` 0; `zm_weapons` 17 (the jetgun's 9, the shield's 8); in game `--shop` 12/12 and the new
+    `--claymores` 6/6 (the claymores alone: a five-step run raced round 1's zombies).
+  - **Bump:** `hud::VERSION` → 109 (the weapon table's new fields, the classes, the viewmodels).

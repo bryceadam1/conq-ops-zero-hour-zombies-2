@@ -97,6 +97,8 @@ pub struct AttachmentDef {
     /// OR-ed into the weapon's: `bDualMag`, `bInfraRed`, `mmsWeapon`, `bUseAsMelee`,
     /// `bAltWeaponAdsOnly`, `bAltWeaponDisableSwitching`.
     pub dual_mag: bool,
+    /// `sharedAmmo`: the weapon pools its ammo by name (`WeaponDef::shared_ammo`).
+    pub shared_ammo: bool,
     pub infrared: bool,
     pub mms: bool,
     pub use_as_melee: bool,
@@ -164,6 +166,7 @@ impl Default for AttachmentDef {
             stack_fire: (0.0, 0.0),
             penetrate: Penetrate::None,
             dual_mag: false,
+            shared_ammo: false,
             infrared: false,
             mms: false,
             use_as_melee: false,
@@ -427,6 +430,8 @@ fn apply_handling(d: &mut WeaponDef, atts: &[&AttachmentDef]) {
     tr.penetrate = walk.iter().map(|a| a.penetrate).find(|p| *p != Penetrate::None).unwrap_or(tr.penetrate);
     // `bIgnoreAttachments` gates the dual magazine (`FUN_008eba90`); the other flags OR regardless.
     tr.dual_mag |= !tr.ignore_attachments && walk.iter().any(|a| a.dual_mag);
+    // `FUN_008e8bc0`: the def's `sharedAmmo`, or (unless `bIgnoreAttachments`) any attachment's.
+    d.shared_ammo |= !tr.ignore_attachments && walk.iter().any(|a| a.shared_ammo);
     tr.infrared |= walk.iter().any(|a| a.infrared);
     tr.mms |= walk.iter().any(|a| a.mms);
     tr.use_as_melee |= walk.iter().any(|a| a.use_as_melee);

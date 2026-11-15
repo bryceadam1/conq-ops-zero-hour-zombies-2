@@ -19,7 +19,7 @@ pub fn weapon_rows(dir: &std::path::Path) -> Result<Vec<crate::schema::Row>, Str
 /// The expected weapon rows of TranZit's weapons `ids` (the Zombies weapon table).
 pub fn zm_weapon_rows(dir: &std::path::Path, ids: &[String]) -> Result<Vec<crate::schema::Row>, String> {
     let install = install::Install::open_zm(dir)?;
-    rows::Expected::new(&install).with_melee("knife_zm").rows_for(&crate::weapons::schema(), ids)
+    rows::Expected::new(&install).with_melee("knife_zm").with_scripted_shield().rows_for(&crate::weapons::schema(), ids)
 }
 
 /// Both expected tables for the install at `dir`: the weapon rows and the create-a-class rows.

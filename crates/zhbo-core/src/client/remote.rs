@@ -282,11 +282,27 @@ impl Remote {
             let at = s.eye;
             s.weapon.step(&p.arsenal, |m| {
                 use crate::weapons::arsenal::RaiseKind;
+                // A reload's phases: what others hear (`reloadSound` and its kin); the torso's reload
+                // is the reload's own.
+                let reload = match m {
+                    sounds::Moment::Reload(d, false) => Some((d, NpcSound::Reload)),
+                    sounds::Moment::Reload(d, true) => Some((d, NpcSound::ReloadEmpty)),
+                    sounds::Moment::ReloadStart(d) => Some((d, NpcSound::ReloadStart)),
+                    sounds::Moment::ReloadEnd(d) => Some((d, NpcSound::ReloadEnd)),
+                    _ => None,
+                };
+                if let Some((d, n)) = reload {
+                    if let Some(e) = sounds::some(d.npc_sound(n)).filter(|_| heard) {
+                        cues.play_at(e, at);
+                    }
+                    return;
+                }
                 let (def, action, sound) = match m {
                     sounds::Moment::Putaway(d) => (d, torso::DROP, Some(NpcSound::Putaway)),
                     sounds::Moment::Raise(d, RaiseKind::First) => (d, torso::FIRST_RAISE, Some(NpcSound::FirstRaise)),
                     sounds::Moment::Raise(d, RaiseKind::Normal | RaiseKind::Quick | RaiseKind::Empty) => (d, torso::RAISE, Some(NpcSound::Raise)),
                     sounds::Moment::Raise(_, RaiseKind::Alt) | sounds::Moment::AltSwitch(_) | sounds::Moment::AdsZoom(_) => return,
+                    sounds::Moment::Reload(..) | sounds::Moment::ReloadStart(_) | sounds::Moment::ReloadEnd(_) => return,
                 };
                 if let Some(clip) = table.pick(def.torso_anims, action, ctx) {
                     started = Some(Torso { action, clip, t: 0.0, lethal: false });

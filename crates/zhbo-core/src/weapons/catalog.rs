@@ -378,6 +378,27 @@ pub fn weapon_or_none(id: &str) -> Option<&'static WeaponDef> {
     def
 }
 
+/// The weapon whose stock `def` draws on: BO2 registers ammo indices in load order, and a weapon
+/// that shares (`sharedAmmo`) takes the index of the first already registered under its ammo name
+/// (`FUN_008e2760`); any other gets its own. The table's order is the registration order. (The
+/// engine's dual-wield link, a left gun on its right gun's stock, is the arsenal's left hand.)
+pub fn stock_owner(def: &'static WeaponDef) -> &'static str {
+    first_registered(def, |d| &d.ammo_name)
+}
+
+/// The weapon whose magazine `def` loads: as [`stock_owner`] by clip name (`FUN_008e2b00`).
+pub fn clip_owner(def: &'static WeaponDef) -> &'static str {
+    first_registered(def, |d| &d.clip_name)
+}
+
+fn first_registered(def: &'static WeaponDef, name: impl Fn(&WeaponDef) -> &String) -> &'static str {
+    if !def.shared_ammo || name(def).is_empty() {
+        return &def.id;
+    }
+    // A sharing weapon outside the table (a test's) registers under the name itself.
+    catalog().all().iter().copied().find(|d| name(d) == name(def)).map_or(name(def).as_str(), |d| d.id.as_str())
+}
+
 /// The weapon with this id, falling back to the built-in table and then to its first entry.
 /// Display-only callers use this; the substitution is recorded (and printed once per id) so it is
 /// never silent. Kit construction uses [`weapon_or_none`].

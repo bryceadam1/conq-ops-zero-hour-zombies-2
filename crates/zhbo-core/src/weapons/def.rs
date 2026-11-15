@@ -28,11 +28,17 @@ pub enum Class {
     Lethal,
     Tactical,
     Equipment,
+    /// BO2's item-inventory weapon of grenade type (`WEAPINVENTORY_ITEM`, weapType grenade): held
+    /// up as the weapon in hand, not an offhand. Zombies' scripts switch to one for a moment (a
+    /// perk's bottle, the knuckle crack, a melee buy's flourish, the reviver's syrette: its raise
+    /// is the animation) or set one on an action slot (the claymores, `setactionslot( 4, "weapon",
+    /// ... )`); its fire throws or plants it as a grenade ([`WeaponDef::place`]).
+    Item,
 }
 
 impl Class {
     pub fn is_gun(self) -> bool {
-        !matches!(self, Class::Shield | Class::Melee | Class::Lethal | Class::Tactical | Class::Equipment)
+        !matches!(self, Class::Shield | Class::Melee | Class::Lethal | Class::Tactical | Class::Equipment | Class::Item)
     }
     /// A weapon of the primary/secondary slots: a gun or the Assault Shield.
     pub fn is_slot_weapon(self) -> bool {
@@ -56,6 +62,7 @@ impl Class {
             Class::Lethal => "lethal",
             Class::Tactical => "tactical",
             Class::Equipment => "equipment",
+            Class::Item => "item",
         }
     }
     /// The gun classes, each one Create-a-Class weapon group ([`Class::cac_group`]).
@@ -73,7 +80,7 @@ impl Class {
             Class::Launcher => "weapon_launcher",
             Class::Special | Class::Shield => "weapon_special",
             Class::Lethal | Class::Tactical | Class::Equipment => "weapon_grenade",
-            Class::Melee => "",
+            Class::Melee | Class::Item => "",
         }
     }
     pub(crate) fn parse(s: &str) -> Option<Self> {
@@ -91,6 +98,7 @@ impl Class {
             Class::Lethal,
             Class::Tactical,
             Class::Equipment,
+            Class::Item,
         ]
         .into_iter()
         .find(|c| c.name() == s)
@@ -472,6 +480,14 @@ pub struct WeaponDef {
     pub alt_switch_sound: String,
     /// The putaway's event (`putawaySoundPlayer`), played as the drop begins.
     pub putaway_sound: String,
+    /// The reload's events (`reloadSoundPlayer`, `reloadEmptySoundPlayer`,
+    /// `reloadStartSoundPlayer`, `reloadEndSoundPlayer`), played as a reload begins, from empty,
+    /// and as a shell reload's start and end begin (EV_RELOAD, EV_RELOAD_FROM_EMPTY,
+    /// EV_RELOAD_START, EV_RELOAD_END: the client's events 0x12-0x15, `FUN_004c1590`).
+    pub reload_sound: String,
+    pub reload_empty_sound: String,
+    pub reload_start_sound: String,
+    pub reload_end_sound: String,
     /// The zoom-in event as aiming starts (`adsZoomSound`; scoped weapons).
     pub ads_zoom_sound: String,
     /// The melee swing with this weapon in hand (`meleeSwipeSoundPlayer`).
@@ -548,6 +564,13 @@ pub struct WeaponDef {
     pub alt: String,
     /// This alt mode keeps its own ammo (a grenade launcher), not the weapon's magazine.
     pub alt_own_ammo: bool,
+    /// BO2's ammo registration (`FUN_008e2760`, `FUN_008e2b00`): a weapon that shares
+    /// (`sharedAmmo`, its own or an attachment's: `FUN_008e8bc0`) takes the stock of the first
+    /// weapon registered under its `ammo_name` and the magazine of the first under its
+    /// `clip_name` ([`super::stock_owner`], [`super::clip_owner`]); any other keeps its own.
+    pub shared_ammo: bool,
+    pub ammo_name: String,
+    pub clip_name: String,
     /// The Create-a-Class slot BO2 offers this weapon in (`mp/statstable.csv` column 13:
     /// `primary`, `secondary`, `primarygrenade`, `specialgrenade`); empty when it is not a
     /// Create-a-Class item (a negative allocation cost: the `_dw` pistols, the War Machine, the
@@ -596,6 +619,9 @@ pub struct WeaponDef {
     pub place: Place,
     /// What the weapon is as equipment (claymore, C4, …); `Other` when it stays in the hand.
     pub equipment_kind: Kind,
+    /// BO2's `offhandSlot` specific use (`OFFHAND_SLOT_SPECIFIC_USE`): an item a script sets on an
+    /// action slot (the claymores) or hands over itself (the syrette), never in the weapon cycle.
+    pub specific_use: bool,
     /// The specialties this weapon grants while it is the current weapon: its variant's own
     /// (`WeaponVariantDef.perks`) and its attachments' (`WeaponAttachment.perks`), unioned when
     /// the attachments are applied (Ghidra G1's HasSpecialty rule).
@@ -1095,6 +1121,7 @@ impl Default for WeaponDef {
             melee_charge_delay: 0.0,
             effect: Effect::None,
             equipment_kind: Kind::Other,
+            specific_use: false,
             fuse_time: 0.0,
             cook: false,
             detonate_delay: 0.0,
@@ -1140,6 +1167,10 @@ impl Default for WeaponDef {
             silenced_fx_weapon: String::new(),
             silenced_view_flash_fx: String::new(),
             raise_sound: String::new(),
+            reload_sound: String::new(),
+            reload_empty_sound: String::new(),
+            reload_start_sound: String::new(),
+            reload_end_sound: String::new(),
             first_raise_sound: String::new(),
             alt_switch_sound: String::new(),
             putaway_sound: String::new(),
@@ -1171,6 +1202,9 @@ impl Default for WeaponDef {
             alt_modes: Vec::new(),
             alt: String::new(),
             alt_own_ammo: false,
+            shared_ammo: false,
+            ammo_name: String::new(),
+            clip_name: String::new(),
             cac_slot: String::new(),
             cac_group: String::new(),
             cac_name: String::new(),
@@ -1350,6 +1384,10 @@ impl WeaponDef {
         self.first_raise_sound.clone_from(&from.first_raise_sound);
         self.alt_switch_sound.clone_from(&from.alt_switch_sound);
         self.putaway_sound.clone_from(&from.putaway_sound);
+        self.reload_sound.clone_from(&from.reload_sound);
+        self.reload_empty_sound.clone_from(&from.reload_empty_sound);
+        self.reload_start_sound.clone_from(&from.reload_start_sound);
+        self.reload_end_sound.clone_from(&from.reload_end_sound);
         self.ads_zoom_sound.clone_from(&from.ads_zoom_sound);
         self.melee_swipe_sound.clone_from(&from.melee_swipe_sound);
         self.melee_hit_sound.clone_from(&from.melee_hit_sound);
@@ -1394,6 +1432,10 @@ impl WeaponDef {
             (&self.first_raise_sound, Heard::Player),
             (&self.alt_switch_sound, Heard::Player),
             (&self.putaway_sound, Heard::Player),
+            (&self.reload_sound, Heard::Player),
+            (&self.reload_empty_sound, Heard::Player),
+            (&self.reload_start_sound, Heard::Player),
+            (&self.reload_end_sound, Heard::Player),
             (&self.ads_zoom_sound, Heard::Player),
             (&self.melee_swipe_sound, Heard::Player),
             (&self.melee_hit_sound, Heard::Player),
@@ -1496,10 +1538,28 @@ pub enum NpcSound {
     Pullback,
     /// `emptyFireSound`: the trigger pulled on an empty magazine.
     EmptyFire,
+    /// `reloadSound`, `reloadEmptySound`, `reloadStartSound`, `reloadEndSound`: the reload's
+    /// phases (EV_RELOAD and its kin, events 0x12-0x15).
+    Reload,
+    ReloadEmpty,
+    ReloadStart,
+    ReloadEnd,
 }
 
 impl NpcSound {
-    pub const ALL: [NpcSound; 7] = [NpcSound::Raise, NpcSound::FirstRaise, NpcSound::Putaway, NpcSound::MeleeSwipe, NpcSound::MeleeHit, NpcSound::Pullback, NpcSound::EmptyFire];
+    pub const ALL: [NpcSound; 11] = [
+        NpcSound::Raise,
+        NpcSound::FirstRaise,
+        NpcSound::Putaway,
+        NpcSound::MeleeSwipe,
+        NpcSound::MeleeHit,
+        NpcSound::Pullback,
+        NpcSound::EmptyFire,
+        NpcSound::Reload,
+        NpcSound::ReloadEmpty,
+        NpcSound::ReloadStart,
+        NpcSound::ReloadEnd,
+    ];
 
     pub const fn key(self) -> &'static str {
         match self {
@@ -1510,6 +1570,10 @@ impl NpcSound {
             NpcSound::MeleeHit => "melee_hit",
             NpcSound::Pullback => "pullback",
             NpcSound::EmptyFire => "empty_fire",
+            NpcSound::Reload => "reload",
+            NpcSound::ReloadEmpty => "reload_empty",
+            NpcSound::ReloadStart => "reload_start",
+            NpcSound::ReloadEnd => "reload_end",
         }
     }
 }

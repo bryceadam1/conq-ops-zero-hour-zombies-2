@@ -291,6 +291,7 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
         stack_fire: (a.stack_fire_spread, a.stack_fire_accuracy_decay),
         penetrate: Penetrate::from_bo2(a.penetrate_type),
         dual_mag: a.dual_mag,
+        shared_ammo: a.shared_ammo,
         infrared: a.infrared,
         mms: a.mms_weapon,
         use_as_melee: a.use_as_melee,
@@ -468,7 +469,7 @@ pub fn table_with_metadata(
         }
         if let Some(w) = bo2.iter().find(|w| w.name == id) {
             let mut d = to_def(w, names);
-            alt_mode_ammo(&mut d, w);
+            alt_mode_ammo(&mut d, w, alt_parent(bo2, w));
             weapons.push(d);
         }
     }
@@ -732,19 +733,30 @@ pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
 /// the class melee weapon the global swing. Each melee weapon gets its own swing. Sets each
 /// definition's `fire_sound`, `melee_swipe_sound` and `fx_weapon`; returns the events and the FX weapon
 /// INI.
-/// An alt mode's ammo (`WEAPINVENTORY_ALTMODE`): a launcher alt mode has its own grenades; select
-/// fire and a second optic share the weapon's magazine. BO2 counts the alt launcher's grenades as
-/// rounds, not magazines: the start count includes the loaded one, the max is the spare cap
+/// An alt mode's ammo (`WEAPINVENTORY_ALTMODE`): BO2 registers the alt after `parent`, the gun it
+/// belongs to, and an alt that shares (`sharedAmmo`) under its gun's clip name loads its gun's
+/// magazine (`FUN_008e2b00`: select fire); any other has its own (`FUN_008e2760`: the launchers,
+/// the upgraded SMR's second optic). BO2 counts an alt launcher's grenades as rounds, not
+/// magazines: the start count includes the loaded one, the max is the spare cap
 /// (`FUN_005e08d0`; G16).
-pub(crate) fn alt_mode_ammo(d: &mut WeaponDef, w: &Weapon) {
+pub(crate) fn alt_mode_ammo(d: &mut WeaponDef, w: &Weapon, parent: Option<&Weapon>) {
     if w.inventory != bo2::inventory::ALTMODE {
         return;
     }
-    d.alt_own_ammo = d.class == Class::Launcher;
-    if d.alt_own_ammo {
+    d.alt_own_ammo = !(d.shared_ammo && parent.is_some_and(|p| p.clip_name == w.clip_name));
+    // A launcher's grenades count as rounds even where its def says magazines; any other own-ammo
+    // alt keeps `to_def`'s counts (the dual optic's 7 magazines of 30).
+    if d.alt_own_ammo && d.class == Class::Launcher {
         d.start_reserve = (w.start_ammo - w.clip_size).max(0) as u16;
         d.max_reserve = (w.max_ammo.max(0) as u16).max(d.start_reserve);
     }
+}
+
+/// The gun alt mode `alt` belongs to: the weapon whose own `altWeapon` or one of whose attachment
+/// uniques names it.
+pub(crate) fn alt_parent<'a>(bo2: &'a [Weapon], alt: &Weapon) -> Option<&'a Weapon> {
+    let names = |w: &Weapon| w.alt_weapon.as_deref() == Some(alt.name.as_str()) || w.attachment_uniques.iter().any(|u| u.alt_weapon.as_deref() == Some(alt.name.as_str()));
+    bo2.iter().find(|w| w.name != alt.name && w.inventory != bo2::inventory::ALTMODE && names(w))
 }
 
 pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [WeaponDef], converted: &[String]) -> (Vec<crate::sfx::DynSfx>, String) {
@@ -1072,6 +1084,11 @@ fn class_of(w: &Weapon) -> Class {
     if w.weap_type == bo2::kind::MELEE {
         return Class::Melee;
     }
+    // An item-inventory grenade is held up as the weapon in hand (Zombies' bottles, flourishes,
+    // syrette and claymores), never an offhand.
+    if w.inventory == bo2::inventory::ITEM && matches!(w.weap_type, bo2::kind::GRENADE | bo2::kind::MINE) {
+        return Class::Item;
+    }
     if is_shield(w) {
         return Class::Shield;
     }
@@ -1198,6 +1215,10 @@ fn npc_sounds(w: &Weapon) -> Vec<(String, String)> {
                 NpcSound::MeleeHit => &w.melee_hit_sound,
                 NpcSound::Pullback => &w.pullback_sound,
                 NpcSound::EmptyFire => &w.empty_fire_sound,
+                NpcSound::Reload => &w.reload_sound,
+                NpcSound::ReloadEmpty => &w.reload_empty_sound,
+                NpcSound::ReloadStart => &w.reload_start_sound,
+                NpcSound::ReloadEnd => &w.reload_end_sound,
             };
             alias.as_deref().map(|a| (m.key().to_string(), zhbo_core::names::npc_def_sound_event(a)))
         })
@@ -1250,6 +1271,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let d = WeaponDef {
         id: w.name.clone(),
         equipment_kind: manifest::equipment_kind_of(&w.name),
+        specific_use: w.offhand_slot == bo2::offhand_slot::SPECIFIC_USE,
         display_name,
         class,
         weap_class: WeapClass::from_bo2(w.class),
@@ -1307,7 +1329,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // shotguns 2): `FUN_008ed080` takes it when above 0, else 1, and clamps nothing. The walk's
         // own aimed scale (`AdsWalkScale`, 0.4) is the engine's, applied by the sim.
         ads_move_scale: if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 },
-        sprint_duration_scale: if w.sprint_duration_scale > 0.0 { w.sprint_duration_scale } else { 1.0 },
+        sprint_duration_scale: w.sprint_duration_scale,
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },
         melee_delay: w.melee_delay.max(0.0),
@@ -1356,14 +1378,14 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         projectile_object: String::new(),
         // A gun's shot is its own `ZHBO_BO2_Fire_<id>` mix (`sounds_and_fx`); an offhand's throw is
         // its def-level alias.
-        fire_sound: if class.is_offhand() { def_sound(&w.fire_sound_player) } else { String::new() },
+        fire_sound: if class.is_offhand() || class == Class::Item { def_sound(&w.fire_sound_player) } else { String::new() },
         empty_fire_sound: String::new(),
         left_fire_sound: String::new(),
         // Set by `sounds_and_fx` (a converted event).
         silenced_fire_sound: String::new(),
         // What others hear when it is thrown or set down (`fireSound`; `client` plays it at the
         // thrower for every other player).
-        npc_fire_sound: if class.is_offhand() { def_sound(&w.fire_sound) } else { String::new() },
+        npc_fire_sound: if class.is_offhand() || class == Class::Item { def_sound(&w.fire_sound) } else { String::new() },
         // A gun's third-person opening and last round (`FUN_005320e0` reads both off the def, so
         // no attachment changes them): the client plays them at another player's shot.
         npc_fire_start_sound: if class.is_offhand() { String::new() } else { def_sound(&w.fire_start_sound) },
@@ -1392,6 +1414,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         first_raise_sound: def_sound(&w.first_raise_sound_player),
         alt_switch_sound: def_sound(&w.alt_switch_sound_player),
         putaway_sound: def_sound(&w.putaway_sound_player),
+        reload_sound: def_sound(&w.reload_sound_player),
+        reload_empty_sound: def_sound(&w.reload_empty_sound_player),
+        reload_start_sound: def_sound(&w.reload_start_sound_player),
+        reload_end_sound: def_sound(&w.reload_end_sound_player),
         ads_zoom_sound: def_sound(&w.ads_zoom_sound),
         melee_swipe_sound: def_sound(&w.melee_swipe_sound_player),
         melee_hit_sound: def_sound(&w.melee_hit_sound),
@@ -1427,6 +1453,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // no MP base weapon does) toggles to it. MP alt modes come from the attachment uniques.
         alt: w.alt_weapon.clone().unwrap_or_default(),
         alt_own_ammo: false,
+        shared_ammo: w.shared_ammo,
+        ammo_name: w.ammo_name.clone(),
+        clip_name: w.clip_name.clone(),
         // Set from the statstable by `set_cac_slots` (the table is not this weapon's data).
         cac_slot: String::new(),
         cac_group: String::new(),
