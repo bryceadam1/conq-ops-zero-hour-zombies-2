@@ -16225,3 +16225,21 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   lock. The script now encodes a test clip and waits for the lock. A third launch lost its
   upload when the Mac's address changed (the SSH group admits one address); `cloud.ensure_group`
   adds the new one, and `run.sh` reuses a machine already up.
+
+## Voice: Whisper training moves between the Mac and spot machines (2026-11-15)
+
+- Spot capacity for g5/g6.xlarge in us-west-2 came and went all evening: two machines were
+  reclaimed minutes after launch, one 2 minutes after its 14-minute upload, one mid-upload
+  ($0.18, $0.06). The user chose to stay on spot and keep training on the Mac in between.
+- `train_whisper.py`: `last` now holds the optimizer (`optimizer.pt`, used only when saved at
+  the weights' step); SIGTERM saves `last` at the next step and exits 75; `--micro` splits a
+  step into passes (the sum over tokens divided by the whole batch's count, the same gradient),
+  so the Mac takes the cloud's 64-clip steps and schedule in two passes of 32.
+- `train_whisper.sh`: after setup it writes `~/job/READY` and waits for `~/job/GO`; a watcher
+  reads the spot notice from instance metadata (IMDSv2) and SIGTERMs the trainer. The Mac's
+  `run.sh` stops its own trainer at READY, pushes the checkpoint, writes GO, and pulls every
+  minute (`cloud.py watch --poll`); a reclaimed machine hands the run back to the Mac and a new
+  launch begins, under a ledger of every machine's cost.
+- Checked on the Mac: SIGTERM at step 8 saved and exited 75; the resume restored the optimizer
+  and went on to step 12. `plot_training.py` drops the rows a resume from an older checkpoint
+  replaced.

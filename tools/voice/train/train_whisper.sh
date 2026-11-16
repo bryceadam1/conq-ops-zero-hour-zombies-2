@@ -4,6 +4,10 @@
 # this sets up an environment, trains into ~/job/out (pulled every few minutes by `cloud.py
 # watch`), then writes ~/job/DONE. Run again after a lost machine, it resumes from ~/job/out/last.
 # Every step is logged; a failure still ends in DONE so the machine never idles.
+# The Mac trains while no machine has the run: after setup this writes ~/job/READY and waits for
+# ~/job/GO, which the Mac writes once it has stopped and pushed its checkpoint to ~/job/out. A spot
+# machine's two-minute notice stops the trainer at the next step with `last` saved, for the Mac to
+# pull and carry on.
 #   MAC_ROOT=<the Mac's ~/.conquerops/voice> nohup bash ~/job/train/train_whisper.sh base.en > ~/job/logs/train_whisper.out 2>&1 &
 # (the clip lists name the Mac's paths; MAC_ROOT is mapped to ~/job/data)
 set -uo pipefail
@@ -27,13 +31,28 @@ uv pip install -q --python $PY torch torchaudio --index-url https://download.pyt
 uv pip install -q --python $PY "transformers==5.22.2" soundfile numpy || finish "transformers failed"
 $PY -c "import torch; assert torch.cuda.is_available(); print('torch', torch.__version__, torch.cuda.get_device_name())" || finish "no CUDA"
 
+touch ~/job/READY
+for i in $(seq 360); do [ -f ~/job/GO ] && break; sleep 5; done
+[ -f ~/job/GO ] || finish "the Mac never handed over"
+
 D=~/job/data
 RESUME=""
 [ -f ~/job/out/last/state.json ] && RESUME=--resume
-cd ~/job/train && $PY train_whisper.py --whisper $D/whisper-$MODEL --train $D/augment/lists/train.tsv \
+cd ~/job/train && { $PY train_whisper.py --whisper $D/whisper-$MODEL --train $D/augment/lists/train.tsv \
   --test $D/augment/lists/test.tsv --noisy $D/augment/test_noisy --prompts $D/corpus/prompts.tsv \
   --vocab $D/corpus/vocab.tsv --canonical $D/corpus/canonical.tsv \
   --augment $D/augment --out ~/job/out --remap "$MAC_ROOT=$D" \
-  --epochs 6 --patience 4 --batch 64 --lr 5e-5 --eval-every 1000 --workers $(( $(nproc) - 1 )) --bf16 $RESUME \
-  || echo "training failed"
+  --epochs 6 --patience 4 --batch 64 --lr 5e-5 --eval-every 1000 --workers $(( $(nproc) - 1 )) --bf16 $RESUME & }
+TRAINER=$!
+# The spot notice (instance metadata, IMDSv2): SIGTERM the trainer, which saves at its next step.
+( while kill -0 $TRAINER 2>/dev/null; do
+    T=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' -H "X-aws-ec2-metadata-token: $T" http://169.254.169.254/latest/meta-data/spot/instance-action)" = 200 ]; then
+      echo "== $(date -u) spot notice: stopping the trainer"; kill -TERM $TRAINER; break
+    fi
+    sleep 5
+  done ) &
+wait $TRAINER; CODE=$?
+[ $CODE -eq 75 ] && finish "handed off"
+[ $CODE -eq 0 ] || finish "training failed ($CODE)"
 finish "training done"

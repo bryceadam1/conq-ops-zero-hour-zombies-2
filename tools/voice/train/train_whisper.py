@@ -41,6 +41,7 @@ import hashlib
 import json
 import math
 import random
+import signal
 import sys
 import time
 from pathlib import Path
@@ -229,14 +230,17 @@ def encode(model, mel):
     return enc.layer_norm(x)
 
 
-def loss_of(model, batch, device):
+def loss_of(model, batch, device, tokens=None):
     """Cross-entropy over the label's tokens. The vocabulary's 51,864 logits are taken only where the
-    loss looks: at every position (the prompt is most of each row) they held tens of GB."""
+    loss looks: at every position (the prompt is most of each row) they held tens of GB. With
+    `tokens`, the sum divided by that count: a slice of a batch's share of the batch's mean."""
     states = encode(model, batch["mel"].to(device))
     hidden = model.model.decoder(input_ids=batch["inputs"].to(device), encoder_hidden_states=states).last_hidden_state
     labels = batch["labels"].to(device)
     keep = labels != -100
-    return torch.nn.functional.cross_entropy(model.proj_out(hidden[keep]).float(), labels[keep])
+    if tokens is None:
+        return torch.nn.functional.cross_entropy(model.proj_out(hidden[keep]).float(), labels[keep])
+    return torch.nn.functional.cross_entropy(model.proj_out(hidden[keep]).float(), labels[keep], reduction="sum") / tokens
 
 
 @torch.no_grad()
@@ -312,6 +316,9 @@ def batches_by_length(rows, size, seed):
     return chunks
 
 
+HANDED_OFF = 75  # the exit code after SIGTERM: `last` saved, the run not finished
+
+
 def save(model, proc, where, state=None):
     model.save_pretrained(where)
     proc.save_pretrained(where)
@@ -333,6 +340,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=6)
     ap.add_argument("--patience", type=int, default=4, help="evaluations in a row without a new best before stopping")
     ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--micro", type=int, default=0, help="clips per forward pass (a step still takes --batch; the Mac's memory)")
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--warmup", type=int, default=500)
     ap.add_argument("--eval-every", type=int, default=2000)
@@ -379,6 +387,8 @@ def main():
         state = json.loads((out / "last" / "state.json").read_text())
         model = WhisperForConditionalGeneration.from_pretrained(out / "last").to(device)
         print(f"resuming at step {state['step']} (best {state['best']:.4f})", flush=True)
+        # The checkpoint moves between the Mac and the cloud as files: the optimizer's file counts
+        # only when it was saved at the same step as the weights.
     else:
         model = WhisperForConditionalGeneration.from_pretrained(args.whisper).to(device)
     model.config.forced_decoder_ids = None
@@ -389,6 +399,23 @@ def main():
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / args.warmup) * max(0.0, 1 - s / total))
     for _ in range(state["step"]):
         sched.step()
+    opt_file = out / "last" / "optimizer.pt"
+    if args.resume and state["step"] and opt_file.exists():
+        saved = torch.load(opt_file, map_location=device)
+        if saved["step"] == state["step"]:
+            opt.load_state_dict(saved["opt"])
+            print("optimizer state restored", flush=True)
+        else:
+            print(f"optimizer state is from step {saved['step']}, not {state['step']}: starting it fresh", flush=True)
+
+    def checkpoint(state):
+        save(model, proc, out / "last", state)
+        torch.save({"step": state["step"], "opt": opt.state_dict()}, opt_file)
+
+    # SIGTERM (the Mac handing over to a cloud machine, or a spot machine's two-minute notice):
+    # finish the step, save `last`, and leave.
+    term = []
+    signal.signal(signal.SIGTERM, lambda *_: term.append(1))
     metrics = open(out / "metrics.jsonl", "a")
 
     def record(row):
@@ -405,9 +432,15 @@ def main():
         loader = torch.utils.data.DataLoader(train, batch_sampler=chunks, **loader_kw)
         running, norms = 0.0, 0.0
         for batch in loader:
-            with torch.autocast(device, dtype=torch.bfloat16, enabled=args.bf16):
-                loss = loss_of(model, batch, device)
-            loss.backward()
+            n, tokens = len(batch["i"]), int((batch["labels"] != -100).sum())
+            micro = args.micro or n
+            loss = 0.0
+            for a in range(0, n, micro):
+                part = {k: batch[k][a : a + micro] for k in ("mel", "inputs", "labels")}
+                with torch.autocast(device, dtype=torch.bfloat16, enabled=args.bf16):
+                    piece = loss_of(model, part, device, tokens)
+                piece.backward()
+                loss += piece.detach()
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             sched.step()
@@ -437,10 +470,16 @@ def main():
                       f"(flagged {unknown_flagged:.3f}, false {false_unknown:.3f}), loss {loss_dev:.4f}" + (" (best)" if better else ""), flush=True)
                 if better:
                     save(model, proc, out / "best")
-                save(model, proc, out / "last", state)
+                checkpoint(state)
                 if state["since_best"] >= args.patience:
                     print(f"no new best in {args.patience} evaluations: stopping", flush=True)
                     stop = True
+            if term:
+                state = dict(state, step=step)
+                checkpoint(state)
+                record({"type": "handoff", "step": step, "time": time.time()})
+                print(f"stopped at step {step} and saved it", flush=True)
+                sys.exit(HANDED_OFF)
             if step >= total or stop:
                 break
         if step >= total or stop:

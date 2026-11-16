@@ -243,7 +243,7 @@ def watch(args):
             terminate_now(c, st, f"guardrail: {hours:.2f} h, about ${spent:.2f} (cap ${st['cap']:.2f}, lifetime {st['hours']} h)")
             return
         log(f"{status}, {hours:.2f} h, about ${spent:.2f} of ${st['cap']:.2f}")
-        time.sleep(60)
+        time.sleep(args.poll)
 
 
 def status(args):
@@ -287,6 +287,7 @@ def main():
     p.add_argument("job")
     p.add_argument("--pull", nargs="*", help="pairs of remote dir and local dir to keep pulled")
     p.add_argument("--interval", type=int, default=300, help="seconds between pulls")
+    p.add_argument("--poll", type=int, default=60, help="seconds between looks at the machine (and its DONE)")
     p.set_defaults(fn=watch)
     sub.add_parser("status").set_defaults(fn=status)
     p = sub.add_parser("terminate")

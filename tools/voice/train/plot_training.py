@@ -23,6 +23,11 @@ def load(path):
             rows.append(json.loads(line))
         except json.JSONDecodeError:
             continue  # a line cut off mid-pull
+        # A resume from an older checkpoint (a machine lost between saves) trains those steps
+        # again: the rows past the checkpoint it went back to no longer happened.
+        r = rows[-1]
+        if r["type"] == "start" and r.get("resumed_at") is not None:
+            rows = [x for x in rows if x["type"] not in ("train", "eval") or x["step"] <= r["resumed_at"]] + [r]
     return rows
 
 
