@@ -3,7 +3,8 @@ command's label out, with no transcript and no translator between.
 
     venv/bin/python tools/voice/train/train_whisper.py --whisper ~/.conquerops/voice/whisper-base.en \\
         --train <augment>/lists/train.tsv --test <augment>/lists/test.tsv --noisy <augment>/test_noisy \\
-        --prompts <corpus>/prompts.tsv --augment <augment> --out <dir> [--epochs 3] [--limit-steps N]
+        --prompts <corpus>/prompts.tsv --augment <augment> --out <dir> [--epochs 6] [--patience 4]
+        [--remap /Users/me/.conquerops/voice=/home/ubuntu/job/data] [--resume] [--bf16]
 
 Each example is what the game will send (`zhbo_voice::hear`): the clip, augmented as it loads
 (`augment.py`, a different take each epoch), then 3 s of digital silence, as log-mel features
@@ -14,10 +15,17 @@ tokens, and learns the label and end of text; the loss covers only those. SpecAu
 features lightly.
 
 The dev set is 1% of the training vocabularies (by a hash of the id), never trained on, so its
-names are new to the model as the test set's are. Evaluates greedily on dev every `--eval-every`
-steps and keeps the best by exact match in `<out>/best`; at the end scores the best on the
-clean and the noisy test sets and writes their predictions (`test_predictions.tsv`,
-`noisy_predictions.tsv`: path, label, prediction) for `voice_judge`.
+names are new to the model as the test set's are. Every `--eval-every` steps it is decoded
+greedily twice, clean and augmented once with the held-back recordings (a fixed take), and its
+teacher-forced loss taken; the best clean exact match is kept in `<out>/best`, the latest
+weights in `<out>/last` (with `state.json`, so `--resume` carries on after a lost spot machine).
+Training stops after `--epochs`, or when `--patience` evaluations in a row bring no new best.
+At the end the best is scored on the clean and the noisy test sets and their predictions written
+(`test_predictions.tsv`, `noisy_predictions.tsv`: path, label, prediction) for `voice_judge`.
+
+Every number goes to `<out>/metrics.jsonl`, one JSON object a line: `train` rows every 50 steps
+(loss, learning rate, gradient norm, clips a second), `eval` rows (dev clean and noisy exact
+match, dev loss), `test` at the end. `plot_training.py` draws them.
 """
 
 import argparse
@@ -66,19 +74,30 @@ def log_mel(x, filters):
     return ((log + 4.0) / 4.0).numpy()
 
 
+REMAP = []  # (old prefix, new prefix): clip lists name the Mac's paths
+
+
+def remap(path):
+    for old, new in REMAP:
+        if path.startswith(old):
+            return new + path[len(old) :]
+    return path
+
+
 def read_rows(path):
     rows = []
     for line in Path(path).read_text().splitlines():
         p = line.split("\t")
-        rows.append({"path": p[0], "sentence": p[1], "label": p[2], "vid": p[3], "seconds": float(p[4])})
+        rows.append({"path": remap(p[0]), "sentence": p[1], "label": p[2], "vid": p[3], "seconds": float(p[4])})
     return rows
 
 
 class Clips(torch.utils.data.Dataset):
     """Rows as the model's inputs: features (augmented in `augment` mode) and token ids."""
 
-    def __init__(self, rows, tok, prompts, filters, pools=None, split="train"):
+    def __init__(self, rows, tok, prompts, filters, pools=None, split="train", force=False, spec=False):
         self.rows, self.tok, self.prompts, self.filters, self.pools, self.split = rows, tok, prompts, filters, pools, split
+        self.force, self.spec = force, spec
         self.epoch = 0
         self.prev = tok.convert_tokens_to_ids("<|startofprev|>")
         self.start = tok.convert_tokens_to_ids(["<|startoftranscript|>", "<|notimestamps|>"])
@@ -97,10 +116,10 @@ class Clips(torch.utils.data.Dataset):
         x = A.load(r["path"])
         frames = None
         if self.pools is not None:
-            x, _ = A.augment(x, A.rng_for(r["path"], self.epoch), self.pools, self.split)
+            x, _ = A.augment(x, A.rng_for(r["path"], self.epoch), self.pools, self.split, force=self.force)
             frames = len(x) // HOP
         mel = log_mel(window_samples(x), self.filters)
-        if self.pools is not None:
+        if self.spec:
             mel = A.spec_augment(mel, A.rng_for("spec:" + r["path"], self.epoch), frames)
         prefix = self.prefix(r["vid"])
         target = self.tok.encode(" " + r["label"], add_special_tokens=False) + [self.eot]
@@ -182,6 +201,18 @@ def greedy(model, batch, device, eot, max_new=64):
     return [row[: row.index(eot)] if eot in row else row for row in tokens]
 
 
+@torch.no_grad()
+def dev_loss(model, loader, device, bf16):
+    model.eval()
+    total, n = 0.0, 0
+    for batch in loader:
+        with torch.autocast(device, dtype=torch.bfloat16, enabled=bf16):
+            total += loss_of(model, batch, device).item() * len(batch["i"])
+        n += len(batch["i"])
+    model.train()
+    return total / max(n, 1)
+
+
 def evaluate(model, loader, tok, device, rows, path=None):
     model.eval()
     eot = tok.convert_tokens_to_ids("<|endoftext|>")
@@ -207,6 +238,13 @@ def batches_by_length(rows, size, seed):
     return chunks
 
 
+def save(model, proc, where, state=None):
+    model.save_pretrained(where)
+    proc.save_pretrained(where)
+    if state is not None:
+        (Path(where) / "state.json").write_text(json.dumps(state))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--whisper", required=True)
@@ -216,7 +254,8 @@ def main():
     ap.add_argument("--prompts", required=True)
     ap.add_argument("--augment", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--epochs", type=int, default=3)
+    ap.add_argument("--epochs", type=int, default=6)
+    ap.add_argument("--patience", type=int, default=4, help="evaluations in a row without a new best before stopping")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--warmup", type=int, default=500)
@@ -226,9 +265,12 @@ def main():
     ap.add_argument("--limit-steps", type=int, default=0)
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--no-final", action="store_true", help="skip dev and test at the end (timing runs)")
+    ap.add_argument("--remap", action="append", default=[], help="OLD=NEW path prefix")
+    ap.add_argument("--resume", action="store_true", help="carry on from <out>/last")
     args = ap.parse_args()
+    REMAP.extend(tuple(m.split("=", 1)) for m in args.remap)
 
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     proc = WhisperProcessor.from_pretrained(args.whisper)
@@ -242,61 +284,85 @@ def main():
     train_rows = [r for r in rows if h("dev:" + r["vid"]) % 100 != 0]
     dev_rows = sorted(dev_rows, key=lambda r: h(r["path"]))[: args.dev_count]
     test_rows = read_rows(args.test)
-    print(f"train {len(train_rows)}, dev {len(dev_rows)} (vocabularies held out), test {len(test_rows)}", flush=True)
+    print(f"{device}: train {len(train_rows)}, dev {len(dev_rows)} (vocabularies held out), test {len(test_rows)}", flush=True)
 
-    train = Clips(train_rows, tok, prompts, filters, pools, "train")
+    train = Clips(train_rows, tok, prompts, filters, pools, "train", spec=True)
     loader_kw = dict(collate_fn=collate, num_workers=args.workers, prefetch_factor=4 if args.workers else None)
     dev_loader = torch.utils.data.DataLoader(Clips(dev_rows, tok, prompts, filters), batch_size=64, **loader_kw)
+    # The noisy dev set: one fixed take of each dev clip from the held-back recordings.
+    dev_noisy_loader = torch.utils.data.DataLoader(Clips(dev_rows, tok, prompts, filters, pools, "test", force=True), batch_size=64, **loader_kw)
 
-    model = WhisperForConditionalGeneration.from_pretrained(args.whisper).to(device)
+    state = {"step": 0, "best": -1.0, "since_best": 0}
+    if args.resume and (out / "last" / "state.json").exists():
+        state = json.loads((out / "last" / "state.json").read_text())
+        model = WhisperForConditionalGeneration.from_pretrained(out / "last").to(device)
+        print(f"resuming at step {state['step']} (best {state['best']:.4f})", flush=True)
+    else:
+        model = WhisperForConditionalGeneration.from_pretrained(args.whisper).to(device)
     model.config.forced_decoder_ids = None
     model.train()
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     steps_per_epoch = math.ceil(len(train_rows) / args.batch)
     total = args.limit_steps or steps_per_epoch * args.epochs
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / args.warmup) * max(0.0, 1 - s / total))
-    log = open(out / "train.log", "a")
-    best, step, start = -1.0, 0, time.time()
-    for epoch in range(args.epochs):
+    for _ in range(state["step"]):
+        sched.step()
+    metrics = open(out / "metrics.jsonl", "a")
+
+    def record(row):
+        metrics.write(json.dumps(row) + "\n")
+        metrics.flush()
+
+    record({"type": "start", "time": time.time(), "device": device, "train": len(train_rows), "dev": len(dev_rows), "batch": args.batch,
+            "lr": args.lr, "epochs": args.epochs, "steps_per_epoch": steps_per_epoch, "total_steps": total, "resumed_at": state["step"]})
+    step, start, stop = state["step"], time.time(), False
+    done_at_start = step
+    for epoch in range(step // steps_per_epoch, args.epochs):
         train.epoch = epoch
-        loader = torch.utils.data.DataLoader(train, batch_sampler=batches_by_length(train_rows, args.batch, epoch), **loader_kw)
-        running = 0.0
+        chunks = batches_by_length(train_rows, args.batch, epoch)[step - epoch * steps_per_epoch :]
+        loader = torch.utils.data.DataLoader(train, batch_sampler=chunks, **loader_kw)
+        running, norms = 0.0, 0.0
         for batch in loader:
             with torch.autocast(device, dtype=torch.bfloat16, enabled=args.bf16):
                 loss = loss_of(model, batch, device)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             sched.step()
             opt.zero_grad(set_to_none=True)
             step += 1
             running += loss.item()
+            norms += float(norm)
             if step % 50 == 0:
-                rate = step * args.batch / (time.time() - start)
-                msg = f"epoch {epoch} step {step}/{total} loss {running / 50:.4f} lr {sched.get_last_lr()[0]:.2e} {rate:.1f} clips/s"
-                print(msg, flush=True)
-                log.write(msg + "\n")
-                log.flush()
-                running = 0.0
+                rate = (step - done_at_start) * args.batch / (time.time() - start)
+                record({"type": "train", "step": step, "epoch": round(step / steps_per_epoch, 4), "loss": running / 50, "lr": sched.get_last_lr()[0],
+                        "grad_norm": norms / 50, "clips_per_s": rate, "time": time.time()})
+                print(f"epoch {epoch} step {step}/{total} loss {running / 50:.4f} lr {sched.get_last_lr()[0]:.2e} {rate:.1f} clips/s", flush=True)
+                running, norms = 0.0, 0.0
             if step % args.eval_every == 0 or (step == total and not args.no_final):
-                acc = evaluate(model, dev_loader, tok, device, dev_rows)
-                msg = f"step {step}: dev exact match {acc:.4f}" + (" (best)" if acc > best else "")
-                print(msg, flush=True)
-                log.write(msg + "\n")
-                log.flush()
-                if acc > best:
-                    best = acc
-                    model.save_pretrained(out / "best")
-                    proc.save_pretrained(out / "best")
-            if step >= total:
+                clean = evaluate(model, dev_loader, tok, device, dev_rows)
+                noisy = evaluate(model, dev_noisy_loader, tok, device, dev_rows)
+                loss_dev = dev_loss(model, dev_loader, device, args.bf16)
+                better = clean > state["best"]
+                state = {"step": step, "best": max(clean, state["best"]), "since_best": 0 if better else state["since_best"] + 1}
+                record({"type": "eval", "step": step, "epoch": round(step / steps_per_epoch, 4), "dev_clean": clean, "dev_noisy": noisy,
+                        "dev_loss": loss_dev, "best": better, "time": time.time()})
+                print(f"step {step}: dev exact match {clean:.4f} clean, {noisy:.4f} noisy, loss {loss_dev:.4f}" + (" (best)" if better else ""), flush=True)
+                if better:
+                    save(model, proc, out / "best")
+                save(model, proc, out / "last", state)
+                if state["since_best"] >= args.patience:
+                    print(f"no new best in {args.patience} evaluations: stopping", flush=True)
+                    stop = True
+            if step >= total or stop:
                 break
-        if step >= total:
+        if step >= total or stop:
             break
 
     if args.no_final:
         return
     model = WhisperForConditionalGeneration.from_pretrained(out / "best").to(device)
-    results = {"dev": best}
+    results = {"dev": state["best"]}
     test_loader = torch.utils.data.DataLoader(Clips(test_rows, tok, prompts, filters), batch_size=64, **loader_kw)
     results["test"] = evaluate(model, test_loader, tok, device, test_rows, out / "test_predictions.tsv")
     if args.noisy:
@@ -304,11 +370,12 @@ def main():
         noisy_rows = []
         for line in (Path(args.noisy) / "manifest.tsv").read_text().splitlines():
             name, _, src, _ = line.split("\t")
-            r = dict(by_path[src])
+            r = dict(by_path[remap(src)])
             r["path"] = str(Path(args.noisy) / name)
             noisy_rows.append(r)
         noisy_loader = torch.utils.data.DataLoader(Clips(noisy_rows, tok, prompts, filters), batch_size=64, **loader_kw)
         results["noisy"] = evaluate(model, noisy_loader, tok, device, noisy_rows, out / "noisy_predictions.tsv")
+    record({"type": "test", "time": time.time()} | results)
     (out / "results.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results), flush=True)
 
