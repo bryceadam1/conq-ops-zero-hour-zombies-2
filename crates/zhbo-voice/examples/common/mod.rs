@@ -74,15 +74,33 @@ pub const TRAIN_VOICES: [&str; 14] = [
 /// 16 kHz mono samples.
 pub fn speak(text: &str, voice: &str, rate: Option<u32>, scratch: &Path) -> Result<Vec<f32>, zhbo_voice::Error> {
     let wav = scratch.join(format!("zhbo_voice_{}.wav", std::process::id()));
-    let mut say = Command::new("say");
-    say.args(["-v", voice, "--data-format=LEF32@16000", "-o"]).arg(&wav);
-    if let Some(r) = rate {
-        say.arg("-r").arg(r.to_string());
+    // `say` now and then hangs for good (once for an hour on one sentence, 2026-11-16): a try
+    // gets a minute, and three tries before giving up.
+    for _ in 0..3 {
+        let mut say = Command::new("say");
+        say.args(["-v", voice, "--data-format=LEF32@16000", "-o"]).arg(&wav);
+        if let Some(r) = rate {
+            say.arg("-r").arg(r.to_string());
+        }
+        let mut child = say.arg(text).spawn()?;
+        let start = std::time::Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break Some(status);
+            }
+            if start.elapsed() > std::time::Duration::from_secs(60) {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        match status {
+            Some(s) if s.success() => return zhbo_voice::audio::read_wav(&std::fs::read(&wav)?),
+            Some(_) => return Err(format!("say failed for {voice:?}").into()),
+            None => eprintln!("say hung for {voice:?} on {text:?}; trying again"),
+        }
     }
-    let ok = say.arg(text).status()?.success();
-    if !ok {
-        return Err(format!("say failed for {voice:?}").into());
-    }
-    zhbo_voice::audio::read_wav(&std::fs::read(&wav)?)
+    Err(format!("say hung three times for {voice:?}").into())
 }
 

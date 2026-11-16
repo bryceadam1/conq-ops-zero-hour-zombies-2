@@ -5,6 +5,11 @@
 //! `config.json`, `tokenizer.json`; the launcher downloads it at install) and transcribes one
 //! utterance of 16 kHz mono audio greedily. The prompt goes in as the "previous text"
 //! (`<|startofprev|>`), Whisper's own way of carrying context.
+//!
+//! A checkpoint trained to write commands (`tools/voice/train/train_whisper.py`, section 11 step
+//! 13) is read by [`Listener::command`] instead: the same prompt and window, its tokens under the
+//! grammar's mask (`constrain`), so what comes out is the canonical command itself; or, where it
+//! hears a name the prompt lacks, the command up to it and `<unknown: name>`.
 
 use std::path::Path;
 
@@ -41,6 +46,27 @@ pub struct Heard {
     pub encode_seconds: f32,
     pub decode_seconds: f32,
 }
+
+/// One utterance as a command model reads it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Command {
+    /// The canonical command, up to an unknown name if there was one.
+    pub text: String,
+    /// The name heard that the prompt lacks (`<unknown: name>`).
+    pub unknown: Option<String>,
+    /// The most probability the grammar's mask took away at one step (the confidence check).
+    pub masked_max: f32,
+    /// The mask left nothing to say.
+    pub stuck: bool,
+    pub no_speech: f32,
+    pub encode_seconds: f32,
+    pub decode_seconds: f32,
+}
+
+/// What a command model writes before a name it can't find.
+const UNKNOWN_OPEN: &str = " <unknown:";
+/// The most tokens an unknown name may take (a name is a few words; past that the model loops).
+const UNKNOWN_TOKENS: usize = 12;
 
 pub struct Listener {
     /// The encoder's window: `None` for Whisper's full 30 s, or the audio's own length plus this
@@ -108,8 +134,9 @@ impl Listener {
         Ok(self.model.encode(&mel)?)
     }
 
-    fn decode(&mut self, pcm: &[f32], prompt: &str, features: &Tensor, clock: std::time::Instant, encode_seconds: f32) -> Result<Heard, Error> {
-        let features = features.clone();
+    /// The decoder's tokens before the first it writes: the prompt as the previous text, then the
+    /// start of the transcription.
+    fn prefix(&self, prompt: &str) -> Result<Vec<u32>, Error> {
         let mut tokens = Vec::new();
         if !prompt.is_empty() {
             // The prompt may use half the decoder's context, its end kept.
@@ -119,6 +146,88 @@ impl Listener {
             tokens.extend_from_slice(&ids[ids.len().saturating_sub(room)..]);
         }
         tokens.extend_from_slice(&self.start);
+        Ok(tokens)
+    }
+
+    /// A command model's reading of `pcm` over `vocab` (prompted with `prompt(vocab)`), greedy,
+    /// under the grammar's mask if `constrained`. `<unknown:` starts where the model itself would
+    /// write it first, mask or not: as one more allowed token it became the best of what the mask
+    /// left wherever the model wanted something the grammar refuses (6 of 300 spoken commands,
+    /// every name in the prompt, against none unmasked). After it the name is free text up to
+    /// `>` (at most `UNKNOWN_TOKENS`), and the command ends there.
+    pub fn command(&mut self, pcm: &[f32], vocab: &Vocabulary, constrained: bool) -> Result<Command, Error> {
+        let clock = std::time::Instant::now();
+        let features = self.encode(pcm)?;
+        let encode_seconds = clock.elapsed().as_secs_f32();
+        let mut tokens = self.prefix(&prompt(vocab))?;
+        let first = tokens.len();
+        let open = self.tokenizer.encode(UNKNOWN_OPEN, false)?.get_ids().to_vec();
+        let mut mask = if constrained { Some(crate::constrain::Mask::new(vocab, &self.tokenizer)?) } else { None };
+        let (mut masked_max, mut stuck, mut no_speech) = (0f32, false, 0f32);
+        // Where `<unknown:` began, once it has.
+        let mut unknown_at: Option<usize> = None;
+        let budget = ((pcm.len() as f32 / SAMPLE_RATE as f32) * TOKENS_PER_SECOND * 2.0) as usize + 16;
+        for step in 0..MAX_TOKENS.min(budget) {
+            let feed = if step == 0 { &tokens[..] } else { &tokens[tokens.len() - 1..] };
+            let logits = self.model.decode(feed, &features)?;
+            let probs = candle_nn::ops::softmax(&logits, D::Minus1)?.to_vec1::<f32>()?;
+            if step == 0 {
+                no_speech = self.no_speech_token.and_then(|t| probs.get(t as usize).copied()).unwrap_or(0.0);
+            }
+            let text_only = |t: &u32| *t <= self.eot && !self.config.suppress_tokens.contains(t);
+            let best = |allowed: &mut dyn Iterator<Item = u32>| allowed.max_by(|&a, &b| probs[a as usize].total_cmp(&probs[b as usize]));
+            let written = tokens.len() - first;
+            let next = match (unknown_at, &mut mask) {
+                // The rest of `<unknown:`, then the name in any text.
+                (Some(at), _) if written - at < open.len() => open[written - at],
+                (Some(at), _) if written - at >= open.len() + UNKNOWN_TOKENS => break,
+                (Some(_), _) | (None, None) => best(&mut (0..=self.eot).filter(text_only)).unwrap_or(self.eot),
+                (None, Some(m)) => {
+                    let wanted = best(&mut (0..=self.eot).filter(text_only));
+                    let mut allowed = m.allowed(self.eot)?;
+                    if wanted == Some(open[0]) {
+                        allowed.push(open[0]);
+                    }
+                    let kept: f32 = allowed.iter().map(|&t| probs.get(t as usize).copied().unwrap_or(0.0)).sum();
+                    masked_max = masked_max.max(1.0 - kept);
+                    match best(&mut allowed.into_iter()) {
+                        Some(t) => t,
+                        None => {
+                            stuck = true;
+                            break;
+                        }
+                    }
+                }
+            };
+            if next == self.eot {
+                break;
+            }
+            tokens.push(next);
+            if unknown_at.is_none() && next == open[0] && tokens[first..].ends_with(&open[..1]) {
+                unknown_at = Some(written);
+            } else if unknown_at.is_none() {
+                if let Some(m) = &mut mask {
+                    m.advance(next)?;
+                }
+            } else if self.tokenizer.decode(&[next], false)?.contains('>') {
+                break;
+            }
+        }
+        let said = &tokens[first..];
+        let (text, unknown) = match unknown_at {
+            Some(at) => {
+                let name = self.tokenizer.decode(&said[(at + open.len()).min(said.len())..], true)?;
+                (self.tokenizer.decode(&said[..at], true)?, Some(name.trim().trim_end_matches('>').trim().to_string()))
+            }
+            None => (self.tokenizer.decode(said, true)?, None),
+        };
+        let decode_seconds = clock.elapsed().as_secs_f32() - encode_seconds;
+        Ok(Command { text: text.trim().to_string(), unknown, masked_max, stuck, no_speech, encode_seconds, decode_seconds })
+    }
+
+    fn decode(&mut self, pcm: &[f32], prompt: &str, features: &Tensor, clock: std::time::Instant, encode_seconds: f32) -> Result<Heard, Error> {
+        let features = features.clone();
+        let mut tokens = self.prefix(prompt)?;
         let first = tokens.len();
         let (mut sum, mut no_speech) = (0f32, 0f32);
         let budget = ((pcm.len() as f32 / SAMPLE_RATE as f32) * TOKENS_PER_SECOND) as usize + 8;

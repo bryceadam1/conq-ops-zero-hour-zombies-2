@@ -16257,3 +16257,26 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - Of the 468 test misses, many keep the meaning: "enter" for "garrison", "depart" for
   "evacuate", a leading "that"/"them" dropped, word order. The comparison with Whisper to
   flan-T5 (0.783 spoken meaning) needs the candle port with the grammar mask and voice_judge.
+
+## Voice: the Whisper command model against Whisper to flan-T5, spoken (2026-11-16)
+
+- `constrain::Mask` reads Whisper's byte-level BPE as well as T5's sentencepiece (`Style`: a
+  word starts at `Ġ`, so each phrase is tokenized after a space, as the model learned
+  `" " + label`); test `byte_level_tokens_walk_the_same_commands`.
+- `Listener::command`: the trained checkpoint, same prompt and window, under the mask; no
+  snapper, no translator. `<unknown:` opens only where the model itself would write it first:
+  offered as one more allowed token it won wherever the mask refused what the model wanted (6
+  of 300 spoken commands flagged, every name in the prompt, the name then looping). An unknown
+  name is at most 12 tokens.
+- `voice_listen` with `VOICE_COMMAND=<checkpoint>`, the same 300 commands and 8 `say` voices:
+  the released pipeline 0.760 (0.778 English-named); the command model 0.787 masked and
+  unmasked (0.827 English-named), 302 ms a command on the CPU against 318 ms for Whisper alone
+  in the pipeline. The 2026-11-08 run of the pipeline read 0.783 on the same set.
+- Test clips by meaning (`voice_judge`): 0.964 clean, 0.958 noisy.
+- Most misses come from the set, not the hearing: its inputs carry heard-text noise said
+  aloud (`moo to`, `buy raven ridge`), fillers and loose verbs (`kill`, `cash in`), which the
+  model never saw (its corpus is grammatical by ruling); `them make them group 0`; `force
+  attack` for `kill ... now`. Commands the grammar refused what the model wanted for (mask took
+  0.99-1.00) are the ones the confidence guard asks about.
+- **Gotcha:** `say` once hung for an hour on one sentence and voice_listen waited; `speak`
+  now gives a try a minute, three tries.

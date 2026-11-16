@@ -11,6 +11,10 @@
 //! constrained translator reads each. Reports how often the transcription
 //! has every name of the label in it, how often the command means the label, and the time Whisper
 //! takes. Synthetic speech is cleaner than a player's, so this is the ceiling, not the floor.
+//!
+//! `VOICE_COMMAND=<checkpoint dir>`: also a Whisper trained to write commands
+//! (`train_whisper.py`) on the same audio, read by `Listener::command` with the grammar's mask
+//! and without, no translator after it.
 
 mod common;
 
@@ -72,12 +76,36 @@ fn main() -> Result<(), zhbo_voice::Error> {
         None => None,
     };
     let (mut choice_right, mut choice_time, mut choice_asked) = (0usize, 0f64, 0usize);
+    let mut direct = match std::env::var("VOICE_COMMAND") {
+        Ok(dir) => Some(Listener::load(Path::new(&dir), candle_core::Device::Cpu)?),
+        Err(_) => None,
+    };
+    // [masked, free]: right, unknown flagged, seconds; and the masked misses.
+    let (mut direct_right, mut direct_unknown, mut direct_time) = ([0usize; 2], [0usize; 2], [0f64; 2]);
+    let (mut direct_english, mut direct_wrong) = (0usize, Vec::new());
     for (i, (input, label, id)) in rows.iter().enumerate() {
         let Some(v) = vocabs.get(id) else { continue };
         let voice = common::TEST_VOICES[i % common::TEST_VOICES.len()];
         let pcm = common::speak(input, voice, None, &scratch)?;
         let wanted = names_in(label, v);
         let names_prompt = hear::prompt(v);
+        if let Some(ears) = &mut direct {
+            for (k, constrained) in [true, false].into_iter().enumerate() {
+                let t = Instant::now();
+                let c = ears.command(&pcm, v, constrained)?;
+                direct_time[k] += t.elapsed().as_secs_f64();
+                direct_unknown[k] += c.unknown.is_some() as usize;
+                let same = c.unknown.is_none() && same_meaning(&c.text, label, v);
+                direct_right[k] += same as usize;
+                if constrained && id.ends_with('e') {
+                    direct_english += same as usize;
+                }
+                if constrained && !same && direct_wrong.len() < 25 {
+                    let unknown = c.unknown.map(|u| format!(" <unknown: {u}>")).unwrap_or_default();
+                    direct_wrong.push(format!("  [{voice}] {input}\n    want  {label}\n    got   {}{unknown} (mask took {:.2})", c.text, c.masked_max));
+                }
+            }
+        }
         let mut prompted = String::new();
         for k in 0..WAYS.len() {
             let text = if k == 2 {
@@ -152,5 +180,17 @@ fn main() -> Result<(), zhbo_voice::Error> {
         println!("  snapped, token beam {beam}: same meaning {:.3}, {:.0} ms translating", tokens_right as f64 / n, tokens_time / n * 1000.0);
     }
     println!("snapped errors (first 25):\n{}", wrong.join("\n"));
+    if direct.is_some() {
+        for (k, name) in ["masked", "free"].iter().enumerate() {
+            println!(
+                "command model, {name}: same meaning {:.3}, unknown flagged {:.3}, {:.0} ms a command",
+                direct_right[k] as f64 / n,
+                direct_unknown[k] as f64 / n,
+                direct_time[k] / n * 1000.0
+            );
+        }
+        println!("  masked, English-named commands only: same meaning {:.3} of {english}", direct_english as f64 / english.max(1) as f64);
+        println!("command model errors, masked (first 25):\n{}", direct_wrong.join("\n"));
+    }
     Ok(())
 }
