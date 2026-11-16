@@ -15,7 +15,9 @@ finish() { echo "== $(date -u) finished: $1"; touch ~/job/DONE; exit 0; }
 echo "== $(date -u) on $(hostname)"; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader; nproc
 
 sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg >/dev/null || finish "apt failed"
-ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libopus || finish "ffmpeg has no libopus"
+# Encode a tenth of a second, not `-encoders | grep -q`: under pipefail, grep -q's early exit
+# kills ffmpeg with SIGPIPE and fails the check with libopus present.
+ffmpeg -hide_banner -loglevel error -f lavfi -i sine=d=0.1:r=16000 -c:a libopus -b:a 16k -f null - || finish "ffmpeg can't encode Opus"
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 PY=~/envs/whisper/bin/python
