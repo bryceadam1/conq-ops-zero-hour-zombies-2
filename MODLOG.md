@@ -16280,3 +16280,15 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   0.99-1.00) are the ones the confidence guard asks about.
 - **Gotcha:** `say` once hung for an hour on one sentence and voice_listen waited; `speak`
   now gives a try a minute, three tries.
+
+## Voice: the spoken test in Kokoro voices no model trained on (2026-11-16)
+
+- Correction to the entry above: its pipeline ran `commands-t5-small`, not the released
+  `commands-t5-small-choice` (voice.ini's hash 4fb360…), and 0.760 is that older model's.
+- `tools/voice/tts/listen_kokoro.py` speaks voice_listen's 300 rows in Kokoro's Spanish,
+  French, Hindi, Italian and Portuguese voices reading English (the scale-up's Kokoro clips used
+  all 27 English ones; Fish S2-Pro needs a large CUDA GPU, not the Mac). `voice_listen` reads
+  them with `VOICE_AUDIO=<dir>` and now times the translator.
+- Same meaning, the released pipeline 0.820 (0.840 English-named) against the command model
+  0.800 masked (0.790); time a command on the CPU 379 ms hearing + 242 ms translating against
+  330 ms, with a flan-T5 fine-tune sharing the machine.

@@ -15,6 +15,10 @@
 //! `VOICE_COMMAND=<checkpoint dir>`: also a Whisper trained to write commands
 //! (`train_whisper.py`) on the same audio, read by `Listener::command` with the grammar's mask
 //! and without, no translator after it.
+//!
+//! `VOICE_AUDIO=<dir>`: the rows' audio from `<dir>/<i>.wav` and its voices from
+//! `<dir>/manifest.tsv` instead of `say` (`tools/voice/tts/listen_kokoro.py`: Kokoro voices no
+//! model trained on).
 
 mod common;
 
@@ -50,6 +54,12 @@ fn main() -> Result<(), zhbo_voice::Error> {
     let snapper = Snapper::new(words.lines().map(str::to_string), &Tables::parse(&[normal::SHIPPED]));
     let mut model = Translator::load(Path::new(&args[1]), candle_core::Device::Cpu)?;
     let scratch = std::env::temp_dir();
+    let audio_dir = std::env::var("VOICE_AUDIO").ok().map(std::path::PathBuf::from);
+    let audio_voices: Vec<String> = match &audio_dir {
+        Some(d) => std::fs::read_to_string(d.join("manifest.tsv"))?.lines().map(|l| l.split('\t').nth(1).unwrap_or("").to_string()).collect(),
+        None => Vec::new(),
+    };
+    let mut translate_time = 0f64;
     // [no prompt, prompted, prompted and snapped]: names heard whole, commands meaning the
     // label, seconds hearing (and its parts).
     const WAYS: [&str; 3] = ["no prompt", "prompted", "snapped"];
@@ -85,8 +95,13 @@ fn main() -> Result<(), zhbo_voice::Error> {
     let (mut direct_english, mut direct_wrong) = (0usize, Vec::new());
     for (i, (input, label, id)) in rows.iter().enumerate() {
         let Some(v) = vocabs.get(id) else { continue };
-        let voice = common::TEST_VOICES[i % common::TEST_VOICES.len()];
-        let pcm = common::speak(input, voice, None, &scratch)?;
+        let (voice, pcm) = match &audio_dir {
+            Some(d) => (audio_voices[i].as_str(), zhbo_voice::audio::read_wav(&std::fs::read(d.join(format!("{i}.wav")))?)?),
+            None => {
+                let voice = common::TEST_VOICES[i % common::TEST_VOICES.len()];
+                (voice, common::speak(input, voice, None, &scratch)?)
+            }
+        };
         let wanted = names_in(label, v);
         let names_prompt = hear::prompt(v);
         if let Some(ears) = &mut direct {
@@ -122,7 +137,11 @@ fn main() -> Result<(), zhbo_voice::Error> {
                 prompted = text.clone();
             }
             names[k] += wanted.iter().all(|n| text.contains(n.as_str())) as usize;
+            let t = Instant::now();
             let out = model.translate(&text, v, true)?;
+            if k == 2 {
+                translate_time += t.elapsed().as_secs_f64();
+            }
             let same = same_meaning(&out.text, label, v);
             right[k] += same as usize;
             if let (2, Some((decoder, sure))) = (k, &choice) {
@@ -154,7 +173,8 @@ fn main() -> Result<(), zhbo_voice::Error> {
         }
     }
     let n = rows.len().max(1) as f64;
-    println!("{} spoken test rows, {} voices, CPU", rows.len(), common::TEST_VOICES.len());
+    let voices = if audio_dir.is_some() { "the manifest's" } else { "say's" };
+    println!("{} spoken test rows, {} voices ({voices}), CPU", rows.len(), common::TEST_VOICES.len());
     for (k, name) in WAYS.iter().enumerate() {
         println!(
             "{name:>9}: names heard {:.3}, same meaning {:.3}, {:.0} ms hearing ({:.0} encoding, {:.0} decoding)",
@@ -165,6 +185,7 @@ fn main() -> Result<(), zhbo_voice::Error> {
             parts[k][1] / n * 1000.0
         );
     }
+    println!("  snapped, translating under the mask: {:.0} ms a command", translate_time / n * 1000.0);
     println!("  snapped, unconstrained: same meaning {:.3}", free_right as f64 / n);
     println!("  snapped, English-named commands only: same meaning {:.3} of {english}", english_right as f64 / english.max(1) as f64);
     if let Some((_, sure)) = &choice {
