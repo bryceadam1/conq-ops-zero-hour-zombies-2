@@ -7,7 +7,8 @@
 set -uo pipefail
 mkdir -p ~/job/logs ~/job/out/fish
 exec > >(tee -a ~/job/logs/fish_corpus.log) 2>&1
-finish() { echo "== $(date -u) finished: $1"; touch ~/job/DONE; exit 0; }
+# KEEP_GOING=1: a script after this one (t5_fish_job.sh) still has work, so no DONE.
+finish() { echo "== $(date -u) finished: $1"; [ -n "${KEEP_GOING:-}" ] || touch ~/job/DONE; exit 0; }
 echo "== $(date -u) on $(hostname)"; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 IMAGE=hongccc/sglang-omni:dev

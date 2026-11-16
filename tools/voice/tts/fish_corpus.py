@@ -15,6 +15,13 @@ On the Mac, the lines and their reference voices:
   `<dir>/refs/`. `--exclude <file>` (command ids, one per line) skips commands that already have
   audio; a command left with only one kept sentence then speaks that one (id `<cid>_0`).
 
+Or the lines of the held-out spoken test (`voice_listen`'s rows, every `len // rows`-th of
+`<data>/test.tsv`), row i in held-out reference clip i % 24 (8 speakers at three rates), ids the
+row numbers:
+
+    python3 tools/voice/tts/fish_corpus.py listen --data tools/voice \
+        --voices ~/Documents/Projects/whisper-t5-bridge/data/voices --out <dir> [--rows 300]
+
 On the GPU machine, against SGLang-Omni's server (fish_sglang.sh starts it):
 
     python3 fish_corpus.py speak --lines lines.tsv --refs /tmp/refs --out <dir> [--concurrency 32]
@@ -62,6 +69,22 @@ def lines(args):
             rows.append("\t".join(r + (clip, v["text"])))
     (out / "lines.tsv").write_text("\n".join(rows) + "\n")
     print(f"{len(rows)} lines, {len(list((out / 'refs').iterdir()))} reference clips, in {out}")
+
+
+def listen(args):
+    voices = [v for v in json.loads((Path(args.voices) / "voices.json").read_text()) if v["split"] == "heldout"]
+    rows = [r for r in (l.split("\t") for l in (Path(args.data) / "test.tsv").read_text().splitlines()) if len(r) >= 3]
+    stride = max(len(rows) // max(args.rows, 1), 1)
+    out = Path(args.out)
+    (out / "refs").mkdir(parents=True, exist_ok=True)
+    lines = []
+    for i, (sentence, label, vid, *_) in enumerate(rows[::stride][: args.rows]):
+        v = voices[i % len(voices)]
+        clip = Path(v["clip"]).name
+        shutil.copy(Path(args.voices) / v["clip"], out / "refs" / clip)
+        lines.append("\t".join([str(i), sentence, label, "", vid, "test", clip, v["text"]]))
+    (out / "lines.tsv").write_text("\n".join(lines) + "\n")
+    print(f"{len(lines)} lines, {len(list((out / 'refs').iterdir()))} reference clips, in {out}")
 
 
 def speak(args):
@@ -122,6 +145,12 @@ def main():
     p.add_argument("--test", type=int, default=2000)
     p.add_argument("--exclude")
     p.set_defaults(fn=lines)
+    p = sub.add_parser("listen")
+    p.add_argument("--data", required=True)
+    p.add_argument("--voices", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--rows", type=int, default=300)
+    p.set_defaults(fn=listen)
     p = sub.add_parser("speak")
     p.add_argument("--lines", required=True)
     p.add_argument("--refs", required=True)

@@ -88,6 +88,7 @@ def main():
     ap.add_argument("--prompt", help="a file holding the prompt: {heard} is what was said, {names} the row's names (names.tsv)")
     ap.add_argument("--choices", action="store_true", help="also train on choices_train.tsv's multiple-choice questions")
     ap.add_argument("--max-src", type=int, help="the longest input in tokens (default: 64, or 384 with {names} in the prompt)")
+    ap.add_argument("--bf16", action="store_true", help="the forward pass in bf16 autocast (a CUDA GPU; slower on the Mac's)")
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -133,7 +134,8 @@ def main():
         start, total = time.time(), 0.0
         for chunk in batches(train, args.batch, True):
             ids, mask, labels = encode(tok, chunk, device, args.max_len, max_src)
-            loss = model(input_ids=ids, attention_mask=mask, labels=labels).loss
+            with torch.autocast(device, dtype=torch.bfloat16, enabled=args.bf16):
+                loss = model(input_ids=ids, attention_mask=mask, labels=labels).loss
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
