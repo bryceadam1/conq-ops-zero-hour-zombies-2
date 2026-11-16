@@ -16243,3 +16243,17 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - Checked on the Mac: SIGTERM at step 8 saved and exited 75; the resume restored the optimizer
   and went on to step 12. `plot_training.py` drops the rows a resume from an older checkpoint
   replaced.
+
+## Voice: Whisper base.en trained on commands, results (2026-11-16)
+
+- Six passes (18,102 steps of 64 clips, AdamW 5e-5, 500 warm-up steps, straight down to 0):
+  500 steps on the Mac (about 25 clips/s), the rest on one g6.xlarge spot machine (L4, about
+  51 clips/s) for 6.6 h, $4.88; the run's total with the four lost machines is $5.80.
+- Dev (vocabularies held out, greedy, no grammar mask): best clean 0.934 at step 16,000-17,000;
+  noisy 0.933, unknown 0.935 (flagged 0.994), false unknowns 0.002. Still rising slowly through
+  pass 4, flat in passes 5-6.
+- Test (12,022 clips, best checkpoint): exact match 0.961 clean, 0.955 noisy (3,000 clips from
+  the held-back recordings), unknown 0.943 (flagged 0.991).
+- Of the 468 test misses, many keep the meaning: "enter" for "garrison", "depart" for
+  "evacuate", a leading "that"/"them" dropped, word order. The comparison with Whisper to
+  flan-T5 (0.783 spoken meaning) needs the candle port with the grammar mask and voice_judge.
