@@ -14,7 +14,8 @@ exec > >(tee -a ~/job/logs/train_whisper.log) 2>&1
 finish() { echo "== $(date -u) finished: $1"; touch ~/job/DONE; exit 0; }
 echo "== $(date -u) on $(hostname)"; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader; nproc
 
-sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg >/dev/null || finish "apt failed"
+# A fresh machine's unattended-upgrades holds dpkg's lock for its first minutes: wait for it.
+sudo apt-get -o DPkg::Lock::Timeout=900 update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 install -y -qq ffmpeg >/dev/null || finish "apt failed"
 # Encode a tenth of a second, not `-encoders | grep -q`: under pipefail, grep -q's early exit
 # kills ffmpeg with SIGPIPE and fails the check with libopus present.
 ffmpeg -hide_banner -loglevel error -f lavfi -i sine=d=0.1:r=16000 -c:a libopus -b:a 16k -f null - || finish "ffmpeg can't encode Opus"
