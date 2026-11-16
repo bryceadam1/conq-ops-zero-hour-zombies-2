@@ -3,7 +3,8 @@ command's label out, with no transcript and no translator between.
 
     venv/bin/python tools/voice/train/train_whisper.py --whisper ~/.conquerops/voice/whisper-base.en \\
         --train <augment>/lists/train.tsv --test <augment>/lists/test.tsv --noisy <augment>/test_noisy \\
-        --prompts <corpus>/prompts.tsv --augment <augment> --out <dir> [--epochs 6] [--patience 4]
+        --prompts <corpus>/prompts.tsv --vocab <corpus>/vocab.tsv --canonical <corpus>/canonical.tsv \\
+        --augment <augment> --out <dir> [--epochs 6] [--patience 4]
         [--remap /Users/me/.conquerops/voice=/home/ubuntu/job/data] [--resume] [--bf16]
 
 Each example is what the game will send (`zhbo_voice::hear`): the clip, augmented as it loads
@@ -22,6 +23,13 @@ weights in `<out>/last` (with `state.json`, so `--resume` carries on after a los
 Training stops after `--epochs`, or when `--patience` evaluations in a row bring no new best.
 At the end the best is scored on the clean and the noisy test sets and their predictions written
 (`test_predictions.tsv`, `noisy_predictions.tsv`: path, label, prediction) for `voice_judge`.
+
+Unknown names (the abstain output, docs/COMMANDS.md section 9): a tenth of the training rows
+lose one name the speaker says from the prompt and learn the label up to it, then
+`<unknown: plasma troopers>`, and stop; another tenth lose a name the speaker doesn't say and
+keep their label, so the model checks the list rather than its length (`Names`). The dev and
+test sets each have a fixed unknown copy; `unknown_flagged` is how many of those were flagged at
+all, `false_unknown` how many clean dev commands were.
 
 Every number goes to `<out>/metrics.jsonl`, one JSON object a line: `train` rows every 50 steps
 (loss, learning rate, gradient norm, clips a second), `eval` rows (dev clean and noisy exact
@@ -88,24 +96,88 @@ def read_rows(path):
     rows = []
     for line in Path(path).read_text().splitlines():
         p = line.split("\t")
-        rows.append({"path": remap(p[0]), "sentence": p[1], "label": p[2], "vid": p[3], "seconds": float(p[4])})
+        rows.append({"path": remap(p[0]), "sentence": p[1], "label": p[2], "vid": p[3], "seconds": float(p[4]),
+                     "cid": Path(p[0]).stem.rsplit("_", 1)[0]})
     return rows
+
+
+PROMPT_HEAD, PROMPT_TAIL = "Commands for ", "."
+UNKNOWN, DECOY = 0.1, 0.1
+
+
+class Names:
+    """Each vocabulary's prompt entries (hear::prompt: `Commands for a, b, c.`, read back from
+    `prompts.tsv` and checked to rebuild it exactly), the forms that name each entry (a type's
+    singular and plural, from `vocab.tsv`), and each command's names as its label says them
+    (`canonical.tsv`, `sample::names_in`)."""
+
+    def __init__(self, prompts, vocab_tsv, canonical_tsv):
+        self.entries, self.forms = {}, {}
+        for vid, prompt in prompts.items():
+            assert prompt.startswith(PROMPT_HEAD) and prompt.endswith(PROMPT_TAIL), prompt[:40]
+            entries = prompt[len(PROMPT_HEAD) : -len(PROMPT_TAIL)].split(", ")
+            assert self.prompt(entries) == prompt, f"{vid}: the prompt doesn't rebuild"
+            self.entries[vid] = entries
+        for line in Path(vocab_tsv).read_text().splitlines():
+            vid, types = line.split("\t")[:2]
+            self.forms[vid] = {s: p for s, p in (t.split(">") for t in types.split("|") if ">" in t)}
+        self.said = {}
+        for line in Path(canonical_tsv).read_text().splitlines():
+            f = line.split("\t")
+            self.said[f[0]] = [n for n in f[4].split("|") if n] if len(f) > 4 else []
+
+    @staticmethod
+    def prompt(entries):
+        return PROMPT_HEAD + ", ".join(entries) + PROMPT_TAIL
+
+    def entry(self, vid, name):
+        """The prompt entry a name in a label stands for (a singular stands for its plural)."""
+        return self.forms.get(vid, {}).get(name, name)
+
+    def unknown(self, r, name):
+        """The row with `name`'s entry gone from the prompt and the label cut at the first thing
+        the entry names, which becomes `<unknown: ...>`: the command stops there."""
+        entry = self.entry(r["vid"], name)
+        forms = {entry} | {s for s, p in self.forms.get(r["vid"], {}).items() if p == entry}
+        padded = f" {r['label']} "
+        at = min((padded.find(f" {f} "), f) for f in forms if f" {f} " in padded)
+        label = (padded[: at[0]].strip() + f" <unknown: {at[1]}>").strip()
+        return dict(r, label=label, prompt=self.prompt([e for e in self.entries[r["vid"]] if e != entry]))
+
+    def decoy(self, r, rng):
+        """The row with one entry the label doesn't name gone from the prompt, the label as it was."""
+        said = {self.entry(r["vid"], n) for n in self.said.get(r["cid"], [])}
+        others = [e for e in self.entries[r["vid"]] if e not in said]
+        if not others:
+            return r
+        gone = others[int(rng.integers(len(others)))]
+        return dict(r, prompt=self.prompt([e for e in self.entries[r["vid"]] if e != gone]))
+
+    def draw(self, r, rng):
+        """A training row as drawn: an unknown a tenth of the time, a decoy another tenth."""
+        u = rng.random()
+        said = self.said.get(r["cid"], [])
+        if u < UNKNOWN and said:
+            return self.unknown(r, said[int(rng.integers(len(said)))])
+        if u < UNKNOWN + DECOY:
+            return self.decoy(r, rng)
+        return r
 
 
 class Clips(torch.utils.data.Dataset):
     """Rows as the model's inputs: features (augmented in `augment` mode) and token ids."""
 
-    def __init__(self, rows, tok, prompts, filters, pools=None, split="train", force=False, spec=False):
+    def __init__(self, rows, tok, prompts, filters, pools=None, split="train", force=False, spec=False, names=None):
         self.rows, self.tok, self.prompts, self.filters, self.pools, self.split = rows, tok, prompts, filters, pools, split
-        self.force, self.spec = force, spec
+        self.force, self.spec, self.names = force, spec, names
         self.epoch = 0
         self.prev = tok.convert_tokens_to_ids("<|startofprev|>")
         self.start = tok.convert_tokens_to_ids(["<|startoftranscript|>", "<|notimestamps|>"])
         self.eot = tok.convert_tokens_to_ids("<|endoftext|>")
         self.room = 448 // 2 - 1  # the prompt may use half the decoder's context (hear.rs)
 
-    def prefix(self, vid):
-        ids = self.tok.encode(" " + self.prompts[vid].strip(), add_special_tokens=False)
+    def prefix(self, r):
+        ids = self.tok.encode(" " + r.get("prompt", self.prompts[r["vid"]]).strip(), add_special_tokens=False)
         return [self.prev] + ids[-self.room :] + self.start
 
     def __len__(self):
@@ -113,6 +185,8 @@ class Clips(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         r = self.rows[i]
+        if self.names is not None:
+            r = self.names.draw(r, A.rng_for("unknown:" + r["path"], self.epoch))
         x = A.load(r["path"])
         frames = None
         if self.pools is not None:
@@ -121,7 +195,7 @@ class Clips(torch.utils.data.Dataset):
         mel = log_mel(window_samples(x), self.filters)
         if self.spec:
             mel = A.spec_augment(mel, A.rng_for("spec:" + r["path"], self.epoch), frames)
-        prefix = self.prefix(r["vid"])
+        prefix = self.prefix(r)
         target = self.tok.encode(" " + r["label"], add_special_tokens=False) + [self.eot]
         return {"mel": mel, "prefix": prefix, "target": target, "i": i}
 
@@ -227,7 +301,7 @@ def evaluate(model, loader, tok, device, rows, path=None):
     if path:
         Path(path).write_text("\n".join(lines) + "\n")
     model.train()
-    return right / max(total, 1)
+    return right / max(total, 1), [l.split("\t")[2] for l in lines]
 
 
 def batches_by_length(rows, size, seed):
@@ -252,6 +326,8 @@ def main():
     ap.add_argument("--test", required=True)
     ap.add_argument("--noisy")
     ap.add_argument("--prompts", required=True)
+    ap.add_argument("--vocab", required=True, help="the corpus's vocab.tsv (a type's singular and plural)")
+    ap.add_argument("--canonical", required=True, help="the corpus's canonical.tsv (each command's names)")
     ap.add_argument("--augment", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--epochs", type=int, default=6)
@@ -284,13 +360,19 @@ def main():
     train_rows = [r for r in rows if h("dev:" + r["vid"]) % 100 != 0]
     dev_rows = sorted(dev_rows, key=lambda r: h(r["path"]))[: args.dev_count]
     test_rows = read_rows(args.test)
+    names = Names(prompts, args.vocab, args.canonical)
+    # The unknown dev set: each dev command that names something, with one of its names (drawn by
+    # its id) gone from the prompt.
+    dev_unknown_rows = [names.unknown(r, names.said[r["cid"]][h("unk:" + r["cid"]) % len(names.said[r["cid"]])])
+                        for r in dev_rows if names.said.get(r["cid"])]
     print(f"{device}: train {len(train_rows)}, dev {len(dev_rows)} (vocabularies held out), test {len(test_rows)}", flush=True)
 
-    train = Clips(train_rows, tok, prompts, filters, pools, "train", spec=True)
+    train = Clips(train_rows, tok, prompts, filters, pools, "train", spec=True, names=names)
     loader_kw = dict(collate_fn=collate, num_workers=args.workers, prefetch_factor=4 if args.workers else None)
     dev_loader = torch.utils.data.DataLoader(Clips(dev_rows, tok, prompts, filters), batch_size=64, **loader_kw)
     # The noisy dev set: one fixed take of each dev clip from the held-back recordings.
     dev_noisy_loader = torch.utils.data.DataLoader(Clips(dev_rows, tok, prompts, filters, pools, "test", force=True), batch_size=64, **loader_kw)
+    dev_unknown_loader = torch.utils.data.DataLoader(Clips(dev_unknown_rows, tok, prompts, filters), batch_size=64, **loader_kw)
 
     state = {"step": 0, "best": -1.0, "since_best": 0}
     if args.resume and (out / "last" / "state.json").exists():
@@ -340,14 +422,19 @@ def main():
                 print(f"epoch {epoch} step {step}/{total} loss {running / 50:.4f} lr {sched.get_last_lr()[0]:.2e} {rate:.1f} clips/s", flush=True)
                 running, norms = 0.0, 0.0
             if step % args.eval_every == 0 or (step == total and not args.no_final):
-                clean = evaluate(model, dev_loader, tok, device, dev_rows)
-                noisy = evaluate(model, dev_noisy_loader, tok, device, dev_rows)
+                clean, clean_preds = evaluate(model, dev_loader, tok, device, dev_rows)
+                noisy, _ = evaluate(model, dev_noisy_loader, tok, device, dev_rows)
+                unknown, unknown_preds = evaluate(model, dev_unknown_loader, tok, device, dev_unknown_rows)
+                false_unknown = sum("<unknown" in p for p in clean_preds) / max(len(clean_preds), 1)
+                unknown_flagged = sum("<unknown" in p for p in unknown_preds) / max(len(unknown_preds), 1)
                 loss_dev = dev_loss(model, dev_loader, device, args.bf16)
                 better = clean > state["best"]
                 state = {"step": step, "best": max(clean, state["best"]), "since_best": 0 if better else state["since_best"] + 1}
                 record({"type": "eval", "step": step, "epoch": round(step / steps_per_epoch, 4), "dev_clean": clean, "dev_noisy": noisy,
+                        "dev_unknown": unknown, "unknown_flagged": unknown_flagged, "false_unknown": false_unknown,
                         "dev_loss": loss_dev, "best": better, "time": time.time()})
-                print(f"step {step}: dev exact match {clean:.4f} clean, {noisy:.4f} noisy, loss {loss_dev:.4f}" + (" (best)" if better else ""), flush=True)
+                print(f"step {step}: dev exact match {clean:.4f} clean, {noisy:.4f} noisy, {unknown:.4f} unknown "
+                      f"(flagged {unknown_flagged:.3f}, false {false_unknown:.3f}), loss {loss_dev:.4f}" + (" (best)" if better else ""), flush=True)
                 if better:
                     save(model, proc, out / "best")
                 save(model, proc, out / "last", state)
@@ -364,7 +451,7 @@ def main():
     model = WhisperForConditionalGeneration.from_pretrained(out / "best").to(device)
     results = {"dev": state["best"]}
     test_loader = torch.utils.data.DataLoader(Clips(test_rows, tok, prompts, filters), batch_size=64, **loader_kw)
-    results["test"] = evaluate(model, test_loader, tok, device, test_rows, out / "test_predictions.tsv")
+    results["test"], _ = evaluate(model, test_loader, tok, device, test_rows, out / "test_predictions.tsv")
     if args.noisy:
         by_path = {r["path"]: r for r in test_rows}
         noisy_rows = []
@@ -374,7 +461,12 @@ def main():
             r["path"] = str(Path(args.noisy) / name)
             noisy_rows.append(r)
         noisy_loader = torch.utils.data.DataLoader(Clips(noisy_rows, tok, prompts, filters), batch_size=64, **loader_kw)
-        results["noisy"] = evaluate(model, noisy_loader, tok, device, noisy_rows, out / "noisy_predictions.tsv")
+        results["noisy"], _ = evaluate(model, noisy_loader, tok, device, noisy_rows, out / "noisy_predictions.tsv")
+    test_unknown_rows = [names.unknown(r, names.said[r["cid"]][h("unk:" + r["cid"]) % len(names.said[r["cid"]])])
+                         for r in test_rows if names.said.get(r["cid"])]
+    unknown_loader = torch.utils.data.DataLoader(Clips(test_unknown_rows, tok, prompts, filters), batch_size=64, **loader_kw)
+    results["unknown"], preds = evaluate(model, unknown_loader, tok, device, test_unknown_rows, out / "unknown_predictions.tsv")
+    results["unknown_flagged"] = sum("<unknown" in p for p in preds) / max(len(preds), 1)
     record({"type": "test", "time": time.time()} | results)
     (out / "results.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results), flush=True)

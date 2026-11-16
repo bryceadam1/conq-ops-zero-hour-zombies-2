@@ -32,6 +32,7 @@ RESUME=""
 [ -f ~/job/out/last/state.json ] && RESUME=--resume
 cd ~/job/train && $PY train_whisper.py --whisper $D/whisper-$MODEL --train $D/augment/lists/train.tsv \
   --test $D/augment/lists/test.tsv --noisy $D/augment/test_noisy --prompts $D/corpus/prompts.tsv \
+  --vocab $D/corpus/vocab.tsv --canonical $D/corpus/canonical.tsv \
   --augment $D/augment --out ~/job/out --remap "$MAC_ROOT=$D" \
   --epochs 6 --patience 4 --batch 64 --lr 5e-5 --eval-every 1000 --workers $(( $(nproc) - 1 )) --bf16 $RESUME \
   || echo "training failed"

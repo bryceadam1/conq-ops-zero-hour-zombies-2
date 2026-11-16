@@ -523,7 +523,9 @@ Several checks combine to decide what the player is told:
 | Low confidence (voice; section 11) | Asks for confirmation: "Rangers attack-move to north ridge?" |
 
 The abstain production has a slot that may name any word from the full roster vocabulary, not
-just what is resolvable now. That lets a failed command say what it couldn't find.
+just what is resolvable now. That lets a failed command say what it couldn't find. The voice
+model writes it as `<unknown: plasma troopers>` where a name it hears is not in its prompt's list,
+and stops there (`train_whisper.py`, section 11 step 13); the command runs no further.
 
 ## 10. Tuning
 
@@ -773,6 +775,13 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
      epoch of 193,046 clips in about 2.9 h. Gotcha: the logits over Whisper's 51,864 tokens at
      every position (the prompt is most of each row) took the process to 32 GB and into swap;
      they are taken only at the label's positions.
+     **Unknown names:** a tenth of the training rows lose one name the speaker says from the
+     prompt and learn the label up to it, then `<unknown: name>`; another tenth lose a name the
+     speaker doesn't say and keep their label, so the model checks the list, not its length. The
+     dev and test sets each have a fixed unknown copy. **Decoding at run time** is one prompt per
+     command (the vocabulary's names) under the grammar's token mask, not a fresh options prompt
+     at every step: on the translator, option decoding lost to the mask (0.82 against 0.95
+     typed, and on speech), and a step's options can overrun Whisper's 223-token prompt.
 
 - **Fine-tuning (built, `tools/voice/train/train_t5.py`).** flan-t5-small on the training set and
   the heard rows, with a prompt that carries the match's names (`--prompt

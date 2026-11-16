@@ -48,6 +48,8 @@ def summary(rows, cost, price):
     if tests:
         t = tests[-1]
         tiles.append(("Test, clean", f"{t['test'] * 100:.1f}%", f"noisy {t['noisy'] * 100:.1f}%" if "noisy" in t else ""))
+        if "unknown" in t:
+            tiles.append(("Test, unknown", f"{t['unknown'] * 100:.1f}%", f"flagged {t['unknown_flagged'] * 100:.1f}%"))
     return tiles, evals
 
 
@@ -58,6 +60,10 @@ def build(rows, title, cost, price):
         {"id": "acc", "title": "Dev exact match", "note": "1% of the training vocabularies, never trained on; noisy is one fixed take from recordings training never hears",
          "pct": True, "series": [{"label": "clean", "slot": 1, "pts": [[e["epoch"], e["dev_clean"]] for e in evals]},
                                  {"label": "noisy", "slot": 2, "pts": [[e["epoch"], e["dev_noisy"]] for e in evals]}]},
+        {"id": "unknown", "title": "Unknown names", "note": "dev commands with one spoken name gone from the prompt: right in full, flagged at all; and clean dev commands wrongly flagged",
+         "pct": True, "series": [{"label": "right", "slot": 1, "pts": [[e["epoch"], e["dev_unknown"]] for e in evals if "dev_unknown" in e]},
+                                 {"label": "flagged", "slot": 2, "pts": [[e["epoch"], e["unknown_flagged"]] for e in evals if "unknown_flagged" in e]},
+                                 {"label": "false flags", "slot": 3, "pts": [[e["epoch"], e["false_unknown"]] for e in evals if "false_unknown" in e]}]},
         {"id": "loss", "title": "Loss (cross-entropy per label token)", "note": "training: mean of the last 50 steps, augmented; dev: clean, teacher-forced",
          "series": [{"label": "training", "slot": 1, "pts": [[r["epoch"], r["loss"]] for r in train]},
                     {"label": "dev", "slot": 2, "pts": [[e["epoch"], e["dev_loss"]] for e in evals]}]},
@@ -71,10 +77,10 @@ def build(rows, title, cost, price):
     tile_html = "".join(f'<div class="tile"><div class="k">{html.escape(k)}</div><div class="v">{html.escape(v)}</div><div class="s">{html.escape(sub)}</div></div>'
                         for k, v, sub in tiles)
     table = "".join(f"<tr><td>{e['step']:,}</td><td>{e['epoch']:.2f}</td><td>{e['dev_clean'] * 100:.1f}%</td><td>{e['dev_noisy'] * 100:.1f}%</td>"
-                    f"<td>{e['dev_loss']:.4f}</td><td>{'best' if e.get('best') else ''}</td></tr>" for e in evals)
+                    f"<td>{e.get('dev_unknown', 0) * 100:.1f}%</td><td>{e.get('false_unknown', 0) * 100:.1f}%</td><td>{e['dev_loss']:.4f}</td><td>{'best' if e.get('best') else ''}</td></tr>" for e in evals)
     updated = time.strftime("%Y-%m-%d %H:%M", time.localtime())
     return (PAGE.replace("{title}", html.escape(title)).replace("{updated}", updated).replace("{tiles}", tile_html)
-            .replace("{table}", table or '<tr><td colspan="6">No evaluation yet.</td></tr>').replace("{charts}", json.dumps(charts)))
+            .replace("{table}", table or '<tr><td colspan="8">No evaluation yet.</td></tr>').replace("{charts}", json.dumps(charts)))
 
 
 PAGE = r"""<title>Whisper Training Run</title>
@@ -82,14 +88,14 @@ PAGE = r"""<title>Whisper Training Run</title>
 <style>
 :root {
   --bg: #f6f6f4; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #77756f; --grid: #e4e3df; --axis: #c9c7c1;
-  --s1: #2a78d6; --s2: #eb6834;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #94938a; --grid: #2c2c2a; --axis: #45443f;
-  --s1: #3987e5; --s2: #d95926; color-scheme: dark } }
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #121211; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #94938a; --grid: #2c2c2a; --axis: #45443f;
-  --s1: #3987e5; --s2: #d95926; color-scheme: dark }
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; color-scheme: dark }
 body { background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding-block: 24px 48px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 main { max-width: 1040px; margin: 0 auto; display: grid; gap: 20px; }
@@ -125,7 +131,7 @@ details summary { cursor: pointer; color: var(--ink-2); padding: 4px 0; }
 <section class="tiles">{tiles}</section>
 <section class="grid" id="charts"></section>
 <details open><summary>Every evaluation</summary>
-<div class="table-wrap"><table><thead><tr><th>Step</th><th>Pass</th><th>Dev clean</th><th>Dev noisy</th><th>Dev loss</th><th></th></tr></thead><tbody>{table}</tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>Step</th><th>Pass</th><th>Dev clean</th><th>Dev noisy</th><th>Unknown right</th><th>False flags</th><th>Dev loss</th><th></th></tr></thead><tbody>{table}</tbody></table></div>
 </details>
 </main>
 <script>

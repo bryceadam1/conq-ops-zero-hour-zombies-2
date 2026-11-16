@@ -16205,3 +16205,23 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   - The vocabulary's logits at every decoder position took the process to 32 GB: the prompt is
     about 140 of each row's 160 tokens. Only the label's positions are projected now.
   - Greedy decoding without the cache re-ran the prompt every token: 300 dev clips in 7 minutes.
+
+## Voice: unknown names in the Whisper training (2026-11-15)
+
+- The user asked that training match the run time (constrained decoding, a prompt of what may
+  come) and that the model write `<unknown: plasma trooper>` for a name it can't find; the
+  design choices were left to me, toward the best chance of beating Whisper to flan-T5.
+- Decided: one prompt per command (the vocabulary's names, `hear::prompt`) under the grammar's
+  token mask, not a fresh options prompt each step. The translator's own results favour the mask
+  (option decoding 0.82 against 0.95 typed, and worse on speech), and a step's options can
+  overrun Whisper's 223-token prompt.
+- `train_whisper.py`: `Names` reads each prompt's entries (checked to rebuild all 8,000 prompts
+  exactly), a type's singular and plural, and each command's names from `canonical.tsv`. A tenth
+  of rows drop a spoken name's entry and learn the label up to it plus `<unknown: name>`; a
+  tenth drop an unspoken one and keep their label. Fixed unknown copies of dev and test; the
+  metrics add unknown right, flagged and false flags.
+- Two cloud attempts died in setup and terminated themselves ($0.20, $0.48): `grep -q` under
+  `pipefail` (SIGPIPE to ffmpeg) failed the Opus check, then unattended-upgrades held dpkg's
+  lock. The script now encodes a test clip and waits for the lock. A third launch lost its
+  upload when the Mac's address changed (the SSH group admits one address); `cloud.ensure_group`
+  adds the new one, and `run.sh` reuses a machine already up.
