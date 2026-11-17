@@ -16292,3 +16292,27 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
 - Same meaning, the released pipeline 0.820 (0.840 English-named) against the command model
   0.800 masked (0.790); time a command on the CPU 379 ms hearing + 242 ms translating against
   330 ms, with a flan-T5 fine-tune sharing the machine.
+
+## Voice: flan-T5 fine-tuned on the paraphrase corpus (2026-11-16)
+
+- `commands-t5-small-choice` fine-tuned one more epoch (`train_t5.py --choices --epochs 1 --lr
+  3e-4`, MPS) on its set plus the scale-up corpus's 895,879 paraphrase rows, heard rows ten
+  times: 1,049,640 rows. Names in the prompt are the old set's plus the corpus's; `words.txt`
+  gained 297 ordinary words, none of them in any vocabulary's names.
+- Typed exact match: dev 0.966, test 0.971 (released 0.936, 0.963); 199 ms a command one at a
+  time on the CPU.
+- 300 spoken commands in held-out Kokoro voices (`VOICE_AUDIO`), idle Mac, CPU:
+
+  | | Same meaning | English-named | ms a command |
+  |---|---|---|---|
+  | Released pipeline | 0.820 | 0.840 | 336 hearing + 211 translating |
+  | Pipeline, new translator | 0.827 | 0.852 | 347 + 217 |
+  | Whisper command model, masked | 0.800 | 0.790 | 297 |
+
+  The typed gain shows up on speech as 2 commands of 300, within noise; the misses are mostly
+  hearing (snapped names 0.937) and spoken fillers the grammar refuses (`kill`, `take out`).
+- The cloud attempt (g6e.xlarge spot, Fish audio plus a bf16 run) lost SSH from the Mac mid-
+  upload and the launcher quit with the machine up; terminated after about an hour, ~$1.95.
+  The launcher now retries each push and terminates on failure. Fish dropped; Kokoro only.
+- **Gotcha:** `caffeinate -i` doesn't hold a closed lid on battery: the run crawled in dark
+  wakes from 16:02 and stopped at 16:49 until the Mac woke at 19:40.

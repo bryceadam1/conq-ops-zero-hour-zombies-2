@@ -795,6 +795,14 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   `lm_head` while the config still says the embeddings are tied, and candle trusting the config
   decodes nonsense; the script writes `tie_word_embeddings = false` and the loader goes by the
   weights.
+- **Paraphrase fine-tune (candidate, not released).** One more epoch from the released model
+  on the scale-up corpus's paraphrases (895,879 rows of `spoken.tsv` and `spoken_canonical.tsv`)
+  added to its own set, the heard rows ten times over: 1,049,640 rows, 32,802 steps of 32 at
+  3e-4 on MPS, about 7 h (`commands-t5-small-para`). Typed exact match 0.966 dev and 0.971 test,
+  against 0.936 and 0.963. On voice_listen's 300 commands in held-out Kokoro voices, idle Mac,
+  CPU: same meaning 0.827 (0.852 English-named) against the released model's 0.820 (0.840), 2
+  commands of 300; 347 ms hearing + 217 ms translating against 336 + 211. The Whisper command
+  model (step 13) read 0.800 (0.790) in 297 ms on the same clips.
 - **Results**, the released model. Typed text (`voice_eval`, 2,046 held-out rows, greedy, one
   command at a time on the CPU):
 
