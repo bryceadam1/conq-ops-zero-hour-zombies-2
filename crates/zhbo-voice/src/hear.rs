@@ -352,6 +352,7 @@ pub fn unrepeat(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().collect();
     let norm = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
     let mut out: Vec<&str> = Vec::new();
+    let mut looped = false;
     let mut i = 0;
     while i < words.len() {
         out.push(words[i]);
@@ -365,12 +366,14 @@ pub fn unrepeat(text: &str) -> String {
                 skipped = true;
             }
             if skipped {
+                looped = true;
                 break 'runs;
             }
         }
     }
-    // A loop cut off mid-way leaves the run's start again at the end: drop it.
-    let n = out.len();
+    // A loop cut off mid-way leaves the run's start again at the end: drop it. Only after a loop:
+    // a command may name a place twice (`near the bridge, get over to the bridge`).
+    let n = if looped { out.len() } else { 0 };
     'tail: for len in (3..=n / 2).rev() {
         let tail: Vec<String> = out[n - len..].iter().map(|w| norm(w)).collect();
         for run in len + 1..=n - len {
@@ -501,6 +504,8 @@ mod tests {
         assert_eq!(unrepeat("go to the bridge go to the bridge go to the bridge"), "go to the bridge");
         assert_eq!(unrepeat("garrison, garrison units near there"), "garrison, garrison units near there");
         assert_eq!(unrepeat("the 3 weakest builders"), "the 3 weakest builders");
+        let twice = "our eight korselvases furthest south near the mirdorhal bridge, get over to the mirdorhal bridge";
+        assert_eq!(unrepeat(twice), twice);
     }
 
     #[test]

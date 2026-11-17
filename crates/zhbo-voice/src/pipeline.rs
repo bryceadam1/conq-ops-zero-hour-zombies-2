@@ -1,5 +1,5 @@
 //! From speech to a command (docs/COMMANDS.md section 11): Whisper prompted with the match's
-//! names, the snapper, and the constrained translator.
+//! names and biased toward its phrases over a beam, the snapper, and the constrained translator.
 
 use std::path::Path;
 
@@ -7,6 +7,7 @@ use candle_core::Device;
 use zhbo_core::command::normal::{self, Tables};
 use zhbo_core::command::Vocabulary;
 
+use crate::bias::Bias;
 use crate::hear::{self, Listener};
 use crate::snap::Snapper;
 use crate::{Error, Translator};
@@ -30,6 +31,13 @@ pub fn model_dir(manifest: &str, section: &str) -> Option<String> {
     None
 }
 
+/// Whisper's beam and the bias's weights (log-probability per token) for the match's names and
+/// the grammar's words: the best of the dev sweep on held-out voices (MODLOG, 2026-11-17; beam 8
+/// gained 0.003 for 170 ms more, heavier names finished the wrong ones).
+const BEAM: usize = 4;
+const NAME_WEIGHT: f32 = 2.0;
+const WORD_WEIGHT: f32 = 1.0;
+
 /// What one utterance came to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Outcome {
@@ -51,6 +59,8 @@ pub struct Pipeline {
     model: Translator,
     /// Decoding by options with this beam instead of the token mask (`options`), when set.
     options: Option<(crate::options::OptionDecoder, usize)>,
+    /// The last match's bias, by its prompt (a match's names change rarely).
+    bias: Option<(String, Bias)>,
 }
 
 impl Pipeline {
@@ -60,14 +70,18 @@ impl Pipeline {
         let dir = |section: &str| model_dir(MANIFEST, section).map(|d| voice_dir.join(d)).ok_or_else(|| format!("voice.ini has no [{section}] Dir"));
         let (whisper, translator) = (dir("Whisper")?, dir("Translator")?);
         let words = std::fs::read_to_string(translator.join("words.txt"))?;
+        let mut ears = Listener::load(&whisper, device.clone())?;
+        ears.beam = BEAM;
+        ears.stop_first = true;
         Ok(Pipeline {
-            ears: Listener::load(&whisper, device.clone())?,
+            ears,
             snapper: Snapper::new(words.lines().map(str::to_string), tables),
             model: Translator::load(&translator, device.clone())?,
             options: match std::env::var("ZHBO_VOICE_OPTIONS").ok().and_then(|b| b.parse::<usize>().ok()).filter(|&b| b > 0) {
                 Some(beam) => Some((crate::options::OptionDecoder::load(&translator, device)?, beam)),
                 None => None,
             },
+            bias: None,
         })
     }
 
@@ -78,7 +92,13 @@ impl Pipeline {
 
     /// Hear `pcm` (16 kHz mono) and translate it over `vocab`.
     pub fn run(&mut self, pcm: &[f32], vocab: &Vocabulary) -> Result<Outcome, Error> {
-        let said = self.ears.hear(pcm, &hear::prompt(vocab))?;
+        let prompt = hear::prompt(vocab);
+        if self.bias.as_ref().is_none_or(|(p, _)| *p != prompt) {
+            let (names, words) = self.snapper.phrases(vocab);
+            let phrases: Vec<(String, f32)> = names.into_iter().map(|p| (p, NAME_WEIGHT)).chain(words.into_iter().map(|p| (p, WORD_WEIGHT))).collect();
+            self.bias = Some((prompt.clone(), Bias::new(self.ears.tokenizer(), &phrases)?));
+        }
+        let said = self.ears.hear_biased(pcm, &prompt, self.bias.as_ref().map(|(_, b)| b))?;
         let heard = hear::tidy(&said.text);
         let snapped = self.snapper.snap(&heard, vocab);
         if let Some((decoder, beam)) = &self.options {

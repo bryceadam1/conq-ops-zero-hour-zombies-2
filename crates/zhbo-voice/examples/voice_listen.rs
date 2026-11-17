@@ -20,6 +20,9 @@
 //! names and the grammar's words by those weights; `VOICE_BEAM=<n>`: over a beam of n;
 //! `VOICE_STOP_FIRST`: the beam stops once its best hypothesis ends.
 //!
+//! `VOICE_DUMP=<file>`: each row as a line (voice, input, label, heard, snapped, command, same
+//! meaning, and the command and same meaning from the input itself, typed).
+//!
 //! `VOICE_AUDIO=<dir>`: the rows' audio from `<dir>/<i>.wav` and its voices from
 //! `<dir>/manifest.tsv` instead of `say` (`tools/voice/tts/listen_kokoro.py`: Kokoro voices no
 //! model trained on).
@@ -73,6 +76,10 @@ fn main() -> Result<(), zhbo_voice::Error> {
         None => Vec::new(),
     };
     let mut translate_time = 0f64;
+    let mut dump = match std::env::var("VOICE_DUMP") {
+        Ok(f) => Some(std::fs::File::create(f)?),
+        Err(_) => None,
+    };
     // [no prompt, prompted, prompted and snapped]: names heard whole, commands meaning the
     // label, seconds hearing (and its parts).
     const WAYS: [&str; 3] = ["no prompt", "prompted", "snapped"];
@@ -183,6 +190,12 @@ fn main() -> Result<(), zhbo_voice::Error> {
                     tokens_right += same_meaning(&decoder.decode_tokens(&text, v, *beam)?.text, label, v) as usize;
                     tokens_time += t.elapsed().as_secs_f64();
                 }
+            }
+            if let (2, Some(f)) = (k, &mut dump) {
+                use std::io::Write;
+                let typed = model.translate(&hear::tidy(input), v, true)?;
+                let typed_same = same_meaning(&typed.text, label, v);
+                writeln!(f, "{voice}\t{input}\t{label}\t{prompted}\t{text}\t{}\t{}\t{}\t{}", out.text, same as u8, typed.text, typed_same as u8)?;
             }
             if k == 2 && id.ends_with('e') {
                 english += 1;

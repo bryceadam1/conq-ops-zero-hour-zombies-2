@@ -795,7 +795,7 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   `lm_head` while the config still says the embeddings are tied, and candle trusting the config
   decodes nonsense; the script writes `tie_word_embeddings = false` and the loader goes by the
   weights.
-- **Paraphrase fine-tune (candidate, not released).** One more epoch from the released model
+- **Paraphrase fine-tune (voice.ini's translator; release `voice-commands-v2` not yet published).** One more epoch from the released model
   on the scale-up corpus's paraphrases (895,879 rows of `spoken.tsv` and `spoken_canonical.tsv`)
   added to its own set, the heard rows ten times over: 1,049,640 rows, 32,802 steps of 32 at
   3e-4 on MPS, about 7 h (`commands-t5-small-para`). Typed exact match 0.966 dev and 0.971 test,
@@ -803,7 +803,7 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   CPU: same meaning 0.827 (0.852 English-named) against the released model's 0.820 (0.840), 2
   commands of 300; 347 ms hearing + 217 ms translating against 336 + 211. The Whisper command
   model (step 13) read 0.800 (0.790) in 297 ms on the same clips.
-- **Biasing (built, `crates/zhbo-voice/src/bias.rs`; not yet on in the pipeline).** Whisper's
+- **Biasing (built, `crates/zhbo-voice/src/bias.rs`; on in `Pipeline`, beam 4, names 2, words 1).** Whisper's
   beam search with the match's phrases made likelier, nothing ruled out: the snapper's names
   (weight 2) and grammar words (weight 1, `Snapper::phrases`) in a tree over Whisper's tokens,
   each in lower, capitalised and title case after a space; a token starting or carrying on a

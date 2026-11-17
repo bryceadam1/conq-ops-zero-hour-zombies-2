@@ -16349,3 +16349,23 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   10.3 → 6.2 ms at one row, 29 → 12 ms at four; greedy outputs unchanged (dev 0.800 both).
 - What's left after the names: fillers and loose verbs said aloud (`kill`, `take out`,
   `riley` for `rally`), grammar the translator refuses, not hearing.
+
+## Voice: the biased beam on in the pipeline, and where the spoken misses come from (2026-11-17)
+
+- `Pipeline` hears with beam 4, names 2, words 1, stopping at the first best end; the bias is
+  rebuilt when the prompt (the match's names) changes. voice.ini's `[Translator]` is now the
+  paraphrase fine-tune (`commands-t5-small-para`, release `voice-commands-v2`). **No release is
+  published on GitHub yet, v1 included:** the manifest's translator URLs don't resolve.
+- `voice_listen` `VOICE_DUMP=<file>`: per row, heard, snapped, command, and the command from the
+  typed input. On the 300 Kokoro test clips (biased beam, paraphrase translator): snapped word
+  error rate 0.098, transcripts word for word 0.470; same meaning 0.857 spoken against 0.973
+  typed. Of 43 misses, 36 are hearing (the typed input was right) and 7 the translator's.
+- The 36: a name's singular or plural (`the torhal` heard `torhals`, `kornixcal` as
+  `kornixcals`; about 13, often with its `the` dropped: the prompt lists names in the plural);
+  fillers written as words (`um` as `erm` then read `them`, `uh` as `our`, `a`, `all have`,
+  `uh, kill` as `aquil`; about 7); numbers and short words (`two` as `to`, `group 8` as
+  `grouped it`, `sell` as `tell`; about 5); rare verbs (`cash in` as `facing`, `car-bomb` as
+  `call in`, `rally` as `riley`, `queue` and `put up a` into names; about 6); names (`vasvel`
+  as `vaspel`, `selhalvel wing`; about 4).
+- **Fix:** `unrepeat` dropped a trailing run said earlier (`near the mirdorhal bridge, get over
+  to the mirdorhal bridge` lost its destination); the tail is now trimmed only after a loop.
