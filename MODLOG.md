@@ -16316,3 +16316,36 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   The launcher now retries each push and terminates on failure. Fish dropped; Kokoro only.
 - **Gotcha:** `caffeinate -i` doesn't hold a closed lid on battery: the run crawled in dark
   wakes from 16:02 and stopped at 16:49 until the Mac woke at 19:40.
+
+## Voice: biased beam search for Whisper, and a faster decoder (2026-11-17)
+
+- `bias::Bias`: the match's names and the grammar's words (`Snapper::phrases`) in a tree over
+  Whisper's tokens; a token that starts or carries on a phrase gains its weight in
+  log-probability, a phrase left half-way gives its gain back (Zhao et al. 2019's retraction).
+  `Listener::hear_biased` runs it over a beam (`beam`, `stop_first`). `voice_listen` takes
+  `VOICE_BIAS=<names>,<words>`, `VOICE_BEAM`, `VOICE_STOP_FIRST`.
+- Tuned on Kokoro clips of 300 dev rows (`listen-kokoro-dev`, the held-out voices), paraphrase
+  translator, same meaning after snapping:
+
+  | | Names heard | Same meaning | Hearing |
+  |---|---|---|---|
+  | greedy | 0.917 | 0.800 | 255 ms |
+  | greedy, names 2 | 0.903 | 0.757 | |
+  | beam 4 | 0.943 | 0.817 | |
+  | beam 2, names 2 words 1, stop first | 0.957 | 0.823 | 399 ms |
+  | beam 4, names 2 words 1, stop first | 0.977 | 0.827 | 423 ms |
+  | beam 4, names 4 words 1 | 0.970 | 0.797 | |
+  | beam 8, names 2 words 1, stop first | 0.977 | 0.830 | 596 ms |
+
+  Greedy biasing commits to a name's first token and then finishes some name (`wrenmox rovers`
+  for `wrendri cannons`) or loops (`kornix kornix`); a beam lets the acoustics overrule it.
+- Test, once, 300 Kokoro clips: beam 4 names 2 words 1 stop first, same meaning 0.857 (0.877
+  English-named), 418 ms hearing + 211 translating; greedy 0.827 (0.852), 267 + 212; the
+  released translator under the same bias 0.833. Unsnapped, the biased transcription already
+  reads 0.853: the bias does the snapper's work before the text is written.
+- **Decoder speed:** every step copied and transposed the audio's keys and values per row in
+  all six layers. The audio's keys are now kept once (per head, transposed, scaled), every
+  row's query reads them in one batch, and the self-attention cache is kept per head. A step
+  10.3 → 6.2 ms at one row, 29 → 12 ms at four; greedy outputs unchanged (dev 0.800 both).
+- What's left after the names: fillers and loose verbs said aloud (`kill`, `take out`,
+  `riley` for `rally`), grammar the translator refuses, not hearing.

@@ -803,6 +803,20 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   CPU: same meaning 0.827 (0.852 English-named) against the released model's 0.820 (0.840), 2
   commands of 300; 347 ms hearing + 217 ms translating against 336 + 211. The Whisper command
   model (step 13) read 0.800 (0.790) in 297 ms on the same clips.
+- **Biasing (built, `crates/zhbo-voice/src/bias.rs`; not yet on in the pipeline).** Whisper's
+  beam search with the match's phrases made likelier, nothing ruled out: the snapper's names
+  (weight 2) and grammar words (weight 1, `Snapper::phrases`) in a tree over Whisper's tokens,
+  each in lower, capitalised and title case after a space; a token starting or carrying on a
+  phrase adds its weight to its log-probability, and a phrase left half-way gives its gain back.
+  `Listener::hear_biased` over `Listener::beam` hypotheses, ranked by score over length, stopping
+  once the best ends (`stop_first`); a beam of 1 without a bias is the greedy decoding as before.
+  The decoder keeps the audio's keys once, transposed and scaled, and reads every row's query
+  against them in one batch, and the self-attention cache per head: a step went from 10.3 to
+  6.2 ms at one row and 29 to 12 ms at four. Tuned on Kokoro clips of 300 dev rows (greedy
+  biasing finished the wrong names and looped; beam 8 gained 0.003 on beam 4 for 170 ms). On
+  the 300 test clips with the paraphrase translator: same meaning 0.857 (0.877 English-named),
+  418 ms hearing + 211 translating, against greedy's 0.827 at 267 + 212 and the released
+  pipeline's 0.820 at 336 + 211; names heard after snapping 0.973 against 0.937.
 - **Results**, the released model. Typed text (`voice_eval`, 2,046 held-out rows, greedy, one
   command at a time on the CPU):
 

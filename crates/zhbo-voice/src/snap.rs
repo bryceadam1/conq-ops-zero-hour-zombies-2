@@ -39,25 +39,34 @@ impl Snapper {
 
     /// The phrases a heard span may be respelt into, for one match.
     fn targets(&self, vocab: &Vocabulary) -> Vec<String> {
-        let mut out: Vec<String> = fixed_words().iter().map(|w| w.to_string()).collect();
-        out.extend(vocab.verbs.iter().map(|v| v.words.clone()));
-        out.extend(self.table_phrases.iter().cloned());
-        for n in vocab.types.iter().chain(&vocab.classes) {
-            out.push(n.singular.clone());
-            out.push(n.plural.clone());
-        }
-        for list in [&vocab.places, &vocab.teams, &vocab.upgrades, &vocab.powers, &vocab.sciences, &vocab.modes, &vocab.weapons] {
-            for name in list {
-                out.push(name.clone());
-                // `the torwren crossing` is often said, and heard, without its article.
-                if let Some(bare) = name.strip_prefix("the ") {
-                    out.push(bare.to_string());
-                }
-            }
-        }
+        let (mut out, words) = self.phrases(vocab);
+        out.extend(words);
         out.sort();
         out.dedup();
         out
+    }
+
+    /// The same phrases in two lists: the match's names, and the grammar's words, verbs and the
+    /// synonym table's phrases (what Whisper's bias boosts, each list by its own weight).
+    pub fn phrases(&self, vocab: &Vocabulary) -> (Vec<String>, Vec<String>) {
+        let mut words: Vec<String> = fixed_words().iter().map(|w| w.to_string()).collect();
+        words.extend(vocab.verbs.iter().map(|v| v.words.clone()));
+        words.extend(self.table_phrases.iter().cloned());
+        let mut names = Vec::new();
+        for n in vocab.types.iter().chain(&vocab.classes) {
+            names.push(n.singular.clone());
+            names.push(n.plural.clone());
+        }
+        for list in [&vocab.places, &vocab.teams, &vocab.upgrades, &vocab.powers, &vocab.sciences, &vocab.modes, &vocab.weapons] {
+            for name in list {
+                names.push(name.clone());
+                // `the torwren crossing` is often said, and heard, without its article.
+                if let Some(bare) = name.strip_prefix("the ") {
+                    names.push(bare.to_string());
+                }
+            }
+        }
+        (names, words)
     }
 
     /// `heard` (tidied: lower case, words and commas) with each unknown word's span respelt.

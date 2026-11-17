@@ -19,6 +19,7 @@ use candle_transformers::models::whisper::{self, Config};
 use tokenizers::Tokenizer;
 use zhbo_core::command::Vocabulary;
 
+use crate::bias::{self, Bias};
 use crate::Error;
 
 /// The audio Whisper expects.
@@ -73,6 +74,10 @@ pub struct Listener {
     /// many frames (100 a second) of silence after it. A command lasts a few seconds, and the
     /// encoder's cost grows with its window.
     pub window: Option<usize>,
+    /// Hypotheses kept while writing: 1 is greedy.
+    pub beam: usize,
+    /// Stop the beam once its best hypothesis ends, instead of when `beam` have.
+    pub stop_first: bool,
     model: crate::whisper::Whisper,
     tokenizer: Tokenizer,
     config: Config,
@@ -103,6 +108,8 @@ impl Listener {
         let no_speech_token = whisper::NO_SPEECH_TOKENS.iter().find_map(|t| tokenizer.token_to_id(t));
         Ok(Listener {
             window: Some(WINDOW_SILENCE),
+            beam: 1,
+            stop_first: false,
             filters: mel_filters(SAMPLE_RATE, whisper::N_FFT, config.num_mel_bins),
             prev: id("<|startofprev|>")?,
             eot: id(whisper::EOT_TOKEN)?,
@@ -115,12 +122,23 @@ impl Listener {
         })
     }
 
+    /// Whisper's tokenizer (a `Bias` is built over it).
+    pub fn tokenizer(&self) -> &Tokenizer {
+        &self.tokenizer
+    }
+
     /// Transcribe `pcm` (16 kHz mono, at most 30 s), with `prompt` as the text before it.
     pub fn hear(&mut self, pcm: &[f32], prompt: &str) -> Result<Heard, Error> {
+        self.hear_biased(pcm, prompt, None)
+    }
+
+    /// The same, with `bias`'s phrases made likelier as it writes (`bias`), over a beam of
+    /// `self.beam` hypotheses.
+    pub fn hear_biased(&mut self, pcm: &[f32], prompt: &str, bias: Option<&Bias>) -> Result<Heard, Error> {
         let clock = std::time::Instant::now();
         let features = self.encode(pcm)?;
         let encode_seconds = clock.elapsed().as_secs_f32();
-        self.decode(pcm, prompt, &features, clock, encode_seconds)
+        self.decode(pcm, prompt, &features, clock, encode_seconds, bias)
     }
 
     /// The audio's features from Whisper's encoder (`[1, positions, d_model]`), over the
@@ -225,36 +243,105 @@ impl Listener {
         Ok(Command { text: text.trim().to_string(), unknown, masked_max, stuck, no_speech, encode_seconds, decode_seconds })
     }
 
-    fn decode(&mut self, pcm: &[f32], prompt: &str, features: &Tensor, clock: std::time::Instant, encode_seconds: f32) -> Result<Heard, Error> {
-        let features = features.clone();
-        let mut tokens = self.prefix(prompt)?;
-        let first = tokens.len();
-        let (mut sum, mut no_speech) = (0f32, 0f32);
+    fn decode(&mut self, pcm: &[f32], prompt: &str, features: &Tensor, clock: std::time::Instant, encode_seconds: f32, bias: Option<&Bias>) -> Result<Heard, Error> {
+        let beam = self.beam.max(1);
+        let prefix = self.prefix(prompt)?;
+        // Text only: every special token (timestamps, task, language) sits at or after the end
+        // of text, and the checkpoint's own suppressions stay suppressed.
+        let mut text = vec![true; self.eot as usize + 1];
+        for &t in &self.config.suppress_tokens {
+            if let Some(x) = text.get_mut(t as usize) {
+                *x = false;
+            }
+        }
+        struct Hyp {
+            said: Vec<u32>,
+            /// The log-probability with the bias's changes (what the beam ranks), and without.
+            score: f32,
+            log_prob: f32,
+            state: bias::State,
+        }
+        let mut live = vec![Hyp { said: Vec::new(), score: 0.0, log_prob: 0.0, state: bias::State::default() }];
+        let mut done: Vec<Hyp> = Vec::new();
+        let mut no_speech = 0f32;
         let budget = ((pcm.len() as f32 / SAMPLE_RATE as f32) * TOKENS_PER_SECOND) as usize + 8;
         for step in 0..MAX_TOKENS.min(budget) {
-            // The cache holds what came before: the whole start first, then one token a step.
-            let feed = if step == 0 { &tokens[..] } else { &tokens[tokens.len() - 1..] };
-            let logits = self.model.decode(feed, &features)?;
-            let probs = candle_nn::ops::softmax(&logits, D::Minus1)?.to_vec1::<f32>()?;
+            // The cache holds what came before: the whole start first, then one token a row.
+            let feed = if step == 0 {
+                Tensor::new(prefix.as_slice(), &self.device)?.unsqueeze(0)?
+            } else {
+                let last: Vec<u32> = live.iter().map(|h| *h.said.last().unwrap_or(&self.eot)).collect();
+                Tensor::new(last.as_slice(), &self.device)?.unsqueeze(1)?
+            };
+            let logits = self.model.decode_rows(&feed, features)?;
+            let rows = candle_nn::ops::log_softmax(&logits, D::Minus1)?.to_vec2::<f32>()?;
             if step == 0 {
-                no_speech = self.no_speech_token.and_then(|t| probs.get(t as usize).copied()).unwrap_or(0.0);
+                no_speech = self.no_speech_token.and_then(|t| rows[0].get(t as usize)).map_or(0.0, |l| l.exp());
             }
-            // Text only: every special token (timestamps, task, language) sits at or after the end
-            // of text, and the checkpoint's own suppressions stay suppressed.
-            let next = (0..=self.eot)
-                .filter(|t| !self.config.suppress_tokens.contains(t))
-                .max_by(|&a, &b| probs[a as usize].total_cmp(&probs[b as usize]))
-                .unwrap_or(self.eot);
-            sum += probs[next as usize].max(1e-12).ln();
-            if next == self.eot {
+            // Each row's best few continuations, by log-probability plus the bias's change.
+            let mut options: Vec<(f32, usize, u32, f32)> = Vec::new();
+            for (b, (h, lp)) in live.iter().zip(&rows).enumerate() {
+                let (rest, better) = bias.map_or((0.0, Vec::new()), |x| x.boosts(h.state));
+                let mut mine: Vec<(f32, u32)> = Vec::with_capacity(beam + 1 + better.len());
+                for (t, &l) in lp.iter().enumerate().take(text.len()) {
+                    if text[t] {
+                        mine.push((l + rest, t as u32));
+                    }
+                }
+                let k = (beam + 1).min(mine.len());
+                if k < mine.len() {
+                    mine.select_nth_unstable_by(k, |a, c| c.0.total_cmp(&a.0));
+                    mine.truncate(k);
+                }
+                for &(t, change) in &better {
+                    if text.get(t as usize).copied().unwrap_or(false) {
+                        mine.retain(|m| m.1 != t);
+                        mine.push((lp[t as usize] + change, t));
+                    }
+                }
+                options.extend(mine.into_iter().map(|(sc, t)| (h.score + sc, b, t, lp[t as usize])));
+            }
+            options.sort_by(|a, c| c.0.total_cmp(&a.0));
+            // Best first: an end of text finishes its row, anything else carries one on, until the
+            // beam is full again.
+            let mut next: Vec<Hyp> = Vec::new();
+            let mut parents: Vec<u32> = Vec::new();
+            let best_ends = options.first().is_some_and(|o| o.2 == self.eot);
+            for (score, b, t, l) in options {
+                if next.len() == beam {
+                    break;
+                }
+                let h = &live[b];
+                if t == self.eot {
+                    if done.len() < beam {
+                        done.push(Hyp { said: h.said.clone(), score, log_prob: h.log_prob + l, state: h.state });
+                    }
+                    continue;
+                }
+                let mut said = h.said.clone();
+                said.push(t);
+                let state = bias.map_or(bias::State::default(), |x| x.advance(h.state, t));
+                next.push(Hyp { said, score, log_prob: h.log_prob + l, state });
+                parents.push(b as u32);
+            }
+            if done.len() >= beam || next.is_empty() || (self.stop_first && best_ends) {
                 break;
             }
-            tokens.push(next);
+            self.model.reorder(&parents)?;
+            live = next;
         }
-        let said = &tokens[first..];
-        let text = unrepeat(self.tokenizer.decode(said, true)?.trim());
+        // Out of budget: what is still going counts as said.
+        if done.is_empty() {
+            done = live;
+        }
+        // Whisper's own ranking: the score over the length (end of text counted).
+        let best = done
+            .into_iter()
+            .max_by(|a, c| (a.score / (a.said.len() + 1) as f32).total_cmp(&(c.score / (c.said.len() + 1) as f32)))
+            .ok_or("no hypothesis")?;
+        let text = unrepeat(self.tokenizer.decode(&best.said, true)?.trim());
         let decode_seconds = clock.elapsed().as_secs_f32() - encode_seconds;
-        Ok(Heard { text, mean_log_prob: sum / (said.len() + 1) as f32, no_speech, encode_seconds, decode_seconds })
+        Ok(Heard { text, mean_log_prob: best.log_prob / (best.said.len() + 1) as f32, no_speech, encode_seconds, decode_seconds })
     }
 }
 

@@ -43,41 +43,54 @@ impl Attention {
     /// cache, causally) or to `source` (the audio, projected once and cached).
     fn forward(&mut self, x: &Tensor, source: Option<&Tensor>) -> Result<Tensor> {
         let q = self.query.forward(x)?;
-        let (k, v, past) = match source {
-            Some(audio) => match &self.cache {
-                Some((k, v)) => (k.clone(), v.clone(), None),
-                None => {
-                    let (k, v) = (self.key.forward(audio)?, self.value.forward(audio)?);
-                    self.cache = Some((k.clone(), v.clone()));
-                    (k, v, None)
+        let (b, n, s) = q.dims3()?;
+        let size = s / self.heads;
+        match source {
+            // The audio's keys (per head, transposed and scaled) and values, once. Every row reads
+            // the same audio, so all rows' queries go through as one: [1, heads, rows × n, size].
+            Some(audio) => {
+                if self.cache.is_none() {
+                    let k = (self.heads(&self.key.forward(audio)?)?.transpose(2, 3)? * (size as f64).powf(-0.5))?.contiguous()?;
+                    let v = self.heads(&self.value.forward(audio)?)?.contiguous()?;
+                    self.cache = Some((k, v));
                 }
-            },
-            None if !self.keep => (self.key.forward(x)?, self.value.forward(x)?, None),
-            None => {
+                let (k, v) = self.cache.as_ref().expect("cached above");
+                let q = q.reshape((1, b * n, self.heads, size))?.transpose(1, 2)?.contiguous()?;
+                let w = candle_nn::ops::softmax_last_dim(&q.matmul(k)?)?;
+                self.out.forward(&w.matmul(v)?.transpose(1, 2)?.reshape((b, n, s))?)
+            }
+            None if !self.keep => {
                 let (k, v) = (self.key.forward(x)?, self.value.forward(x)?);
-                let past = self.cache.as_ref().map_or(0, |(k, _)| k.dim(1).unwrap_or(0));
+                let scale = (size as f64).powf(-0.25);
+                let q = (self.heads(&q)? * scale)?;
+                let k = (self.heads(&k)?.transpose(2, 3)? * scale)?;
+                let v = self.heads(&v)?.contiguous()?;
+                let w = candle_nn::ops::softmax_last_dim(&q.contiguous()?.matmul(&k.contiguous()?)?)?;
+                self.out.forward(&w.matmul(&v)?.transpose(1, 2)?.flatten_from(2)?)
+            }
+            // Keys and values kept per head ([rows, heads, positions, size]), so a step appends
+            // one position instead of transposing the whole cache again.
+            None => {
+                let k = self.heads(&self.key.forward(x)?)?;
+                let v = self.heads(&self.value.forward(x)?)?;
+                let past = self.cache.as_ref().map_or(0, |(k, _)| k.dim(2).unwrap_or(0));
                 let (k, v) = match &self.cache {
-                    Some((pk, pv)) => (Tensor::cat(&[pk, &k], 1)?, Tensor::cat(&[pv, &v], 1)?),
-                    None => (k, v),
+                    Some((pk, pv)) => (Tensor::cat(&[pk, &k], 2)?, Tensor::cat(&[pv, &v], 2)?),
+                    None => (k.contiguous()?, v.contiguous()?),
                 };
                 self.cache = Some((k.clone(), v.clone()));
-                (k, v, Some(past))
+                let q = (self.heads(&q)? * (size as f64).powf(-0.5))?.contiguous()?;
+                let mut qk = q.matmul(&k.t()?)?;
+                // New position i (after `past` cached ones) sees positions up to past + i.
+                if n > 1 {
+                    let total = past + n;
+                    let mask: Vec<f32> = (0..n).flat_map(|i| (0..total).map(move |j| if j > past + i { f32::NEG_INFINITY } else { 0.0 })).collect();
+                    qk = qk.broadcast_add(&Tensor::from_vec(mask, (n, total), x.device())?)?;
+                }
+                let w = candle_nn::ops::softmax_last_dim(&qk)?;
+                self.out.forward(&w.matmul(&v)?.transpose(1, 2)?.flatten_from(2)?)
             }
-        };
-        let (_, n, s) = q.dims3()?;
-        let scale = ((s / self.heads) as f64).powf(-0.25);
-        let q = (self.heads(&q)? * scale)?;
-        let k = (self.heads(&k)?.transpose(2, 3)? * scale)?;
-        let v = self.heads(&v)?.contiguous()?;
-        let mut qk = q.contiguous()?.matmul(&k.contiguous()?)?;
-        // New position i (after `past` cached ones) sees positions up to past + i.
-        if let (Some(past), true) = (past, n > 1) {
-            let total = past + n;
-            let mask: Vec<f32> = (0..n).flat_map(|i| (0..total).map(move |j| if j > past + i { f32::NEG_INFINITY } else { 0.0 })).collect();
-            qk = qk.broadcast_add(&Tensor::from_vec(mask, (n, total), x.device())?)?;
         }
-        let w = candle_nn::ops::softmax_last_dim(&qk)?;
-        self.out.forward(&w.matmul(&v)?.transpose(1, 2)?.flatten_from(2)?)
     }
 }
 
@@ -120,6 +133,15 @@ impl Block {
         if let Some((attn, _)) = &mut self.cross {
             attn.cache = None;
         }
+    }
+
+    /// The self-attention cache's rows taken from `rows` (a beam's parents; the first step's
+    /// one row copied out). The audio's cache is one row every row reads.
+    fn reorder(&mut self, rows: &Tensor) -> Result<()> {
+        if let Some((k, v)) = &self.attn.cache {
+            self.attn.cache = Some((k.index_select(rows, 0)?, v.index_select(rows, 0)?));
+        }
+        Ok(())
     }
 }
 
@@ -186,14 +208,29 @@ impl Whisper {
 
     /// The next-token logits after `tokens` (the ones not yet given), over `audio`.
     pub fn decode(&mut self, tokens: &[u32], audio: &Tensor) -> Result<Tensor> {
-        let x = Tensor::new(tokens, audio.device())?.unsqueeze(0)?;
-        let mut x = self.tokens.forward(&x)?.broadcast_add(&self.text_positions.narrow(0, self.written, tokens.len())?)?;
-        self.written += tokens.len();
+        self.decode_rows(&Tensor::new(tokens, audio.device())?.unsqueeze(0)?, audio)?.squeeze(0)
+    }
+
+    /// The same for a batch of rows (`[rows, tokens]`, each as many new tokens), one row of
+    /// logits each. The cache holds as many rows: one until `reorder` copies them out.
+    pub fn decode_rows(&mut self, tokens: &Tensor, audio: &Tensor) -> Result<Tensor> {
+        let n = tokens.dim(1)?;
+        let mut x = self.tokens.forward(tokens)?.broadcast_add(&self.text_positions.narrow(0, self.written, n)?)?;
+        self.written += n;
         for block in &mut self.decoder {
             x = block.forward(&x, Some(audio))?;
         }
         let x = self.decoder_ln.forward(&x)?;
-        let last = x.narrow(1, tokens.len() - 1, 1)?.squeeze(1)?;
-        last.matmul(&self.tokens.embeddings().t()?)?.squeeze(0)
+        let last = x.narrow(1, n - 1, 1)?.squeeze(1)?;
+        last.matmul(&self.tokens.embeddings().t()?)
+    }
+
+    /// Keep the decoder's cached rows `rows` (indices into the last call's rows), in that order.
+    pub fn reorder(&mut self, rows: &[u32]) -> Result<()> {
+        let rows = Tensor::new(rows, self.text_positions.device())?;
+        for block in &mut self.decoder {
+            block.reorder(&rows)?;
+        }
+        Ok(())
     }
 }

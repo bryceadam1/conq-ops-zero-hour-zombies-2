@@ -16,6 +16,10 @@
 //! (`train_whisper.py`) on the same audio, read by `Listener::command` with the grammar's mask
 //! and without, no translator after it.
 //!
+//! `VOICE_BIAS=<names>,<words>`: the prompted transcription biased (`bias`) toward the match's
+//! names and the grammar's words by those weights; `VOICE_BEAM=<n>`: over a beam of n;
+//! `VOICE_STOP_FIRST`: the beam stops once its best hypothesis ends.
+//!
 //! `VOICE_AUDIO=<dir>`: the rows' audio from `<dir>/<i>.wav` and its voices from
 //! `<dir>/manifest.tsv` instead of `say` (`tools/voice/tts/listen_kokoro.py`: Kokoro voices no
 //! model trained on).
@@ -49,6 +53,15 @@ fn main() -> Result<(), zhbo_voice::Error> {
     if let Ok(w) = std::env::var("VOICE_WINDOW") {
         ears.window = w.parse().ok();
     }
+    if let Some(b) = std::env::var("VOICE_BEAM").ok().and_then(|b| b.parse().ok()) {
+        ears.beam = b;
+    }
+    let weights: Option<(f32, f32)> = std::env::var("VOICE_BIAS").ok().and_then(|w| {
+        let (n, w) = w.split_once(',')?;
+        Some((n.trim().parse().ok()?, w.trim().parse().ok()?))
+    });
+    ears.stop_first = std::env::var("VOICE_STOP_FIRST").is_ok();
+    println!("beam {}{}, bias {weights:?}", ears.beam, if ears.stop_first { " (stop at the first best end)" } else { "" });
     println!("encoder window: {}", ears.window.map_or("30 s".to_string(), |w| format!("the audio and {w} frames")));
     let words = std::fs::read_to_string(Path::new(&args[1]).join("words.txt"))?;
     let snapper = Snapper::new(words.lines().map(str::to_string), &Tables::parse(&[normal::SHIPPED]));
@@ -104,6 +117,14 @@ fn main() -> Result<(), zhbo_voice::Error> {
         };
         let wanted = names_in(label, v);
         let names_prompt = hear::prompt(v);
+        let bias = match weights {
+            Some((wn, ww)) => {
+                let (n, w) = snapper.phrases(v);
+                let phrases: Vec<(String, f32)> = n.into_iter().map(|p| (p, wn)).chain(w.into_iter().map(|p| (p, ww))).collect();
+                Some(zhbo_voice::bias::Bias::new(ears.tokenizer(), &phrases)?)
+            }
+            None => None,
+        };
         if let Some(ears) = &mut direct {
             for (k, constrained) in [true, false].into_iter().enumerate() {
                 let t = Instant::now();
@@ -127,7 +148,7 @@ fn main() -> Result<(), zhbo_voice::Error> {
                 snapper.snap(&prompted, v)
             } else {
                 let t = Instant::now();
-                let heard = ears.hear(&pcm, if k == 0 { "" } else { &names_prompt })?;
+                let heard = if k == 0 { ears.hear(&pcm, "")? } else { ears.hear_biased(&pcm, &names_prompt, bias.as_ref())? };
                 took[k] += t.elapsed().as_secs_f64();
                 parts[k][0] += heard.encode_seconds as f64;
                 parts[k][1] += heard.decode_seconds as f64;
