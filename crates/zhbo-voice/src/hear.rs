@@ -397,9 +397,25 @@ pub fn tidy(heard: &str) -> String {
     kept.split_whitespace().collect::<Vec<_>>().join(" ").replace(" ,", ",").trim_matches(',').trim().to_string()
 }
 
-/// The match's names as Whisper's prompt: the words it should expect, most specific first.
+/// The match's names as Whisper's prompt: the words it should expect, most specific first. The
+/// command model was trained on this one.
 pub fn prompt(vocab: &Vocabulary) -> String {
-    format!("Commands for {}.", vocab.spoken_names().join(", "))
+    prompt_with(vocab, false, false)
+}
+
+/// The same, with each type also in the singular (`torhal, torhals`) where `singular`, and
+/// opening with fillers (`Um, uh,`) where `fillers`: Whisper writes the previous text's style,
+/// and otherwise leaves out or respells what a player says between words.
+pub fn prompt_with(vocab: &Vocabulary, singular: bool, fillers: bool) -> String {
+    let names = if singular {
+        let mut out: Vec<String> = vocab.types.iter().flat_map(|n| [n.singular.clone(), n.plural.clone()]).collect();
+        out.extend(vocab.spoken_names().into_iter().skip(vocab.types.len()));
+        out
+    } else {
+        vocab.spoken_names()
+    };
+    let lead = if fillers { "Um, uh, commands for" } else { "Commands for" };
+    format!("{lead} {}.", names.join(", "))
 }
 
 /// The samples the encoder's window covers: the audio and `silence` frames of silence after it,
@@ -474,8 +490,20 @@ pub fn mel_filters(sample_rate: usize, n_fft: usize, n_mels: usize) -> Vec<f32> 
     const MIN_LOG_HZ: f64 = 1000.0;
     let min_log_mel = MIN_LOG_HZ / F_SP;
     let log_step = 6.4f64.ln() / 27.0;
-    let to_mel = |f: f64| if f < MIN_LOG_HZ { f / F_SP } else { min_log_mel + (f / MIN_LOG_HZ).ln() / log_step };
-    let to_hz = |m: f64| if m < min_log_mel { m * F_SP } else { MIN_LOG_HZ * ((m - min_log_mel) * log_step).exp() };
+    let to_mel = |f: f64| {
+        if f < MIN_LOG_HZ {
+            f / F_SP
+        } else {
+            min_log_mel + (f / MIN_LOG_HZ).ln() / log_step
+        }
+    };
+    let to_hz = |m: f64| {
+        if m < min_log_mel {
+            m * F_SP
+        } else {
+            MIN_LOG_HZ * ((m - min_log_mel) * log_step).exp()
+        }
+    };
     let bins = n_fft / 2 + 1;
     let nyquist = sample_rate as f64 / 2.0;
     let fft_hz: Vec<f64> = (0..bins).map(|k| nyquist * k as f64 / (bins - 1) as f64).collect();

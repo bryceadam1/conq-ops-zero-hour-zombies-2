@@ -16,8 +16,9 @@
 //! (`train_whisper.py`) on the same audio, read by `Listener::command` with the grammar's mask
 //! and without, no translator after it.
 //!
-//! `VOICE_BIAS=<names>,<words>`: the prompted transcription biased (`bias`) toward the match's
-//! names and the grammar's words by those weights; `VOICE_BEAM=<n>`: over a beam of n;
+//! `VOICE_BIAS=<names>,<verbs>,<words>` (or `<names>,<words>`): the prompted transcription biased
+//! (`bias`) toward the match's names, the verbs and table phrases, and the fixed words by those
+//! weights; `VOICE_PROMPT=singular,fillers`: the types in both numbers, fillers first; `VOICE_BEAM=<n>`: over a beam of n;
 //! `VOICE_STOP_FIRST`: the beam stops once its best hypothesis ends.
 //!
 //! `VOICE_DUMP=<file>`: each row as a line (voice, input, label, heard, snapped, command, same
@@ -59,12 +60,20 @@ fn main() -> Result<(), zhbo_voice::Error> {
     if let Some(b) = std::env::var("VOICE_BEAM").ok().and_then(|b| b.parse().ok()) {
         ears.beam = b;
     }
-    let weights: Option<(f32, f32)> = std::env::var("VOICE_BIAS").ok().and_then(|w| {
-        let (n, w) = w.split_once(',')?;
-        Some((n.trim().parse().ok()?, w.trim().parse().ok()?))
+    // Names, verbs and the synonym table's phrases, fixed words; two weights give the last both.
+    let weights: Option<(f32, f32, f32)> = std::env::var("VOICE_BIAS").ok().and_then(|w| {
+        let x: Vec<f32> = w.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        match x[..] {
+            [n, w] => Some((n, w, w)),
+            [n, v, w] => Some((n, v, w)),
+            _ => None,
+        }
     });
+    // VOICE_PROMPT: `singular` (types in both numbers), `fillers`, or both, comma-separated.
+    let style = std::env::var("VOICE_PROMPT").unwrap_or_default();
+    let (singular, fillers) = (style.contains("singular"), style.contains("fillers"));
     ears.stop_first = std::env::var("VOICE_STOP_FIRST").is_ok();
-    println!("beam {}{}, bias {weights:?}", ears.beam, if ears.stop_first { " (stop at the first best end)" } else { "" });
+    println!("beam {}{}, bias {weights:?}, prompt singular {singular} fillers {fillers}", ears.beam, if ears.stop_first { " (stop at the first best end)" } else { "" });
     println!("encoder window: {}", ears.window.map_or("30 s".to_string(), |w| format!("the audio and {w} frames")));
     let words = std::fs::read_to_string(Path::new(&args[1]).join("words.txt"))?;
     let snapper = Snapper::new(words.lines().map(str::to_string), &Tables::parse(&[normal::SHIPPED]));
@@ -123,11 +132,11 @@ fn main() -> Result<(), zhbo_voice::Error> {
             }
         };
         let wanted = names_in(label, v);
-        let names_prompt = hear::prompt(v);
+        let names_prompt = hear::prompt_with(v, singular, fillers);
         let bias = match weights {
-            Some((wn, ww)) => {
-                let (n, w) = snapper.phrases(v);
-                let phrases: Vec<(String, f32)> = n.into_iter().map(|p| (p, wn)).chain(w.into_iter().map(|p| (p, ww))).collect();
+            Some((wn, wv, ww)) => {
+                let (n, vb, w) = snapper.phrases(v);
+                let phrases: Vec<(String, f32)> = n.into_iter().map(|p| (p, wn)).chain(vb.into_iter().map(|p| (p, wv))).chain(w.into_iter().map(|p| (p, ww))).collect();
                 Some(zhbo_voice::bias::Bias::new(ears.tokenizer(), &phrases)?)
             }
             None => None,

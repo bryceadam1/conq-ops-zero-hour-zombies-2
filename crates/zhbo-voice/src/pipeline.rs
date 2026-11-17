@@ -31,12 +31,19 @@ pub fn model_dir(manifest: &str, section: &str) -> Option<String> {
     None
 }
 
-/// Whisper's beam and the bias's weights (log-probability per token) for the match's names and
-/// the grammar's words: the best of the dev sweep on held-out voices (MODLOG, 2026-11-17; beam 8
-/// gained 0.003 for 170 ms more, heavier names finished the wrong ones).
+/// Whisper's beam and the bias's weights (log-probability per token) for the match's names, the
+/// grammar's verbs and its other words: the best of the dev sweeps on held-out voices (MODLOG,
+/// 2026-11-17; beam 8 gained 0.003 for 170 ms more, heavier names finished the wrong ones, verbs
+/// at 2 gained 0.010, other words at 0.5 changed nothing).
 const BEAM: usize = 4;
 const NAME_WEIGHT: f32 = 2.0;
+const VERB_WEIGHT: f32 = 2.0;
 const WORD_WEIGHT: f32 = 1.0;
+/// Whisper's prompt names each type in both numbers and opens with fillers, so it writes what was
+/// said rather than the plural the names list suggests, and keeps an "uh" as an "uh" (MODLOG,
+/// 2026-11-17: 0.827 to 0.863 same meaning on the dev clips).
+const PROMPT_SINGULAR: bool = true;
+const PROMPT_FILLERS: bool = true;
 
 /// What one utterance came to.
 #[derive(Clone, Debug, PartialEq)]
@@ -92,10 +99,11 @@ impl Pipeline {
 
     /// Hear `pcm` (16 kHz mono) and translate it over `vocab`.
     pub fn run(&mut self, pcm: &[f32], vocab: &Vocabulary) -> Result<Outcome, Error> {
-        let prompt = hear::prompt(vocab);
+        let prompt = hear::prompt_with(vocab, PROMPT_SINGULAR, PROMPT_FILLERS);
         if self.bias.as_ref().is_none_or(|(p, _)| *p != prompt) {
-            let (names, words) = self.snapper.phrases(vocab);
-            let phrases: Vec<(String, f32)> = names.into_iter().map(|p| (p, NAME_WEIGHT)).chain(words.into_iter().map(|p| (p, WORD_WEIGHT))).collect();
+            let (names, verbs, words) = self.snapper.phrases(vocab);
+            let phrases: Vec<(String, f32)> =
+                names.into_iter().map(|p| (p, NAME_WEIGHT)).chain(verbs.into_iter().map(|p| (p, VERB_WEIGHT))).chain(words.into_iter().map(|p| (p, WORD_WEIGHT))).collect();
             self.bias = Some((prompt.clone(), Bias::new(self.ears.tokenizer(), &phrases)?));
         }
         let said = self.ears.hear_biased(pcm, &prompt, self.bias.as_ref().map(|(_, b)| b))?;

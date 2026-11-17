@@ -16369,3 +16369,31 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   as `vaspel`, `selhalvel wing`; about 4).
 - **Fix:** `unrepeat` dropped a trailing run said earlier (`near the mirdorhal bridge, get over
   to the mirdorhal bridge` lost its destination); the tail is now trimmed only after a loop.
+
+## Voice: both numbers and fillers in Whisper's prompt, and verbs boosted (2026-11-17)
+
+- The three fixes for the hearing misses above, tuned on the 300 dev clips (beam 4, names 2,
+  paraphrase translator) and run on the test clips once:
+
+  | dev setting | same meaning | ms hearing |
+  |---|---|---|
+  | baseline (names 2, words 1, plural prompt) | 0.827 | 497 |
+  | prompt lists singular and plural | 0.857 | 548 |
+  | prompt opens `Um, uh,` | 0.833 | 503 |
+  | both | 0.863 | 561 |
+  | verbs and table phrases at 2 | 0.840 | 572 |
+  | both prompts, verbs 2 | **0.873** | 629 |
+  | both prompts, verbs 2, other words 0.5 | 0.873 | 626 |
+
+- Test clips, once, with both prompts and verbs 2: same meaning **0.890** against 0.857 (0.889
+  English-named against 0.877), 639 ms hearing + 265 translating. Word error rate 0.098 →
+  0.091; hearing misses 36 → 26 (translator misses still 7). 14 commands fixed, 5 broken: two
+  are Whisper repeating the command's end that `unrepeat` doesn't catch because the repeat is
+  partial (`... stand guard veteran peldor walk`, `... in front of there guard behind`), the
+  rest `seize me` heard `says me`, `siriuses` as `sirius is`, `garrisoned` as `garrison`.
+- On in `Pipeline` (`VERB_WEIGHT`, `PROMPT_SINGULAR`, `PROMPT_FILLERS`); `voice_listen` takes
+  `VOICE_PROMPT=singular,fillers` and `VOICE_BIAS=names,verbs,words`. The command model keeps
+  the plural-only prompt it was trained on. Both numbers overflow the prompt's 223 tokens in 13
+  of 2,400 matches (35 with fillers); the start of the list is lost there.
+- `cargo fmt` isn't this repo's style (lines run to about 200): don't run it on the crate.
+

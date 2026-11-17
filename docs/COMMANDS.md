@@ -803,7 +803,7 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   CPU: same meaning 0.827 (0.852 English-named) against the released model's 0.820 (0.840), 2
   commands of 300; 347 ms hearing + 217 ms translating against 336 + 211. The Whisper command
   model (step 13) read 0.800 (0.790) in 297 ms on the same clips.
-- **Biasing (built, `crates/zhbo-voice/src/bias.rs`; on in `Pipeline`, beam 4, names 2, words 1).** Whisper's
+- **Biasing (built, `crates/zhbo-voice/src/bias.rs`; on in `Pipeline`, beam 4, names 2, verbs 2, words 1).** Whisper's
   beam search with the match's phrases made likelier, nothing ruled out: the snapper's names
   (weight 2) and grammar words (weight 1, `Snapper::phrases`) in a tree over Whisper's tokens,
   each in lower, capitalised and title case after a space; a token starting or carrying on a
@@ -817,6 +817,15 @@ the fine-tuning script, the translator and the constrained decoder, Whisper with
   the 300 test clips with the paraphrase translator: same meaning 0.857 (0.877 English-named),
   418 ms hearing + 211 translating, against greedy's 0.827 at 267 + 212 and the released
   pipeline's 0.820 at 336 + 211; names heard after snapping 0.973 against 0.937.
+  `Snapper::phrases` splits the grammar's verbs and table phrases (`cash in`, `car-bomb`,
+  `rally`; weight 2) from its other words (`the`, `facing`; weight 1). In `Pipeline`, Whisper's
+  prompt (`hear::prompt_with`) lists each type in both numbers (`torhal, torhals`) and opens
+  with `Um, uh,`, so a heard singular stays singular and a filler stays a filler; the command
+  model keeps the plural-only `hear::prompt` it was trained on. Both numbers overflow Whisper's
+  223-token prompt room in 13 of 2,400 matches, which lose the start of the list. Dev clips:
+  0.827 → 0.857 (both numbers), 0.863 (and fillers), 0.873 (and verbs 2); words at 0.5 changed
+  nothing. Test clips, once: same meaning 0.890 (0.889 English-named), 639 ms hearing + 265
+  translating; 26 hearing misses against 36.
 - **Results**, the released model. Typed text (`voice_eval`, 2,046 held-out rows, greedy, one
   command at a time on the CPU):
 

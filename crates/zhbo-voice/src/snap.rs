@@ -39,19 +39,21 @@ impl Snapper {
 
     /// The phrases a heard span may be respelt into, for one match.
     fn targets(&self, vocab: &Vocabulary) -> Vec<String> {
-        let (mut out, words) = self.phrases(vocab);
+        let (mut out, verbs, words) = self.phrases(vocab);
+        out.extend(verbs);
         out.extend(words);
         out.sort();
         out.dedup();
         out
     }
 
-    /// The same phrases in two lists: the match's names, and the grammar's words, verbs and the
-    /// synonym table's phrases (what Whisper's bias boosts, each list by its own weight).
-    pub fn phrases(&self, vocab: &Vocabulary) -> (Vec<String>, Vec<String>) {
-        let mut words: Vec<String> = fixed_words().iter().map(|w| w.to_string()).collect();
-        words.extend(vocab.verbs.iter().map(|v| v.words.clone()));
-        words.extend(self.table_phrases.iter().cloned());
+    /// The same phrases in three lists: the match's names, the verbs and the synonym table's
+    /// phrases, and the grammar's fixed words (what Whisper's bias boosts, each list by its own
+    /// weight).
+    pub fn phrases(&self, vocab: &Vocabulary) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let words: Vec<String> = fixed_words().iter().map(|w| w.to_string()).collect();
+        let mut verbs: Vec<String> = vocab.verbs.iter().map(|v| v.words.clone()).collect();
+        verbs.extend(self.table_phrases.iter().cloned());
         let mut names = Vec::new();
         for n in vocab.types.iter().chain(&vocab.classes) {
             names.push(n.singular.clone());
@@ -66,7 +68,7 @@ impl Snapper {
                 }
             }
         }
-        (names, words)
+        (names, verbs, words)
     }
 
     /// `heard` (tidied: lower case, words and commas) with each unknown word's span respelt.
