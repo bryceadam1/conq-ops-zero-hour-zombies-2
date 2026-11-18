@@ -18,7 +18,7 @@
 //!
 //! `VOICE_BIAS=<names>,<verbs>,<words>` (or `<names>,<words>`): the prompted transcription biased
 //! (`bias`) toward the match's names, the verbs and table phrases, and the fixed words by those
-//! weights; `VOICE_PROMPT=singular,fillers`: the types in both numbers, fillers first; `VOICE_BEAM=<n>`: over a beam of n;
+//! weights; `VOICE_PROMPT=singular,fillers`: the types in both numbers, fillers first (`none`: no prompt, `lead`: the fillers alone); `VOICE_BEAM=<n>`: over a beam of n;
 //! `VOICE_STOP_FIRST`: the beam stops once its best hypothesis ends.
 //!
 //! `VOICE_DUMP=<file>`: each row as a line (voice, input, label, heard, snapped, command, same
@@ -69,7 +69,8 @@ fn main() -> Result<(), zhbo_voice::Error> {
             _ => None,
         }
     });
-    // VOICE_PROMPT: `singular` (types in both numbers), `fillers`, or both, comma-separated.
+    // VOICE_PROMPT: `singular` (types in both numbers), `fillers`, or both, comma-separated; `none`
+    // for no prompt, or `lead` for the fillers alone ("Um, uh,"), to weigh the prompt against the bias.
     let style = std::env::var("VOICE_PROMPT").unwrap_or_default();
     let (singular, fillers) = (style.contains("singular"), style.contains("fillers"));
     ears.stop_first = std::env::var("VOICE_STOP_FIRST").is_ok();
@@ -132,7 +133,13 @@ fn main() -> Result<(), zhbo_voice::Error> {
             }
         };
         let wanted = names_in(label, v);
-        let names_prompt = hear::prompt_with(v, singular, fillers);
+        let names_prompt = if style.contains("none") {
+            String::new()
+        } else if style.contains("lead") {
+            "Um, uh,".to_string()
+        } else {
+            hear::prompt_with(v, singular, fillers)
+        };
         let bias = match weights {
             Some((wn, wv, ww)) => {
                 let (n, vb, w) = snapper.phrases(v);

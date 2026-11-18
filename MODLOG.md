@@ -16397,3 +16397,14 @@ The language now names groups and the map's areas, and reads synonyms (docs/COMM
   of 2,400 matches (35 with fillers); the start of the list is lost there.
 - `cargo fmt` isn't this repo's style (lines run to about 200): don't run it on the crate.
 
+
+## Voice: the bias doesn't replace the names prompt (2026-11-17)
+
+- `voice_listen` `VOICE_PROMPT=none` (no prompt) and `lead` (`Um, uh,` alone). Dev clips, beam 4,
+  paraphrase translator, same meaning after snapping: the full prompt with names 2 verbs 2 reads
+  0.873 at 629 ms hearing; no prompt 0.780 (2/2, 427 ms) and 0.790 (3/3, 505 ms); the fillers
+  alone 0.780 (2/2, 497 ms) and 0.780 (3/3, 579 ms). Names heard 0.970 against 0.857–0.893.
+- The prompt tells the decoder the match's invented names in context; the bias only adds a flat
+  bonus per token, so it helps a name Whisper already half-considered and can't bring up one it
+  didn't. A heavier bias also writes longer, eating most of the time the shorter prompt saves.
+  The prompt stays.
